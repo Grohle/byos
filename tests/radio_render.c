@@ -44,10 +44,11 @@ enum { RY_IDLE, RY_CONNECTING, RY_BUFFERING, RY_PLAYING, RY_ERROR };
 #define RA_MAXST 240
 static struct ra_lib *ra_lb; static struct ra_conf ra_cf;
 struct ra_list {
-    int kind; char arg[100], title[100];
-    struct ra_station *it; int n, state, more, offset;
+    int kind; char arg[100], title[100], base[200]; unsigned sid;
+    struct ra_station *it; int n, state, more, offset, err;
 };
 static struct ra_list ra_ls[2];
+static struct ra_srcs ra_sr;
 static struct ra_country *ra_ct; static int ra_nct, ra_ct_state;
 static struct { int state, pct, br, have, ver; char err[24], title[256], codec[8]; struct ra_station cur; } ra_np;
 static int ra_active(void) { return ra_np.have && (ra_np.state == RY_CONNECTING || ra_np.state == RY_BUFFERING || ra_np.state == RY_PLAYING); }
@@ -122,12 +123,38 @@ static void frame(int pg, const char *name)
     ra_sp = pg == RG_ROOT ? 0 : 1; ra_stack[0] = RG_ROOT; ra_stack[1] = pg;
     ra_render(); save(name);
 }
+/* a list page opened from the sources page (back label "Sources") */
+static void frame_from_srcs(const char *name)
+{
+    ra_sp = 2; ra_stack[0] = RG_ROOT; ra_stack[1] = RG_SRCS; ra_stack[2] = RG_LIST;
+    ra_render(); save(name);
+}
+static void sources(void)
+{
+    char e[] = ""; ra_srcs_parse(&ra_sr, e);
+    struct ra_src *s = ra_src_add(&ra_sr, RSRC_M3U, "https://lists.example.org/spain.m3u", "");
+    s->n = 42; s->fetched = 1700000000;
+    s = ra_src_add(&ra_sr, RSRC_JSON, "https://example.com/my-stations.json", "Mis emisoras de jazz");
+    s->n = 1; s->fetched = 1700000000;
+    s = ra_src_add(&ra_sr, RSRC_PLS, "http://old.example.net/radio.pls", ""); s->err = RSE_NET; s->on = 0;
+    s = ra_src_add(&ra_sr, RSRC_RBX, "https://radio.example.org", ""); s->fetched = 1700000000;
+    s = ra_src_add(&ra_sr, RSRC_URL, "https://new.example.com/list", ""); s->busy = 1;
+}
+static void eu_list(void)
+{
+    struct ra_list *l = &ra_ls[1];
+    if (!l->it) l->it = calloc(RA_MAXST, sizeof *l->it);
+    l->n = 0; l->state = 2; l->more = 0; l->err = 0; l->sid = ra_sr.s[1].sid;
+    snprintf(l->title, sizeof l->title, "%s", tr("Radio pública europea"));
+    for (int k = 0; k < RA_NEU; k++) ra_eu_station(k, &l->it[l->n++]);
+}
 
 int main(void)
 {
     (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout;
     if (!text_init()) { printf("no font (TEXT_FONT_DIRS)\n"); return 2; }
     ra_lb = calloc(1, sizeof *ra_lb);
+    { char e[] = ""; ra_srcs_parse(&ra_sr, e); }
     status_bar();
     static const int langs[] = { LANG_ES, LANG_EN, LANG_FR, LANG_DE, LANG_JA, LANG_RU, LANG_TH };
     static const char *const lc[] = { "es", "en", "fr", "de", "ja", "ru", "th" };
@@ -169,6 +196,24 @@ int main(void)
         snprintf(n, sizeof n, "%s_15_countries", lc[li]); frame(RG_CTRY, n);
         ra_nct = 0; ra_ct_state = 1; snprintf(n, sizeof n, "%s_16_countries_loading", lc[li]); frame(RG_CTRY, n);
         ra_ct_state = 2; ra_nct = 8;
+        /* sources: Explore with them, the sources page, the European list, a list that failed */
+        sources(); memset(&ra_np, 0, sizeof ra_np); ra_tab = 1; ra_pos[RG_ROOT] = 0;
+        snprintf(n, sizeof n, "%s_17_explore_sources", lc[li]); frame(RG_ROOT, n);
+        ra_pos[RG_SRCS] = 0; snprintf(n, sizeof n, "%s_18_sources", lc[li]); frame(RG_SRCS, n);
+        ra_pos[RG_SRCS] = 9999; ra_render(); ra_pos[RG_SRCS] = ra_maxpos(RG_SRCS); snprintf(n, sizeof n, "%s_19_sources_end", lc[li]); frame(RG_SRCS, n);
+        eu_list(); ra_pos[RG_LIST] = 0;
+        play(&ra_ls[1].it[2], RY_PLAYING, 100, "", ""); snprintf(n, sizeof n, "%s_20_eu_list_playing", lc[li]); frame(RG_LIST, n);
+        ra_pos[RG_LIST] = 9999; ra_render(); ra_pos[RG_LIST] = ra_maxpos(RG_LIST); snprintf(n, sizeof n, "%s_21_eu_list_end", lc[li]); frame(RG_LIST, n);
+        ra_ls[1].n = 0; ra_ls[1].state = 3; ra_ls[1].err = RSE_NOTLIST; ra_ls[1].sid = ra_sr.s[4].sid; snprintf(ra_ls[1].title, sizeof ra_ls[1].title, "%s", ra_sr.s[4].name);
+        ra_pos[RG_LIST] = 0; memset(&ra_np, 0, sizeof ra_np); snprintf(n, sizeof n, "%s_22_source_not_a_list", lc[li]); frame_from_srcs(n);
+        ra_ls[1].state = 2; ra_ls[1].err = RSE_EMPTY; snprintf(n, sizeof n, "%s_23_source_empty", lc[li]); frame_from_srcs(n);
+        /* ends of a session */
+        eu_list(); ra_pos[RG_LIST] = 0;
+        play(&ra_ls[1].it[2], RY_ERROR, 0, "", "cap"); snprintf(n, sizeof n, "%s_24_session_cap", lc[li]); frame(RG_LIST, n);
+        play(&ra_ls[1].it[2], RY_ERROR, 0, "", "nosd"); snprintf(n, sizeof n, "%s_25_no_sd", lc[li]); frame(RG_LIST, n);
+        ra_sr.s[0].on = 0; memset(&ra_np, 0, sizeof ra_np); ra_pos[RG_ROOT] = 0;
+        snprintf(n, sizeof n, "%s_26_explore_without_radio_browser", lc[li]); frame(RG_ROOT, n);
+        char e0[] = ""; ra_srcs_parse(&ra_sr, e0);
     }
     printf("radio render: %d frames in %s, %d layout problems\n", frames, outdir(), lfails);
     return lfails != 0;

@@ -3,8 +3,10 @@
 #define RA_RH 60                 /* alto de una fila de emisora */
 #define RA_MINI_Y 392            /* tarjeta de "sonando" */
 #define RA_MINI_TOP 386          /* hasta aqui llegan las listas cuando hay tarjeta */
-enum { RG_ROOT, RG_LIST, RG_CTRY, RG_N };
-enum { RH_ST = 100, RH_STAR, RH_TAB, RH_NAV, RH_GENRE, RH_CTRY, RH_ADD, RH_OWNMORE, RH_RETRY, RH_MINI, RH_MSTAR, RH_MPLAY };
+enum { RG_ROOT, RG_LIST, RG_CTRY, RG_SRCS, RG_N };
+enum { RH_ST = 100, RH_STAR, RH_TAB, RH_NAV, RH_GENRE, RH_CTRY, RH_ADD, RH_OWNMORE, RH_RETRY, RH_MINI, RH_MSTAR, RH_MPLAY,
+       RH_SRC, RH_SRCMGR, RH_SRCROW, RH_SRCSW, RH_SRCADD };
+#define RA_SRH 60                /* fila de la pagina de fuentes */
 
 static int ra_stack[4], ra_sp, ra_ch[RG_N], ra_editing, ra_tab;
 static float ra_pos[RG_N], ra_vel, ra_edit_e;       /* ra_edit_e: 0 = cabecera normal, 1 = buscando */
@@ -107,9 +109,19 @@ static const char *ra_err_text(const char *e)
     if (!strcmp(e, "net")) return tr("Sin conexión");
     if (!strncmp(e, "http", 4) || !strcmp(e, "nostream")) return tr("Emisora no disponible");
     if (!strcmp(e, "hls") || !strcmp(e, "codec")) return tr("Formato no compatible");
+    if (!strcmp(e, "enc")) return tr("Emisión cifrada: no compatible");
     if (!strcmp(e, "player")) return tr("El reproductor no responde");
+    if (!strcmp(e, "nosd")) return tr("No hay tarjeta SD");
+    if (!strcmp(e, "space")) return tr("La tarjeta SD está llena");
+    if (!strcmp(e, "cap")) return tr("Límite de la sesión alcanzado");
+    if (!strcmp(e, "end")) return tr("La emisión ha terminado");
     return tr("No se pudo reproducir");
 }
+/* fines que no son un fallo: en gris */
+static int ra_err_soft(const char *e) { return !strcmp(e, "cap") || !strcmp(e, "end"); }
+static const char *ra_src_name(const struct ra_src *s) { return s->type == RSRC_EU ? tr("Radio pública europea") : s->name; }
+/* "1 emisora" / "42 emisoras" */
+static void ra_count(int n, char *o, int cap) { if (n == 1) snprintf(o, cap, "%s", tr("1 emisora")); else snprintf(o, cap, tr("%d emisoras"), n); }
 
 static void ra_row(uint16_t *d, int y, const struct ra_station *s, int id)
 {
@@ -136,12 +148,12 @@ static int ra_rows(uint16_t *d, int y, const struct ra_list *l, int slot)
     for (int i = 0; i < l->n; i++, y += RA_RH) ra_row(d, y, &l->it[i], (slot << 16) | i);
     if (l->state == 1) { if (y + 30 > ra_clip0 && y + 44 < H) fm_spinner_at(d, W / 2, y + 34); y += 70; }
     else if (l->state == 3) {
-        ra_center(d, y + 44, tr("No se pudo cargar"), 15, FMC_GREY);
+        ra_center(d, y + 44, l->err == RSE_NOTLIST ? tr("No es una lista de emisoras") : tr("No se pudo cargar"), 15, FMC_GREY);
         const char *t = tr("Reintentar"); int w = tw_n(t, 15, -1);
         draw_text(d, (W - w) / 2, y + 76, t, 15, fm_pressed(RH_RETRY, slot) ? rgb(5, 66, 128) : FMC_BLUE, 0, 30, H);
         ra_hit(W / 2 - w / 2 - 24, y + 52, W / 2 + w / 2 + 24, y + 92, RH_RETRY, slot);
         y += 110;
-    } else if (l->state == 2 && !l->n && !l->more) { ra_center(d, y + 50, tr("Sin resultados"), 15, FMC_GREY); y += 90; }
+    } else if (l->state == 2 && !l->n && !l->more) { ra_center(d, y + 50, l->sid ? tr("La lista no tiene emisoras") : tr("Sin resultados"), 15, FMC_GREY); y += 90; }
     return y - y0;
 }
 static int ra_section(uint16_t *d, int y, const char *t)
@@ -197,10 +209,20 @@ static int ra_draw_favs(uint16_t *d, int y)
     y += 56;
     return y - y0;
 }
+/* Radio Browser activado (Explorar muestra sus listas y la busqueda lo consulta) */
+static int ra_rb_on(void) { for (int i = 0; i < ra_sr.n; i++) if (ra_sr.s[i].type == RSRC_RB) return ra_sr.s[i].on; return 1; }
 static int ra_draw_explore(uint16_t *d, int y)
 {
-    int y0 = y;
-    y += 8;
+    int y0 = y, ns = 0, idx[RA_MAXSRC];
+    for (int i = 0; i < ra_sr.n; i++) if (ra_sr.s[i].on && ra_sr.s[i].type != RSRC_RB) idx[ns++] = i;
+    /* fuentes: la lista europea y las del usuario, y la pagina para gestionarlas */
+    y += ra_section(d, y, tr("Fuentes"));
+    ra_card(d, y, ns + 1);
+    for (int k = 0; k < ns; k++) ra_card_row(d, y, ns + 1, k, ra_src_name(&ra_sr.s[idx[k]]), 0xFFFF, 1, RH_SRC, idx[k]);
+    ra_card_row(d, y, ns + 1, ns, tr("Gestionar fuentes…"), fm_pressed(RH_SRCMGR, 0) ? rgb(5, 66, 128) : FMC_BLUE, 0, RH_SRCMGR, 0);
+    y += (ns + 1) * 44 + 6;
+    if (!ra_rb_on()) return y + 8 - y0;
+    y += ra_section(d, y, "Radio Browser");
     ra_card(d, y, 3);
     ra_card_row(d, y, 3, 0, tr("Más escuchadas"), 0xFFFF, 1, RH_NAV, 0);
     ra_card_row(d, y, 3, 1, ra_cf.cname[0] ? ra_cf.cname : ra_cf.cc, 0xFFFF, 1, RH_NAV, 1);
@@ -229,7 +251,7 @@ static void ra_status(char *o, int cap, uint16_t *col)
     case RY_CONNECTING: snprintf(o, cap, "%s", tr("Conectando…")); break;
     case RY_BUFFERING: snprintf(o, cap, tr("Cargando… %d%%"), ra_np.pct); break;
     case RY_PLAYING: snprintf(o, cap, "%s", ra_np.title[0] ? ra_np.title : tr("En directo")); break;
-    case RY_ERROR: snprintf(o, cap, "%s", ra_err_text(ra_np.err)); *col = rgb(255, 69, 58); break;
+    case RY_ERROR: snprintf(o, cap, "%s", ra_err_text(ra_np.err)); if (!ra_err_soft(ra_np.err)) *col = rgb(255, 69, 58); break;
     default: snprintf(o, cap, "%s", tr("Detenida"));
     }
 }
@@ -309,11 +331,18 @@ static void ra_render_list(uint16_t *d)
     for (int i = 30 * W; i < W * H; i++) d[i] = 0;
     int y0 = 74 - (int)pos, y = y0;
     ra_clip0 = 74; ra_clip1 = ra_bottom();
-    draw_text(d, 16, y + 34, l->title, 28, 0xFFFF, W - 32, 30, H); y += 52;
+    int tsz = 28; while (tsz > 20 && tw_n(l->title, tsz, -1) > W - 32) tsz -= 2;   /* un titulo largo encoge antes de cortarse */
+    draw_text(d, 16, y + 34, l->title, tsz, 0xFFFF, W - 32, 30, H); y += 52;
     y += ra_rows(d, y, l, 1);
+    int si = l->sid ? ra_src_ix(&ra_sr, l->sid) : -1;
+    if (si >= 0 && ra_sr.s[si].type == RSRC_EU && l->state == 2) {
+        y += 14;
+        if (y < H && y + 60 > 30) draw_wrapped(d, 16, y, W - 32, tr("RA_EU_NOTE"), 12, rgb(110, 110, 116), 16, 1);
+        y += draw_wrapped(0, 16, y, W - 32, tr("RA_EU_NOTE"), 12, 0, 16, 0) + 8;
+    }
     ra_ch[RG_LIST] = y - y0 + 16;
     fm_chrome_status(d);
-    fm_navbar(d, tr("Radio"), l->title, pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
+    fm_navbar(d, ra_sp > 0 && ra_stack[ra_sp - 1] == RG_SRCS && ra_stack[ra_sp] == RG_LIST ? tr("Fuentes") : tr("Radio"), l->title, pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
     ra_mini(d);
     draw_toast(d);
 }
@@ -349,6 +378,82 @@ static void ra_render_ctry(uint16_t *d)
     ra_mini(d);
     draw_toast(d);
 }
+/* ------------------------------------------------------------------ pagina de fuentes */
+static void ra_src_icon(uint16_t *d, int x, int y, const struct ra_src *s)
+{
+    uint16_t bg; const char *t;
+    switch (s->type) {
+    case RSRC_RB: bg = rgb(10, 132, 255); t = "RB"; break;
+    case RSRC_EU: bg = rgb(0, 51, 153); t = "EU"; break;
+    case RSRC_M3U: bg = rgb(255, 149, 0); t = "M3U"; break;
+    case RSRC_PLS: bg = rgb(0, 150, 136); t = "PLS"; break;
+    case RSRC_JSON: bg = rgb(124, 77, 255); t = "{ }"; break;
+    case RSRC_RBX: bg = rgb(72, 72, 78); t = "RB"; break;
+    default: bg = rgb(58, 58, 62); t = "?"; break;
+    }
+    fill_rrect(d, x, y, 32, 32, 8, bg, s->on ? 255 : 130);
+    int sz = strlen(t) > 2 ? 11 : 13, w = tw_n(t, sz, -1);
+    draw_text(d, x + (32 - w) / 2, y + 21, t, sz, 0xFFFF, 0, 30, H);
+    if (s->type == RSRC_EU) for (int k = 0; k < 12; k++) {      /* el circulo de estrellas */
+        float a = k * (float)M_PI / 6; fill_circle(d, x + 16 + cosf(a) * 12.5f, y + 16 + sinf(a) * 12.5f, 0.9f, rgb(255, 204, 0), s->on ? 255 : 130);
+    }
+}
+static void ra_src_status(const struct ra_src *s, char *o, int n, int *warn)
+{
+    *warn = 0; char c[48];
+    if (s->type == RSRC_RB) { snprintf(o, n, "%s", tr("Directorio comunitario")); return; }
+    if (s->type == RSRC_EU) { ra_count(s->n, c, sizeof c); snprintf(o, n, "%s · %s", c, tr("Integrada")); return; }
+    if (s->busy) { snprintf(o, n, "%s", tr("Comprobando…")); return; }
+    char host[80]; ra_url_host(s->url, host, sizeof host);
+    if (s->err) {
+        snprintf(o, n, "%s", s->err == RSE_NET ? tr("Sin conexión") : s->err == RSE_EMPTY ? tr("La lista no tiene emisoras") : tr("No es una lista de emisoras"));
+        *warn = 1; return;
+    }
+    if (s->type == RSRC_RBX) { snprintf(o, n, "Radio Browser · %s", host); return; }
+    if (s->type == RSRC_URL || !s->fetched) { snprintf(o, n, "%s", host); return; }
+    ra_count(s->n, c, sizeof c);
+    snprintf(o, n, "%s · %s", c, s->type == RSRC_M3U ? "M3U" : s->type == RSRC_PLS ? "PLS" : "JSON");
+}
+static int ra_srcs_top(void) { return 74 - (int)ra_pos[RG_SRCS] + 52; }
+static void ra_render_srcs(uint16_t *d)
+{
+    float pos = ra_pos[RG_SRCS];
+    for (int i = 30 * W; i < W * H; i++) d[i] = 0;
+    int y0 = 74 - (int)pos, y = y0;
+    ra_clip0 = 74; ra_clip1 = ra_bottom();
+    draw_text(d, 16, y + 34, tr("Fuentes"), 28, 0xFFFF, W - 32, 30, H); y += 52;
+    int full = ra_sr.n >= RA_MAXSRC;
+    if (y + ra_sr.n * RA_SRH + 44 > 30 && y < H) fill_rrect(d, 16, y, W - 32, ra_sr.n * RA_SRH + 44, 10, FMC_CARD, 255);
+    for (int i = 0; i < ra_sr.n; i++) {
+        const struct ra_src *s = &ra_sr.s[i];
+        int ry = y + i * RA_SRH;
+        if (ry >= ra_clip1 || ry + RA_SRH <= ra_clip0) continue;
+        if (fm_pressed(RH_SRCROW, i)) fill_rrect(d, 16, ry, W - 32, RA_SRH, i == 0 ? 10 : 0, rgb(50, 50, 54), 255);
+        ra_src_icon(d, 28, ry + 14, s);
+        draw_text(d, 72, ry + 26, ra_src_name(s), 15, s->on ? 0xFFFF : rgb(150, 150, 156), W - 72 - 84, 30, H);
+        char st[200]; int warn; ra_src_status(s, st, sizeof st, &warn);
+        draw_text(d, 72, ry + 45, st, 12, warn ? rgb(255, 159, 10) : FMC_GREY, W - 72 - 84, 30, H);
+        if (s->busy) fm_spinner_at(d, W - 92, ry + 30);
+        sp_switch(d, W - 16 - 12 - 51, ry + 15, s->on ? 1.f : 0.f, 0);
+        fm_hline(d, 72, W - 16, ry + RA_SRH - 1, FMC_SEP);
+        ra_hit(16, ry, W - 16 - 72, ry + RA_SRH, RH_SRCROW, i);
+        ra_hit(W - 16 - 72, ry, W - 16, ry + RA_SRH, RH_SRCSW, i);
+    }
+    int ay = y + ra_sr.n * RA_SRH;
+    if (ay < ra_clip1 && ay + 44 > ra_clip0) {
+        if (fm_pressed(RH_SRCADD, 0)) fill_rrect(d, 16, ay, W - 32, 44, 10, rgb(50, 50, 54), 255);
+        draw_text(d, 32, ay + 28, full ? tr("No caben más fuentes") : tr("Añadir fuente…"), 15, full ? FMC_GREY : FMC_BLUE, W - 64, 30, H);
+        if (!full) ra_hit(16, ay, W - 16, ay + 44, RH_SRCADD, 0);
+    }
+    y = ay + 44 + 12;
+    if (y < H && y + 120 > 30) draw_wrapped(d, 32, y, W - 64, tr("RA_SRC_HELP"), 12, FMC_GREY, 16, 1);
+    y += draw_wrapped(0, 32, y, W - 64, tr("RA_SRC_HELP"), 12, 0, 16, 0) + 16;
+    ra_ch[RG_SRCS] = y - y0 + 16;
+    fm_chrome_status(d);
+    fm_navbar(d, tr("Radio"), tr("Fuentes"), pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
+    ra_mini(d);
+    draw_toast(d);
+}
 static void ra_render_page(uint16_t *d, int pg, int rec)
 {
     int keep = fm_rec; fm_rec = rec; if (rec) fm_nhit = 0;
@@ -356,6 +461,7 @@ static void ra_render_page(uint16_t *d, int pg, int rec)
     case RG_ROOT: ra_render_root(d); break;
     case RG_LIST: ra_render_list(d); break;
     case RG_CTRY: ra_render_ctry(d); break;
+    case RG_SRCS: ra_render_srcs(d); break;
     }
     fm_rec = keep;
 }

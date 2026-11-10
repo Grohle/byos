@@ -1,7 +1,7 @@
 /* radio_core.inc.c - parte pura de la app Radio (sin pantalla, red ni hilos): directorio de
  * Radio Browser (JSON -> emisoras y paises, URLs de las consultas), que codecs suenan, la
  * biblioteca del usuario (favoritas, recientes y emisoras propias en un fichero de texto), el
- * fichero de estado del ayudante (hibynet radio) y los ajustes.
+ * fichero de estado del ayudante (hibynet radio), los ajustes y las fuentes (radio_src.inc.c).
  * La usan radio.inc.c (shell) y tests/radio_test.c (PC). Antes hay que incluir
  * freemusic_core.inc.c (fj_*, fm_cpy, fm_trim, fm_urlenc) y radio_stream.inc.c (rs_*). */
 #ifndef RADIO_CORE_INC
@@ -63,21 +63,24 @@ static void ra_initial(const char *name, char o[8])
 
 /* ------------------------------------------------------------------ codecs */
 /* lo que dice el directorio -> RS_*: MP3 y AAC (ADTS) suenan, lo desconocido se prueba (el
- * ayudante mira las tramas), HLS / Ogg / Opus / FLAC / video no */
+ * ayudante mira las tramas), HLS con MP3 o AAC tambien (RS_HLS); Ogg / Opus / FLAC / video no */
 static int ra_codec_kind(const char *codec, int hls)
 {
-    if (hls) return RS_HLS;
-    if (!codec[0] || !strcasecmp(codec, "UNKNOWN")) return RS_UNKNOWN;
-    if (!strcasecmp(codec, "MP3")) return RS_MP3;
-    if (!strcasecmp(codec, "AAC") || !strcasecmp(codec, "AAC+")) return RS_AAC;
-    if (!strcasecmp(codec, "FLAC")) return RS_FLAC;
-    return RS_OGG;                        /* OGG, OPUS, "AAC,H.264", WMA...: no suena */
+    int k;
+    if (!codec[0] || !strcasecmp(codec, "UNKNOWN")) k = RS_UNKNOWN;
+    else if (!strcasecmp(codec, "MP3")) k = RS_MP3;
+    else if (!strcasecmp(codec, "AAC") || !strcasecmp(codec, "AAC+")) k = RS_AAC;
+    else if (!strcasecmp(codec, "FLAC")) k = RS_FLAC;
+    else k = RS_OGG;                      /* OGG, OPUS, "AAC,H.264", WMA...: no suena */
+    if (hls) return k == RS_MP3 || k == RS_AAC || k == RS_UNKNOWN ? RS_HLS : RS_OGG;
+    return k;
 }
-static int ra_playable(int kind) { return kind == RS_MP3 || kind == RS_AAC || kind == RS_UNKNOWN; }
-/* "MP3 128k", "AAC", "128k", "" */
+static int ra_playable(int kind) { return kind == RS_MP3 || kind == RS_AAC || kind == RS_UNKNOWN || kind == RS_HLS; }
+/* "MP3 128k", "AAC", "128k", "" (HLS: su codec si se sabe, si no "HLS") */
 static void ra_qlabel(const struct ra_station *s, char *o, int cap)
 {
     const char *c = s->kind == RS_MP3 ? "MP3" : s->kind == RS_AAC ? "AAC" : "";
+    if (s->kind == RS_HLS) c = !strcasecmp(s->codec, "MP3") ? "MP3" : !strncasecmp(s->codec, "AAC", 3) ? "AAC" : "HLS";
     if (s->br > 0) snprintf(o, cap, "%s%s%dk", c, c[0] ? " " : "", s->br);
     else snprintf(o, cap, "%s", c);
 }
@@ -96,13 +99,16 @@ static int ra_same(const struct ra_station *a, const struct ra_station *b)
 static const char *const RA_HOSTS[] = { "de1.api.radio-browser.info", "fi1.api.radio-browser.info", "de2.api.radio-browser.info" };
 #define RA_NHOST ((int)(sizeof RA_HOSTS / sizeof RA_HOSTS[0]))
 enum { RL_TOP, RL_COUNTRY, RL_TAG, RL_SEARCH };
-/* consulta de una lista de emisoras; arg: codigo de pais, etiqueta o texto buscado */
-static void ra_list_url(char *o, int n, int host, int kind, const char *arg, int limit, int offset)
+/* raiz de un servidor del directorio ("https://de1.api.radio-browser.info") */
+static void ra_host_base(char *o, int n, int host) { snprintf(o, n, "https://%s", RA_HOSTS[(unsigned)host % RA_NHOST]); }
+/* consulta de una lista de emisoras a la raiz base (el directorio u otro servidor compatible);
+ * arg: codigo de pais, etiqueta o texto buscado */
+static void ra_list_url(char *o, int n, const char *base, int kind, const char *arg, int limit, int offset)
 {
     char e[300] = ""; fm_urlenc(arg ? arg : "", e, sizeof e);
     const char *f = kind == RL_COUNTRY ? "&countrycode=" : kind == RL_TAG ? "&tag=" : kind == RL_SEARCH ? "&name=" : "";
-    snprintf(o, n, "https://%s/json/stations/search?order=clickcount&reverse=true&hidebroken=true&limit=%d&offset=%d%s%s",
-             RA_HOSTS[(unsigned)host % RA_NHOST], limit, offset, f, kind == RL_TOP ? "" : e);
+    snprintf(o, n, "%s/json/stations/search?order=clickcount&reverse=true&hidebroken=true&limit=%d&offset=%d%s%s",
+             base, limit, offset, f, kind == RL_TOP ? "" : e);
 }
 static void ra_countries_url(char *o, int n, int host)
 {
@@ -136,7 +142,7 @@ static int ra_parse_stations(const char *js, struct ra_station *o, int max, int 
         fj_gs(e, "hls", num, sizeof num);
         s.kind = (unsigned char)ra_codec_kind(s.codec, atoi(num) != 0 || rs_url_kind(url) == RS_HLS);
         if (!ra_playable(s.kind)) continue;
-        if (s.kind == RS_UNKNOWN) s.codec[0] = 0;
+        if (s.kind == RS_UNKNOWN || !strcasecmp(s.codec, "UNKNOWN")) s.codec[0] = 0;
         fj_gs(e, "name", s.name, sizeof s.name); ra_clean(s.name);
         if (!s.name[0]) continue;
         int dup = 0; for (int k = 0; k < n && !dup; k++) if (!strcmp(o[k].url, url)) dup = 1;
@@ -255,7 +261,7 @@ static int ra_own_add(struct ra_lib *L, const char *name, const char *url)
     fm_cpy(s.name, sizeof s.name, name); ra_clean(s.name);
     if (!s.name[0]) ra_url_host(s.url, s.name, sizeof s.name);
     int k = rs_url_kind(s.url);
-    s.kind = (unsigned char)(k == RS_MP3 || k == RS_AAC ? k : RS_UNKNOWN);
+    s.kind = (unsigned char)(k == RS_MP3 || k == RS_AAC || k == RS_HLS ? k : RS_UNKNOWN);
     if (ra_ix(L->own, L->nown, &s) >= 0) return -2;
     if (L->nown >= RA_MAXOWN) return -3;
     L->own[L->nown] = s;
@@ -299,9 +305,9 @@ static void ra_lib_parse(struct ra_lib *L, char *text)
         if (nf > 6) { int b = atoi(f[6]); s.br = (short)(b > 0 && b < 4000 ? b : 0); }
         if (nf > 7) fm_cpy(s.tags, sizeof s.tags, f[7]);
         if (l[0] == 'C') s.uuid[0] = 0;                          /* las propias no son del directorio */
-        s.kind = (unsigned char)ra_codec_kind(s.codec, 0);
+        s.kind = (unsigned char)ra_codec_kind(s.codec, rs_url_kind(s.url) == RS_HLS);
         if (!ra_playable(s.kind)) s.kind = RS_UNKNOWN;
-        if (!s.uuid[0] && s.kind == RS_UNKNOWN) { int k = rs_url_kind(s.url); if (k == RS_MP3 || k == RS_AAC) s.kind = (unsigned char)k; }
+        if (!s.uuid[0] && s.kind == RS_UNKNOWN) { int k = rs_url_kind(s.url); if (k == RS_MP3 || k == RS_AAC || k == RS_HLS) s.kind = (unsigned char)k; }
         switch (l[0]) {
         case 'F': if (L->nfav < RA_MAXFAV && ra_ix(L->fav, L->nfav, &s) < 0) L->fav[L->nfav++] = s; break;
         case 'R': if (L->nrec < RA_MAXREC && ra_ix(L->rec, L->nrec, &s) < 0) L->rec[L->nrec++] = s; break;
@@ -311,7 +317,7 @@ static void ra_lib_parse(struct ra_lib *L, char *text)
 }
 
 /* ------------------------------------------------------------------ estado del ayudante */
-struct ra_hstate { char st[16], file[300], codec[8], title[256], err[24]; int gen, br, pct, open; };
+struct ra_hstate { char st[16], file[300], codec[8], title[256], err[24]; int gen, br, pct, open, lead, hls; };
 /* fichero "clave=valor" que escribe hibynet radio; 1 = tiene estado */
 static int ra_state_parse(const char *text, struct ra_hstate *o)
 {
@@ -331,6 +337,8 @@ static int ra_state_parse(const char *text, struct ra_hstate *o)
             else if (kl == 2 && !memcmp(l, "br", 2)) o->br = atoi(v);
             else if (kl == 3 && !memcmp(l, "pct", 3)) o->pct = atoi(v);
             else if (kl == 4 && !memcmp(l, "open", 4)) o->open = atoi(v) != 0;
+            else if (kl == 4 && !memcmp(l, "lead", 4)) o->lead = atoi(v);
+            else if (kl == 3 && !memcmp(l, "hls", 3)) o->hls = atoi(v) != 0;
             if (d) {
                 if (vl >= (int)sizeof o->file && d == o->file) vl = 0;          /* una ruta cortada no sirve */
                 if (vl > cap - 1) vl = cap - 1;
@@ -343,51 +351,19 @@ static int ra_state_parse(const char *text, struct ra_hstate *o)
     return o->st[0] != 0;
 }
 
-/* ------------------------------------------------------------------ ruta para el reproductor
- * El motor de fabrica nombra los ficheros como "a:\Carpeta\x.mp3" (a: = la tarjeta). Lo que
- * esta en la tarjeta lo traduce playctl; para el tmpfs hay dos formas de decirlo y se prueba
- * cual abre (el ayudante avisa con open=1):
- *   0  la ruta Linux tal cual (playctl la manda como "\tmp\hibyradio\x.mp3", sin unidad)
- *   1  saliendo de la tarjeta: "a:\..\..\..\..\..\..\tmp\hibyradio\x.mp3" */
-#define RA_NPATHMODE 2
-static int ra_on_card(const char *f)
-{
-    return !strncmp(f, "/usr/data/mnt/", 14) || !strncmp(f, "/data/mnt/", 10) || !strncmp(f, "/mnt/", 5);
-}
-static void ra_player_path(const char *file, int mode, char *o, int cap)
-{
-    if (mode != 1 || ra_on_card(file) || file[0] != '/') { snprintf(o, cap, "%s", file); return; }
-    int k = snprintf(o, cap, "a:\\..\\..\\..\\..\\..\\..");
-    for (const char *p = file; *p && k < cap - 1; p++) o[k++] = *p == '/' ? '\\' : *p;
-    o[k < cap ? k : cap - 1] = 0;
-}
-
-/* ------------------------------------------------------------------ ajustes */
-#define RA_TMPDIR "/tmp/hibyradio"
+/* ------------------------------------------------------------------ ajustes
+ * El audio va a la tarjeta SD: el motor de fabrica no toca ficheros de /tmp y la RAM no da para
+ * un bufer (docs/RADIO.md). En /tmp solo el fichero de estado del ayudante (unos bytes). */
+#define RA_SDDIR "/usr/data/mnt/sd_0/HiByOS/cache/radio"
+#define RA_STDIR "/tmp/hibyradio"
 struct ra_conf {
-    char dir[160];               /* donde escribe el ayudante (tmpfs; o una carpeta de la SD) */
-    int presize_mb;              /* tamano logico del fichero disperso; 0 = fichero que crece */
-    int prebuf_kb;               /* 0 = lo decide el ayudante (unos 8 s de audio) */
+    int lead_s;                  /* segundos escritos antes de dar el fichero al reproductor */
+    int cap_mb;                  /* tope de una sesion en la tarjeta */
     char cc[4], cname[64];       /* pais elegido ("" = el del idioma) */
     int tab;                     /* pestana abierta la ultima vez */
-    int pathmode;                /* como entiende el reproductor la ruta (ra_player_path); -1 = por probar */
 };
-static void ra_conf_default(struct ra_conf *c)
-{
-    memset(c, 0, sizeof *c);
-    snprintf(c->dir, sizeof c->dir, "%s", RA_TMPDIR); c->presize_mb = 256; c->pathmode = -1;
-}
-static int ra_dir_ok(const char *d)
-{
-    if (d[0] != '/' || !d[1] || strlen(d) >= 150 || strstr(d, "..")) return 0;
-    for (const unsigned char *p = (const unsigned char *)d; *p; p++) if (*p <= ' ' || *p == '\\' || *p == '\'' || *p == '"' || *p == 0x7f) return 0;
-    if (d[strlen(d) - 1] == '/') return 0;
-    /* nunca la raiz de un almacenamiento: el ayudante borra sus ficheros al acabar */
-    const char *m = !strncmp(d, "/usr/data/mnt/", 14) ? d + 14 : !strncmp(d, "/data/mnt/", 10) ? d + 10 : !strncmp(d, "/mnt/", 5) ? d + 5 : 0;
-    if (m) { const char *sl = strchr(m, '/'); return sl && sl[1]; }        /* tarjeta: una carpeta dentro */
-    int slashes = 0; for (const char *p = d; *p; p++) if (*p == '/' && p[1]) slashes++;
-    return slashes >= 2;
-}
+static void ra_conf_default(struct ra_conf *c) { memset(c, 0, sizeof *c); c->lead_s = 15; c->cap_mb = 128; }
+/* las claves antiguas (dir, presize_mb, prebuf_kb, pathmode: el bufer en tmpfs) se ignoran */
 static void ra_conf_parse(struct ra_conf *c, char *text)
 {
     ra_conf_default(c);
@@ -396,18 +372,18 @@ static void ra_conf_parse(struct ra_conf *c, char *text)
         l[strcspn(l, "\r")] = 0;
         char *v = strchr(l, '='); if (!v || l[0] == '#') continue;
         *v++ = 0;
-        if (!strcmp(l, "dir")) { if (ra_dir_ok(v)) snprintf(c->dir, sizeof c->dir, "%s", v); }
-        else if (!strcmp(l, "presize_mb")) { int n = atoi(v); if (n >= 0 && n <= 1024) c->presize_mb = n; }
-        else if (!strcmp(l, "prebuf_kb")) { int n = atoi(v); if (n >= 0 && n <= 1024) c->prebuf_kb = n; }
+        if (!strcmp(l, "lead_s")) { int n = atoi(v); if (n >= 5 && n <= 60) c->lead_s = n; }
+        else if (!strcmp(l, "cap_mb")) { int n = atoi(v); if (n >= 16 && n <= 2048) c->cap_mb = n; }
         else if (!strcmp(l, "country")) { if (strlen(v) == 2 && isalpha((unsigned char)v[0]) && isalpha((unsigned char)v[1])) { c->cc[0] = (char)toupper((unsigned char)v[0]); c->cc[1] = (char)toupper((unsigned char)v[1]); c->cc[2] = 0; } }
         else if (!strcmp(l, "country_name")) { fm_cpy(c->cname, sizeof c->cname, v); ra_clean(c->cname); }
         else if (!strcmp(l, "tab")) c->tab = atoi(v) == 1;
-        else if (!strcmp(l, "pathmode")) { int n = atoi(v); c->pathmode = n >= 0 && n < RA_NPATHMODE ? n : -1; }
     }
     if (!c->cc[0] || !c->cname[0]) c->cc[0] = c->cname[0] = 0;
 }
 static void ra_conf_write(const struct ra_conf *c, FILE *f)
 {
-    fprintf(f, "dir=%s\npresize_mb=%d\nprebuf_kb=%d\ncountry=%s\ncountry_name=%s\ntab=%d\npathmode=%d\n", c->dir, c->presize_mb, c->prebuf_kb, c->cc, c->cname, c->tab, c->pathmode);
+    fprintf(f, "lead_s=%d\ncap_mb=%d\ncountry=%s\ncountry_name=%s\ntab=%d\n", c->lead_s, c->cap_mb, c->cc, c->cname, c->tab);
 }
+
+#include "radio_src.inc.c"
 #endif

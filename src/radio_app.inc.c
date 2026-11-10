@@ -49,8 +49,18 @@ static void ra_search_now(void)
     snprintf(ra_q_sent, sizeof ra_q_sent, "%s", ra_q);
     ra_pos[RG_ROOT] = 0; ra_vel = 0;
     const char *q = ra_q; while (*q == ' ') q++;
-    if (strlen(q) < 2) ra_list_reset(0);
-    else ra_list_open(0, RL_SEARCH, q, "");
+    if (strlen(q) < 2) { ra_list_reset(0); return; }
+    /* primero lo que hay en la lista europea (sin red), luego el directorio si esta activado */
+    struct ra_list *l = &ra_ls[0];
+    ra_list_reset(0);
+    l->kind = RL_SEARCH; snprintf(l->arg, sizeof l->arg, "%s", q); l->title[0] = 0;
+    if (!ra_list_alloc(l)) return;
+    int eu = 0; for (int i = 0; i < ra_sr.n; i++) if (ra_sr.s[i].type == RSRC_EU && ra_sr.s[i].on) eu = 1;
+    for (int k = 0; eu && k < RA_NEU && l->n < RA_MAXST; k++) {
+        struct ra_station st; ra_eu_station(k, &st);
+        if (strcasestr(st.name, q) || strcasestr(st.tags, q)) l->it[l->n++] = st;
+    }
+    if (ra_rb_on()) ra_list_more(0); else l->state = 2;
 }
 static void ra_edit_redraw(uint16_t *d, int pressed)
 {
@@ -156,6 +166,84 @@ static void ra_own_menu(int i)
         }
     } else if (r == 2) { ra_own_del(ra_lb, i); ra_save_lib(); }
 }
+/* ------------------------------------------------------------------ fuentes */
+/* el interruptor de una fila: el pomo se desliza y luego cambia */
+static void ra_src_toggle(int i)
+{
+    if (i < 0 || i >= ra_sr.n) return;
+    struct ra_src *s = &ra_sr.s[i];
+    double t0 = now_ms(); int to = !s->on, ry = ra_srcs_top() + i * RA_SRH;
+    for (;;) {
+        double t = (now_ms() - t0) / 180.0; if (t > 1) t = 1;
+        float e = (float)ease_out(t), k = to ? e : 1 - e;
+        ra_render_page(fr0, RG_SRCS, 1);
+        if (ry + 48 < RA_MINI_TOP || !ra_np.have) {
+            fill_rrect(fr0, W - 16 - 12 - 51 - 2, ry + 13, 55, 35, 17, FMC_CARD, 255);
+            sp_switch(fr0, W - 16 - 12 - 51, ry + 15, k, 0);
+        }
+        present(); if (t >= 1) break;
+    }
+    s->on = (unsigned char)to;
+    ra_save_srcs();
+    if (s->on && s->type > RSRC_EU && s->type != RSRC_RBX && (s->err || !s->fetched)) ra_src_fetch(i, -1, 0);
+}
+static void ra_src_add_ui(void)
+{
+    if (ra_sr.n >= RA_MAXSRC) { toast(tr("No caben más fuentes")); return; }
+    char in[RA_URLN] = "", url[RA_URLN];
+    if (!fm_edit_plain(tr("Añadir fuente"), tr("URL de una lista de emisoras"), in, sizeof in - 1)) return;
+    int t = ra_src_detect(in, url, sizeof url);
+    if (t < 0 || strlen(url) >= sizeof ra_sr.s[0].url) { toast(tr("URL no válida")); return; }
+    if (ra_src_find_url(&ra_sr, url) >= 0) { toast(tr("Esa fuente ya está")); return; }
+    struct ra_src *s = ra_src_add(&ra_sr, t, url, "");
+    if (!s) return;
+    ra_save_srcs();
+    lg("radio: fuente nueva %s (tipo %d)", url, t);
+    toast(tr("Fuente añadida"));
+    ra_src_fetch(ra_sr.n - 1, -1, 1);
+}
+static void ra_src_menu(int i)
+{
+    if (i < 0 || i >= ra_sr.n) return;
+    struct ra_src *s = &ra_sr.s[i];
+    if (s->type == RSRC_RB) return;                  /* el directorio: solo el interruptor */
+    enum { A_OPEN, A_REFRESH, A_RENAME, A_URL, A_DEL };
+    const char *o[5]; int act[5], n = 0, del = -1, user = s->type > RSRC_EU;
+    if (s->on) { o[n] = tr("Abrir"); act[n++] = A_OPEN; }
+    if (user && s->type != RSRC_RBX) { o[n] = tr("Actualizar"); act[n++] = A_REFRESH; }
+    if (user) { o[n] = tr("Renombrar"); act[n++] = A_RENAME; o[n] = tr("Editar URL"); act[n++] = A_URL; del = n; o[n] = tr("Eliminar fuente"); act[n++] = A_DEL; }
+    if (!n) return;
+    char title[300]; snprintf(title, sizeof title, "%s", user ? s->url : ra_src_name(s));
+    int a = action_sheet(title, o, n, del);
+    if (a < 0 || a >= n) return;
+    switch (act[a]) {
+    case A_OPEN: ra_src_open(i, 0); ra_push(RG_LIST); break;
+    case A_REFRESH: ra_src_fetch(i, -1, 1); break;
+    case A_RENAME: {
+        char nm[56]; snprintf(nm, sizeof nm, "%s", s->name);
+        if (line_edit(tr("Renombrar"), tr("Nombre"), nm, sizeof nm - 1)) { ra_clean(nm); if (nm[0]) { snprintf(s->name, sizeof s->name, "%s", nm); s->named = 1; ra_save_srcs(); } }
+        break; }
+    case A_URL: {
+        char in[RA_URLN], url[RA_URLN]; snprintf(in, sizeof in, "%s", s->url);
+        if (!fm_edit_plain(tr("Editar URL"), tr("URL de una lista de emisoras"), in, sizeof in - 1)) break;
+        int t = ra_src_detect(in, url, sizeof url);
+        if (t < 0 || strlen(url) >= sizeof s->url) { toast(tr("URL no válida")); break; }
+        if (!strcmp(url, s->url)) break;
+        int k = ra_src_find_url(&ra_sr, url); if (k >= 0 && k != i) { toast(tr("Esa fuente ya está")); break; }
+        char c[200]; ra_list_cache(s->sid, c, sizeof c); unlink(c);
+        snprintf(s->url, sizeof s->url, "%s", url); s->sid = ra_hash(url); s->type = (unsigned char)t; s->err = 0; s->fetched = 0; s->n = 0;
+        if (!s->named) ra_url_host(url, s->name, sizeof s->name);
+        ra_save_srcs();
+        ra_src_fetch(i, -1, 1);
+        break; }
+    case A_DEL:
+        if (confirm(tr("¿Eliminar la fuente?"), tr("Eliminar"))) {
+            char c[200]; ra_list_cache(s->sid, c, sizeof c); unlink(c);
+            ra_src_del(&ra_sr, i); ra_save_srcs();
+        }
+        break;
+    }
+}
 static void ra_tap(int k, int i);
 static void ra_search_ui(void)
 {
@@ -191,7 +279,16 @@ static void ra_tap(int k, int i)
         }
         break;
     case RH_ADD: ra_add_station(); break;
-    case RH_RETRY: if (i == 2) ra_ctry_fetch(); else if (i == 0 || i == 1) ra_list_more(i); break;
+    case RH_RETRY:
+        if (i == 2) ra_ctry_fetch();
+        else if (i == 1 && ra_ls[1].sid && !ra_ls[1].base[0]) ra_src_open(ra_src_ix(&ra_sr, ra_ls[1].sid), 1);
+        else if (i == 0 || i == 1) ra_list_more(i);
+        break;
+    case RH_SRC: if (i >= 0 && i < ra_sr.n) { ra_src_open(i, 0); ra_push(RG_LIST); } break;
+    case RH_SRCMGR: ra_pos[RG_SRCS] = 0; ra_push(RG_SRCS); break;
+    case RH_SRCROW: ra_src_menu(i); break;
+    case RH_SRCSW: ra_src_toggle(i); break;
+    case RH_SRCADD: ra_src_add_ui(); break;
     case RH_MSTAR: ra_fav_tap(&ra_np.cur); break;
     case RH_MPLAY: if (ra_active()) ra_stop(); else { struct ra_station c = ra_np.cur; ra_play(&c); } break;
     }
@@ -247,6 +344,7 @@ static void radio_app_at(int ix, int iy)
         }
         int anim = moving || now < toast_until + 40 || now - ra_tab_t0 < 240;
         int busy = ra_ls[0].state == 1 || ra_ls[1].state == 1 || ra_ct_state == 1 || ra_active();
+        for (int k = 0; k < ra_sr.n && !busy; k++) busy = ra_sr.s[k].busy && pg == RG_SRCS;
         if (busy && now - tbusy > 95) dirty = 1;
         if (dirty || anim) { ra_render(); present(); dirty = 0; tbusy = now; }
         int wait = anim ? 0 : busy ? 60 : 250;

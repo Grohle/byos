@@ -1,11 +1,17 @@
 /* radio_test.c - PC tests of the Radio app's pure parts:
  *   src/radio_stream.inc.c  (stream helper and shell: content kinds, .m3u/.pls, ICY metadata,
  *                            chunked bodies, MPEG/ADTS frame sync, file names, Latin-1)
+ *                            HLS playlists (master/media, sequence tracking), MPEG-TS demux,
+ *                            ID3 skip, frame-duration counting)
  *   src/radio_core.inc.c    (Radio Browser JSON, query URLs, station library TSV, helper state
- *                            file, settings, custom station URLs, player paths)
- * against hand-written samples in tests/radio_samples (Radio Browser response shape).
+ *                            file, settings, custom station URLs)
+ *   src/radio_src.inc.c     (station sources: M3U/PLS/JSON lists, sniffing, sources.tsv, the
+ *                            built-in European public radio list)
+ * against hand-written samples in tests/radio_samples (Radio Browser response shape) and a real
+ * 1.4 s MPEG-TS segment of RNE Radio 3 (rne_r3_seg.ts, its public HLS stream).
  * Run: bash tests/radio_test.sh */
 #define _GNU_SOURCE
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,8 +40,8 @@ static void t_stations(void)
     struct ra_station s[20]; int seen = -1;
     int n = ra_parse_stations(js, s, 20, &seen);
     CHECK(seen == 11, "seen %d", seen);
-    CHECK(n == 5, "playable stations %d", n);
-    if (n < 5) { free(js); return; }
+    CHECK(n == 7, "playable stations %d", n);
+    if (n < 7) { free(js); return; }
     CHECK(!strcmp(s[0].name, "Radio Uno"), "name0 %s", s[0].name);
     CHECK(!strcmp(s[0].url, "https://stream.example.com/uno.mp3"), "url_resolved wins: %s", s[0].url);
     CHECK(!strcmp(s[0].uuid, "960e57c5-0601-11e8-ae97-52543be04c81"), "uuid %s", s[0].uuid);
@@ -49,16 +55,19 @@ static void t_stations(void)
     CHECK(s[1].kind == RS_AAC && s[1].br == 64 && !s[1].tags[0], "aac+ kind %d", s[1].kind);
     ra_sub(&s[1], sub, sizeof sub); CHECK(!strcmp(sub, "DE"), "sub without tags '%s'", sub);
 
-    CHECK(!strcmp(s[2].name, "Mystery Stream") && s[2].kind == RS_UNKNOWN && !s[2].codec[0] && s[2].br == 0, "unknown codec kept (%s %d)", s[2].name, s[2].kind);
-    ra_qlabel(&s[2], q, sizeof q); CHECK(!q[0], "no label for unknown '%s'", q);
-    CHECK(!strcmp(s[3].name, "Jazz FM Live"), "controls cleaned '%s'", s[3].name);
-    CHECK(!strcmp(s[3].tags, "jazz, smooth jazz"), "tags '%s'", s[3].tags);
-    CHECK(s[3].kind == RS_MP3, "lowercase codec");
-    CHECK(!strcmp(s[4].name, "Caf\xC3\xA9 del Mar \xD0\xA0\xD0\xB0\xD0\xB4\xD0\xB8\xD0\xBE"), "\\u escapes '%s'", s[4].name);
-    CHECK(s[4].br == 0, "absurd bitrate dropped %d", s[4].br);
+    /* HLS now plays (the helper demuxes it): the "hls" flag and a .m3u8 URL both make it RS_HLS */
+    CHECK(!strcmp(s[2].name, "HLS Station") && s[2].kind == RS_HLS, "hls flag -> RS_HLS (%s %d)", s[2].name, s[2].kind);
+    ra_qlabel(&s[2], q, sizeof q); CHECK(!strcmp(q, "AAC 96k"), "hls label shows the codec '%s'", q);
+    CHECK(!strcmp(s[3].name, "Mystery Stream") && s[3].kind == RS_UNKNOWN && !s[3].codec[0] && s[3].br == 0, "unknown codec kept (%s %d)", s[3].name, s[3].kind);
+    ra_qlabel(&s[3], q, sizeof q); CHECK(!q[0], "no label for unknown '%s'", q);
+    CHECK(!strcmp(s[4].name, "Jazz FM Live"), "controls cleaned '%s'", s[4].name);
+    CHECK(!strcmp(s[4].tags, "jazz, smooth jazz"), "tags '%s'", s[4].tags);
+    CHECK(s[4].kind == RS_MP3, "lowercase codec");
+    CHECK(!strcmp(s[5].name, "Playlist HLS") && s[5].kind == RS_HLS, ".m3u8 url -> RS_HLS (%d)", s[5].kind);
+    CHECK(!strcmp(s[6].name, "Caf\xC3\xA9 del Mar \xD0\xA0\xD0\xB0\xD0\xB4\xD0\xB8\xD0\xBE"), "\\u escapes '%s'", s[6].name);
+    CHECK(s[6].br == 0, "absurd bitrate dropped %d", s[6].br);
     for (int i = 0; i < n; i++) {
-        CHECK(strcmp(s[i].name, "HLS Station") && strcmp(s[i].name, "Ogg Radio") && strcmp(s[i].name, "Bad URL") &&
-              strcmp(s[i].name, "Playlist HLS") && strcmp(s[i].name, "Radio Uno (copy)"), "should be filtered: %s", s[i].name);
+        CHECK(strcmp(s[i].name, "Ogg Radio") && strcmp(s[i].name, "Bad URL") && strcmp(s[i].name, "Radio Uno (copy)"), "should be filtered: %s", s[i].name);
         CHECK(ra_playable(s[i].kind), "playable %s", s[i].name);
     }
     /* cap: max = 2 keeps the first two but still counts the whole page */
@@ -85,14 +94,17 @@ static void t_countries(void)
 }
 static void t_urls(void)
 {
-    char u[700];
-    ra_list_url(u, sizeof u, 0, RL_SEARCH, "rock & roll/fm", 60, 120);
+    char u[700], b[200];
+    ra_host_base(b, sizeof b, 0); CHECK(!strcmp(b, "https://de1.api.radio-browser.info"), "base %s", b);
+    ra_list_url(u, sizeof u, b, RL_SEARCH, "rock & roll/fm", 60, 120);
     CHECK(strstr(u, "https://de1.api.radio-browser.info/json/stations/search?") == u, "host %s", u);
     CHECK(strstr(u, "limit=60&offset=120") && strstr(u, "hidebroken=true") && strstr(u, "order=clickcount&reverse=true"), "params %s", u);
     CHECK(strstr(u, "&name=rock%20%26%20roll%2Ffm") || strstr(u, "&name=rock+%26+roll%2Ffm"), "encoded name %s", u);
-    ra_list_url(u, sizeof u, 1, RL_COUNTRY, "ES", 60, 0); CHECK(strstr(u, "fi1.api") && strstr(u, "&countrycode=ES"), "country %s", u);
-    ra_list_url(u, sizeof u, 2, RL_TAG, "hip hop", 60, 0); CHECK(strstr(u, "de2.api") && strstr(u, "&tag=hip"), "tag %s", u);
-    ra_list_url(u, sizeof u, 3, RL_TOP, "ignored", 60, 0); CHECK(strstr(u, "de1.api") && !strstr(u, "ignored") && !strstr(u, "&name="), "top wraps hosts %s", u);
+    ra_host_base(b, sizeof b, 1); ra_list_url(u, sizeof u, b, RL_COUNTRY, "ES", 60, 0); CHECK(strstr(u, "fi1.api") && strstr(u, "&countrycode=ES"), "country %s", u);
+    ra_host_base(b, sizeof b, 2); ra_list_url(u, sizeof u, b, RL_TAG, "hip hop", 60, 0); CHECK(strstr(u, "de2.api") && strstr(u, "&tag=hip"), "tag %s", u);
+    ra_host_base(b, sizeof b, 3); ra_list_url(u, sizeof u, b, RL_TOP, "ignored", 60, 0); CHECK(strstr(u, "de1.api") && !strstr(u, "ignored") && !strstr(u, "&name="), "top wraps hosts %s", u);
+    ra_list_url(u, sizeof u, "https://radio.example.org:8443", RL_TOP, "", 60, 0);
+    CHECK(strstr(u, "https://radio.example.org:8443/json/stations/search?") == u, "another Radio Browser server %s", u);
     ra_countries_url(u, sizeof u, 0); CHECK(strstr(u, "/json/countries?") && strstr(u, "limit=250"), "countries %s", u);
     CHECK(!ra_click_url(u, sizeof u, 0, "960e57c5-0601-11e8-ae97-52543be04c81") && !strcmp(u, "https://de1.api.radio-browser.info/json/url/960e57c5-0601-11e8-ae97-52543be04c81"), "click %s", u);
     CHECK(ra_click_url(u, sizeof u, 0, "../etc") == -1 && ra_click_url(u, sizeof u, 0, "") == -1, "bad uuid refused");
@@ -168,10 +180,8 @@ static void t_misc(void)
     ra_lang_country("fr", cc, cn, sizeof cn); CHECK(!strcmp(cc, "FR") && !strcmp(cn, "France"), "fr -> %s", cc);
     ra_lang_country("zh-Hant", cc, cn, sizeof cn); CHECK(!strcmp(cc, "TW"), "zh-Hant -> %s", cc);
     ra_lang_country("xx", cc, cn, sizeof cn); CHECK(!strcmp(cc, "US"), "unknown -> %s", cc);
-    char p[420];
-    ra_player_path("/tmp/hibyradio/Radio Uno.mp3", 0, p, sizeof p); CHECK(!strcmp(p, "/tmp/hibyradio/Radio Uno.mp3"), "mode 0 %s", p);
-    ra_player_path("/tmp/hibyradio/Radio Uno.mp3", 1, p, sizeof p); CHECK(!strcmp(p, "a:\\..\\..\\..\\..\\..\\..\\tmp\\hibyradio\\Radio Uno.mp3"), "mode 1 %s", p);
-    ra_player_path("/data/mnt/sd_0/Radio/x.mp3", 1, p, sizeof p); CHECK(!strcmp(p, "/data/mnt/sd_0/Radio/x.mp3"), "card path untouched %s", p);
+    CHECK(ra_codec_kind("AAC", 1) == RS_HLS && ra_codec_kind("", 1) == RS_HLS && ra_codec_kind("OPUS", 1) == RS_OGG && ra_playable(RS_HLS), "hls kinds");
+    CHECK(!strncmp(RA_SDDIR, "/usr/data/mnt/sd_0/", 19) && strncmp(RA_SDDIR, "/tmp", 4), "audio on the SD card, never in tmpfs: %s", RA_SDDIR);
     char nm[64];
     rs_safe_name("AC/DC: \"Live\" *?<>|", nm, sizeof nm); CHECK(!strchr(nm, '/') && !strchr(nm, ':') && !strchr(nm, '"') && !strchr(nm, '*') && nm[0] == 'A', "safe name '%s'", nm);
     rs_safe_name("...", nm, sizeof nm); CHECK(!strcmp(nm, "Radio"), "dots only '%s'", nm);
@@ -196,20 +206,23 @@ static void t_state_conf(void)
     CHECK(ra_state_parse(longf, &h) && !h.file[0], "truncated path dropped");
     CHECK(ra_state_parse("st=stopped", &h) && !strcmp(h.st, "stopped"), "no trailing newline");
 
+    CHECK(ra_state_parse("st=ready\ngen=1\nlead=17\nhls=1\n", &h) && h.lead == 17 && h.hls == 1, "lead/hls");
+
     struct ra_conf c; ra_conf_default(&c);
-    CHECK(!strcmp(c.dir, RA_TMPDIR) && c.presize_mb == 256 && c.pathmode == -1 && !c.cc[0], "defaults");
-    char t[] = "dir=/data/mnt/sd_0/Radio\npresize_mb=0\nprebuf_kb=128\ncountry=de\ncountry_name=Deutschland\ntab=1\npathmode=1\njunk\n";
+    CHECK(c.lead_s == 15 && c.cap_mb == 128 && !c.cc[0], "defaults");
+    /* old keys of the tmpfs buffer are ignored */
+    char t[] = "dir=/tmp/hibyradio\npresize_mb=256\nprebuf_kb=128\npathmode=1\nlead_s=20\ncap_mb=64\ncountry=de\ncountry_name=Deutschland\ntab=1\njunk\n";
     ra_conf_parse(&c, t);
-    CHECK(!strcmp(c.dir, "/data/mnt/sd_0/Radio") && c.presize_mb == 0 && c.prebuf_kb == 128 && !strcmp(c.cc, "DE") && !strcmp(c.cname, "Deutschland") && c.tab == 1 && c.pathmode == 1, "parsed");
+    CHECK(c.lead_s == 20 && c.cap_mb == 64 && !strcmp(c.cc, "DE") && !strcmp(c.cname, "Deutschland") && c.tab == 1, "parsed");
     char *buf = 0; size_t blen = 0; FILE *f = open_memstream(&buf, &blen); ra_conf_write(&c, f); fclose(f);
+    CHECK(!strstr(buf, "dir=") && !strstr(buf, "presize") && !strstr(buf, "pathmode"), "old keys not written");
     struct ra_conf d; ra_conf_parse(&d, buf);
     CHECK(!memcmp(&c, &d, sizeof c), "conf round trip");
     free(buf);
-    char bad[] = "dir=/\npresize_mb=99999\ncountry=ESP\npathmode=7\n";
+    char bad[] = "lead_s=1\ncap_mb=99999\ncountry=ESP\n";
     ra_conf_parse(&c, bad);
-    CHECK(!strcmp(c.dir, RA_TMPDIR) && c.presize_mb == 256 && !c.cc[0] && c.pathmode == -1, "bad values ignored");
+    CHECK(c.lead_s == 15 && c.cap_mb == 128 && !c.cc[0], "bad values ignored");
     char nameonly[] = "country_name=Nowhere\n"; ra_conf_parse(&c, nameonly); CHECK(!c.cc[0] && !c.cname[0], "name without code dropped");
-    CHECK(!ra_dir_ok("/tmp") && ra_dir_ok("/tmp/hibyradio") && !ra_dir_ok("/tmp/a/../b") && !ra_dir_ok("relative/x") && !ra_dir_ok("/tmp/a b") && !ra_dir_ok("/data/mnt/sd_0/") && !ra_dir_ok("/data/mnt/sd_0") && ra_dir_ok("/data/mnt/sd_0/Radio") && !ra_dir_ok("/usr/data/mnt/sd_1"), "dir_ok");
 }
 
 /* ------------------------------------------------------------------ stream pieces */
@@ -351,11 +364,255 @@ static void t_frames(void)
     CHECK(rs_sync(b, n, RS_UNKNOWN, &f) == as && f.kind == RS_AAC, "aac sync any");
 }
 
+/* ------------------------------------------------------------------ HLS playlists */
+static void hls_parse(struct rs_hls *h, const char *t, int piece)
+{   /* fed in pieces of `piece` bytes, like the helper reads them */
+    rs_hls_init(h);
+    int n = (int)strlen(t);
+    for (int i = 0; i < n; i += piece) rs_hls_feed(h, t + i, i + piece <= n ? piece : n - i);
+    rs_hls_end(h);
+}
+static void t_hls(void)
+{
+    static struct rs_hls h;
+    /* RNE's live media playlist (absolute segment URLs, 4 x ~5 s) */
+    const char *rne = "#EXTM3U\n## Created with Golumi Video Platform\n\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n#EXT-X-MEDIA-SEQUENCE:110026\n"
+                      "#EXTINF:5.013,\nhttps://rtvelivestream.rtve.es/rtvesec/rne/GL0/37_110026.ts\n#EXTINF:4.992,\nhttps://rtvelivestream.rtve.es/rtvesec/rne/GL0/37_110027.ts\n"
+                      "#EXTINF:4.992,\nhttps://rtvelivestream.rtve.es/rtvesec/rne/GL0/37_110028.ts\n#EXTINF:5.013,\nhttps://rtvelivestream.rtve.es/rtvesec/rne/GL0/37_110029.ts\n";
+    for (int piece = 1; piece <= 64; piece += 7) {
+        hls_parse(&h, rne, piece);
+        if (!(h.ok && !h.master && h.target == 5 && h.seq0 == 110026 && h.nseg == 4 && !h.enc && !h.endlist)) { CHECK(0, "rne playlist in pieces of %d", piece); break; }
+    }
+    hls_parse(&h, rne, 4096);
+    CHECK(h.ok && !h.master && h.target == 5 && h.seq0 == 110026 && h.nseg == 4, "media playlist (ok %d target %d seq %lld n %d)", h.ok, h.target, h.seq0, h.nseg);
+    const struct rs_hseg *g = rs_hls_seg(&h, 3);
+    CHECK(g && g->seq == 110029 && g->ms == 5013 && !strcmp(g->uri, "https://rtvelivestream.rtve.es/rtvesec/rne/GL0/37_110029.ts"), "last segment");
+    int gap = -1;
+    /* start: back from the end until the lead (15 s) is covered -> the first 4 (14.997 s < 15 s with 3) */
+    CHECK(rs_hls_first(&h, -1, 15000, &gap) == 0 && !gap, "start covers the lead: %d", rs_hls_first(&h, -1, 15000, &gap));
+    CHECK(rs_hls_first(&h, -1, 9000, &gap) == 2, "start, 9 s lead -> 2 segments back");
+    CHECK(rs_hls_first(&h, -1, 0, &gap) == 3, "start, no lead -> only the newest");
+    CHECK(rs_hls_first(&h, 110027, 15000, &gap) == 2 && !gap, "next after the last written");
+    CHECK(rs_hls_first(&h, 110029, 15000, &gap) == 4 && !gap, "nothing new");
+    CHECK(rs_hls_first(&h, 110020, 15000, &gap) == 0 && gap, "fell out of the window: gap, from the oldest");
+    CHECK(rs_hls_first(&h, 999999, 15000, &gap) == 0 && gap, "sequence went back (restart): start again");
+    /* the window slides: the next reload has 110027..110030 */
+    const char *next = "#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXT-X-MEDIA-SEQUENCE:110027\n#EXTINF:5,\na.ts\n#EXTINF:5,\nb.ts\n#EXTINF:5,\nc.ts\n#EXTINF:5,\nd.ts\n";
+    hls_parse(&h, next, 4096);
+    int i = rs_hls_first(&h, 110029, 15000, &gap); g = rs_hls_seg(&h, i);
+    CHECK(i == 3 && g && g->seq == 110030 && !strcmp(g->uri, "d.ts"), "sequence tracking: only 110030 is new (relative uri kept: %s)", g ? g->uri : "-");
+    /* master: the lightest audio-only variant; video variants only if nothing else */
+    const char *master = "#EXTM3U\r\n#EXT-X-VERSION:3\r\n"
+                         "#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,CODECS=\"avc1.4d401f,mp4a.40.2\"\r\nvideo_720.m3u8\r\n"
+                         "#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=196608,CODECS=\"mp4a.40.2\",SUBTITLES=\"subs\"\r\naudio_192.m3u8\r\n"
+                         "#EXT-X-STREAM-INF:BANDWIDTH=64000,CODECS=\"mp4a.40.5\"\r\nlow/audio_64.m3u8\r\n"
+                         "#EXT-X-STREAM-INF:BANDWIDTH=128000,CODECS=\"mp4a.40.2\"\r\naudio_128.m3u8\r\n";
+    hls_parse(&h, master, 13);
+    CHECK(h.ok && h.master && h.nvar == 4 && !strcmp(rs_hls_variant(&h), "low/audio_64.m3u8"), "master -> lowest audio variant '%s'", rs_hls_variant(&h));
+    const char *vonly = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"en\",DEFAULT=YES,URI=\"audio/en.m3u8\"\n"
+                        "#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360,AUDIO=\"aud\"\nv360.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=320x180,AUDIO=\"aud\"\nv180.m3u8\n";
+    hls_parse(&h, vonly, 4096);
+    CHECK(h.master && !strcmp(rs_hls_variant(&h), "audio/en.m3u8"), "video-only master -> the audio rendition '%s'", rs_hls_variant(&h));
+    const char *vonly2 = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360\nv360.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=320x180\nv180.m3u8\n";
+    hls_parse(&h, vonly2, 4096);
+    CHECK(h.master && !strcmp(rs_hls_variant(&h), "v180.m3u8"), "only video: the lightest '%s'", rs_hls_variant(&h));
+    /* what cannot play */
+    hls_parse(&h, "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:6,\ns1.ts\n", 4096);
+    CHECK(h.ok && h.enc, "encrypted");
+    hls_parse(&h, "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-KEY:METHOD=NONE\n#EXTINF:6,\ns1.ts\n", 4096);
+    CHECK(h.ok && !h.enc, "METHOD=NONE is not encrypted");
+    hls_parse(&h, "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6,\ns1.m4s\n#EXT-X-ENDLIST\n", 4096);
+    CHECK(h.fmp4 && h.endlist, "fMP4 + ENDLIST");
+    /* an extended M3U station list is not HLS */
+    hls_parse(&h, "#EXTM3U\n#EXTINF:-1,Radio Uno\nhttp://a.example.com/uno\n", 4096);
+    CHECK(!h.ok, "M3U station list is not HLS");
+    hls_parse(&h, "<html>nope</html>", 4096);
+    CHECK(!h.ok, "html");
+    /* a long DVR window: only the last RS_HLS_SEGS stay, sequence numbers keep counting */
+    char *big = malloc(200000); int k = snprintf(big, 200000, "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:5000\n");
+    for (int j = 0; j < 900; j++) k += snprintf(big + k, 200000 - k, "#EXTINF:4.0,\nseg_%d.ts\n", 5000 + j);
+    hls_parse(&h, big, 8192);
+    CHECK(h.nseg == 900 && !rs_hls_seg(&h, 0) && rs_hls_seg(&h, 899) && rs_hls_seg(&h, 899)->seq == 5899, "long window ring");
+    i = rs_hls_first(&h, -1, 15000, &gap); CHECK(i == 896, "start near the live edge: %d", i);
+    i = rs_hls_first(&h, 5100, 15000, &gap); CHECK(i == 900 - RS_HLS_SEGS && gap, "old position outside the ring: gap (%d)", i);
+    free(big);
+    char a[64]; rs_hls_attr("#EXT-X-STREAM-INF:CODECS=\"mp4a.40.2,avc1\",BANDWIDTH=1", "BANDWIDTH", a, sizeof a);
+    CHECK(!strcmp(a, "1"), "attr after a quoted comma '%s'", a);
+}
+
+/* ------------------------------------------------------------------ MPEG-TS */
+static int ts_pkt(unsigned char *p, int pid, int pusi, int cc, const unsigned char *pay, int n, int af)
+{   /* one 188-byte packet; with af (or a short payload) an adaptation field pads it */
+    p[0] = 0x47; p[1] = (unsigned char)((pusi ? 0x40 : 0) | (pid >> 8)); p[2] = (unsigned char)pid;
+    int room = 184, k = 4;
+    if (n < 184 || af) {
+        int alen = 183 - n; if (alen < 0) alen = 0;
+        p[3] = (unsigned char)(0x30 | (cc & 15)); p[4] = (unsigned char)alen;
+        if (alen) { p[5] = 0; memset(p + 6, 0xFF, alen - 1); }
+        k = 5 + alen; room = 188 - k;
+    } else p[3] = (unsigned char)(0x10 | (cc & 15));
+    if (n > room) n = room;
+    memcpy(p + k, pay, n);
+    return n;
+}
+static void t_ts(void)
+{
+    /* the real RNE Radio 3 segment (SDT, PAT, PMT 4096, audio PID 256 = 0x0F ADTS) */
+    long n; unsigned char *b = (unsigned char *)load("rne_r3_seg.ts", &n);
+    static unsigned char out[200000]; int o = 0;
+    struct rs_ts t;
+    for (int piece = 1; piece <= 4096; piece = piece * 3 + 1) {      /* any split gives the same output */
+        rs_ts_init(&t); o = 0;
+        for (long i = 0; i < n; i += piece) o += rs_ts_feed(&t, b + i, (int)(i + piece <= n ? piece : n - i), out + o);
+        if (o != 34223 || t.pmt != 4096 || t.apid != 256 || t.atype != 0x0F) { CHECK(0, "rne segment, pieces of %d: es %d pmt %d apid %d", piece, o, t.pmt, t.apid); break; }
+    }
+    CHECK(o == 34223 && t.pkts == 200, "elementary stream bytes %d (python reference 34223), packets %lld", o, t.pkts);
+    int frames = 0, p = 0; struct rs_frame f;
+    while (p + 7 <= o && rs_adts_hdr(out + p, &f) && p + f.len <= o) { p += f.len; frames++; }
+    CHECK(out[0] == 0xFF && (out[1] & 0xF6) == 0xF0 && frames == 65 && p == 33877, "ADTS from the first byte: %d whole frames up to %d", frames, p);
+    CHECK(f.hz == 48000, "48 kHz");
+    struct rs_dur d; memset(&d, 0, sizeof d);
+    for (int i = 0; i < o; i += 777) rs_dur_feed(&d, out + i, i + 777 <= o ? 777 : o - i);
+    CHECK(d.kind == RS_AAC && d.frames == 66 && !d.lost && d.sec > 1.40 && d.sec < 1.41, "duration %.3f s, %lld frames (last one cut), lost %lld", d.sec, d.frames, d.lost);
+    free(b);
+
+    /* synthetic: junk before sync, a PES header spanning two packets, adaptation fields,
+     * a packet of another PID, MPEG audio (0x03) */
+    static unsigned char ts[188 * 16], pay[400], es[188 * 16];
+    int k = 0;
+    for (int i = 0; i < 5; i++) ts[k++] = 0x11;                        /* junk */
+    unsigned char pat[] = { 0x00, 0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE1, 0x00, 0, 0, 0, 0 };   /* program 1 -> PMT 0x100 */
+    ts_pkt(ts + k, 0, 1, 0, pat, sizeof pat, 1); k += 188;
+    unsigned char pmt[] = { 0x00, 0x02, 0xB0, 0x17, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xE1, 0x01, 0xF0, 0x00,
+                            0x1B, 0xE1, 0x01, 0xF0, 0x00,                   /* H.264 on 0x101: ignored */
+                            0x03, 0xE1, 0x02, 0xF0, 0x00, 0, 0, 0, 0 };    /* MPEG audio on 0x102 */
+    ts_pkt(ts + k, 0x100, 1, 0, pmt, sizeof pmt, 1); k += 188;
+    unsigned char v[184]; memset(v, 0xFF, sizeof v);
+    ts_pkt(ts + k, 0x101, 1, 0, v, 184, 0); k += 188;                  /* video: must not leak */
+    /* PES: header 9 + 175 extra bytes = 184: the whole first payload is header, 0 more in the next */
+    memset(pay, 0, sizeof pay); pay[2] = 1; pay[3] = 0xC0; pay[6] = 0x80; pay[7] = 0x80; pay[8] = 175 + 5;   /* header data 180: spans */
+    ts_pkt(ts + k, 0x102, 1, 0, pay, 184, 0); k += 188;               /* 184 bytes: 9 + 175 of the 180 */
+    unsigned char a2[184]; for (int i = 0; i < 184; i++) a2[i] = (unsigned char)(i < 5 ? 0xEE : 'A' + i % 26);
+    ts_pkt(ts + k, 0x102, 0, 1, a2, 184, 0); k += 188;                // 5 more header bytes, then 179 of audio
+    unsigned char a3[100]; for (int i = 0; i < 100; i++) a3[i] = (unsigned char)('a' + i % 26);
+    ts_pkt(ts + k, 0x102, 0, 2, a3, 100, 0); k += 188;                 /* short: adaptation field padding */
+    rs_ts_init(&t);
+    o = rs_ts_feed(&t, ts, k, es);
+    CHECK(t.pmt == 0x100 && t.apid == 0x102 && t.atype == 0x03 && t.junk == 5, "synthetic PAT/PMT (pmt %x apid %x type %x junk %lld)", t.pmt, t.apid, t.atype, t.junk);
+    CHECK(o == 179 + 100 && es[0] == 'A' + 5 % 26 && es[178] == 'A' + 183 % 26 && es[179] == 'a' && es[278] == 'a' + 99 % 26, "PES header across packets skipped, padding ignored (%d bytes)", o);
+    /* a stream whose only audio is LATM: nothing comes out, latm says why */
+    unsigned char pmt2[] = { 0x00, 0x02, 0xB0, 0x12, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xE1, 0x01, 0xF0, 0x00, 0x11, 0xE1, 0x02, 0xF0, 0x00, 0, 0, 0, 0 };
+    k = 0; ts_pkt(ts + k, 0, 1, 0, pat, sizeof pat, 1); k += 188; ts_pkt(ts + k, 0x100, 1, 0, pmt2, sizeof pmt2, 1); k += 188;
+    ts_pkt(ts + k, 0x102, 1, 0, pay, 184, 0); k += 188;
+    rs_ts_init(&t); o = rs_ts_feed(&t, ts, k, es);
+    CHECK(o == 0 && t.latm && t.apid < 0, "LATM refused");
+    /* audio before its PES start is dropped (joined mid-PES) */
+    k = 0; ts_pkt(ts + k, 0, 1, 0, pat, sizeof pat, 1); k += 188; ts_pkt(ts + k, 0x100, 1, 0, pmt, sizeof pmt, 1); k += 188;
+    ts_pkt(ts + k, 0x102, 0, 5, a3, 100, 0); k += 188;
+    rs_ts_init(&t); o = rs_ts_feed(&t, ts, k, es);
+    CHECK(o == 0, "continuation without a PES start dropped");
+
+    /* ID3 of packed audio */
+    unsigned char id3[16] = { 'I', 'D', '3', 4, 0, 0, 0, 0, 0x01, 0x10 };   /* 128 + 16 = 144 bytes of tag */
+    CHECK(rs_id3_len(id3, 10) == 154, "id3 len %ld", rs_id3_len(id3, 10));
+    CHECK(rs_id3_len(id3, 2) == -1 && rs_id3_len((const unsigned char *)"\xFF\xF1", 2) == 0 && rs_id3_len((const unsigned char *)"\x47@", 2) == 0, "id3 needs bytes / not id3");
+    id3[5] = 0x10; CHECK(rs_id3_len(id3, 10) == 164, "id3 with footer");
+    /* duration of MP3 (MPEG-1 L3 1152 samples, MPEG-2 L3 576) */
+    unsigned char m[8192]; int mn = 0; for (int i = 0; i < 10; i++) mn += mp3_frame(m + mn, i & 1);
+    memset(&d, 0, sizeof d); rs_dur_feed(&d, m, 3); rs_dur_feed(&d, m + 3, mn - 3);
+    CHECK(d.frames == 10 && d.kind == RS_MP3 && fabs(d.sec - 10 * 1152.0 / 44100) < 1e-6 && !d.lost, "mp3 duration %.4f", d.sec);
+    memset(&d, 0, sizeof d); unsigned char junk[3] = { 1, 2, 3 }; rs_dur_feed(&d, junk, 3); rs_dur_feed(&d, m, mn);
+    CHECK(d.frames == 10 && d.lost == 3, "junk counted as lost (%lld)", d.lost);
+}
+
+/* ------------------------------------------------------------------ sources */
+static void t_sources(void)
+{
+    struct ra_station s[64]; long n; char title[64];
+    char *b = load("list.m3u", &n);
+    CHECK(ra_src_sniff(b) == RSRC_M3U, "sniff m3u");
+    int k = ra_parse_m3u(b, s, 64);
+    CHECK(k == 4, "m3u stations %d", k);
+    if (k == 4) {
+        CHECK(!strcmp(s[0].name, "RNE Radio 3") && s[0].kind == RS_HLS && !strcmp(s[0].cc, "ES") && !strcmp(s[0].tags, "Spain"), "extinf with attributes: %s %d %s '%s'", s[0].name, s[0].kind, s[0].cc, s[0].tags);
+        CHECK(!strcmp(s[1].name, "FIP, Paris") && s[1].kind == RS_MP3, "comma inside quotes / in the name: '%s'", s[1].name);
+        CHECK(!strcmp(s[2].name, "stream.example.org") && s[2].kind == RS_UNKNOWN, "no #EXTINF: name from the host '%s'", s[2].name);
+        CHECK(!strcmp(s[3].name, "AAC FM") && s[3].kind == RS_AAC, "aac by extension");
+    }
+    free(b);
+    CHECK(ra_parse_m3u("#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:5,\nseg.ts\n", s, 64) == -2, "HLS media playlist is a stream");
+    CHECK(ra_src_sniff("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nx.m3u8\n") == -2, "HLS master sniffed as a stream");
+    b = load("list.pls", &n);
+    CHECK(ra_src_sniff(b) == RSRC_PLS, "sniff pls");
+    k = ra_parse_pls(b, s, 64);
+    CHECK(k == 2 && !strcmp(s[0].name, "Radio Uno") && !strcmp(s[0].url, "http://s1.example.com:8000/") && !strcmp(s[1].name, "s2.example.com"), "pls %d (%s / %s)", k, k > 0 ? s[0].name : "", k > 1 ? s[1].name : "");
+    free(b);
+    b = load("list.json", &n);
+    CHECK(ra_src_sniff(b) == RSRC_JSON, "sniff json");
+    k = ra_parse_jlist(b, s, 64, title, sizeof title);
+    CHECK(k == 3 && !strcmp(title, "My stations"), "json %d '%s'", k, title);
+    if (k == 3) {
+        CHECK(!strcmp(s[0].name, "RNE Radio Cl\xC3\xA1sica") && s[0].kind == RS_HLS && !strcmp(s[0].codec, "AAC") && s[0].br == 192 && !strcmp(s[0].cc, "ES") && !strcmp(s[0].tags, "classical"), "json fields %s %d %s %d", s[0].name, s[0].kind, s[0].codec, s[0].br);
+        CHECK(!strcmp(s[1].name, "Deutschlandfunk") && s[1].kind == RS_MP3 && s[1].br == 128, "mp3");
+        CHECK(!strcmp(s[2].name, "Yle Radio 1") && s[2].kind == RS_AAC && !strcmp(s[2].cc, "FI"), "countrycode key");
+    }
+    free(b);
+    CHECK(ra_parse_jlist("[{\"name\":\"A\",\"url\":\"https://a.example.com/a.mp3\"},{\"name\":\"O\",\"url\":\"https://o.example.com/o.ogg\",\"codec\":\"OGG\"},{\"url\":\"ftp://x\"}]", s, 64, title, sizeof title) == 1 && !title[0], "bare array, unplayable dropped");
+    CHECK(ra_parse_jlist("{\"nope\":1}", s, 64, title, sizeof title) == -1 && ra_src_sniff("{\"nope\":1}") == -1, "not a list");
+    CHECK(ra_src_sniff("{\"supported_version\":1,\"software_version\":\"0.7.31\",\"status\":\"OK\",\"stations\":50000}") == RSRC_RBX, "Radio Browser stats");
+    CHECK(ra_src_sniff("<!DOCTYPE html><html>") == -1 && ra_src_sniff("") == -1, "html");
+    CHECK(ra_src_parse(RSRC_URL, "[playlist]\nFile1=http://a.example.com/x.mp3\n", s, 64, 0, 0) == 1, "unknown type: sniffed");
+    /* detection of what the user typed */
+    char u[RA_URLN];
+    CHECK(ra_src_detect("example.com/radio/list.M3U8?x=1", u, sizeof u) == RSRC_M3U && !strcmp(u, "http://example.com/radio/list.M3U8?x=1"), "m3u %s", u);
+    CHECK(ra_src_detect("https://example.com/l.pls", u, sizeof u) == RSRC_PLS, "pls");
+    CHECK(ra_src_detect("Https://example.com/stations.json", u, sizeof u) == RSRC_JSON && !strncmp(u, "https://", 8), "json, auto-capital scheme %s", u);
+    CHECK(ra_src_detect("https://radio.example.org/", u, sizeof u) == RSRC_RBX && !strcmp(u, "https://radio.example.org"), "server root %s", u);
+    CHECK(ra_src_detect("https://radio.example.org:8443/json/", u, sizeof u) == RSRC_RBX && !strcmp(u, "https://radio.example.org:8443"), "server /json %s", u);
+    CHECK(ra_src_detect("https://example.com/lists/top", u, sizeof u) == RSRC_URL, "unknown: sniffed later");
+    CHECK(ra_src_detect("not a url", u, sizeof u) == -1 && ra_src_detect("ftp://a.example.com/x", u, sizeof u) == -1, "bad");
+    /* sources.tsv */
+    static struct ra_srcs S, T;
+    char e0[] = ""; ra_srcs_parse(&S, e0);
+    CHECK(S.n == 2 && S.s[0].type == RSRC_RB && S.s[1].type == RSRC_EU && S.s[0].on && S.s[1].on && S.s[1].n == RA_NEU, "built-ins on an empty file");
+    struct ra_src *x = ra_src_add(&S, RSRC_M3U, "https://example.com/a.m3u", "");
+    CHECK(x && !strcmp(x->name, "example.com") && !x->named && x->sid == ra_hash("https://example.com/a.m3u"), "add: name from host");
+    x->n = 12; x->fetched = 1700000000; x->on = 0;
+    ra_src_add(&S, RSRC_JSON, "https://example.com/b.json", "Mis\tfavoritas");
+    S.s[0].on = 0;
+    char *buf = 0; size_t bl = 0; FILE *f = open_memstream(&buf, &bl); ra_srcs_write(&S, f); fclose(f);
+    CHECK(strlen(buf) < 600, "small file (%zu bytes)", strlen(buf));
+    ra_srcs_parse(&T, buf);
+    CHECK(T.n == 4 && !T.s[0].on && T.s[2].type == RSRC_M3U && T.s[2].n == 12 && T.s[2].fetched == 1700000000 && !T.s[2].on && !strcmp(T.s[3].name, "Mis favoritas") && T.s[3].named, "round trip (%d)", T.n);
+    CHECK(ra_src_find_url(&T, "https://EXAMPLE.com/b.json") == 3 && ra_src_ix(&T, ra_hash("builtin:eu")) == 1, "find");
+    ra_src_del(&T, 0); ra_src_del(&T, 1); CHECK(T.n == 4, "built-ins cannot be removed");
+    ra_src_del(&T, 2); CHECK(T.n == 3 && T.s[2].type == RSRC_JSON, "remove");
+    free(buf);
+    char old[] = "# x\n2\t1\t0\t3\t0\t0\t\thttps://example.com/a.m3u\n2\t1\t0\t3\t0\t0\t\thttps://example.com/a.m3u\n9\t1\t0\t0\t0\t0\t\thttps://x.example.com\n2\t1\t0\t0\t0\t0\t\tnot-a-url\n1\t0\t0\t0\t0\t0\t\t\n";
+    ra_srcs_parse(&T, old);
+    int eu = ra_src_ix(&T, ra_hash("builtin:eu"));
+    CHECK(T.n == 3 && T.s[0].type == RSRC_RB && T.s[0].on && eu >= 0 && !T.s[eu].on && ra_src_find_url(&T, "https://example.com/a.m3u") >= 0, "missing built-in added in front, duplicates and junk dropped (%d)", T.n);
+
+    /* the built-in European list: names, URLs, all playable and unique; RNE inside */
+    int rne3 = 0, rne1 = 0, clas = 0, r5 = 0;
+    for (int i = 0; i < RA_NEU; i++) {
+        struct ra_station st; ra_eu_station(i, &st);
+        CHECK(st.name[0] && rs_url_ok(st.url) && ra_playable(st.kind) && strlen(st.cc) == 2 && st.br > 0, "eu %d: %s", i, st.name);
+        for (int j = 0; j < i; j++) CHECK(strcmp(RA_EU[j].url, RA_EU[i].url) && strcmp(RA_EU[j].name, RA_EU[i].name), "eu duplicate %s", RA_EU[i].name);
+        if (strstr(st.url, "rne_r3_main")) rne3 = st.kind == RS_HLS;
+        if (strstr(st.url, "rne_r1_main")) rne1 = 1;
+        if (strstr(st.url, "rne_r2_main")) clas = 1;
+        if (strstr(st.url, "rne_r5")) r5 = 1;
+    }
+    CHECK(rne3 && rne1 && clas && r5, "RNE Radio 3 (HLS), Radio 1, Radio Clasica, Radio 5 are in the list");
+    CHECK(RA_NEU >= 40, "a good set of stations (%d)", RA_NEU);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) dir = argv[1];
     t_stations(); t_countries(); t_urls(); t_library(); t_misc(); t_state_conf();
-    t_kinds(); t_playlists(); t_icy(); t_chunked(); t_frames();
+    t_kinds(); t_playlists(); t_icy(); t_chunked(); t_frames(); t_hls(); t_ts(); t_sources();
     printf("radio: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }
