@@ -52,6 +52,50 @@ Three tabs at the bottom: **Library**, **Audiobooks** and **Store**.
   A progress ring shows each download; you can pause, cancel and delete.
 - Downloads run in a separate process and continue after you leave Books.
 
+### Catalogs (your own book sources)
+
+Besides Project Gutenberg, the **Books** side of Explore can browse any **OPDS 1.x** catalog:
+Calibre-Web, COPS, Kavita, Komga, or a public library that publishes one.
+
+1. In **Explore** › **Books**, tap the pill with the name of the catalog in use
+   (**Project Gutenberg** at first). The **Catalogs** page opens.
+2. Tap **Add Catalog…** and type its address, for example `https://example.org/opds`
+   (leave out `https://` or `http://` and both are tried; the address of the web page of a
+   Calibre-Web or COPS server works too when it links to its catalog). The address is checked
+   while a spinner turns; if it is not a catalog you are told why and nothing is added.
+3. The new catalog becomes the one in use. Go back: its folders and books are listed in
+   Explore. Folders open their own page, long lists load their next page as you scroll, and
+   the search bar appears only when the catalog offers a search.
+4. A book page shows its summary and a **Download** button: the EPUB goes to `SD/Books/` and
+   to the Library, like the ones from Project Gutenberg. Entries without an EPUB are shown
+   with **No EPUB available**.
+5. To switch, tap a catalog in the **Catalogs** page. To remove one, touch and hold it.
+   Project Gutenberg cannot be removed.
+
+**Suggested** lists a few free catalogs to add with one tap. Each one was checked on
+2026-11-10 to answer without an account and to offer EPUB files:
+
+| Catalog | Language | Address |
+|---|---|---|
+| textos.info | Spanish | `https://www.textos.info/catalogo.atom` |
+| Ebooks libres et gratuits | French | `https://www.ebooksgratuits.com/opds/` |
+| Wolne Lektury | Polish | `https://wolnelektury.pl/opds/` |
+| Magyar Elektronikus Könyvtár | Hungarian | `https://mek.oszk.hu/opds/` |
+| unglue.it | English (Creative Commons) | `https://unglue.it/api/opds/` |
+
+Limits:
+
+- **No sign-in.** `hibynet` has no HTTP authentication, so catalogs that ask for a user name
+  and password do not work, and no password is ever stored (a `user:password@` part typed in
+  an address is dropped).
+- OPDS 1.x (Atom) only: OPDS 2.0 (JSON) catalogs are not read.
+- EPUB only; other formats of an entry are ignored.
+- Up to 12 catalogs. The language picker and **Popular** / **New** belong to Project
+  Gutenberg and are hidden in other catalogs.
+
+The list is kept in `/usr/data/hibymod/appdata/books/catalogs.tsv` (plain text, one catalog
+per line: address, last status, name, search template).
+
 <p align="center">
   <img src="../../docs/media/apps/books/02_library_more.png" width="160" alt="Library, scrolled">
   <img src="../../docs/media/apps/books/03_book_menu.png" width="160" alt="Book menu">

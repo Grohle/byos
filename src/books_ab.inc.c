@@ -288,9 +288,10 @@ static int ab_job_done(struct ab_job *j)
 }
 
 /* ------------------------------------------------------------------ estado */
-enum { AP_MINE, AP_STORE, AP_BOOK, AP_LANG, AP_DL };
-struct ab_pg { int kind; float scroll; char id[96]; int src; };   /* src: 0 LibriVox, 2 Gutenberg */
-static struct ab_pg ab_stk[4][4]; static int ab_spn[4];   /* pestanas: 1 audiolibros (Libros) | 2 explorar, 3 descargas (Gutenberg) */
+enum { AP_MINE, AP_STORE, AP_BOOK, AP_LANG, AP_DL, AP_FEED, AP_CATS };   /* AP_FEED: a folder of a catalog; AP_CATS: the list of catalogs */
+struct ab_pg { int kind; float scroll; char id[96]; int src; char url[OPDS_URL], title[64]; };   /* src: 0 LibriVox, 2 Gutenberg; url, title: AP_FEED */
+#define AB_DEPTH 12                             /* a catalog can be several folders deep */
+static struct ab_pg ab_stk[4][AB_DEPTH]; static int ab_spn[4];   /* pestanas: 1 audiolibros (Libros) | 2 explorar, 3 descargas (Gutenberg) */
 #define AB_PG (&ab_stk[bk_tab][ab_spn[bk_tab] - 1])
 /* tienda */
 static int ab_src, ab_sort;                     /* 0 audiolibros / 1 libros; 0 populares / 1 novedades */
@@ -313,8 +314,30 @@ static struct ab_ds ab_ds; static double ab_ds_t;
 /* mini reproductor / progreso */
 static struct np_info ab_np; static int ab_np_ok; static double ab_np_t; static int ab_np_mine = -1;
 static int ab_play_id; static double ab_play_t; static char ab_play_book[96];
+/* OPDS catalogs added by the user (Books app, "Books" segment of Explore). The list lives in
+ * BK_DIR/catalogs.tsv; an empty current catalog means Project Gutenberg, which is built in.
+ * One feed is in memory at a time: the one the page on top shows (ab_feed_tick). */
+#define AB_CATS_FILE BK_DIR "/catalogs.tsv"
+static struct opds_cat ab_cats[OPDS_MAXCAT]; static int ab_ncat; static char ab_cat_cur[OPDS_URL];
+static struct opds_feed ab_feed; static char ab_feed_url[OPDS_URL];
+static int ab_feed_state;                       /* 0 nothing, 1 loading, 2 ok, 3 network error, 4 not a catalog */
+static int ab_feed_sy; static double ab_feed_next_t;   /* screen y of the first row in the last frame; last failed "next page" */
+static struct ab_job ab_jf; static int ab_jf_what; static double ab_jf_t;   /* 0 feed, 1 next page, 2 new catalog, 3 search description */
+static char ab_jf_url[OPDS_URL], ab_osd_url[OPDS_URL];
+static char ab_add_url[OPDS_URL], ab_add_name[64]; static int ab_add_guess, ab_add_try;   /* catalog being checked */
+static char ab_pend_url[OPDS_URL], ab_pend_title[64];                                     /* folder about to be pushed */
+static char ab_ocur_epub[OPDS_EPUB_URL], ab_ocur_cover[OPDS_URL], ab_ocur_cat[64];        /* book page of a catalog book */
+static uint64_t ab_tfail[48]; static int ab_tfail_n;                                       /* covers that failed */
+static int ab_cat_on(void) { return !bk_gut && ab_src == 1 && ab_cat_cur[0]; }
+static int ab_cat_find(const char *url) { for (int i = 0; i < ab_ncat; i++) if (!strcmp(ab_cats[i].url, url)) return i; return -1; }
+static void ab_tfail_add(const char *id) { ab_tfail[ab_tfail_n] = ab_hash(id); ab_tfail_n = (ab_tfail_n + 1) % 48; }
+static int ab_tfail_has(const char *id) { uint64_t h = ab_hash(id); for (int i = 0; i < 48; i++) if (ab_tfail[i] == h) return 1; return 0; }
+static void ab_feed_tick(void);
+static void ab_feed_thumbs(void);
+static float ab_maxscroll(void);
 /* toques */
-enum { H_NONE, H_TAB, H_BACK, H_SEARCH, H_SCLEAR, H_SCANCEL, H_LANG, H_SORT, H_SRC, H_ROW, H_CELL, H_MAIN, H_MORE, H_SEC, H_ALL, H_DOTS, H_MINI, H_MINIPP, H_LANGROW, H_RETRY, H_GOSTORE, H_DLAB, H_EPUB, H_GOEXP };
+enum { H_NONE, H_TAB, H_BACK, H_SEARCH, H_SCLEAR, H_SCANCEL, H_LANG, H_SORT, H_SRC, H_ROW, H_CELL, H_MAIN, H_MORE, H_SEC, H_ALL, H_DOTS, H_MINI, H_MINIPP, H_LANGROW, H_RETRY, H_GOSTORE, H_DLAB, H_EPUB, H_GOEXP,
+       H_CAT, H_FROW, H_CATROW, H_CATADD, H_CATSUG };
 struct ab_ht { short x0, y0, x1, y1; char kind; short idx; };
 static struct ab_ht ab_ht[128]; static int ab_nht, ab_press_k, ab_press_i = -1;
 static void ab_hit(int x0, int y0, int x1, int y1, int kind, int idx, int c0, int c1)
@@ -491,6 +514,7 @@ static int ab_list_parse(const char *path)
 /* pide la lista que toca (destacados con cache de 6 h; busquedas siempre a la red) */
 static void ab_list_want(const char *query)
 {
+    if (ab_cat_on()) { ab_feed_tick(); return; }   /* a catalog of the user: its feed, not the Gutenberg list */
     char key[700]; ab_list_key(key, sizeof key, query);
     if (!strcmp(key, ab_want_key) && ab_res_state) return;
     snprintf(ab_want_key, sizeof ab_want_key, "%s", key);
@@ -534,7 +558,7 @@ static int ab_thumb_need(const char *id, int src, const char *cover_url, int big
         snprintf(ab_jt.key, sizeof ab_jt.key, "%s", id);
         return 1;
     }
-    char url[300];
+    char url[OPDS_URL + 4];
     if (src == 1) snprintf(url, sizeof url, "%s", cover_url ? cover_url : ""); else ab_cover_url(id, url, sizeof url);
     if (!url[0]) return 0;
     if (ab_job_get(&ab_jt, AJ_THUMB, url, jpg, id)) return 0;
@@ -545,12 +569,240 @@ static void ab_thumbs_next(void)
 {
     if (ab_jt.pid) return;
     struct ab_pg *pg = AB_PG;
+    if (pg->kind == AP_BOOK && ab_cur_state == 2 && ab_cur_src == 2 && opds_is_book_id(ab_cur_id)) {   /* a catalog book: its own cover link */
+        if (!ab_tfail_has(ab_cur_id) && ab_thumb_need(ab_cur_id, 1, ab_ocur_cover, 1)) return;
+    } else
     if (pg->kind == AP_BOOK && ab_cur_state == 2) { if (ab_thumb_need(ab_cur_id, ab_cur_src == 2, ab_cur_src == 2 ? ab_gcur.cover : 0, 1)) return; }
+    if (pg->kind == AP_FEED || (pg->kind == AP_STORE && ab_cat_on())) { ab_feed_thumbs(); return; }
     if (pg->kind != AP_STORE || ab_res_state != 2) return;
     for (int i = 0; i < ab_res.n; i++) {
         if (!strcmp(ab_res.h[i].id, ab_thumb_fail) && now_ms() - ab_thumb_fail_t < 60000) continue;
         if (ab_thumb_need(ab_res.h[i].id, ab_src, ab_res.h[i].cover, 0)) return;
     }
+}
+
+/* ------------------------------------------------------------------ OPDS catalogs of the user */
+#define AB_FROW 56                              /* row of a folder (a book row is AB_ROW) */
+static unsigned ab_feed_gen; static uint64_t ab_osd_tried;
+static void ab_cats_load(void)
+{
+    ab_ncat = 0; ab_cat_cur[0] = 0;
+    char *t = ab_read_small(AB_CATS_FILE, 32 * 1024); if (!t) return;
+    ab_ncat = opds_cats_parse(t, ab_cats, OPDS_MAXCAT, ab_cat_cur, sizeof ab_cat_cur);
+    free(t);
+}
+static void ab_cats_save(void)
+{
+    int cap = OPDS_MAXCAT * (2 * OPDS_URL + 100) + OPDS_URL + 16;
+    char *b = malloc(cap); if (!b) return;
+    int n = opds_cats_format(ab_cats, ab_ncat, ab_cat_cur, b, cap);
+    bk_mkdirs(); bk_write_atomic(AB_CATS_FILE, b, n);
+    free(b);
+}
+/* pages of catalogs kept in the cache ("o_*"): the ones older than max_age go; if more than 24 are left, all go */
+static void ab_feed_prune(double max_age)
+{
+    for (int pass = 0; pass < 2; pass++) {
+        DIR *d = opendir(AB_CACHE); if (!d) return;
+        struct dirent *e; int left = 0;
+        while ((e = readdir(d))) {
+            if (strncmp(e->d_name, "o_", 2)) continue;
+            char p[300]; snprintf(p, sizeof p, AB_CACHE "/%s", e->d_name);
+            if (pass || ab_age_s(p) > max_age) unlink(p); else left++;
+        }
+        closedir(d);
+        if (left <= 24) return;
+    }
+}
+/* forget the feed in memory (a catalog that is being checked keeps its job) */
+static void ab_feed_drop(void)
+{
+    if (!(ab_jf.pid && ab_jf_what == 2)) ab_job_kill(&ab_jf);
+    opds_feed_reset(&ab_feed); ab_feed_url[0] = 0; ab_feed_state = 0; ab_feed_next_t = 0; ab_feed_gen++;
+}
+static int ab_jf_start(int what, const char *url, const char *out)
+{
+    if (ab_jf.pid && ab_jf_what == 0 && what) { ab_feed_url[0] = 0; ab_feed_state = 0; }   /* the page that was loading is asked for again later */
+    ab_jf_what = what; ab_jf_t = now_ms();
+    return ab_job_get(&ab_jf, AJ_LIST, url, out, "");
+}
+/* the root of a catalog answered (or not): its status and its search template */
+static void ab_cat_note(const char *url, int ok)
+{
+    int k = ab_cat_find(url); if (k < 0) return;
+    struct opds_cat *c = &ab_cats[k]; int ch = 0;
+    if (c->st != (ok ? 1 : 2)) { c->st = ok ? 1 : 2; ch = 1; }
+    if (ok && ab_feed.search[0]) {
+        if (ab_feed.search_tpl) { if (strcmp(c->tpl, ab_feed.search)) { fm_cpy(c->tpl, sizeof c->tpl, ab_feed.search); ch = 1; } }
+        else if (!c->tpl[0] && !ab_jf.pid && ab_osd_tried != ab_hash(ab_feed.search) && !access(NETBIN, X_OK)) {   /* an OpenSearch description: read it */
+            fm_cpy(ab_jf_url, sizeof ab_jf_url, url); fm_cpy(ab_osd_url, sizeof ab_osd_url, ab_feed.search);
+            unlink("/tmp/hibymod/ab_osd.xml");
+            ab_jf_start(3, ab_osd_url, "/tmp/hibymod/ab_osd.xml");
+        }
+    }
+    if (ch) ab_cats_save();
+}
+/* show the page "url": from the cache (1 h) or from the network; a search always from the network */
+static void ab_feed_load(const char *url, int search)
+{
+    static int nload;
+    ab_feed_drop();
+    fm_cpy(ab_feed_url, sizeof ab_feed_url, url);
+    char out[300];
+    if (search) { snprintf(out, sizeof out, "/tmp/hibymod/ab_of.xml"); unlink(out); }
+    else {
+        ab_cache_path("o_", url, ".xml", out, sizeof out);
+        double age = ab_age_s(out);
+        if (age >= 0 && age < 3600 && opds_parse(out, url, &ab_feed, 0) >= 0) { ab_feed_state = 2; ab_cat_note(url, 1); return; }
+        if (!(++nload & 7)) ab_feed_prune(3600);
+    }
+    ab_feed_state = 1;
+    if (access(NETBIN, X_OK) || ab_jf_start(0, url, out)) ab_feed_state = 3;
+}
+/* the feed the page on top shows: 1 and its URL in o (*search: a search); 0 when it shows none */
+static int ab_feed_wanted(char *o, int cap, int *search)
+{
+    *search = 0; o[0] = 0;
+    if (bk_tab != 2 || ab_spn[2] < 1) return 0;
+    struct ab_pg *pg = AB_PG;
+    if (pg->kind == AP_FEED) { snprintf(o, cap, "%s", pg->url); return o[0] != 0; }
+    if (pg->kind != AP_STORE || !ab_cat_on()) return 0;
+    if (ab_searching) {
+        int k = ab_cat_find(ab_cat_cur);
+        if (!ab_qsent[0] || k < 0 || !ab_cats[k].tpl[0]) return 0;
+        opds_search_url(ab_cats[k].tpl, ab_qsent, o, cap); *search = 1;
+        return o[0] != 0;
+    }
+    snprintf(o, cap, "%s", ab_cat_cur);
+    return 1;
+}
+static int ab_feed_vis(void) { char u[OPDS_URL]; int s; return ab_feed_wanted(u, sizeof u, &s) && !strcmp(u, ab_feed_url); }
+static void ab_feed_tick(void)
+{
+    if (ab_jf.pid && ab_jf_what == 2) return;   /* a catalog is being checked: it uses the same buffer */
+    char u[OPDS_URL]; int search;
+    if (ab_feed_wanted(u, sizeof u, &search) && strcmp(u, ab_feed_url)) ab_feed_load(u, search);
+}
+static const char *ab_feed_cover(const struct opds_e *e) { const char *c = opds_s(&ab_feed, e->cover); return c[0] ? c : opds_s(&ab_feed, e->image); }
+static int ab_feed_row_h(const struct opds_e *e) { return e->kind == OE_NAV ? AB_FROW : AB_ROW; }
+/* covers of the books that are on screen: the next one that is missing */
+static void ab_feed_thumbs(void)
+{
+    if (ab_feed_state != 2 || !ab_feed_vis()) return;
+    int y = ab_feed_sy;
+    for (int i = 0; i < ab_feed.n && y < AB_TABY; i++) {
+        const struct opds_e *e = &ab_feed.e[i]; int rh = ab_feed_row_h(e);
+        if (e->kind != OE_NAV && y + rh > 30) {
+            const char *c = ab_feed_cover(e); char id[24]; opds_book_id(e->h, id, sizeof id);
+            if (c[0] && !ab_tfail_has(id) && ab_thumb_need(id, 1, c, 0)) return;
+        }
+        y += rh;
+    }
+}
+static int ab_feed_imgs(void)
+{
+    if (ab_feed_state != 2 || !ab_feed_vis()) return 0;
+    int loaded = 0, y = ab_feed_sy;
+    for (int i = 0; i < ab_feed.n && y < AB_TABY && loaded < 4; i++) {
+        const struct opds_e *e = &ab_feed.e[i]; int rh = ab_feed_row_h(e);
+        if (e->kind != OE_NAV && y + rh > 30) {
+            char id[24], tp[300]; opds_book_id(e->h, id, sizeof id); ab_thumb_path(id, 1, 40, 60, tp, sizeof tp);
+            if (!ab_img_known(tp, 40, 60) && !access(tp, R_OK) && ab_img_load(tp, 40, 60) > 0) loaded++;
+        }
+        y += rh;
+    }
+    return loaded;
+}
+/* adding a catalog: fetch its address and see whether it is one */
+static void ab_add_fetch(void)
+{
+    char out[300]; ab_cache_path("o_", ab_add_url, ".xml", out, sizeof out);
+    if (ab_jf_start(2, ab_add_url, out)) { ab_add_url[0] = 0; toast(tr("No se pudo conectar con el servidor")); }
+}
+static void ab_add_done(int r)
+{
+    char out[300]; snprintf(out, sizeof out, "%s", ab_jf.out);
+    if (r <= 0) {
+        if (ab_add_guess && !(ab_add_try & 1)) {   /* the scheme was a guess: try the other one */
+            ab_add_try |= 1;
+            char u[OPDS_URL + 8];
+            if (!strncmp(ab_add_url, "https://", 8)) snprintf(u, sizeof u, "http://%s", ab_add_url + 8); else snprintf(u, sizeof u, "https://%s", ab_add_url + 7);
+            if (strlen(u) < OPDS_URL && ab_cat_find(u) < 0) { strcpy(ab_add_url, u); ab_add_fetch(); return; }
+        }
+        ab_add_url[0] = 0; toast(tr("No se pudo conectar con el servidor")); return;
+    }
+    ab_feed_drop();
+    int n = opds_parse(out, ab_add_url, &ab_feed, 0);
+    if (n < 0) {   /* a web page? Calibre-Web, COPS... say there where their catalog is */
+        char alt[OPDS_URL] = ""; char *b = (ab_add_try & 2) ? 0 : ab_read_small(out, OPDS_READ);
+        if (b) { opds_discover_buf(b, ab_add_url, alt, sizeof alt); free(b); }
+        unlink(out); opds_feed_reset(&ab_feed);
+        if (alt[0] && ab_cat_find(alt) < 0) { ab_add_try |= 2; strcpy(ab_add_url, alt); ab_add_fetch(); return; }
+        ab_add_url[0] = 0; toast(tr("Esa dirección no es un catálogo OPDS")); return;
+    }
+    if (ab_ncat >= OPDS_MAXCAT) { ab_feed_drop(); ab_add_url[0] = 0; toast(tr("No caben más catálogos")); return; }
+    struct opds_cat *c = &ab_cats[ab_ncat++]; memset(c, 0, sizeof *c);
+    strcpy(c->url, ab_add_url);
+    fm_cpy(c->name, sizeof c->name, ab_add_name[0] ? ab_add_name : ab_feed.title);
+    for (char *p = c->name; *p; p++) if ((unsigned char)*p < 32) *p = ' ';
+    ab_trim(c->name);
+    if (!c->name[0]) fm_url_host(c->url, c->name, sizeof c->name);
+    c->st = 1;
+    strcpy(ab_cat_cur, c->url); strcpy(ab_feed_url, c->url); ab_feed_state = 2;   /* it becomes the catalog in use; its first page is already here */
+    ab_add_url[0] = 0; ab_q[0] = 0; ab_stk[2][0].scroll = 0;
+    ab_cats_save();
+    ab_cat_note(ab_cat_cur, 1);
+}
+static void ab_feed_done(int r)
+{
+    char out[300]; snprintf(out, sizeof out, "%s", ab_jf.out);
+    if (ab_jf_what == 3) {   /* the OpenSearch description of a catalog: its search template */
+        int k = ab_cat_find(ab_jf_url); char tpl[OPDS_URL];
+        ab_osd_tried = ab_hash(ab_osd_url);
+        if (r > 0 && k >= 0 && !opds_osd_parse(out, ab_osd_url, tpl, sizeof tpl)) { strcpy(ab_cats[k].tpl, tpl); ab_cats_save(); }
+        unlink(out); return;
+    }
+    if (ab_jf_what == 2) { ab_add_done(r); return; }
+    if (ab_jf_what == 1) {   /* one more page of the same list */
+        if (r <= 0) ab_feed_next_t = now_ms();   /* again in a while */
+        else if (opds_parse(out, ab_jf_url, &ab_feed, 1) <= 0 || !strcmp(ab_feed.next, ab_jf_url)) ab_feed.next[0] = 0;   /* nothing new: the list ends here */
+        unlink(out); return;
+    }
+    int search = !strncmp(out, "/tmp/", 5);
+    int n = opds_parse(out, ab_feed_url, &ab_feed, 0);   /* the network failed: an old copy is better than nothing */
+    if (search || (n < 0 && r > 0)) unlink(out);
+    ab_feed_state = n >= 0 ? 2 : r > 0 ? 4 : 3;
+    ab_cat_note(ab_feed_url, r > 0 && n >= 0);
+}
+/* network work of the catalogs; 1 when something on screen changed */
+static int ab_feed_poll(void)
+{
+    int ch = 0, r; unsigned g = ab_feed_gen;
+    ab_feed_tick();
+    if (g != ab_feed_gen) ch = 1;
+    if (ab_jf.pid) {
+        if ((r = ab_job_done(&ab_jf))) { ab_feed_done(r); ch = 1; }
+        else {
+            char pp[320]; snprintf(pp, sizeof pp, "%s.part", ab_jf.out); struct stat s;
+            if (!stat(pp, &s) && s.st_size > OPDS_READ + 32 * 1024) {   /* hibynet has no size limit: what is read is enough */
+                ab_job_kill(&ab_jf); rename(pp, ab_jf.out); ab_feed_done(1); ch = 1;
+            } else if (now_ms() - ab_jf_t > 45000) { ab_job_kill(&ab_jf); unlink(pp); ab_feed_done(-1); ch = 1; }
+        }
+    }
+    if (ab_jt.pid && ab_jt.kind == AJ_THUMB && opds_is_book_id(ab_jt.key)) {   /* a cover that is far too big */
+        char pp[320]; snprintf(pp, sizeof pp, "%s.part", ab_jt.out); struct stat s;
+        if (!stat(pp, &s) && s.st_size > 2 * 1024 * 1024) { ab_job_kill(&ab_jt); unlink(pp); ab_tfail_add(ab_jt.key); }
+    }
+    /* near the end of the list: its next page */
+    if (!ab_jf.pid && ab_feed_state == 2 && ab_feed.next[0] && !ab_feed.cut && ab_feed.n < OPDS_MAXE - 40 && now_ms() - ab_feed_next_t > 8000
+        && ab_feed_vis() && AB_PG->scroll > ab_maxscroll() - 700 && !access(NETBIN, X_OK)) {
+        fm_cpy(ab_jf_url, sizeof ab_jf_url, ab_feed.next);
+        unlink("/tmp/hibymod/ab_on.xml");
+        if (ab_jf_start(1, ab_jf_url, "/tmp/hibymod/ab_on.xml")) ab_feed_next_t = now_ms();
+        ch = 1;
+    }
+    if (ab_feed_imgs()) ch = 1;
+    return ch;
 }
 
 /* ------------------------------------------------------------------ ficha */
@@ -568,7 +820,7 @@ static void ab_cur_open(const char *id, int src)
     ab_cur_reset(); snprintf(ab_cur_id, sizeof ab_cur_id, "%s", id); ab_cur_src = src;
     if (src == 2) {   /* Gutenberg: titulo y autor vienen del resultado; el resumen, de su ficha OPDS (cache de 7 dias) */
         ab_cur_state = 2;
-        if (!strcmp(ab_gcur.id, id) && !ab_gcur.desc[0]) {
+        if (!strcmp(ab_gcur.id, id) && !ab_gcur.desc[0] && !opds_is_book_id(id)) {   /* (a catalog book brings its summary) */
             char out[300]; ab_cache_path("g_", id, ".xml", out, sizeof out);
             double age = ab_age_s(out);
             if (!(age >= 0 && age < 7 * 86400 && !ab_gut_detail_parse(out, ab_gcur.desc, sizeof ab_gcur.desc)) && !access(NETBIN, X_OK)) {
@@ -694,7 +946,10 @@ static void gut_dest(const struct ab_hit *h, char *dest, int cap)
 {
     int k = gut_find(h->id);
     if (k >= 0) { snprintf(dest, cap, "%s", gut_dl[k].dest); return; }
-    char nm[200], s2[300]; snprintf(s2, sizeof s2, "%s - %s", h->author[0] ? h->author : "Gutenberg", h->title); ab_sanitize(s2, nm, 90);
+    char nm[200], s2[300];
+    if (!h->author[0] && opds_is_book_id(h->id)) snprintf(s2, sizeof s2, "%s", h->title);   /* a catalog book without author */
+    else snprintf(s2, sizeof s2, "%s - %s", h->author[0] ? h->author : "Gutenberg", h->title);
+    ab_sanitize(s2, nm, 90);
     snprintf(dest, cap, "%s/Books/%s.epub", FS_SD, nm);
 }
 /* estado del EPUB: -1 sin descargar, 0 listo, 1 en cola, 2 bajando, 3 parado (sin red, sin espacio) */
@@ -893,6 +1148,24 @@ static void ab_searchbar(uint16_t *d, int y, int c0, int c1)
     ab_hit(16, y, 16 + fw - (ab_searching ? 36 : 0), y + 36, H_SEARCH, 0, c0, c1);
     if (ab_searching) ab_hit(W - 16 - cancel_w, y, W, y + 36, H_SCANCEL, 0, c0, c1);
 }
+/* the catalog in use, as a pill that opens the list of catalogs (y = its top) */
+static const char *ab_cat_name(void) { int k = ab_cat_cur[0] ? ab_cat_find(ab_cat_cur) : -1; return k >= 0 ? ab_cats[k].name : "Project Gutenberg"; }
+static int ab_cat_has_search(void) { int k = ab_cat_find(ab_cat_cur); return k >= 0 && ab_cats[k].tpl[0]; }
+static void ab_cat_chip(uint16_t *d, int y, int c0, int c1)
+{
+    const char *nm = ab_cat_name();
+    int nw = tw_n(nm, 13, -1); if (nw > W - 32 - 62) nw = W - 32 - 62;
+    int w = nw + 62;
+    if (y >= c0 && y + 30 <= c1) {
+        fill_rrect(d, 16, y, w, 30, 15, ab_pressed(H_CAT, 0) ? rgb(58, 58, 62) : rgb(44, 44, 48), 255);
+        fill_rrect(d, 27, y + 8, 3, 13, 1, AB_BLUE, 255); fill_rrect(d, 32, y + 8, 3, 13, 1, AB_BLUE, 255); fill_rrect(d, 37, y + 10, 3, 11, 1, AB_BLUE, 255);   /* books on a shelf */
+        fill_rrect(d, 25, y + 21, 17, 2, 1, AB_BLUE, 255);
+        draw_text(d, 48, y + 20, nm, 13, 0xFFFF, nw, c0, c1);
+        for (int k = 0; k < 4; k++) { fill_circle(d, 16 + w - 18 + k, y + 13 + k, 0.9f, AB_GRAY, 255); fill_circle(d, 16 + w - 18 + 6 - k, y + 13 + k, 0.9f, AB_GRAY, 255); }
+    }
+    ab_hit(16, y - 4, 16 + w, y + 34, H_CAT, 0, c0, c1);
+}
+static int ab_render_feed(uint16_t *d, int y0, int c0, int c1);
 /* contenido de la tienda desde y0; devuelve el alto */
 static int ab_render_store_body(uint16_t *d, int y0, int c0, int c1)
 {
@@ -902,9 +1175,10 @@ static int ab_render_store_body(uint16_t *d, int y0, int c0, int c1)
         const char *o[2] = { tr(srcs[0]), tr(srcs[1]) };
         ab_segment(d, 16, y + 4, W - 32, 30, o, 2, ab_src, H_SRC, c0, c1);
         y += 44;
-        ab_searchbar(d, y, c0, c1);
-        y += 46;
+        if (!bk_gut && ab_src == 1) { ab_cat_chip(d, y, c0, c1); y += 40; }   /* Books: Project Gutenberg or a catalog of the user */
+        if (!ab_cat_on() || ab_cat_has_search()) { ab_searchbar(d, y, c0, c1); y += 46; }
     }
+    if (ab_cat_on()) return y - y0 + ab_render_feed(d, y, c0, c1);
     /* idioma (y orden en LibriVox) */
     {
         char lb[80]; snprintf(lb, sizeof lb, "%s", ab_lang_name(ab_lang_cur()));
@@ -987,19 +1261,22 @@ static int ab_render_book(uint16_t *d, int y0, int c0, int c1)
     int th = ab_wrap(d, tx, y + 18, tw, title, 17, 0xFFFF, 22, 4, c0, c1);
     draw_text(d, tx, y + 18 + th + 2, author[0] ? author : tr("Anónimo"), 14, AB_BLUE, tw, c0, c1);
     char meta[120];
-    if (gut) snprintf(meta, sizeof meta, "EPUB · Project Gutenberg");
+    int ocat = gut && opds_is_book_id(ab_cur_id);   /* a book of a catalog of the user */
+    if (ocat) snprintf(meta, sizeof meta, ab_ocur_epub[0] ? "EPUB · %s" : "%s", ab_ocur_cat);
+    else if (gut) snprintf(meta, sizeof meta, "EPUB · Project Gutenberg");
     else { char du[32], sz[24]; ab_fmt_dur(ab_cur.totdur, du, sizeof du); ab_fmt_size(ab_cur.total, sz, sizeof sz); snprintf(meta, sizeof meta, "%s · %s", du, sz); }
     draw_text(d, tx, y + 18 + th + 22, meta, 12, AB_GRAY, tw, c0, c1);
     if (!gut) { char cs[48]; if (ab_cur.nsec == 1) snprintf(cs, sizeof cs, "%s", tr("1 capítulo")); else snprintf(cs, sizeof cs, tr("%d capítulos"), ab_cur.nsec); draw_text(d, tx, y + 18 + th + 39, cs, 12, AB_GRAY, tw, c0, c1); }
     y += (ch > th + 60 ? ch : th + 60) + 16;
     /* boton principal */
     {
-        char lb[120]; int blue = 1; float frac = -2; int spin = 0;
+        char lb[120]; int blue = 1, dis = 0; float frac = -2; int spin = 0;
         if (gut) {
             if (gst == 0) snprintf(lb, sizeof lb, "%s", tr("Leer"));
             else if (gst == 2) { snprintf(lb, sizeof lb, "%s", tr("Descargando…")); frac = ab_ds.total > 0 ? (float)ab_ds.got / ab_ds.total : 0; }
             else if (gst == 3) snprintf(lb, sizeof lb, "%s", tr(!strcmp(ab_ds.state, "nospace") ? "No hay espacio en la SD" : "Reintentar descarga"));
             else if (gst == 1) { snprintf(lb, sizeof lb, "%s", tr("En cola…")); spin = 1; ab_anim_hint = 1; }
+            else if (ocat && !ab_ocur_epub[0]) { snprintf(lb, sizeof lb, "%s", tr("Sin EPUB disponible")); blue = 0; dis = 1; }   /* PDF, MOBI... only */
             else snprintf(lb, sizeof lb, "%s", tr("Descargar EPUB"));
         } else if (ab_play_id && !strcmp(ab_play_book, ab_cur.id)) { snprintf(lb, sizeof lb, "%s", tr("Abriendo…")); spin = 1; }
         else if (ab_nqueued) {
@@ -1027,7 +1304,7 @@ static int ab_render_book(uint16_t *d, int y0, int c0, int c1)
                 int sx = bx + (bw - lw - ix) / 2;
                 if (play) ab_play_glyph(d, sx + 4, y + 22, 7, 0xFFFF);
                 if (spin) spn_draw(d, sx - 18, y + 22, spn_phase(now_ms()), 8, c0, c1);
-                draw_text(d, sx + ix, y + 28, lb, 16, blue ? 0xFFFF : AB_BLUE, bw - 20, c0, c1);
+                draw_text(d, sx + ix, y + 28, lb, 16, blue ? 0xFFFF : dis ? AB_GRAY : AB_BLUE, bw - 20, c0, c1);
             }
         }
         ab_hit(bx, y, bx + bw, y + bh, H_MAIN, 0, c0, c1);
@@ -1203,6 +1480,118 @@ static int ab_render_lang(uint16_t *d, int y0, int c0, int c1)
     return y - y0 + 10;
 }
 
+/* ------------------------------------------------------------------ drawing: catalogs of the user */
+static void ab_feed_row(uint16_t *d, int y, int i, int c0, int c1, int last)
+{
+    const struct opds_e *e = &ab_feed.e[i]; int rh = ab_feed_row_h(e);
+    if (y + rh < c0 || y > c1) return;
+    if (ab_pressed(H_FROW, i)) for (int yy = y; yy < y + rh; yy++) if (yy >= c0 && yy < c1) for (int x = 0; x < W; x++) d[yy * W + x] = rgb(44, 44, 46);
+    const char *title = opds_s(&ab_feed, e->title), *sum = opds_s(&ab_feed, e->sum);
+    if (e->kind == OE_NAV) {   /* a folder */
+        if (y + 12 >= c0 && y + 44 <= c1) {
+            fill_rrect(d, 16, y + 12, 32, 32, 8, rgb(44, 44, 48), 255);
+            fill_rrect(d, 23, y + 21, 9, 5, 2, AB_BLUE, 255); fill_rrect(d, 23, y + 24, 18, 12, 2.5f, AB_BLUE, 255);
+        }
+        int x = 60, mw = W - x - 40;
+        if (sum[0]) { draw_text(d, x, y + 24, title, 15, 0xFFFF, mw, c0, c1); draw_text(d, x, y + 43, sum, 12, AB_GRAY, mw, c0, c1); }
+        else draw_text(d, x, y + 33, title, 15, 0xFFFF, mw, c0, c1);
+        ab_chev_right(d, W - 24, y + rh / 2, c0, c1);
+        if (!last) ab_hline(d, x, W, y + rh - 1, AB_SEP, c0, c1);
+    } else {   /* a book, like the ones of Project Gutenberg */
+        char id[24], tp[300]; opds_book_id(e->h, id, sizeof id); ab_thumb_path(id, 1, 40, 60, tp, sizeof tp);
+        const uint16_t *im = ab_img_get(tp, 40, 60);
+        int ix = 24, iy = y + (AB_ROW - 60) / 2;
+        if (im) bk_blit_scaled(d, im, 40, 60, ix, iy, 40, 60, 32, 5, c0, c1);
+        else if (iy >= c0 && iy + 60 <= c1) fill_rrect(d, ix, iy, 40, 60, 5, rgb(44, 44, 48), 255);
+        int x = 84, mw = W - x - 16;
+        int local = gut_ready(id); if (local) mw -= 24;
+        const char *au = opds_s(&ab_feed, e->author);
+        draw_text(d, x, y + 25, title, 15, 0xFFFF, mw, c0, c1);
+        if (au[0]) draw_text(d, x, y + 44, au, 13, AB_GRAY, mw, c0, c1);
+        draw_text(d, x, y + (au[0] ? 62 : 44), e->kind == OE_BOOK ? "EPUB" : tr("Sin EPUB disponible"), 12, rgb(99, 99, 104), mw, c0, c1);
+        if (local) ab_check_glyph(d, W - 26, y + AB_ROW / 2, AB_BLUE, c0, c1);
+        if (!last) ab_hline(d, x, W, y + AB_ROW - 1, AB_SEP, c0, c1);
+    }
+    ab_hit(0, y, W, y + rh, H_FROW, i, c0, c1);
+}
+/* the page of a catalog (its root in Explore, or a folder) from y0; returns the height */
+static int ab_render_feed(uint16_t *d, int y0, int c0, int c1)
+{
+    int y = y0, srch = AB_PG->kind == AP_STORE && ab_searching;
+    if (ab_jf.pid) ab_anim_hint = 1;
+    if (srch && !ab_qsent[0]) { ab_wrap(d, 24, y + 30, W - 48, tr("Busca libros por título o autor."), 14, AB_GRAY, 20, 3, c0, c1); return 80; }
+    char u[OPDS_URL]; int s;
+    if (!ab_feed_wanted(u, sizeof u, &s)) { draw_text(d, 24, y + 30, tr("Sin resultados"), 15, AB_GRAY, W - 48, c0, c1); return 50; }
+    int st = strcmp(u, ab_feed_url) ? 1 : ab_feed_state;
+    if (st < 2) {
+        ab_anim_hint = 1;
+        if (y + 60 < c1 && y > c0 - 40) ab_spin(d, W / 2, y + 44, c0, c1);
+        const char *m = tr(srch ? "Buscando…" : "Cargando…"); draw_text(d, (W - tw_n(m, 14, -1)) / 2, y + 86, m, 14, AB_GRAY, 0, c0, c1);
+        return 110;
+    }
+    if (st == 3 || (st == 4 && !srch)) {
+        const char *m = st == 4 ? tr("Esa dirección no es un catálogo OPDS") : access(NETBIN, X_OK) ? tr("Falta el componente de red (hibynet)") : tr("No se pudo conectar. Comprueba la WiFi y toca para reintentar.");
+        int h = ab_wrap(d, 24, y + 30, W - 48, m, 14, AB_GRAY, 20, 4, c0, c1);
+        ab_hit(0, y, W, y + 40 + h, H_RETRY, 0, c0, c1);
+        return 50 + h;
+    }
+    if (!ab_feed.n) { draw_text(d, 24, y + 30, tr("Sin resultados"), 15, AB_GRAY, W - 48, c0, c1); return 50; }
+    ab_feed_sy = y;
+    for (int i = 0; i < ab_feed.n; i++) { ab_feed_row(d, y, i, c0, c1, i == ab_feed.n - 1); y += ab_feed_row_h(&ab_feed.e[i]); }
+    if (ab_jf.pid && ab_jf_what == 1) { if (y + 12 > c0 && y + 40 < c1) ab_spin(d, W / 2, y + 26, c0, c1); y += 52; }   /* the next page is coming */
+    return y - y0 + 16;
+}
+#define AB_CROW 60
+/* a row of the list of catalogs. mark: 1 in use, 2 being checked, 3 can be added */
+static void ab_cat_row(uint16_t *d, int y, const char *name, const char *sub, uint16_t subc, int mark, int kind, int idx, int c0, int c1)
+{
+    if (y + AB_CROW >= c0 && y <= c1) {
+        if (kind && ab_pressed(kind, idx)) for (int yy = y; yy < y + AB_CROW; yy++) if (yy >= c0 && yy < c1) for (int x = 0; x < W; x++) d[yy * W + x] = rgb(44, 44, 46);
+        if (y + 12 >= c0 && y + 48 <= c1) {   /* an open book */
+            fill_rrect(d, 16, y + 12, 36, 36, 9, rgb(44, 44, 48), 255);
+            fill_rrect(d, 23, y + 22, 10, 16, 2, AB_BLUE, 255); fill_rrect(d, 35, y + 22, 10, 16, 2, AB_BLUE, 255);
+        }
+        int x = 64, mw = W - x - 48;
+        draw_text(d, x, y + 27, name, 16, 0xFFFF, mw, c0, c1);
+        draw_text(d, x, y + 46, sub, 12, subc, mw, c0, c1);
+        int cy = y + AB_CROW / 2;
+        if (mark == 1) ab_check_glyph(d, W - 26, cy, AB_BLUE, c0, c1);
+        else if (mark == 2) { if (cy - 14 > c0 && cy + 14 < c1) ab_spin(d, W - 30, cy, c0, c1); }
+        else if (mark == 3 && cy - 8 >= c0 && cy + 8 <= c1) { fill_rrect(d, W - 37, cy - 1, 14, 2, 1, AB_BLUE, 255); fill_rrect(d, W - 31, cy - 7, 2, 14, 1, AB_BLUE, 255); }
+        ab_hline(d, x, W, y + AB_CROW - 1, AB_SEP, c0, c1);
+    }
+    if (kind) ab_hit(0, y, W, y + AB_CROW, kind, idx, c0, c1);
+}
+/* the list of catalogs: Project Gutenberg (built in), the ones of the user, "Add" and the suggested ones */
+static int ab_render_cats(uint16_t *d, int y0, int c0, int c1)
+{
+    int y = y0 + 6; char host[80];
+    if (ab_jf.pid && ab_jf_what == 2) ab_anim_hint = 1;
+    ab_cat_row(d, y, "Project Gutenberg", "gutenberg.org", AB_GRAY, !ab_cat_cur[0], H_CATROW, 0, c0, c1); y += AB_CROW;
+    for (int i = 0; i < ab_ncat; i++, y += AB_CROW) {
+        int bad = ab_cats[i].st == 2; fm_url_host(ab_cats[i].url, host, sizeof host);
+        ab_cat_row(d, y, ab_cats[i].name, bad ? tr("Sin respuesta") : host, bad ? rgb(255, 159, 10) : AB_GRAY, !strcmp(ab_cats[i].url, ab_cat_cur), H_CATROW, i + 1, c0, c1);
+    }
+    if (ab_add_url[0]) {   /* the one that is being checked */
+        fm_url_host(ab_add_url, host, sizeof host);
+        ab_cat_row(d, y, ab_add_name[0] ? ab_add_name : host, tr("Comprobando…"), AB_GRAY, 2, 0, 0, c0, c1); y += AB_CROW;
+    }
+    if (y + 48 >= c0 && y <= c1) {
+        if (ab_pressed(H_CATADD, 0)) for (int yy = y; yy < y + 48; yy++) if (yy >= c0 && yy < c1) for (int x = 0; x < W; x++) d[yy * W + x] = rgb(44, 44, 46);
+        draw_text(d, 16, y + 30, tr("Añadir catálogo…"), 16, AB_BLUE, W - 32, c0, c1);
+    }
+    ab_hit(0, y, W, y + 48, H_CATADD, 0, c0, c1); y += 48;
+    int first = 1;
+    for (int i = 0; i < OPDS_NSUGGEST; i++) {
+        if (ab_cat_find(OPDS_SUGGEST[i].url) >= 0 || !strcmp(ab_add_url, OPDS_SUGGEST[i].url)) continue;
+        if (first) { ab_hline(d, 0, W, y, AB_SEP, c0, c1); if (y + 34 > c0 && y < c1) draw_text(d, 16, y + 30, tr("SUGERIDOS"), 12, AB_GRAY, W - 32, c0, c1); y += 38; first = 0; }
+        ab_cat_row(d, y, OPDS_SUGGEST[i].name, OPDS_SUGGEST[i].note, AB_GRAY, 3, H_CATSUG, i, c0, c1); y += AB_CROW;
+    }
+    y += 8;
+    y += ab_wrap(d, 16, y + 14, W - 32, tr("BOOKS_CAT_HELP"), 12, rgb(99, 99, 104), 16, 8, c0, c1) + 10;
+    return y - y0 + 10;
+}
+
 /* ------------------------------------------------------------------ composicion */
 static void ab_render(uint16_t *d)
 {
@@ -1227,6 +1616,8 @@ static void ab_render(uint16_t *d)
         case AP_BOOK: h = ab_render_book(d, y0, top, bot); break;
         case AP_LANG: h = ab_render_lang(d, y0, top, bot); break;
         case AP_DL: h = ab_render_dl(d, y0, top, bot); break;
+        case AP_FEED: h = ab_render_feed(d, y0, top, bot); break;
+        case AP_CATS: h = ab_render_cats(d, y0, top, bot); break;
         }
         /* cabecera */
         ab_fill(d, 30, top, 0);
@@ -1235,10 +1626,17 @@ static void ab_render(uint16_t *d)
         } else {
             const struct ab_pg *prev = &ab_stk[bk_tab][ab_spn[bk_tab] - 2];
             const char *bt = prev->kind == AP_MINE ? tr("Audiolibros") : prev->kind == AP_STORE ? "Gutenberg" : prev->kind == AP_DL ? tr("Descargas") : tr("Atrás");
+            int ocat = pg->kind == AP_FEED || pg->kind == AP_CATS || (pg->kind == AP_BOOK && opds_is_book_id(pg->id));
+            if (prev->kind == AP_FEED && prev->title[0]) bt = prev->title;
+            else if (prev->kind == AP_STORE && ocat) bt = tr("Explorar");
+            const char *pt = pg->kind == AP_CATS ? tr("Catálogos") : pg->kind == AP_FEED ? pg->title : 0;   /* these pages have a title */
+            int bw = 140;
+            if (pt) { bw = tw_n(bt, 17, -1); if (bw > 84) bw = 84; }
             uint16_t c = ab_pressed(H_BACK, 0) ? rgb(5, 66, 128) : AB_BLUE;
-            ab_chev_left(d, 16, 53, c); draw_text(d, 30, 59, bt, 17, c, 140, 0, H);
-            ab_hit(0, 30, 160, AB_NAV, H_BACK, 0, 0, H);
+            ab_chev_left(d, 16, 53, c); draw_text(d, 30, 59, bt, 17, c, bw, 0, H);
+            ab_hit(0, 30, pt ? 120 : 160, AB_NAV, H_BACK, 0, 0, H);
             if (pg->kind == AP_LANG) { const char *t = tr("Idioma"); draw_text(d, (W - tw_n(t, 17, -1)) / 2, 59, t, 17, 0xFFFF, 0, 0, H); }
+            if (pt && pt[0]) { int mw = W - 2 * (30 + bw + 8), w = tw_n(pt, 17, -1); if (w > mw) w = mw; draw_text(d, (W - w) / 2, 59, pt, 17, 0xFFFF, mw, 0, H); }
             if (pg->kind == AP_BOOK && ab_cur_src == 0 && ab_cur_state == 2 && (ab_ndone || ab_nqueued)) {
                 fill_circle(d, W - 30, 53, 14, ab_pressed(H_DOTS, 0) ? rgb(70, 70, 76) : rgb(44, 44, 48), 255);
                 for (int k = -1; k <= 1; k++) fill_circle(d, W - 30 + k * 6, 53, 1.7f, AB_BLUE, 255);
@@ -1249,6 +1647,9 @@ static void ab_render(uint16_t *d)
         if (root) ab_hline(d, 0, W, AB_HDR - 1, AB_SEP, 0, H);
     }
     ab_content_h[bk_tab * 2 + (root ? 0 : 1)] = (float)h;
+    if (pg->kind == AP_FEED || pg->kind == AP_CATS || (pg->kind == AP_STORE && ab_cat_on())) {   /* a list that got shorter (another page, a removed catalog) */
+        float mx = ab_maxscroll(); if (pg->scroll > mx + 0.5f) { pg->scroll = mx; ab_anim_hint = 1; }
+    }
     if (ab_mini_on()) ab_minibar(d, AB_TABY - AB_MINIH);
     ab_tabbar(d, bk_tab, 1);
     draw_toast(d);
@@ -1385,6 +1786,10 @@ static void ab_gut_download(void)
     if (access(NETBIN, X_OK)) { toast(tr("Falta el componente de red (hibynet)")); return; }
     struct ab_qe e; memset(&e, 0, sizeof e);
     snprintf(e.book, sizeof e.book, "gutenberg:%s", ab_gcur.id); e.kind = 'e';
+    if (opds_is_book_id(ab_gcur.id)) {   /* a catalog book: the EPUB link of its entry */
+        if (!ab_ocur_epub[0]) return;
+        snprintf(e.url, sizeof e.url, "%s", ab_ocur_epub);
+    } else
     ab_gut_epub_url(ab_gcur.id, e.url, sizeof e.url);
     gut_dest(&ab_gcur, e.dest, sizeof e.dest);
     gut_list_add(ab_gcur.id, e.dest, ab_gcur.title, ab_gcur.author);
@@ -1445,11 +1850,13 @@ static void ab_transition(const uint16_t *from, const uint16_t *to, int dir)
 }
 static void ab_push(int kind, const char *id, int src)
 {
-    if (ab_spn[bk_tab] >= 4) return;
+    if (ab_spn[bk_tab] >= AB_DEPTH) return;
     ab_render(img_base);
     struct ab_pg *pg = &ab_stk[bk_tab][ab_spn[bk_tab]++];
     memset(pg, 0, sizeof *pg); pg->kind = kind; if (id) snprintf(pg->id, sizeof pg->id, "%s", id); pg->src = src;
+    if (kind == AP_FEED) { fm_cpy(pg->url, sizeof pg->url, ab_pend_url); fm_cpy(pg->title, sizeof pg->title, ab_pend_title); }
     if (kind == AP_BOOK) ab_cur_open(id, src);
+    ab_feed_tick();
     ab_press_k = H_NONE; ab_press_i = -1;
     ab_render(img_app);
     ab_transition(img_base, img_app, 1);
@@ -1461,6 +1868,7 @@ static void ab_pop(int animate)
     if (animate) ab_render(img_base);
     ab_spn[bk_tab]--;
     struct ab_pg *pg = AB_PG;
+    ab_feed_tick();
     if (pg->kind == AP_BOOK) ab_cur_open(pg->id, pg->src);
     if (pg->kind == AP_MINE || pg->kind == AP_DL) ab_mine_scan();
     if (pg->kind == AP_DL) gut_dl_scan();
@@ -1514,6 +1922,7 @@ static void ab_search_fire(void)
 static int ab_poll(void)
 {
     int ch = 0, r;
+    if (ab_feed_poll()) ch = 1;
     if ((r = ab_job_done(&ab_jl))) {
         if (!strcmp(ab_jl.key, ab_want_key)) {
             if (r > 0 && !ab_list_parse(ab_jl.out)) { snprintf(ab_res_key, sizeof ab_res_key, "%s", ab_jl.key); ab_res_state = 2; }
@@ -1537,7 +1946,7 @@ static int ab_poll(void)
             char *argv[] = { ASSETS "/hibywall", jpg, ab_jt.wall_out, ws, hs, 0 };
             ab_jt.pid = ab_spawn(argv); ab_jt.kind = AJ_WALL; if (ab_jt.pid <= 0) ab_jt.pid = 0;
         } else {
-            if (r < 0) { snprintf(ab_thumb_fail, sizeof ab_thumb_fail, "%s", ab_jt.key); ab_thumb_fail_t = now_ms(); if (ab_jt.kind == AJ_WALL) unlink(ab_jt.out); }
+            if (r < 0) { snprintf(ab_thumb_fail, sizeof ab_thumb_fail, "%s", ab_jt.key); ab_thumb_fail_t = now_ms(); ab_tfail_add(ab_jt.key); if (ab_jt.kind == AJ_WALL) unlink(ab_jt.out); }
             ab_jt.kind = AJ_NONE; ch = 1;
         }
     }
@@ -1545,7 +1954,7 @@ static int ab_poll(void)
     /* miniaturas en cache -> memoria (pocas por vuelta) */
     {
         int loaded = 0; struct ab_pg *pg = AB_PG;
-        if (pg->kind == AP_STORE && ab_res_state == 2) for (int i = 0; i < ab_res.n && loaded < 4; i++) {
+        if (pg->kind == AP_STORE && ab_res_state == 2 && !ab_cat_on()) for (int i = 0; i < ab_res.n && loaded < 4; i++) {
             int w, h; ab_thumb_spec(ab_src, 0, &w, &h); char tp[300]; ab_thumb_path(ab_res.h[i].id, ab_src, w, h, tp, sizeof tp);
             if (!ab_img_known(tp, w, h) && !access(tp, R_OK)) { ab_img_load(tp, w, h); loaded++; }
         }
@@ -1641,6 +2050,82 @@ static void gut_row_menu(int idx)
     if (sd_mounted() && access(g.dest, F_OK)) gut_list_remove(g.dest);
     gut_dl_scan(); ab_present();
 }
+/* ------------------------------------------------------------------ catalogs of the user: actions */
+/* a row of the catalog: a folder opens its page, a book its sheet */
+static void ab_feed_open(int idx)
+{
+    if (idx < 0 || idx >= ab_feed.n || !ab_feed_vis()) return;
+    const struct opds_e *e = &ab_feed.e[idx];
+    if (ab_searching && !kb_off) kb_hide();
+    if (e->kind == OE_NAV) {
+        const char *u = opds_s(&ab_feed, e->href); if (!u[0]) return;
+        fm_cpy(ab_pend_url, sizeof ab_pend_url, u); fm_cpy(ab_pend_title, sizeof ab_pend_title, opds_s(&ab_feed, e->title));
+        ab_push(AP_FEED, 0, 0);   /* (the feed in memory changes here) */
+        return;
+    }
+    memset(&ab_gcur, 0, sizeof ab_gcur);
+    opds_book_id(e->h, ab_gcur.id, sizeof ab_gcur.id);
+    fm_cpy(ab_gcur.title, sizeof ab_gcur.title, opds_s(&ab_feed, e->title));
+    fm_cpy(ab_gcur.author, sizeof ab_gcur.author, opds_s(&ab_feed, e->author));
+    fm_cpy(ab_gcur.desc, sizeof ab_gcur.desc, opds_s(&ab_feed, e->sum));
+    fm_cpy(ab_ocur_epub, sizeof ab_ocur_epub, e->kind == OE_BOOK ? opds_s(&ab_feed, e->href) : "");
+    fm_cpy(ab_ocur_cover, sizeof ab_ocur_cover, ab_feed_cover(e));
+    fm_cpy(ab_ocur_cat, sizeof ab_ocur_cat, ab_cat_name());
+    char id[24]; snprintf(id, sizeof id, "%s", ab_gcur.id);
+    ab_cur_reset(); ab_push(AP_BOOK, id, 2);
+}
+/* the list of catalogs: use this one (0 = Project Gutenberg) and go back to Explore */
+static void ab_cat_pick(int idx)
+{
+    if (idx < 0 || idx > ab_ncat) return;
+    if (ab_jf.pid && ab_jf_what == 2) ab_job_kill(&ab_jf);   /* the one that was being checked is dropped */
+    ab_add_url[0] = 0;
+    const char *u = idx ? ab_cats[idx - 1].url : "";
+    if (strcmp(u, ab_cat_cur)) {
+        fm_cpy(ab_cat_cur, sizeof ab_cat_cur, u); ab_cats_save();
+        ab_feed_drop(); ab_q[0] = 0; ab_stk[2][0].scroll = 0;
+        if (!idx) { ab_want_key[0] = 0; ab_res_state = 0; ab_list_want(0); }
+    }
+    ab_pop(1);
+}
+static void ab_cat_add_start(const char *in, const char *name)
+{
+    char u[OPDS_URL]; int guess = 0;
+    if (ab_jf.pid && ab_jf_what == 2) return;   /* one at a time */
+    if (opds_url_norm(in, u, sizeof u, &guess)) { toast(tr("Esa dirección no es válida")); return; }
+    if (ab_cat_find(u) >= 0) { toast(tr("Ese catálogo ya está")); return; }
+    if (ab_ncat >= OPDS_MAXCAT) { toast(tr("No caben más catálogos")); return; }
+    if (access(NETBIN, X_OK)) { toast(tr("Falta el componente de red (hibynet)")); return; }
+    fm_cpy(ab_add_url, sizeof ab_add_url, u); fm_cpy(ab_add_name, sizeof ab_add_name, name);
+    ab_add_guess = guess; ab_add_try = 0;
+    ab_add_fetch();
+}
+/* "Add catalog…": its address, typed */
+static void ab_cat_add(void)
+{
+    char in[OPDS_URL] = "";
+    ab_render(fr0);
+    int a = kb_cfg_autocap; kb_cfg_autocap = 0;
+    int r = line_edit(tr("Añadir catálogo"), "https://", in, sizeof in);
+    kb_cfg_autocap = a;
+    ab_trim(in);
+    if (r && in[0]) ab_cat_add_start(in, "");
+}
+/* touch and hold a catalog of the user (i from 1): remove it */
+static void ab_cat_menu(int i)
+{
+    if (i < 1 || i > ab_ncat) return;
+    char nm[64]; fm_cpy(nm, sizeof nm, ab_cats[i - 1].name);
+    const char *o[1] = { tr("Eliminar") };
+    ab_render(fr0);
+    if (action_sheet(nm, o, 1, 0) == 0) {
+        int cur = !strcmp(ab_cats[i - 1].url, ab_cat_cur);
+        memmove(&ab_cats[i - 1], &ab_cats[i], (size_t)(ab_ncat - i) * sizeof ab_cats[0]); ab_ncat--;
+        if (cur) { ab_cat_cur[0] = 0; ab_feed_drop(); ab_q[0] = 0; ab_stk[2][0].scroll = 0; ab_want_key[0] = 0; ab_res_state = 0; }   /* back to Project Gutenberg */
+        ab_cats_save();
+    }
+    ab_present();
+}
 /* ------------------------------------------------------------------ toques */
 static void ab_tap(int kind, int idx)
 {
@@ -1656,6 +2141,8 @@ static void ab_tap(int kind, int idx)
         if (!g.st) { gut_read(g.dest); break; }
         memset(&ab_gcur, 0, sizeof ab_gcur);   /* aun no esta: su ficha (progreso, cancelar) */
         snprintf(ab_gcur.id, sizeof ab_gcur.id, "%s", g.id); snprintf(ab_gcur.title, sizeof ab_gcur.title, "%s", g.title); snprintf(ab_gcur.author, sizeof ab_gcur.author, "%s", g.author);
+        if (opds_is_book_id(g.id)) ab_ocur_epub[0] = ab_ocur_cover[0] = ab_ocur_cat[0] = 0;   /* from a catalog: its entry is not here any more */
+        else
         snprintf(ab_gcur.cover, sizeof ab_gcur.cover, "https://www.gutenberg.org/cache/epub/%s/pg%s.cover.medium.jpg", g.id, g.id);
         ab_cur_reset(); ab_push(AP_BOOK, g.id, 2);
         break;
@@ -1674,7 +2161,15 @@ static void ab_tap(int kind, int idx)
         ab_pop(1);
         AB_PG->scroll = 0; ab_want_key[0] = 0; ab_res_state = 0; ab_list_want(ab_searching ? ab_qsent : 0); ab_present();
         break;
-    case H_RETRY: if (pg->kind == AP_BOOK) { char id[96]; snprintf(id, sizeof id, "%s", pg->id); ab_cur_reset(); ab_cur_open(id, pg->src); } else ab_list_retry(); ab_present(); break;
+    case H_RETRY: if (pg->kind == AP_BOOK) { char id[96]; snprintf(id, sizeof id, "%s", pg->id); ab_cur_reset(); ab_cur_open(id, pg->src); }
+        else if (pg->kind == AP_FEED || (pg->kind == AP_STORE && ab_cat_on())) { ab_feed_url[0] = 0; ab_feed_state = 0; ab_feed_tick(); }
+        else ab_list_retry();
+        ab_present(); break;
+    case H_CAT: ab_push(AP_CATS, 0, 0); break;
+    case H_FROW: ab_feed_open(idx); break;
+    case H_CATROW: ab_cat_pick(idx); break;
+    case H_CATADD: ab_cat_add(); ab_present(); break;
+    case H_CATSUG: if (idx >= 0 && idx < OPDS_NSUGGEST) ab_cat_add_start(OPDS_SUGGEST[idx].url, OPDS_SUGGEST[idx].name); ab_present(); break;
     case H_ROW:
         if (idx < 0 || idx >= ab_res.n) break;
         if (ab_searching && !kb_off) kb_hide();
@@ -1743,6 +2238,7 @@ static void ab_tap(int kind, int idx)
 /* pulsacion larga en una portada de Audiolibros */
 static void ab_cell_menu(int i)
 {
+    if (AB_PG->kind == AP_CATS) { ab_cat_menu(i); ab_present(); return; }   /* the list of catalogs: remove one */
     if (i < 0 || i >= ab_nmine) return;
     struct ab_mi *m = &ab_mine[i];
     const char *o[3] = { m->done ? tr("Marcar como no leído") : tr("Marcar como terminado"), tr("Empezar desde el principio"), tr("Eliminar") };
@@ -1774,6 +2270,7 @@ static void ab_open(void)
     ab_cache_prune();
     int n; struct ab_qe *q = ab_q_load(AB_Q, &n); free(q);
     if (n && !ab_ds.alive && sd_mounted()) ab_worker_start();   /* reanudar al volver (vuelve a mirar el espacio) */
+    ab_cats_load(); ab_feed_prune(6 * 3600);
     if (bk_tab) ab_tab_init(bk_tab);
 }
 /* Biblioteca en reposo: 1 si acaba de terminar la descarga de un EPUB (hay que volver a escanear) */
@@ -1793,6 +2290,7 @@ static void ab_close(void)
     ab_np_tick(1);
     if (ab_searching) { kb_end(); ab_searching = 0; ab_q[0] = ab_qsent[0] = 0; }
     ab_job_kill(&ab_jl); ab_job_kill(&ab_jm); ab_job_kill(&ab_jt);
+    ab_job_kill(&ab_jf); ab_feed_drop(); ab_add_url[0] = 0;
     ab_img_free(); ab_cur_reset();
     free(ab_mine); ab_mine = 0; ab_nmine = 0;
     free(gut_dl); gut_dl = 0; gut_ndl = 0; gut_orph_seen = -1;
@@ -1883,7 +2381,7 @@ static int ab_run(void)
                 double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }
                 float mx = ab_maxscroll(); pg->scroll = s0 - (cur_y - sy); if (pg->scroll < 0) pg->scroll = 0; if (pg->scroll > mx) pg->scroll = mx;
                 ab_present();
-            } else if ((k == H_CELL || k == H_DLAB || k == H_EPUB) && now_ms() - ts > 450) { longp = 1; break; }
+            } else if ((k == H_CELL || k == H_DLAB || k == H_EPUB || k == H_CATROW) && now_ms() - ts > 450) { longp = 1; break; }
         }
         if (moved) { if (now_ms() - lt > 60) vel = 0; lt_fl = 0; continue; }
         vel = 0;
