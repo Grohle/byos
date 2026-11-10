@@ -22,3 +22,4 @@ apps/*/*.hpk
 
 # Copia original de los digitos de HiBy (referencia local)
 src/digits_hiby_orig.h
+.venv/
