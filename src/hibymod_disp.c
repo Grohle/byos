@@ -32,6 +32,10 @@
  * AJUSTES DEL REPRODUCTOR (v7, orden 'S'): leer/cambiar BT, Wi-Fi, DLNA, AirPlay, ganancia,
  * MSEB, volumen... con la misma secuencia que su centro de control. Ver la ultima seccion y
  * docs/research_settings_api.md. Inerte mientras nadie mande 'S'.
+ *
+ * POSICION, COLA Y VOLUMEN (v8, orden 'Q'): saltar a un punto de la pista, leer posicion y
+ * duracion, "reproducir despues"/"anadir a la cola" sin cortar lo que suena y volumen absoluto.
+ * Ver la ultima seccion y docs/research_seek_queue_volume.md. Inerte mientras nadie mande 'Q'.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -63,6 +67,7 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 #include "hm_shared.h"
+#include "topbar_layout.h"
 
 #define HOLD_MAX_S 120
 #define BOOT_HOLD_S 30         /* retencion maxima durante la animacion de arranque */
@@ -238,6 +243,48 @@ static void ov_apply(unsigned char *b)
     st->ov_saved = 1;
 }
 
+
+/* ---------------------------------------------------------------- "%" de la bateria a la derecha */
+/* La barra de HiBy (topbar.view) solo alinea las cifras a la izquierda: con "68%" quedaria un
+ * hueco entre el "%" y la pila. Antes de mostrar un fotograma, el bloque "NN%" se empuja a la
+ * derecha (TOPBAR_DW px por cifra que falte) y el hueco queda a su izquierda, con el color de
+ * fondo de esa fila. El reproductor reutiliza sus buferes y puede no redibujar la barra: para
+ * no empujarlo dos veces se recuerda la firma de las zonas ya movidas. */
+static uint32_t np_now(void);
+static int sb_ndig = 3; static uint32_t sb_t;
+static uint32_t sb_done[8]; static unsigned sb_ndone;
+static uint32_t sb_hash(const unsigned char *b)
+{
+    uint32_t h = 2166136261u;
+    for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) {
+        const uint16_t *r = (const uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
+        for (int x = 0; x < TOPBAR_PCT_W; x++) h = (h ^ r[x]) * 16777619u;
+    }
+    return h;
+}
+static void sb_fix(unsigned char *b)
+{
+    if (!b || fline < (TOPBAR_PCT_X + TOPBAR_PCT_W) * 2u) return;
+    uint32_t now = np_now();
+    if (now - sb_t > 2000 || !sb_t) {            /* nivel de bateria: cada 2 s como mucho */
+        sb_t = now ? now : 1;
+        char v[8] = ""; int f = r_open("/sys/class/power_supply/battery/capacity", O_RDONLY);
+        if (f >= 0) { ssize_t n = read(f, v, sizeof v - 1); if (n > 0) v[n] = 0; r_close(f); }
+        int c = atoi(v); sb_ndig = !v[0] || c < 0 ? 3 : c >= 100 ? 3 : c >= 10 ? 2 : 1;
+    }
+    int k = (3 - sb_ndig) * TOPBAR_DW;
+    if (k <= 0) return;
+    uint32_t h = sb_hash(b);
+    for (unsigned i = 0; i < 8 && i < sb_ndone; i++) if (sb_done[i] == h) return;   /* ya movida */
+    for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) {
+        uint16_t *r = (uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
+        uint16_t bg = r[-1];                          /* el fondo justo a la izquierda (hueco tras el Wi-Fi) */
+        memmove(r + k, r, (size_t)(TOPBAR_PCT_W - k) * 2);
+        for (int x = 0; x < k; x++) r[x] = bg;
+    }
+    sb_done[sb_ndone++ % 8] = sb_hash(b);
+}
+
 /* copia src -> d (bufer visible, tras frame_edge) y pone la capa en el orden del barrido:
  * filas hasta el final de la capa, la capa, el resto. Asi ninguna fila de la capa se barre
  * antes de estar puesta. */
@@ -255,6 +302,7 @@ static void copy_then_ov(unsigned char *d, const unsigned char *src)
 /* ---------------------------------------------------------------- ordenes */
 static void pl_kick(void);     /* v6, al final del fichero */
 static void st_kick(void);     /* v7 ajustes, al final del fichero */
+static void qc_kick(void);     /* v8 posicion/cola/volumen, al final del fichero */
 static void *control(void *arg)
 {
     (void)arg;
@@ -265,6 +313,7 @@ static void *control(void *arg)
         while (read(f, &c, 1) == 1) {
             if (c == 'L') { pl_kick(); continue; }   /* v6: sin el mutex de la pantalla */
             if (c == 'S') { st_kick(); continue; }   /* v7: ajustes del reproductor, idem */
+            if (c == 'Q') { qc_kick(); continue; }   /* v8: posicion/salto, cola, volumen, idem */
             pthread_mutex_lock(&mu);
             if (c == 'C') {
                 if (!st->held && !st->capture && map_frames()) {
@@ -779,10 +828,12 @@ int ioctl(int fd, unsigned long req, ...)
         if (st->capture && frames) {
             unsigned char *b = buf_at(last_var.yoffset);
             memcpy(frames + fsize, b, fsize);   /* fotograma del reproductor -> frames[1] */
+            sb_fix(frames + fsize);             /* el shell copia la barra de aqui */
             wait_even(&st->fr0_seq);
             memcpy(b, frames, fsize);           /* el panel sigue con la imagen del shell */
             st->cap_frames++;
         } else {
+            if (map_fb()) sb_fix(buf_at(last_var.yoffset));
             if (st->home_sub_on && map_fb()) home_substitute(buf_at(last_var.yoffset));
             if (st->ov_on && map_fb()) ov_apply(buf_at(last_var.yoffset));
             else st->ov_saved = 0;
@@ -1443,6 +1494,451 @@ static void st_kick(void)
     if (pthread_create(&t, &a, st_thread, 0)) {
         st_again = 0; __sync_lock_release(&st_busy);
         st_result("id=-1 rc=-11 key=- val=0 ms=0 pthread_create\n", 0);
+    }
+    pthread_attr_destroy(&a);
+}
+
+/* ================================================================ v8: posicion, cola y volumen ('Q')
+ * Detalles, evidencia y riesgos: docs/research_seek_queue_volume.md. INERTE si nadie manda 'Q'.
+ *
+ *   SALTAR  seek_locked(ms) 0x437780 = cerrojo del reproductor + 0x4376a0(ms) + soltar. 0x4376a0 es
+ *     lo que llaman el arrastre de la barra de progreso de fabrica (0x50c924), el avance rapido con
+ *     teclas (0x510004) y setProgress de HiBy Link (0x457778, desde su hilo); el mensaje 3 de la
+ *     cola del reproductor (DLNA "seek") usa 0x437780. Unidad: ms ABSOLUTOS en el fichero; la pista
+ *     va de get_param(0xd) (inicio, >0 en pistas de .cue) a get_param(0xe) (fin), como hace la
+ *     interfaz de fabrica: posicion = get_param(6) - inicio, duracion = fin - inicio.
+ *   COLA    la lista que suena se lee de list_tb_<id> CADA VEZ que hace falta una pista (0x4341c0 ->
+ *     0x71de60, sin cache), y la siguiente es indice+1 sobre n = get_param(8) (0x435fc0). Si la
+ *     lista es nuestra (hibymod\q1/q2, orden = rowid) se inserta la fila detras de la actual
+ *     moviendo las de detras (o al final) y despues set_param(8, n+1): no se corta nada. En
+ *     aleatorio el orden es un vector de n entradas (P+0xec): solo con reshuffle=1 se rehace con
+ *     0x435ce0(n+1) bajo el cerrojo del reproductor (como hace la radio de fabrica, 0x4ce554) y la
+ *     nueva va justo despues de la actual. Lista ajena (album de fabrica...): rc=-ENOTSUP, o con
+ *     rebuild=1 se copia a nuestra ranura 1 + la nueva y se continua en la misma pista y posicion
+ *     (play_index con pos = ms absolutos, como al reanudar al encender; corte breve).
+ *   VOLUMEN la secuencia de setVolume de HiBy Link (st_set de la seccion 'S'), maximo setting 0x10;
+ *     como mucho una escritura cada 50 ms (cada una reescribe user.ini).
+ *
+ * Peticion (QC_REQ, rename atomico):  HMQ1 / id=N / op=pos|seek|next|append|vol|volget|check /
+ *   [ms=MS] [val=V] [path=RUTA o N|RUTA (pista N de un .cue)] [dup=1] [unscanned=1] [reshuffle=1] [rebuild=1]
+ * Respuesta (QC_RES): "id=N rc=R op=OP pos=MS dur=MS state=S index=I count=C val=V max=M ms=T mensaje"
+ *   state: 0 en pausa, 1 sonando, 2 parado (0x437260). Una linea "qc: ..." en disp.log. */
+#define QC_REQ "/tmp/hibymod_qreq"
+#define QC_RES "/tmp/hibymod_qres"
+#define HP_GET_TBL 0x7f1cb0u              /* tabla de saltos de get_param (0x20 entradas) */
+#define HP_SET_TBL 0x7f1c34u              /* tabla de saltos de set_param (0x1f entradas) */
+/* 16 bytes en la entrada + 16 en una segunda ventana (varias de estas funciones empiezan igual) */
+static const struct { uint32_t addr, off2, w[4], w2[4]; } qc_sig[] = {
+    { 0x437780, 0x20, { 0x27bdffd8, 0xafb00020, 0x3c100097, 0x26109ac8 }, { 0x0c10dda8, 0x8fa40018, 0x8e19004c, 0x0320f809 } }, /* 0 seek_locked(ms) */
+    { 0x4376a0, 0x80, { 0x27bdffd8, 0xafb0001c, 0x3c100097, 0x26109ac8 }, { 0x0c10f768, 0x02202025, 0x2404000a, 0x0c11ed68 } }, /* 1 seek(ms), la llama 0 */
+    { 0x437420, 0x2c, { 0x27bdffd8, 0xafb0001c, 0x3c100097, 0x26109ac8 }, { 0x0c10dce8, 0x00000000, 0x00408825, 0x8e19004c } }, /* 2 track_active() */
+    { 0x437260, 0x2c, { 0x27bdffd8, 0xafb0001c, 0x3c100097, 0x26109ac8 }, { 0x0c10f790, 0x00000000, 0x24030001, 0x1043000e } }, /* 3 play_state() */
+    { 0x435ce0, 0x40, { 0x27bdffd0, 0xafb0001c, 0x3c100097, 0x26109ac8 }, { 0xae0000ec, 0x0c11ec70, 0x001320c0, 0x10400077 } }, /* 4 shuffle_build(n, otra) */
+    { 0x43dda0, 0x00, { 0x00802825, 0x00003025, 0x0819d559, 0x24040205 }, { 0x00802825, 0x00003025, 0x0819d559, 0x24040205 } }, /* 5 motor: seek, la llama 1 */
+    { 0x4341c0, 0x40, { 0x27bdfc40, 0xafbf03bc, 0xafb403b8, 0xafb303b4 }, { 0x00002825, 0x26041828, 0x0c1098c0, 0x3c120097 } }, /* 6 read_item(i, &buf) */
+};
+static const struct { uint32_t tbl; int id; uint32_t dst; } qc_jt[] = {   /* casos de get/set_param usados */
+    { HP_GET_TBL, 0x06, 0x436c28 }, { HP_GET_TBL, 0x08, 0x436bd8 }, { HP_GET_TBL, 0x0a, 0x436bc4 },
+    { HP_GET_TBL, 0x0b, 0x436bb0 }, { HP_GET_TBL, 0x0d, 0x436b88 }, { HP_GET_TBL, 0x0e, 0x436b74 },
+    { HP_GET_TBL, 0x15, 0x436b18 }, { HP_GET_TBL, 0x18, 0x436a7c },
+    { HP_SET_TBL, 0x08, 0x436848 }, { HP_SET_TBL, 0x10, 0x4367ec }, { HP_SET_TBL, 0x15, 0x4367a4 },
+    { HP_SET_TBL, 0x17, 0x436798 },
+};
+typedef void (*qc_seek_t)(int);
+typedef int (*qc_i0_t)(void);
+typedef void *(*qc_shuf_t)(int, int);
+typedef int (*qc_item_t)(int, char **);
+#define QCF(i, t) ((t)(uintptr_t)qc_sig[i].addr)
+#define HP_ITEM_SIZE 0xa88                /* elemento de lista: +4 ruta UTF-16 (0x104), +0x424 cue_id */
+
+static volatile int qc_busy, qc_again;
+static struct stat qc_last;
+static uint32_t qc_vol_ms;
+
+/* La parte fija (codigo y tablas de solo lectura del binario) se comprueba entera la primera vez;
+ * despues solo el estado que cambia en marcha (cerrojo del reproductor y contexto de la base, como
+ * pl_check). Asi un deslizador de volumen no relee /proc/self/maps ~40 veces por peticion. */
+static int qc_ok_static, qc_ok_settings;
+static uint32_t qc_ok_ctx;
+static int qc_check(void)
+{
+    if (qc_ok_static) {
+        const uint32_t *p = (const uint32_t *)(uintptr_t)HP_P;
+        if (!p[0x48 / 4] || !p[0x4c / 4]) return -EAGAIN;
+        uint32_t c = *(const uint32_t *)(uintptr_t)HP_DBCTX;
+        if (c && c == qc_ok_ctx) {
+            const uint32_t *ctx = (const uint32_t *)(uintptr_t)c;
+            if (ctx[0] && ctx[0x564 / 4] == 0x70eee0 && ctx[0x568 / 4] == 0x70ef00) return 0;
+        }
+        int r = pl_check();                  /* el contexto cambio: comprobarlo entero otra vez */
+        if (!r) qc_ok_ctx = *(const uint32_t *)(uintptr_t)HP_DBCTX;
+        return r;
+    }
+    int r = pl_check();
+    if (r) return r;
+    for (size_t i = 0; i < sizeof qc_sig / sizeof qc_sig[0]; i++) {
+        uint32_t a = qc_sig[i].addr, b = a + qc_sig[i].off2;
+        if (!pl_mapped(a, 16, 1) || memcmp((const void *)(uintptr_t)a, qc_sig[i].w, 16)) return -ENOEXEC;
+        if (!pl_mapped(b, 16, 1) || memcmp((const void *)(uintptr_t)b, qc_sig[i].w2, 16)) return -ENOEXEC;
+    }
+    for (size_t i = 0; i < sizeof qc_jt / sizeof qc_jt[0]; i++) {
+        uint32_t a = qc_jt[i].tbl + (uint32_t)qc_jt[i].id * 4;
+        if (!pl_mapped(a, 4, 0) || *(const uint32_t *)(uintptr_t)a != qc_jt[i].dst) return -ENOEXEC;
+    }
+    qc_ok_ctx = *(const uint32_t *)(uintptr_t)HP_DBCTX;
+    qc_ok_static = 1;
+    return 0;
+}
+
+/* st_check (seccion 'S') una vez; despues basta con que la estructura de ajustes siga siendo la misma */
+static int qc_check_settings(void)
+{
+    static uint32_t s0;
+    if (qc_ok_settings) {                    /* solo tras un st_check bueno: HP_SETTINGS esta proyectado */
+        uint32_t s = *(const uint32_t *)(uintptr_t)HP_SETTINGS;
+        if (s && s == s0) return 0;
+    }
+    int r = st_check();
+    if (!r) { qc_ok_settings = 1; s0 = *(const uint32_t *)(uintptr_t)HP_SETTINGS; }
+    return r;
+}
+
+static int qc_geti(int id) { int v = 0; PLF(1, pl_getp_t)(id, &v, 0); return v; }
+
+struct qc_out { int pos, dur, state, index, count, val, max; };
+
+/* lista que suena (UTF-16, 0x104 unidades); devuelve 1/2 si es hibymod\q1/q2, 0 si no */
+static int qc_curlist(hw16 *cur)
+{
+    memset(cur, 0, 0x104 * sizeof *cur);
+    PLF(1, pl_getp_t)(0x15, cur, 0);
+    static const hw16 q[] = { 'h','i','b','y','m','o','d','\\','q' };
+    if (memcmp(cur, q, sizeof q) || cur[10] || (cur[9] != '1' && cur[9] != '2')) return 0;
+    return cur[9] - '0';
+}
+
+static void qc_fill(struct qc_out *o)
+{
+    int beg = qc_geti(0x0d), end = qc_geti(0x0e), pos = qc_geti(0x06);
+    o->state = QCF(3, qc_i0_t)();
+    o->dur = end > beg ? end - beg : 0;
+    o->pos = pos > beg ? pos - beg : 0;
+    o->index = qc_geti(0x0b);
+    o->count = qc_geti(0x08);
+}
+
+static int qc_seek(int ms, struct qc_out *o, const char **msg)
+{
+    static hw16 cur[0x104];
+    if (!QCF(2, qc_i0_t)()) { *msg = "nada cargado (parado)"; return -ENODATA; }
+    qc_curlist(cur);
+    if (cur[0] == 'd' && cur[1] == 'l' && cur[2] == 'n' && cur[3] == 'a') { *msg = "modo DLNA: lo controla dmrd"; return -ENOTSUP; }
+    int beg = qc_geti(0x0d), end = qc_geti(0x0e), dur = end - beg;
+    if (dur <= 0) { *msg = "duracion desconocida (radio/stream)"; return -ENOTSUP; }
+    if (ms < 0 || ms > dur) { *msg = "fuera de la pista"; return -ERANGE; }
+    int lim = dur > 1500 ? dur - 1000 : 0;   /* no saltar al ultimo segundo (fin de pista inmediato) */
+    *msg = "ok";
+    if (ms > lim) { ms = lim; *msg = "ok (recortado al ultimo segundo)"; }
+    QCF(0, qc_seek_t)(beg + ms);             /* = 0x4376a0 bajo el cerrojo del reproductor */
+    qc_fill(o);
+    return 0;
+}
+
+#define QC_SEL "COALESCE(m.name,r.path),COALESCE(m.album,''),COALESCE(m.artist,''),COALESCE(m.genre,''),"         \
+    "COALESCE(m.year,0),COALESCE(m.dis_id,0),COALESCE(m.ck_id,0),COALESCE(m.has_child_file,0),COALESCE(m.begin_time,0)," \
+    "COALESCE(m.end_time,0),COALESCE(m.cue_id,-1),COALESCE(m.character,''),COALESCE(m.size,0),COALESCE(m.sample_rate,0),"  \
+    "COALESCE(m.bit_rate,0),COALESCE(m.bit,0),COALESCE(m.channel,0),COALESCE(m.format,0),COALESCE(m.quality,''),"         \
+    "COALESCE(m.album_pic_path,''),COALESCE(m.lrc_path,''),COALESCE(m.track_gain,0),COALESCE(m.track_peak,0),"           \
+    "COALESCE(m.ctime,0),COALESCE(m.mtime,0) "
+
+/* dentro de BEGIN..COMMIT: mete la pista en list_tb_<tb> en la posicion "at" (0..n; las de detras
+ * se mueven) y deja count/music_count de MANAGER_TABLE en n+1. Devuelve filas o <0 (d->rc/err). */
+static int qc_put(struct pl_db *d, int tb, int at, int n, const struct pl_ent *e, int dup, int unscanned)
+{
+    static hw16 w[1024];
+    char hp[1024], q[1700];
+    int R = -1, rows = -1;
+    if (at > 0) {                          /* rowid de la fila en la posicion at-1 (orden = rowid) */
+        snprintf(q, sizeof q, "SELECT rowid FROM list_tb_%d ORDER BY rowid LIMIT 1 OFFSET ?3", tb);
+        pl_sql(d, q, 0, 0, 0, 0, at - 1, &R);
+        if (!d->rc && R < 0) { d->rc = -1; d->err = "posicion fuera de la lista"; }
+    } else R = 0;
+    if (at < n) {                          /* hueco en R+1: dos pasos para no chocar con el rowid unico */
+        snprintf(q, sizeof q, "UPDATE list_tb_%d SET rowid = -rowid WHERE rowid > ?3", tb);   pl_sql(d, q, 0, 0, 0, 0, R, 0);
+        snprintf(q, sizeof q, "UPDATE list_tb_%d SET rowid = 1 - rowid WHERE rowid < 0", tb); pl_sql(d, q, 0, 0, 0, 0, INT32_MIN, 0);
+    }
+    pl_sql(d, "CREATE TEMP TABLE IF NOT EXISTS hm_req(pos INTEGER PRIMARY KEY, path TEXT COLLATE NOCASE, cue INT)", 0, 0, 0, 0, INT32_MIN, 0);
+    pl_sql(d, "DELETE FROM hm_req", 0, 0, 0, 0, INT32_MIN, 0);
+    pl_hpath(e->path, hp, sizeof hp);
+    int k = pl_w16(hp, w, 1024);
+    snprintf(q, sizeof q, "INSERT INTO hm_req(pos, path, cue) VALUES (0, ?1, %d)", e->cue);
+    pl_sql(d, q, w, k, 0, 0, INT32_MIN, 0);
+    /* sin OR IGNORE: una pista que ya esta en la cola da SQLITE_CONSTRAINT (19) -> -EEXIST;
+     * con dup=1 entra con un id negativo propio (la clave es id+path+cue_id) */
+    snprintf(q, sizeof q,
+        "INSERT INTO list_tb_%d(rowid," PL_COLS ") SELECT ?3,%s,r.path," QC_SEL
+        "FROM hm_req r LEFT JOIN MEDIA_TABLE m ON m.path = r.path AND (r.cue < 0 OR m.cue_id = r.cue) "
+        "WHERE m.path IS NOT NULL OR %d ORDER BY m.cue_id LIMIT 1",
+        tb, dup ? "-1000000-?3" : "COALESCE(m.id,-1)", unscanned ? 1 : 0);
+    pl_sql(d, q, 0, 0, 0, 0, R + 1, 0);
+    snprintf(q, sizeof q, "SELECT count(*) FROM list_tb_%d", tb);   pl_sql(d, q, 0, 0, 0, 0, INT32_MIN, &rows);
+    if (!d->rc && rows != n + 1) { d->rc = -1; d->err = "no esta en la biblioteca (MEDIA_TABLE); unscanned=1 la mete igual"; }
+    snprintf(q, sizeof q, "UPDATE MANAGER_TABLE SET count = ?3, music_count = ?3 WHERE id = %d", tb);
+    pl_sql(d, q, 0, 0, 0, 0, rows, 0);
+    return d->rc ? -1 : rows;
+}
+
+/* "reproducir despues" (append=0) o "anadir al final" (append=1) */
+static int qc_queue(const struct pl_ent *e, int append, int dup, int unscanned, int reshuffle, int rebuild,
+                    struct qc_out *o, const char **msg)
+{
+    static hw16 cur[0x104], lw[16];
+    static char cmsg[160], item[HP_ITEM_SIZE];
+    int slot = qc_curlist(cur), mode = qc_geti(0x0a), ci = qc_geti(0x0b), n = qc_geti(0x08);
+    if (!cur[0]) { *msg = "no hay lista cargada: usa 'L' (pc_play_list)"; return -ENODATA; }
+    if (ci < 0 || ci >= n) append = 1;
+    int at = append ? n : ci + 1;
+    if (!slot && !rebuild) {
+        int k = 0; for (; k < 60 && cur[k]; k++) cmsg[k] = cur[k] < 0x80 ? (char)cur[k] : '?';
+        cmsg[k] = 0;
+        snprintf(cmsg + k, sizeof cmsg - (size_t)k, ": no es una cola de hibymod (rebuild=1 la copia)");
+        *msg = cmsg; return -ENOTSUP;
+    }
+    if (slot && mode == 2 && !reshuffle) { *msg = "aleatorio: reshuffle=1 rehace el orden aleatorio"; return -EPERM; }
+    { struct statvfs v; if (!statvfs("/usr/data", &v) && (unsigned long long)v.f_bavail * v.f_frsize < (6ull << 20) + (unsigned long long)n * 2048)
+        { *msg = "poco espacio en /usr/data: no se escribe la cola"; return -ENOSPC; } }
+    /* lista ajena: su orden puede no ser el rowid (vistas ordenadas, carpetas). Antes de copiar se
+     * leen varias posiciones con el lector del propio reproductor (0x4341c0, el de "siguiente", bajo
+     * su cerrojo y fuera del de la base) para comprobar despues que la copia coincide */
+#define QC_NSAMP 6
+    static hw16 samp[QC_NSAMP][0x104];
+    int sidx[QC_NSAMP], ns = 0;
+    if (!slot) {
+        const int cand[QC_NSAMP] = { ci, ci + 1, 0, n / 2, n - 1, ci - 1 };
+        const uint32_t *p = (const uint32_t *)(uintptr_t)HP_P;
+        for (int i = 0; i < QC_NSAMP; i++) {
+            int x = cand[i], seen = 0;
+            if (x < 0 || x >= n) continue;
+            for (int j = 0; j < ns; j++) if (sidx[j] == x) seen = 1;
+            if (seen) continue;
+            char *bp = item;
+            memset(item, 0, sizeof item);
+            ((pl_void_t)(uintptr_t)p[0x48 / 4])();
+            int r = QCF(6, qc_item_t)(x, &bp);
+            ((pl_void_t)(uintptr_t)p[0x4c / 4])();
+            if (r || !item[4]) { *msg = "no se pudo leer la lista actual con el lector del reproductor"; return -ENOTSUP; }
+            memcpy(samp[ns], item + 4, 0x103 * sizeof(hw16));
+            samp[ns][0x103] = 0;
+            sidx[ns++] = x;
+        }
+    }
+    struct pl_db d = { *(void **)*(uint32_t *const *)(uintptr_t)HP_DBCTX, 0, 0 };
+    char q[1200];                            /* CREATE ... PL_CREATE ~540, copia ~500 */
+    int rows = -1, src = -1, same = 0;
+    int tb = slot ? PL_TB0 + slot - 1 : PL_TB0;   /* lista ajena: se copia a la ranura 1 (no suena) */
+    PLF(4, pl_void_t)();
+    pl_sql(&d, "BEGIN", 0, 0, 0, 0, INT32_MIN, 0);
+    if (d.rc) { PLF(5, pl_void_t)(); *msg = "BEGIN (transaccion abierta?)"; return -EBUSY; }
+    if (slot) {                              /* la nuestra: debe seguir siendo la que conoce el reproductor */
+        snprintf(q, sizeof q, "SELECT count(*) FROM list_tb_%d", tb);   pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, &rows);
+        if (!d.rc && rows != n) { d.rc = -1; d.err = "la tabla no coincide con el reproductor (n distinto)"; }
+    } else {
+        int lpn = 0; while (lpn < 0x103 && cur[lpn]) lpn++;
+        pl_sql(&d, "SELECT id FROM MANAGER_TABLE WHERE path = ?1", cur, lpn, 0, 0, INT32_MIN, &src);
+        if (!d.rc && (src < 0 || src == PL_TB0 || src == PL_TB0 + 1)) { d.rc = -1; d.err = "lista virtual (sin list_tb): no se puede copiar"; }
+        snprintf(q, sizeof q, "DROP TABLE IF EXISTS list_tb_%d", tb);                    pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, 0);
+        snprintf(q, sizeof q, "CREATE TABLE IF NOT EXISTS list_tb_%d" PL_CREATE, tb);      pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, 0);
+        if (!d.rc) {
+            snprintf(q, sizeof q, "INSERT INTO list_tb_%d(" PL_COLS ") SELECT " PL_COLS " FROM list_tb_%d ORDER BY rowid", tb, src);
+            pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, 0);
+        }
+        snprintf(q, sizeof q, "SELECT count(*) FROM list_tb_%d", tb);   pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, &rows);
+        if (!d.rc && rows != n) { d.rc = -1; d.err = "la copia no tiene las n filas del reproductor"; }
+        /* cada posicion leida antes por el reproductor debe tener la misma ruta en la copia (orden
+         * rowid); si no, se aborta sin tocar nada */
+        snprintf(q, sizeof q, "SELECT count(*) FROM (SELECT path FROM list_tb_%d ORDER BY rowid LIMIT 1 OFFSET ?3) WHERE path = ?1", tb);
+        for (int i = 0; i < ns && !d.rc; i++) {
+            int ipn = 0; while (ipn < 0x103 && samp[i][ipn]) ipn++;
+            same = 0;
+            pl_sql(&d, q, samp[i], ipn, 0, 0, sidx[i], &same);
+            if (!d.rc && same != 1) { d.rc = -1; d.err = "orden distinto al del reproductor: no se copia"; }
+        }
+        int lpn2 = pl_w16("hibymod\\q1", lw, 16);
+        pl_sql(&d, "DELETE FROM MANAGER_TABLE WHERE id = ?3 OR path = ?1", lw, lpn2, 0, 0, tb, 0);
+        snprintf(q, sizeof q, "INSERT INTO MANAGER_TABLE(id, path, count, music_count, dir_count, m3u_count) VALUES (?3, ?1, %d, %d, 0, 0)", n, n);
+        pl_sql(&d, q, lw, lpn2, 0, 0, tb, 0);
+    }
+    if (!d.rc) rows = qc_put(&d, tb, at, n, e, dup, unscanned);
+    if (d.rc) {
+        int keep = d.rc; const char *ke = d.err;
+        d.rc = 0; pl_sql(&d, "ROLLBACK", 0, 0, 0, 0, INT32_MIN, 0);
+        PLF(5, pl_void_t)();
+        *msg = ke ? ke : "sql";
+        if (keep == 19) { *msg = "ya esta en la cola (dup=1 para repetirla)"; return -EEXIST; }
+        return keep > 0 ? -1000 - keep : (ke && !strncmp(ke, "no esta", 7)) ? -ENOENT : -ENOTSUP;
+    }
+    pl_sql(&d, "COMMIT", 0, 0, 0, 0, INT32_MIN, 0);
+    PLF(5, pl_void_t)();
+    if (d.rc) { *msg = "COMMIT"; return -1000 - d.rc; }
+    if (slot) {
+        if (mode == 2) {                     /* vector aleatorio de n+1 bajo el cerrojo; la nueva, la siguiente */
+            const uint32_t *p = (const uint32_t *)(uintptr_t)HP_P;
+            ((pl_void_t)(uintptr_t)p[0x48 / 4])();
+            QCF(4, qc_shuf_t)(rows, 0);
+            int32_t *arr = (int32_t *)(uintptr_t)p[0xec / 4];
+            int f0 = (int)p[0xf0 / 4], sz = (int)p[0xf4 / 4];
+            if (arr && sz == rows && !append && f0 >= 0 && f0 + 1 < sz)
+                for (int i = 0; i < sz; i++)
+                    if (arr[2 * i] == at) {      /* {indice, ya sonada}: ponerla justo tras la actual */
+                        int32_t t0 = arr[2 * (f0 + 1)], t1 = arr[2 * (f0 + 1) + 1];
+                        arr[2 * (f0 + 1)] = arr[2 * i]; arr[2 * (f0 + 1) + 1] = 0;
+                        arr[2 * i] = t0; arr[2 * i + 1] = t1;
+                        break;
+                    }
+            ((pl_void_t)(uintptr_t)p[0x4c / 4])();
+        }
+        PLF(0, pl_setp_t)(0x08, (const void *)(intptr_t)rows, 0);    /* despues de la tabla: n+1 */
+        *msg = "ok";
+    } else {                                 /* cambiar a la copia en la misma pista y posicion */
+        int pos = qc_geti(0x06);
+        pl_w16("hibymod\\q1", lw, 16);
+        PLF(0, pl_setp_t)(0x17, 0, 0);
+        PLF(0, pl_setp_t)(0x15, lw, 0);
+        PLF(0, pl_setp_t)(0x08, (const void *)(intptr_t)rows, 0);
+        PLF(0, pl_setp_t)(0x10, (const void *)(intptr_t)ci, 0);
+        int r = PLF(2, pl_play_t)(ci < 0 ? 0 : ci, pos > 0 ? pos : -1, 0x10002);
+        if (r) { *msg = "copiada; play_index fallo"; return -EIO; }
+        *msg = "ok (lista copiada a hibymod\\q1)";
+        /* pos con estas banderas: SIN VERIFICAR (al encender se usa 0x40000). Si al cargar la pista
+         * no esta cerca de pos, se salta como la barra de fabrica */
+        if (pos > 3000) {
+            for (int t = 0; t < 40 && !QCF(2, qc_i0_t)(); t++) usleep(50000);
+            if (QCF(2, qc_i0_t)() && qc_geti(0x06) + 3000 < pos) {
+                QCF(0, qc_seek_t)(pos);
+                *msg = "ok (lista copiada a hibymod\\q1; posicion con seek)";
+            }
+        }
+    }
+    qc_fill(o);
+    o->index = at;                           /* donde quedo la nueva */
+    o->count = rows;
+    return 0;
+}
+
+static void qc_result(const char *l)
+{
+    int f = r_open(QC_RES ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (f >= 0) { if (write(f, l, strlen(l)) < 0) {} r_close(f); rename(QC_RES ".tmp", QC_RES); }
+    f = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (f >= 0) { if (write(f, "qc: ", 4) < 0 || write(f, l, strlen(l)) < 0) {} r_close(f); }
+}
+
+static void qc_serve(void)
+{
+    uint32_t t0 = np_now();
+    int id = -1, rc = 0, ms = -1, val = INT32_MIN, dup = 0, uns = 0, resh = 0, reb = 0;
+    char buf[1400], op[16] = "";
+    static char path[1100];
+    const char *msg = "";
+    struct qc_out o = { 0, 0, -1, -1, -1, 0, 0 };
+    path[0] = 0;
+    int f = r_open(QC_REQ, O_RDONLY);
+    if (f < 0) { rc = -ENOENT; msg = QC_REQ; goto out; }
+    struct stat sb;
+    if (fstat(f, &sb)) memset(&sb, 0, sizeof sb);
+    ssize_t got = read(f, buf, sizeof buf - 1); r_close(f);
+    if (got <= 0) { rc = -EINVAL; msg = "peticion vacia"; goto out; }
+    buf[got] = 0;
+    if (strncmp(buf, "HMQ1\n", 5)) { rc = -EINVAL; msg = "falta HMQ1"; goto out; }
+    for (char *l = buf + 5, *nx; l && *l; l = nx) {
+        nx = strchr(l, '\n'); if (nx) *nx++ = 0;
+        size_t L = strlen(l); if (L && l[L - 1] == '\r') l[--L] = 0;
+        if (!strncmp(l, "id=", 3)) id = atoi(l + 3);
+        else if (!strncmp(l, "op=", 3)) snprintf(op, sizeof op, "%s", l + 3);
+        else if (!strncmp(l, "ms=", 3)) ms = atoi(l + 3);
+        else if (!strncmp(l, "val=", 4)) val = atoi(l + 4);
+        else if (!strncmp(l, "path=", 5)) snprintf(path, sizeof path, "%s", l + 5);
+        else if (!strcmp(l, "dup=1")) dup = 1;
+        else if (!strcmp(l, "unscanned=1")) uns = 1;
+        else if (!strcmp(l, "reshuffle=1")) resh = 1;
+        else if (!strcmp(l, "rebuild=1")) reb = 1;
+    }
+    /* ya atendida (otra 'Q' sin peticion nueva; cada peticion es un inodo nuevo por el rename) */
+    if (sb.st_ino && sb.st_ino == qc_last.st_ino && sb.st_mtim.tv_sec == qc_last.st_mtim.tv_sec &&
+        sb.st_mtim.tv_nsec == qc_last.st_mtim.tv_nsec && sb.st_size == qc_last.st_size) return;
+    qc_last = sb;
+    int isvol = !strcmp(op, "vol") || !strcmp(op, "volget");
+    if ((rc = qc_check()) || (isvol && (rc = qc_check_settings()))) {
+        msg = rc == -ENOEXEC ? "firmware distinto: no se llama a nada" : "reproductor sin iniciar"; goto out;
+    }
+    if (!strcmp(op, "check")) {
+        static hw16 cur[0x104]; static char cm[200];
+        qc_curlist(cur);
+        int k = 0; char cu[64]; for (; k < 63 && cur[k]; k++) cu[k] = cur[k] < 0x80 ? (char)cur[k] : '?';
+        cu[k] = 0;
+        qc_fill(&o);
+        snprintf(cm, sizeof cm, "firmas ok; modo=%d lista='%s' activa=%d", qc_geti(0x0a), cu, QCF(2, qc_i0_t)());
+        msg = cm; goto out;
+    }
+    if (!strcmp(op, "pos")) { qc_fill(&o); msg = "ok"; goto out; }
+    if (!strcmp(op, "seek")) { rc = qc_seek(ms, &o, &msg); goto out; }
+    if (!strcmp(op, "next") || !strcmp(op, "append")) {
+        if (!path[0]) { rc = -EINVAL; msg = "falta path="; goto out; }
+        struct pl_ent e = { path, -1 };
+        char *bar = strchr(path, '|');
+        if (bar && bar - path < 6 && bar > path && ((path[0] >= '0' && path[0] <= '9') || path[0] == '-')) { e.cue = atoi(path); e.path = bar + 1; }
+        if (__sync_lock_test_and_set(&pl_busy, 1)) { rc = -EBUSY; msg = "hay una orden 'L' en curso"; goto out; }
+        rc = qc_queue(&e, op[0] == 'a', dup, uns, resh, reb, &o, &msg);
+        __sync_synchronize();
+        pl_busy = 0;
+        goto out;
+    }
+    if (isvol) {
+        const struct st_opt *vo = st_find("volume");
+        o.max = st_get(ST_ID_VOLMAX);
+        if (!vo) { rc = -ENOENT; msg = "volume"; goto out; }
+        if (!strcmp(op, "volget")) { o.val = st_get(vo->id); msg = st_get(ST_ID_LINEOUT) == 1 ? "ok (line out: volumen fijo)" : "ok"; goto out; }
+        if (val == INT32_MIN) { rc = -EINVAL; msg = "falta val="; goto out; }
+        uint32_t now = np_now();             /* como mucho una escritura de user.ini cada 50 ms */
+        if (qc_vol_ms && now - qc_vol_ms < 50) usleep((50 - (now - qc_vol_ms)) * 1000);
+        int v = 0;
+        rc = st_set(vo, val, 0, &v, &msg);
+        qc_vol_ms = np_now();
+        o.val = v;
+        goto out;
+    }
+    rc = -EINVAL; msg = "op desconocida";
+out:;
+    char l[400];
+    snprintf(l, sizeof l, "id=%d rc=%d op=%s pos=%d dur=%d state=%d index=%d count=%d val=%d max=%d ms=%u %s\n",
+             id, rc, op[0] ? op : "-", o.pos, o.dur, o.state, o.index, o.count, o.val, o.max, np_now() - t0, msg);
+    qc_result(l);
+}
+
+static void *qc_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        while (__sync_lock_test_and_set(&qc_again, 0)) qc_serve();
+        __sync_lock_release(&qc_busy);
+        __sync_synchronize();
+        if (!qc_again || __sync_lock_test_and_set(&qc_busy, 1)) break;   /* una 'Q' justo al soltar */
+    }
+    return 0;
+}
+
+static void qc_kick(void)
+{
+    qc_again = 1;
+    __sync_synchronize();
+    if (__sync_lock_test_and_set(&qc_busy, 1)) return;    /* el hilo en curso la atendera */
+    pthread_attr_t a; pthread_t t;
+    pthread_attr_init(&a);
+    pthread_attr_setstacksize(&a, 512 * 1024);    /* play_index usa marcos de ~3 KB, SQLite mas */
+    pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&t, &a, qc_thread, 0)) {
+        qc_again = 0; __sync_lock_release(&qc_busy);
+        qc_result("id=-1 rc=-11 op=- pos=0 dur=0 state=-1 index=-1 count=-1 val=0 max=0 ms=0 pthread_create\n");
     }
     pthread_attr_destroy(&a);
 }

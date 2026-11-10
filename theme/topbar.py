@@ -314,7 +314,7 @@ def bar(bg, clock="09:41", vol="25", pct="100", play_ic="pause", out_ic="po", ne
     if codec: put(codec, POS["topbar_iv_bt_sink_type"])
     if bt: put("bluetooth", POS["topbar_iv_bt"])
     put(f"wifi_connect_{net}", POS["topbar_iv_net"])
-    x = POS["topbar_nv_battery"]
+    x = POS["topbar_nv_battery"] + (3 - len(pct)) * DW    # como lo deja la libreria (sb_fix): "%" fijo
     for c in pct: put(c, x); x += wd(c)
     put("percent", x)
     put(batt, POS["topbar_iv_battery"])
@@ -325,7 +325,7 @@ def bar(bg, clock="09:41", vol="25", pct="100", play_ic="pause", out_ic="po", ne
 
 rows = [bar((0, 0, 0, 255)),
         bar((178, 96, 66, 255), clock="01:15", vol="7", pct="68", play_ic="play", out_ic="lo", level=0.68, hl=True),
-        bar((40, 44, 70, 255), clock="23:58", vol="100", pct="15", out_ic="usb", net=1, bt=False, batt="battery_low_bg", level=0.15),
+        bar((40, 44, 70, 255), clock="23:58", vol="100", pct="5", out_ic="usb", net=1, bt=False, batt="battery_low_bg", level=0.05),
         bar((30, 30, 30, 255), clock="12:00", vol="60", pct="82", out_ic="balance", batt="battery_charge_bg", level=0.82),
         # el peor caso: todo a la vez y lo mas ancho de cada hueco
         bar((0, 0, 0, 255), clock="23:58", vol="100", pct="100", play_ic="play", out_ic="spdif", hl=True, codec="aptx_hd", batt="battery_charge_bg"),
@@ -351,6 +351,14 @@ with open(os.path.join(HERE, "..", "src", "digits.h"), "w", newline="\n") as f:
         assert g.width <= DW - 1, f"la cifra {n} ocupa {g.width} px: sin hueco para el OCR del volumen"
         f.write(f"    {{ {g.width}, {g.height}, {{ {', '.join(rws)} }} }},   /* {n} */\n")
     f.write("};\n")
+# zona del "100%" para la libreria de pantalla (hibymod_disp.c): la barra de HiBy solo alinea
+# las cifras a la izquierda, asi que la libreria las empuja a la derecha cuando hay menos de 3
+with open(os.path.join(HERE, "..", "src", "topbar_layout.h"), "w", newline="\n") as f:
+    f.write("/* topbar_layout.h: generado por theme/topbar.py */\n")
+    f.write(f"#define TOPBAR_PCT_X {X_PCT}      /* primera cifra del porcentaje de bateria */\n")
+    f.write(f"#define TOPBAR_PCT_W {3 * DW + wd('percent')}       /* 3 cifras + el signo % */\n")
+    f.write(f"#define TOPBAR_DW {DW}            /* ancho de celda de una cifra */\n")
+    f.write("#define TOPBAR_Y0 5\n#define TOPBAR_Y1 25\n")
 print("cifras: alto", min(rows_h), "-", max(rows_h), "px;", len(out), "ficheros; POS", POS)
 
 if "--deploy" in sys.argv:
