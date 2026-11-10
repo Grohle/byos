@@ -69,7 +69,9 @@ static struct {
     double pend_t; uint32_t pend_id;      /* pista nueva esperando su caratula */
     /* letra */
     char *lbuf; struct nu_line *ll; int nl, synced, lcur, ltot; float lsc, lsc0, lsc1; double lst;
+    int loff;                             /* [offset:] de la letra en ms (positivo = antes) */
 } nu;
+#define NU_LEAD_MS 11                   /* medio fotograma del panel (44 Hz): el verso cambia centrado en su marca */
 static int nu_xm[NU_S * 2];
 
 /* ------------------------------------------------------------------ utilidades */
@@ -314,13 +316,24 @@ static void nu_make_page(void)
 }
 
 /* ------------------------------------------------------------------ elementos dinamicos */
+/* posicion extrapolada desde la ultima lectura del hilo de nowplay (que lee cada ~1 s). Con el
+ * estado optimista de reproducir/pausa (nu.hold) para que la letra se pare al tocar, no 1 s
+ * despues; el tope de 4 s solo protege si el hilo se queda sin publicar. */
 static int nu_pos(void)
 {
     if (nu.anc < 0) return -1;
     int p = nu.anc;
-    if (nu.ni.playing) { double e = now_ms() - nu.anc_t; p += (int)(e > 1500 ? 1500 : e); }
+    if (nu.hold ? nu.playing : nu.ni.playing) { double e = now_ms() - nu.anc_t; p += (int)(e > 4000 ? 4000 : e); }
     if (nu.ni.duration_ms > 0 && p > nu.ni.duration_ms) p = nu.ni.duration_ms;
     return p;
+}
+/* lectura barata de la posicion publicada (cada vuelta del bucle): el ancla se toma a <=25 ms de
+ * que el hilo la publique, no a <=100 ms (sin deriva entre lecturas) */
+static void nu_pos_sync(void)
+{
+    pthread_mutex_lock(&npx_mu); int p = npx.position_ms; uint32_t id = npx.track_id; int src = npx.source; pthread_mutex_unlock(&npx_mu);
+    if (src == NP_SRC_NONE || id != nu.ni.track_id || p == nu.raw_pos) return;
+    nu.raw_pos = p; nu.anc = p; nu.anc_t = now_ms();
 }
 static void nu_draw_prog(uint16_t *d)
 {
@@ -415,64 +428,52 @@ static void nu_art_draw(uint16_t *d, float m, int top, int clip0, int clip1)
 }
 
 /* ------------------------------------------------------------------ letra (.lrc) */
-static void nu_lyrics_free(void) { free(nu.lbuf); free(nu.ll); nu.lbuf = 0; nu.ll = 0; nu.nl = 0; nu.synced = 0; nu.lcur = -1; nu.ltot = 0; }
-static int nu_line_cmp(const void *a, const void *b) { const struct nu_line *x = a, *y = b; return x->t != y->t ? (x->t < y->t ? -1 : 1) : x->off - y->off; }
+/* El .lrc se lee con lrc_parse (lrc_core.inc.c): todas las variantes de marcas, [offset:],
+ * LRC mejorado, CRLF, BOM, UTF-16. El verso i es el actual desde t_i - loff (offset positivo =
+ * antes) hasta la marca siguiente; el bucle se despierta justo en ese instante (nu_lyrics_next_ms). */
+static void nu_lyrics_free(void) { free(nu.lbuf); free(nu.ll); nu.lbuf = 0; nu.ll = 0; nu.nl = 0; nu.synced = 0; nu.lcur = -1; nu.ltot = 0; nu.loff = 0; }
+/* toma una letra ya leida (se queda con su texto) */
+static void nu_lyrics_from(struct lrc *L)
+{
+    nu_lyrics_free();
+    if (!L->n) { lrc_free(L); return; }
+    nu.ll = malloc(L->n * sizeof *nu.ll);
+    if (!nu.ll) { lrc_free(L); return; }
+    nu.lbuf = L->buf; L->buf = 0;
+    nu.nl = L->n; nu.synced = L->synced; nu.loff = L->offset;
+    int y = 0;
+    for (int i = 0; i < nu.nl; i++) {
+        nu.ll[i].t = L->ln[i].t; nu.ll[i].off = L->ln[i].off;
+        nu.ll[i].y = y; nu.ll[i].h = draw_wrapped(0, 0, 0, W - 48, nu.lbuf + nu.ll[i].off, 20, 0, 26, 0) + 14; y += nu.ll[i].h;
+    }
+    lrc_free(L);
+    nu.ltot = y; nu.lcur = -1; nu.lsc = nu.lsc0 = nu.lsc1 = 0; nu.lst = 0;
+}
 static void nu_lyrics_load(void)
 {
     nu_lyrics_free();
     if (!nu.ni.path[0]) return;
-    char p[460]; snprintf(p, sizeof p, "%s", nu.ni.path);
-    char *dot = strrchr(p, '.'), *sl = strrchr(p, '/'); if (!dot || (sl && dot < sl)) return;
-    strcpy(dot, ".lrc");
-    int f = open(p, O_RDONLY); if (f < 0) { strcpy(dot, ".LRC"); f = open(p, O_RDONLY); }
-    if (f < 0) return;
-    struct stat s; if (fstat(f, &s) || s.st_size <= 0 || s.st_size > (256 << 10)) { close(f); return; }
-    char *src = malloc(s.st_size + 1); if (!src) { close(f); return; }
-    int n = (int)read(f, src, s.st_size); close(f); if (n <= 0) { free(src); return; }
-    src[n] = 0;
-    /* salida: textos en lbuf (sin marcas de tiempo), una entrada por marca */
-    int cap = 64; nu.ll = malloc(cap * sizeof *nu.ll); nu.lbuf = malloc(n * 4 + 16);
-    if (!nu.ll || !nu.lbuf) { free(src); nu_lyrics_free(); return; }
-    int bo = 0, timed = 0;
-    for (char *l = src, *nl; l && *l; l = nl) {
-        nl = strchr(l, '\n'); if (nl) *nl++ = 0;
-        l[strcspn(l, "\r")] = 0;
-        if ((unsigned char)l[0] == 0xEF && (unsigned char)l[1] == 0xBB && (unsigned char)l[2] == 0xBF) l += 3;
-        int ts[16], nt = 0; char *t = l;
-        while (*t == '[') {
-            char *e = strchr(t, ']'); if (!e) break;
-            /* [mm:ss], [mm:ss.x], [mm:ss.xx], [mm:ss.xxx] (o con ':' antes de la fraccion) */
-            char *q = t + 1; int mm = 0, ss = 0, frac = 0, ok = 0, dg = 0;
-            while (*q >= '0' && *q <= '9') { mm = mm * 10 + (*q++ - '0'); ok = 1; }
-            if (ok && *q == ':') { q++; ok = 0; while (*q >= '0' && *q <= '9') { ss = ss * 10 + (*q++ - '0'); ok = 1; } }
-            else ok = 0;
-            if (ok && (*q == '.' || *q == ':')) { q++; int m = 100; while (*q >= '0' && *q <= '9') { if (dg++ < 3) { frac += (*q - '0') * m; m /= 10; } q++; } }
-            if (ok && q == e) { if (nt < 16) ts[nt++] = (mm * 60 + ss) * 1000 + frac; }
-            else if (!nt) { t = 0; break; }                  /* [ar:...] [ti:...]: metadatos */
-            t = e + 1;
-        }
-        if (!t) continue;
-        while (*t == ' ') t++;
-        if (nt) timed = 1;
-        int off = bo; bo += snprintf(nu.lbuf + bo, n * 4 + 16 - bo, "%s", *t ? t : "\xE2\x80\xA6") + 1;   /* verso vacio: pausa (...) */
-        for (int k = 0; k < (nt ? nt : 1); k++) {
-            if (nu.nl == cap) { struct nu_line *x = realloc(nu.ll, cap * 2 * sizeof *x); if (!x) break; nu.ll = x; cap *= 2; }
-            nu.ll[nu.nl].t = nt ? ts[k] : -1; nu.ll[nu.nl].off = off; nu.nl++;
-        }
-    }
-    free(src);
-    if (timed) {                                       /* sin las lineas sin tiempo (titulos sueltos) */
-        int k = 0; for (int i = 0; i < nu.nl; i++) if (nu.ll[i].t >= 0) nu.ll[k++] = nu.ll[i];
-        nu.nl = k; qsort(nu.ll, nu.nl, sizeof *nu.ll, nu_line_cmp);
-    } else {                                           /* sin marcas: sin las vacias del principio y del final */
-        while (nu.nl && !strcmp(nu.lbuf + nu.ll[nu.nl - 1].off, "\xE2\x80\xA6")) nu.nl--;
-    }
-    nu.synced = timed;
-    int y = 0;
-    for (int i = 0; i < nu.nl; i++) { nu.ll[i].y = y; nu.ll[i].h = draw_wrapped(0, 0, 0, W - 48, nu.lbuf + nu.ll[i].off, 20, 0, 26, 0) + 14; y += nu.ll[i].h; }
-    nu.ltot = y; nu.lcur = -1; nu.lsc = nu.lsc0 = nu.lsc1 = 0; nu.lst = 0;
-    if (!nu.nl) nu_lyrics_free();
-    lg("np: letra %s: %d versos%s", p, nu.nl, nu.synced ? " (sincronizada)" : "");
+    char p[600]; lx_lrc_of(nu.ni.path, p, sizeof p);
+    struct lrc L; if (lx_load(p, &L)) return;
+    nu_lyrics_from(&L);
+    lg("np: letra %s: %d versos%s offset %d", p, nu.nl, nu.synced ? " (sincronizada)" : "", nu.loff);
+}
+/* el verso actual en pos (ultimo con t - loff <= pos; -1 antes del primero) */
+static int nu_lyrics_at(int pos)
+{
+    int a = 0, b = nu.nl - 1, r = -1;
+    while (a <= b) { int m = (a + b) / 2; if (nu.ll[m].t - nu.loff <= pos) { r = m; a = m + 1; } else b = m - 1; }
+    return r;
+}
+/* ms hasta el siguiente cambio de verso (-1: ninguno o no suena) */
+static int nu_lyrics_next_ms(void)
+{
+    if (!nu.lyr || !nu.nl || !nu.synced || !(nu.hold ? nu.playing : nu.ni.playing)) return -1;
+    int pos = nu_pos(); if (pos < 0) return -1;
+    pos += NU_LEAD_MS;
+    int i = nu_lyrics_at(pos) + 1; if (i >= nu.nl) return -1;
+    int d = nu.ll[i].t - nu.loff - pos;
+    return d > 0 ? d : 0;
 }
 /* verso actual y desplazamiento objetivo; 1 = cambio (empieza la animacion) */
 static int nu_lyrics_tick(void)
@@ -480,7 +481,9 @@ static int nu_lyrics_tick(void)
     if (!nu.nl) return 0;
     int pos = nu_pos(), cur = -1; float target;
     if (nu.synced) {
-        for (int i = 0; i < nu.nl && nu.ll[i].t <= pos + 250; i++) cur = i;   /* un poco antes, como iOS */
+        if (pos >= 0) cur = nu_lyrics_at(pos + NU_LEAD_MS);
+        /* una lectura nueva un poco por detras (< 150 ms) no devuelve al verso anterior */
+        if (cur < nu.lcur && nu.lcur >= 0 && nu.lcur < nu.nl && pos >= 0 && nu.ll[nu.lcur].t - nu.loff - (pos + NU_LEAD_MS) < 150) cur = nu.lcur;
         target = cur < 0 ? 0 : nu.ll[cur].y - 34;
     } else {
         float k = nu.ni.duration_ms > 0 && pos > 0 ? (float)pos / nu.ni.duration_ms : 0;
@@ -500,18 +503,34 @@ static int nu_lyrics_step(void)
     nu.lsc = nu.lsc0 + (nu.lsc1 - nu.lsc0) * (float)ease_out(t);
     return 1;
 }
+/* sin letra: "Sin letra" y el boton "Buscar letra" en la franja (nu_nl_btn: su rectangulo) */
+static int nu_nl_btn[4];
+static void nu_draw_nolyrics(uint16_t *d)
+{
+    memcpy(d + NU_LY0 * W, nu.page + NU_LY0 * W, (NU_LY1 - NU_LY0) * W * 2);
+    nu_quote_icon(d, W / 2, 178, nu.c_sub, d[178 * W + W / 2]);
+    const char *t1 = tr("Sin letra"), *t2 = tr("Busca la letra de esta canción"), *b = tr("Buscar letra");
+    int w = tw_n(t1, 20, -1); mu_text_bold(d, (W - w) / 2, 220, t1, 20, 0xFFFF, W - 40);
+    w = tw_n(t2, 13, -1); draw_text(d, (W - w > 40 ? (W - w) / 2 : 20), 242, t2, 13, nu.c_sub, W - 40, 0, H);
+    int bw = tw_n(b, 15, -1) + 44, bx = (W - bw) / 2, by = 260;
+    fill_rrect(d, bx, by, bw, 38, 19, blend565(nu.avg, 0xFFFF, 7), 255);
+    mu_text_bold(d, bx + 22, by + 25, b, 15, 0xFFFF, bw - 30);
+    nu_nl_btn[0] = bx; nu_nl_btn[1] = by; nu_nl_btn[2] = bw; nu_nl_btn[3] = 38;
+}
 /* la letra en su franja (de la pagina), con los bordes fundidos; se compone en img_app */
 static void nu_draw_lyrics(uint16_t *d)
 {
+    if (!nu.nl) { nu_draw_nolyrics(d); return; }
     uint16_t *s = img_app;
     memcpy(s + NU_LY0 * W, nu.page + NU_LY0 * W, (NU_LY1 - NU_LY0) * W * 2);
     int base = NU_LY0 + 18 - (int)nu.lsc;
     uint16_t dim = blend565(nu.avg, 0xFFFF, 13);
+    int ct = nu.synced && nu.lcur >= 0 && nu.lcur < nu.nl ? nu.ll[nu.lcur].t : -2;   /* versos con la misma marca: todos */
     for (int i = 0; i < nu.nl; i++) {
         int y = base + nu.ll[i].y;
         if (y + nu.ll[i].h < NU_LY0 - 30) continue;
         if (y > NU_LY1) break;
-        int on = nu.synced && i == nu.lcur;
+        int on = nu.synced && nu.ll[i].t == ct;
         const char *t = nu.lbuf + nu.ll[i].off;
         /* draw_wrapped dibuja sin recorte: lo que se sale va a filas de img_app que no se copian */
         if (y < 30 || y + nu.ll[i].h > H - 20) continue;
@@ -530,7 +549,7 @@ static void nu_draw_lyrics(uint16_t *d)
 static void nu_render(uint16_t *d, int art)
 {
     memcpy(d, nu.page, HM_FRAME_BYTES);
-    if (nu.lyr && nu.nl && nu.lyt > 0.5f) nu_draw_lyrics(d);
+    if (nu.lyr && nu.lyt > 0.5f) nu_draw_lyrics(d);
     nu_draw_prog(d);
     nu_draw_ctl(d);
     if (art) nu_art_draw(d, 1, 0, 0, H);
@@ -539,7 +558,7 @@ static void nu_render(uint16_t *d, int art)
 static void nu_band(int y0, int y1)
 {
     memcpy(fr0 + y0 * W, nu.page + y0 * W, (y1 - y0) * W * 2);
-    if (y0 == NU_LY0 && nu.lyr && nu.nl) nu_draw_lyrics(fr0);
+    if (y0 == NU_LY0 && nu.lyr) nu_draw_lyrics(fr0);
     if (y0 == NU_PB0) nu_draw_prog(fr0);
     if (y0 == NU_CB0) nu_draw_ctl(fr0);
     if (y0 == NU_AB0 || (nu.lyr && y0 == 30)) nu_art_draw(fr0, 1, 0, y0, y1);
@@ -653,6 +672,8 @@ static int nu_hit(int x, int y)
     if (nu.lyr && abs(x - (W - 40)) < 24 && abs(y - 72) < 24) return 3;
     if (abs(x - NU_LBX) < 30 && abs(y - NU_LBY) < 22) return 4;
     if (nu.lyr && y < NU_SB1 && y >= 36 && x < W - 64) return 5;   /* cabecera de la letra: volver */
+    if (nu.lyr && !nu.nl && x >= nu_nl_btn[0] - 8 && x < nu_nl_btn[0] + nu_nl_btn[2] + 8 && y >= nu_nl_btn[1] - 8 && y < nu_nl_btn[1] + nu_nl_btn[3] + 8) return 7;   /* "Buscar letra" */
+    if (nu.lyr && y >= NU_LY0 && y < NU_LY1) return 6;               /* la letra (pulsacion larga: ajustar) */
     return -1;
 }
 /* fundido de toda la pantalla al nuevo estado (cambio de pista) */
@@ -676,8 +697,7 @@ static void nu_crossfade(void)
 /* cambio entre caratula grande y letra: la caratula vuela con un muelle */
 static void nu_toggle_lyrics(void)
 {
-    if (!nu.lyr && !nu.nl) { toast(tr("Esta canción no tiene letra")); nu_render(fr0, 1); draw_toast(fr0); present(); return; }
-    nu.lyr = !nu.lyr; nu_make_page(); nu.lcur = -1; nu_lyrics_tick(); nu.lsc = nu.lsc1; nu.lst = 0;
+    nu.lyr = !nu.lyr;                     /* sin letra: la vista de letra ofrece buscarla */ nu_make_page(); nu.lcur = -1; nu_lyrics_tick(); nu.lsc = nu.lsc1; nu.lst = 0;
     float v = 0, to = nu.lyr ? 1 : 0; struct nu_prof pr = { 0, 0, 0, 0 }; double last = now_ms(); mu_busy = 1;
     for (;;) {
         double t = now_ms(); float dt = (float)(t - last) / 1000; last = t;
@@ -685,7 +705,7 @@ static void nu_toggle_lyrics(void)
         int done = nu_spring_done(nu.lyt, v, to, 0.002f); if (done) nu.lyt = to;
         double t1 = now_ms();
         memcpy(fr0, nu.page, HM_FRAME_BYTES);
-        if (nu.lyr && nu.nl && nu.lyt > 0.35f) {                       /* la letra aparece al final */
+        if (nu.lyr && nu.lyt > 0.35f) {                                /* la letra aparece al final */
             nu_draw_lyrics(img_base);
             int k = (int)nu_clampf((nu.lyt - 0.35f) / 0.5f * 32, 0, 32);
             for (int y = NU_LY0; y < NU_LY1; y++) for (int x = 0; x < W; x++) fr0[y * W + x] = blend565(fr0[y * W + x], img_base[y * W + x], k);
@@ -713,7 +733,7 @@ static int nu_poll(void)
             int ok; nu_snap(&nu.ni, nu.cov, &ok, &cf); nu.cov_ok = cf && ok;
             nu.raw_pos = nu.ni.position_ms; nu.anc = nu.ni.position_ms; nu.anc_t = now; nu.pend_id = 0;
             if (!nu.hold) nu.playing = nu.ni.playing;
-            nu_build_all(); nu.lcur = -1; if (nu.lyr && !nu.nl) { nu.lyr = 0; nu.lyt = 0; nu_make_page(); }
+            nu_build_all(); nu.lcur = -1;         /* sin letra se queda en la vista de letra (ofrece buscarla) */
             if (nu.lyr) { nu_lyrics_tick(); nu.lsc = nu.lsc1; nu.lst = 0; }
             last_full = now;
             return -1;
@@ -721,11 +741,13 @@ static int nu_poll(void)
         return 0;
     }
     /* reproducir/pausa (respetando lo que se acaba de tocar) */
+    int held = nu.hold;                   /* reproducir/pausa tocado aqui: ya se anclo al tocar */
     if (nu.hold && (n.playing == nu.playing || now - nu.hold_t > 2500)) nu.hold = 0;
     if (!nu.hold && n.playing != nu.playing) { nu.playing = n.playing; r |= NB_CTL; }
     /* posicion: se ancla cuando el hilo publica un valor nuevo y se extrapola mientras suena */
+    if (!nu.ni.playing && n.playing && !held) { nu.anc = nu_pos(); nu.anc_t = now; }   /* vuelve a sonar: extrapolar desde ahora */
     if (n.position_ms != nu.raw_pos) { nu.raw_pos = n.position_ms; nu.anc = n.position_ms; nu.anc_t = now; }
-    if (nu.ni.playing && !n.playing) { nu.anc = nu_pos(); nu.anc_t = now; }   /* se paro: congelar donde iba */
+    if (nu.ni.playing && !n.playing && !held) { nu.anc = nu_pos(); nu.anc_t = now; }   /* se paro: congelar donde iba */
     nu.ni.playing = n.playing; nu.ni.duration_ms = n.duration_ms;
     if (strcmp(n.title, nu.ni.title) || strcmp(n.artist, nu.ni.artist)) {   /* etiquetas editadas */
         snprintf(nu.ni.title, sizeof nu.ni.title, "%s", n.title); snprintf(nu.ni.artist, sizeof nu.ni.artist, "%s", n.artist); snprintf(nu.ni.album, sizeof nu.ni.album, "%s", n.album);
@@ -765,17 +787,296 @@ static void nu_present_bands(int r)
 }
 
 
+/* ------------------------------------------------------------------ buscar / ajustar la letra
+ * Integrado en la vista de letra de Reproduciendo (sin salir a otra pantalla): una hoja de iOS
+ * sube sobre la letra con los resultados de LRCLIB para la cancion que suena (artista, titulo,
+ * album y duracion del reproductor; la cabecera con la caratula se queda). Al tocar uno, la hoja
+ * baja hasta abajo y deja ver ESA letra sincronizada con la cancion (es la que suena: misma
+ * posicion, mismo desplazamiento que la letra normal), con el ajuste de sincronizacion (-/+ 0,5 s
+ * y regla deslizable) y "Usar esta letra": guarda el .lrc junto a la cancion con [offset:] y la
+ * hoja baja del todo con la letra ya puesta. "‹ Resultados" vuelve a subirla.
+ * adjust = 1: solo el ajuste de la letra actual (pulsacion larga sobre la letra o menu "...").
+ * Usa img_app (nu_draw_lyrics) y fr0; ningun otro bufer grande. */
+#define NLX_LT 104                      /* borde de la hoja de resultados */
+#define NLX_PT (H - 168)                /* borde de la hoja de vista previa / ajuste */
+#define NLX_HDR 70                      /* cabecera de la hoja de resultados */
+#define NI_LYRSYNC 40                   /* menu "...": ajustar sincronizacion (icono reloj) */
+enum { NLX_LIST, NLX_PREV, NLX_ADJ };
+static struct { uint16_t sb, sub, dimq, btn, sel; } nlx;
+/* fondo opaco de la hoja (borde superior en top) en las filas [y0, y1), esquinas redondeadas */
+static void nu_lx_fill(uint16_t *d, int top, int y0, int y1)
+{
+    if (y0 < 0) y0 = 0; if (y1 > H) y1 = H;
+    for (int y = y0; y < y1; y++) {
+        uint16_t *r = d + y * W; int j = y - top;
+        if (j >= 14 || j < 0) { for (int x = 0; x < W; x++) r[x] = nlx.sb; continue; }
+        float dy = 14 - (j + .5f), e = 14 - sqrtf(196 - dy * dy);
+        int e0 = (int)e; unsigned a = (unsigned)((1 - (e - e0)) * 255);
+        for (int x = e0 + 1; x < W - e0 - 1; x++) r[x] = nlx.sb;
+        r[e0] = mix565(nlx.sb, r[e0], a); r[W - 1 - e0] = mix565(nlx.sb, r[W - 1 - e0], a);
+    }
+}
+static void nu_lx_sheet(uint16_t *d, int top)
+{
+    if (top >= H) return;
+    for (int k = 1; k <= 12; k++) {                      /* sombra suave encima del borde */
+        int y = top - k; if (y < 0) break;
+        uint16_t *r = d + y * W; int dk = 32 - (13 - k) * 10 / 12;
+        for (int x = 0; x < W; x++) r[x] = dim565(r[x], dk);
+    }
+    nu_lx_fill(d, top, top, H);
+    fill_rrect(d, W / 2 - 18, top + 6, 36, 5, 2.5f, blend565(nlx.sb, 0xFFFF, 9), 255);
+}
+static void nu_lx_render(int mode, int top, float sc, int ci, int press, int loading)
+{
+    memcpy(fr0, nu.page, HM_FRAME_BYTES);
+    if (top > NU_LY0 + 8) nu_draw_lyrics(fr0);
+    if (top > NU_PB0) nu_draw_prog(fr0);
+    if (top > NU_CB0) nu_draw_ctl(fr0);
+    nu_art_draw(fr0, 1, 0, 30, NU_SB1);
+    if (top < H) {
+        nu_lx_sheet(fr0, top);
+        if (mode == NLX_LIST) {
+            int ly = top + NLX_HDR;
+            if (lc_rc == -1) lx_spinner_msg(fr0, ly + 96, tr("Buscando letras"));
+            else if (!nlc) {
+                const char *m = lc_rc == 2 ? tr("No se pudo conectar. Comprueba la Wi-Fi.") : lc_rc == 99 ? tr("Falta el componente de red (hibynet)") : tr("No se encontraron letras. Prueba a cambiar la búsqueda.");
+                lx_empty(fr0, ly + 50, m, lc_rc == 2 ? tr("Reintentar") : tr("Editar búsqueda"), nlx.sub, nlx.btn);
+            } else {
+                int y = ly - (int)sc;
+                for (int i = 0; i < nlc; i++, y += LX_ROW) {
+                    if (y + LX_ROW < ly || y >= H) continue;
+                    uint16_t bg = nlx.sb;
+                    if (i == press) { bg = nlx.sel; for (int yy = y < ly ? ly : y; yy < y + LX_ROW && yy < H; yy++) for (int x = 0; x < W; x++) fr0[yy * W + x] = bg; }
+                    else if (i && y >= ly) for (int x = 16; x < W; x++) fr0[y * W + x] = blend565(nlx.sb, 0xFFFF, 3);
+                    lx_row(fr0, 0, y, W, &lc[i], lc_want, bg, 0xFFFF, nlx.sub, nlx.dimq, loading == i);
+                }
+                nu_lx_fill(fr0, top, top, ly);                /* la cabecera tapa las filas que suben */
+                fill_rrect(fr0, W / 2 - 18, top + 6, 36, 5, 2.5f, blend565(nlx.sb, 0xFFFF, 9), 255);
+                for (int yy = ly; yy < ly + 10 && yy < H; yy++) { int k = (yy - ly) * 32 / 10; uint16_t *r = fr0 + yy * W; for (int x = 0; x < W; x++) r[x] = blend565(nlx.sb, r[x], k); }
+            }
+            const char *tt = tr("Letras"); int w = tw_n(tt, 17, -1);
+            mu_text_bold(fr0, (W - w) / 2, top + 37, tt, 17, 0xFFFF, W - 130);
+            /* buscar a mano (lupa) y cerrar (x) */
+            uint16_t lc_ = press == -11 ? blend565(LX_BLUE, 0, 10) : LX_BLUE;
+            nu_ring(fr0, 27, top + 29, 6.5f, 2.2f, lc_, 0); mu_line(fr0, 32, top + 34, 37, top + 39, 2.4f, lc_);
+            nu_disc(fr0, W - 30, top + 32, 14, press == -10 ? blend565(nlx.btn, 0xFFFF, 6) : nlx.btn, 255, 0, H);
+            mu_line(fr0, W - 34.5f, top + 27.5f, W - 25.5f, top + 36.5f, 2, nlx.sub); mu_line(fr0, W - 25.5f, top + 27.5f, W - 34.5f, top + 36.5f, 2, nlx.sub);
+            char s2[96] = "";
+            if (nlc) {
+                int k = snprintf(s2, sizeof s2, tr("%d resultados"), nlc);
+                if (lc_want > 0) snprintf(s2 + k, sizeof s2 - k, " \xC2\xB7 %d:%02d", lc_want / 60, lc_want % 60);
+            }
+            if (s2[0]) { w = tw_n(s2, 12, -1); draw_text(fr0, (W - w) / 2, top + 57, s2, 12, nlx.sub, W - 40, 0, H); }
+        } else {
+            uint16_t bl = press == 5 ? blend565(LX_BLUE, 0, 10) : LX_BLUE;
+            if (mode == NLX_PREV) {
+                mu_line(fr0, 23, top + 21, 17, top + 27, 2.2f, bl); mu_line(fr0, 17, top + 27, 23, top + 33, 2.2f, bl);
+                draw_text(fr0, 29, top + 33, tr("Resultados"), 16, bl, 130, 0, H);
+                if (ci >= 0 && ci < nlc) {
+                    char dt[24]; int k = lrc_dur_badge(lc[ci].dur, lc_want, dt, sizeof dt), xr = W - 16;
+                    if (dt[0]) xr = lx_pill(fr0, xr, top + 18, dt, k, k == 1 ? blend565(nlx.sb, LX_GREEN, 9) : k == 2 ? blend565(nlx.sb, LX_ORANGE, 9) : nlx.btn, k == 1 ? LX_GREEN : k == 2 ? LX_ORANGE : nlx.sub) - 6;
+                    if (lc[ci].synced) lx_pill(fr0, xr, top + 18, "LRC", 0, blend565(nlx.sb, LX_GREEN, 9), LX_GREEN);
+                    else lx_pill(fr0, xr, top + 18, tr("Texto"), 0, nlx.btn, nlx.sub);
+                }
+            } else {
+                draw_text(fr0, 16, top + 33, tr("Cancelar"), 16, bl, 100, 0, H);
+                const char *tt = tr("Sincronización"); int w = tw_n(tt, 16, -1); if (w > 150) w = 150;
+                mu_text_bold(fr0, (W - w) / 2, top + 33, tt, 16, 0xFFFF, 150);
+            }
+            if (nu.synced) lx_adjust(fr0, top + 44, nu.loff, press, nlx.btn, 0xFFFF, nlx.sub);
+            else { const char *m = tr("Letra sin sincronizar"); int w = tw_n(m, 14, -1); draw_text(fr0, (W - w) / 2, top + 80, m, 14, nlx.sub, W - 40, 0, H); }
+            lx_button(fr0, 16, top + 116, W - 32, 44, mode == NLX_PREV ? tr("Usar esta letra") : tr("Guardar"), LX_BLUE, 0xFFFF, press == 4);
+        }
+    }
+    draw_toast(fr0);
+}
+static void nu_lx_snap(void) { nu.lcur = -1; nu_lyrics_tick(); nu.lsc = nu.lsc1; nu.lst = 0; }
+/* arrastre de la hoja hacia abajo desde su cabecera; 1 = soltada para cerrarla */
+static int nu_lx_drag(int mode, float base, float *st, float *sv, int sy, float sc, int ci, int loading)
+{
+    struct pkt p; float v = 0; int lasty = sy; double lt = now_ms();
+    while (cur_down) {
+        if (read_pkt(&p, 20) && !p.down) break;
+        double tn = now_ms(); if (tn > lt) v = 0.6f * v + 0.4f * (cur_y - lasty) * 1000.f / (float)(tn - lt);
+        lasty = cur_y; lt = tn;
+        float dy = (float)(cur_y - sy); if (dy < 0) dy /= 4;          /* hacia arriba: con resistencia */
+        *st = base + dy;
+        nu_lx_render(mode, (int)(*st + .5f), sc, ci, -1, loading); present();
+    }
+    if (now_ms() - lt > 80) v = 0;
+    *sv = v;
+    return *st - base > 110 || (v > 700 && *st - base > 12);
+}
+static void nu_lx(int adjust)
+{
+    if (adjust && (!nu.nl || !nu.synced)) return;
+    nlx.sb = blend565(rgb(20, 20, 22), nu.avg, 7); nlx.sub = blend565(nlx.sb, 0xFFFF, 19);
+    nlx.dimq = blend565(nlx.sb, 0xFFFF, 13); nlx.btn = blend565(nlx.sb, 0xFFFF, 4); nlx.sel = blend565(nlx.sb, 0xFFFF, 3);
+    int want = nu.ni.duration_ms > 0 ? (nu.ni.duration_ms + 500) / 1000 : lx_dur_s(nu.ni.path);
+    char a[128], t[160], b[128], path[460];
+    snprintf(path, sizeof path, "%s", nu.ni.path);
+    snprintf(a, sizeof a, "%s", nu.trk >= 0 && ML ? ML->T[nu.trk].artist : nu.ni.artist);
+    snprintf(t, sizeof t, "%s", nu.ni.title);
+    snprintf(b, sizeof b, "%s", nu.trk >= 0 && nu.alb >= 0 && ML ? ML->A[nu.alb].title : nu.ni.album);
+    if (!adjust) { if (access(NETBIN, X_OK)) { toast(tr("Falta el componente de red (hibynet)")); return; } lc_start(a, t, b, want); }
+    int mode = adjust ? NLX_ADJ : NLX_LIST, ci = -1, loading = -1, press = -1, closing = 0, restore = 0, saved = 0, dirty = 1;
+    int off0 = nu.loff;
+    float st = H, sv = 0, sc = 0, scv = 0;
+    double last = now_ms(), lpoll = now_ms(); struct pkt p;
+    struct nu_prof pr = { 0, 0, 0, 0 };
+    mu_busy = 1;
+    lg("np: letra %s (%d s)", adjust ? "ajuste" : "buscar", want);
+    for (;;) {
+        double now = now_ms(); float dt = (float)(now - last) / 1000; last = now;
+        if (now - lpoll >= 100) { lpoll = now; if (nu_poll() < 0) { lc_cancel(); nu_crossfade(); mu_busy = 0; return; } }   /* otra cancion */
+        nu_pos_sync();
+        if (lc_poll()) dirty = 1;
+        if (loading >= 0) {
+            int r = lc_ready(loading);
+            if (r) {
+                int i = loading; loading = -1; dirty = 1;
+                struct lrc L; char src[160]; lc_path(i, src, sizeof src);
+                int ok = r > 0 && !lx_load(src, &L);
+                if (ok && !L.n) { lrc_free(&L); ok = 0; }
+                if (!ok) toast(tr("No se pudo descargar"));
+                else { nu_lyrics_from(&L); nu_lx_snap(); ci = i; mode = NLX_PREV; restore = 0; }
+            }
+        }
+        /* la hoja (muelle) y el desplazamiento con inercia de la lista */
+        float tgt = closing ? H + 14 : mode == NLX_LIST ? NLX_LT : NLX_PT;
+        int moving = !nu_spring_done(st, sv, tgt, 0.5f);
+        if (moving) { nu_spring(&st, &sv, tgt, 0.40f, 0.92f, dt); if (nu_spring_done(st, sv, tgt, 0.5f)) { st = tgt; sv = 0; } dirty = 1; }
+        else if (closing) break;
+        if (scv) {
+            float mx = nlc * LX_ROW - (H - NLX_LT - NLX_HDR) + 8; if (mx < 0) mx = 0;
+            sc += scv * (dt > 0.05f ? 0.05f : dt); scv *= powf(0.135f, dt > 0.05f ? 0.05f : dt);
+            if (sc < 0) { sc = 0; scv = 0; } if (sc > mx) { sc = mx; scv = 0; }
+            if (fabsf(scv) < 15) scv = 0;
+            dirty = 1;
+        }
+        if (restore && st <= NU_LY0 + 2) { restore = 0; nu_lyrics_load(); nu_lx_snap(); }   /* ya tapada: la letra de verdad */
+        if (nu_lyrics_tick()) dirty = 1;
+        if (nu_lyrics_step()) dirty = 1;
+        int spin = (lc_rc == -1 && mode == NLX_LIST) || loading >= 0, toast_on = now < toast_until + 40;
+        if (dirty || spin || toast_on) { double t1 = now_ms(); nu_lx_render(mode, (int)(st + .5f), sc, ci, press, loading); nu_prof_add(&pr, now_ms() - t1); present(); dirty = 0; }
+        int anim = moving || nu.lst || spin || toast_on || scv;
+        int wait = 100;
+        if (mode != NLX_LIST) { int nx = nu_lyrics_next_ms(); if (nx >= 0 && nx < wait) wait = nx; if (nu.synced && (nu.hold ? nu.playing : nu.ni.playing) && wait > 25) wait = 25; }
+        if (!read_pkt(&p, anim ? 0 : wait) || !p.down) continue;
+        mu_last_input = now_ms(); scv = 0;
+        int sx = p.x, sy = p.y, top = (int)(st + .5f);
+        if (back_zone(sx, sy)) {
+            int bk = app_back_gesture(sx, sy);
+            if (bk) {
+                if (bk > 0) { if (mode == NLX_PREV) { mode = NLX_LIST; restore = 1; } else { if (mode == NLX_ADJ) nu.loff = off0; closing = 1; } }
+                last = now_ms(); dirty = 1; continue;
+            }
+        }
+        if (sy < top - 4 || closing) { drain_until_up(); continue; }       /* fuera de la hoja */
+        if (mode == NLX_LIST) {
+            if (sy < top + 56) {                                           /* cabecera */
+                int h = sx < 64 ? -11 : sx > W - 64 ? -10 : 0;
+                if (h) {
+                    press = h; nu_lx_render(mode, top, sc, ci, press, loading); present(); drain_until_up(); press = -1; dirty = 1;
+                    if (abs(cur_x - sx) > 40 || abs(cur_y - sy) > 40) continue;
+                    if (h == -10) { lc_cancel(); if (restore) { restore = 0; nu_lyrics_load(); nu_lx_snap(); } closing = 1; }
+                    else if (line_edit(tr("Título"), tr("Título"), t, sizeof t) && line_edit(tr("Artista"), tr("Artista"), a, sizeof a)) { lc_start(a, t, "", want); sc = 0; }
+                    last = now_ms(); continue;
+                }
+                if (nu_lx_drag(mode, NLX_LT, &st, &sv, sy, sc, ci, loading)) { lc_cancel(); if (restore) { restore = 0; nu_lyrics_load(); nu_lx_snap(); } closing = 1; }
+                last = now_ms(); dirty = 1; continue;
+            }
+            int ly = top + NLX_HDR;
+            if (lc_rc == -1 || loading >= 0) { drain_until_up(); continue; }
+            if (!nlc) {                                                    /* vacio / sin red: su boton */
+                drain_until_up();
+                if (sy < ly + 30 || sy > ly + 220) continue;
+                if (lc_rc == 2) lc_start(a, t, b, want);
+                else if (lc_rc != 99 && line_edit(tr("Título"), tr("Título"), t, sizeof t) && line_edit(tr("Artista"), tr("Artista"), a, sizeof a)) lc_start(a, t, "", want);
+                last = now_ms(); dirty = 1; continue;
+            }
+            int row = sy >= ly ? (int)((sy - ly + sc) / LX_ROW) : -1; if (row >= nlc) row = -1;
+            press = row; nu_lx_render(mode, top, sc, ci, press, loading); present();
+            int moved = 0, lasty = sy; float sc0 = sc, v = 0; double lt = now_ms();
+            float mx = nlc * LX_ROW - (H - NLX_LT - NLX_HDR) + 8; if (mx < 0) mx = 0;
+            while (cur_down) {
+                if (read_pkt(&p, 16) && !p.down) break;
+                if (!moved && abs(cur_y - sy) > 8) { moved = 1; press = -1; }
+                if (!moved) continue;
+                double tn = now_ms(); if (tn > lt) v = 0.6f * v + 0.4f * (lasty - cur_y) * 1000.f / (float)(tn - lt);
+                lasty = cur_y; lt = tn;
+                sc = sc0 - (cur_y - sy);
+                if (sc < 0) sc = sc / 3; if (sc > mx) sc = mx + (sc - mx) / 3;    /* bordes con resistencia */
+                nu_lx_render(mode, top, sc, ci, -1, loading); present();
+                while (read_pkt(&p, 0)) {}
+            }
+            press = -1; dirty = 1;
+            if (moved) {
+                if (now_ms() - lt > 80) v = 0;
+                if (sc < 0) sc = 0; else if (sc > mx) sc = mx; else scv = v;
+                last = now_ms(); continue;
+            }
+            if (row >= 0 && abs(cur_y - sy) < 20) loading = row;           /* abrir: lc_ready lo trae si falta */
+            last = now_ms(); continue;
+        }
+        /* vista previa / ajuste */
+        int h = -1;
+        if (sy < top + 44) h = sx < 150 ? 5 : -2;
+        else if (sy >= top + 108) h = 4;
+        else if (nu.synced) h = lx_adjust_hit(sx, sy, top + 44);
+        if (h == -2) {
+            if (mode == NLX_ADJ && nu_lx_drag(mode, NLX_PT, &st, &sv, sy, sc, ci, loading)) { nu.loff = off0; closing = 1; }
+            else drain_until_up();
+            last = now_ms(); dirty = 1; continue;
+        }
+        if (h < 0) { drain_until_up(); continue; }
+        press = h; nu_lx_render(mode, top, sc, ci, press, loading); present();
+        int moved = 0, offd = nu.loff;
+        while (cur_down) {
+            if (read_pkt(&p, 16) && !p.down) break;
+            if (h != 2 || (!moved && abs(cur_x - sx) <= 3)) continue;
+            moved = 1;
+            int o = lx_adjust_drag(offd, cur_x - sx);
+            if (o != nu.loff) { nu.loff = o; nu_lyrics_tick(); }               /* la letra se mueve en vivo */
+            nu_lyrics_step(); nu_pos_sync();
+            nu_lx_render(mode, top, sc, ci, 2, loading); present();
+            while (read_pkt(&p, 0)) {}
+        }
+        press = -1; dirty = 1; last = now_ms();
+        if (moved) continue;
+        if (h != 2 && (abs(cur_x - sx) > 30 || abs(cur_y - sy) > 30)) continue;   /* se fue del boton */
+        if (h == 0 || h == 1) { nu.loff = lx_adjust_step(nu.loff, h ? 1 : -1); nu_lyrics_tick(); }
+        else if (h == 5) { if (mode == NLX_PREV) { mode = NLX_LIST; restore = 1; } else { nu.loff = off0; nu_lyrics_tick(); closing = 1; } }
+        else if (h == 4) {
+            char src[600];
+            if (mode == NLX_PREV) lc_path(ci, src, sizeof src); else lx_lrc_of(path, src, sizeof src);
+            if (!lx_save(src, path, nu.synced ? nu.loff : 0)) { saved = 1; closing = 1; lc_cancel(); toast(mode == NLX_PREV ? tr("Letra guardada") : tr("Sincronización guardada")); }
+            else toast(tr("No se pudo guardar"));
+        }
+    }
+    nu_prof_log(&pr, "hoja de letras");
+    lc_cancel();
+    if (restore || (mode == NLX_PREV && !saved)) nu_lyrics_load();
+    if (mode == NLX_ADJ && !saved) nu.loff = off0;
+    nu_lx_snap(); nu_make_page();
+    nu_render(fr0, 1); draw_toast(fr0); present();
+    mu_busy = 0;
+}
+
 /* el menu "..." de la cancion que suena; devuelve NU_* si hay que salir de la hoja */
 static int nu_song_menu(int *arg)
 {
-    struct nu_mi it[6]; int n = 0, trk = nu.trk;
+    struct nu_mi it[8]; int n = 0, trk = nu.trk;
     if (trk >= 0) {
         it[n++] = (struct nu_mi){ tr("Crear radio"), NI_RADIO, 0 };
         it[n++] = (struct nu_mi){ tr("Ir al álbum"), NI_ALB, 1 };
         it[n++] = (struct nu_mi){ tr("Ir al artista"), NI_ART, 0 };
     }
-    { int g = n > 0; it[n++] = (struct nu_mi){ tr("Editar etiquetas"), NI_TAGS, g }; }
-    it[n++] = (struct nu_mi){ tr("Buscar letra"), NI_LYR, 0 };
+    { int g = n > 0; it[n++] = (struct nu_mi){ tr("Editar canción"), NI_TAGS, g }; }
+    it[n++] = (struct nu_mi){ tr("Editar álbum"), NI_ALBTAGS, 0 };
+    it[n++] = (struct nu_mi){ nu.nl ? tr("Cambiar letra") : tr("Buscar letra"), NI_LYR, 0 };
+    if (nu.nl && nu.synced) it[n++] = (struct nu_mi){ tr("Ajustar sincronización"), NI_LYRSYNC, 0 };
     it[n++] = (struct nu_mi){ tr("Buscar carátula"), NI_COV, 0 };
     char sub[300]; snprintf(sub, sizeof sub, "%s%s%s", nu.ni.artist, nu.ni.artist[0] && nu.ni.album[0] ? " · " : "", nu.ni.album);
     int a = nu_menu(it, n, nu.ni.title, sub, nu.alb, nu.cov_ok ? nu.cov : 0, nu.lyr ? 46 : NU_TY - 30, 64);
@@ -786,9 +1087,17 @@ static int nu_song_menu(int *arg)
     if (act == NI_ALB) { *arg = nu.alb; return NU_ALBUM; }
     if (act == NI_ART) { *arg = ML->A[nu.alb].art; return NU_ARTIST; }
     if (act == NI_TAGS) { char *v[1] = { path }; tag_editor(v, 1); nu_npx_refresh(); }
-    else if (act == NI_LYR) { lyrics_search(path, trk >= 0 ? ML->T[trk].artist : nu.ni.artist, nu.ni.title, album); nu_lyrics_load(); if (nu.lyr && !nu.nl) { nu.lyr = 0; nu.lyt = 0; } nu_make_page(); }
+    else if (act == NI_ALBTAGS) {   /* todas las canciones del album: las de la biblioteca o, si no, las de su carpeta */
+        char **v = 0; int nv = 0;
+        if (trk >= 0 && nu.alb >= 0 && ML) v = mu_album_paths(nu.alb, &nv);
+        if (!v || !nv) { if (v) free_list(v, nv); v = album_files(path, &nv); }
+        if (v && nv) tag_editor(v, nv);
+        if (v) free_list(v, nv);
+        nu_npx_refresh();
+    }
+    else if (act == NI_LYR || act == NI_LYRSYNC) { if (!nu.lyr) nu_toggle_lyrics(); nu_lx(act == NI_LYRSYNC); return NU_NONE; }   /* en la propia vista de letra */
     else if (act == NI_COV) { char *v[1] = { path }; cover_search(v, 1, artist, album); if (nu.alb >= 0) mu_cover_forget(nu.alb); nu.art_src = 0; nu_npx_refresh(); }
-    if (act == NI_TAGS || act == NI_LYR || act == NI_COV) mu_render(img_under, mu_st[mu_sp], 1);   /* esas pantallas reutilizan los bufers */
+    if ((act == NI_TAGS || act == NI_ALBTAGS || act == NI_COV) && mu_open > 0 && mu_st[mu_sp]) mu_render(img_under, mu_st[mu_sp], 1);   /* esas pantallas reutilizan los bufers */
     if (nu.lyr) { nu.lcur = -1; nu_lyrics_tick(); nu.lsc = nu.lsc1; nu.lst = 0; }
     nu_render(fr0, 1); draw_toast(fr0); present();
     return NU_NONE;
@@ -804,15 +1113,19 @@ static int nu_loop(int *arg)
         float tgt = nu.playing ? 1 : NU_PAUSE;
         int art_anim = !nu_spring_done(nu.sc, nu.sv, tgt, 0.0015f);
         if (art_anim) { nu_spring(&nu.sc, &nu.sv, tgt, 0.5f, 0.68f, dt); if (nu_spring_done(nu.sc, nu.sv, tgt, 0.0015f)) { nu.sc = tgt; nu.sv = 0; } bands |= NB_ART; }
+        nu_pos_sync();                                               /* ancla fresca: el verso cambia en su marca */
+        if (nu.lyr && nu_lyrics_tick()) bands |= NB_LYR;
         if (nu.lyr && nu_lyrics_step()) bands |= NB_LYR;
         int anim = art_anim || nu.lst || now < toast_until + 40;
         mu_busy = anim;
         if (bands) { double t1 = now_ms(); nu_present_bands(bands); static struct nu_prof pr; nu_prof_add(&pr, now_ms() - t1); if (pr.n >= 60) nu_prof_log(&pr, "reposo/franjas"); }
         else if (now < toast_until + 40) { nu_render(fr0, 1); draw_toast(fr0); present(); }
-        if (!read_pkt(&p, anim ? 0 : 100)) continue;
+        int wait = 100;                                              /* letra sincronizada: despertar en el siguiente verso */
+        if (!anim && nu.lyr) { int nx = nu_lyrics_next_ms(); if (nx >= 0 && nx < wait) wait = nx; if (nu.nl && nu.synced && (nu.hold ? nu.playing : nu.ni.playing) && wait > 25) wait = 25; }
+        if (!read_pkt(&p, anim ? 0 : wait)) continue;
         if (!p.down) continue;
         mu_last_input = now_ms();
-        int sx = p.x, sy = p.y, hit = nu_hit(sx, sy), moved = 0;
+        int sx = p.x, sy = p.y, hit = nu_hit(sx, sy), moved = 0, lp = 0; double tdown = now_ms();
         /* abajo del todo: subir = al inicio */
         if (sy >= 456) {
             while (cur_down && read_pkt(&p, 1000)) if (sy - cur_y > 20) moved = 1;
@@ -836,14 +1149,16 @@ static int nu_loop(int *arg)
                 moved = 2; break;
             }
             if (abs(dx) > 14 || abs(dy) > 14) moved = 1;
+            if (hit == 6 && !moved && nu.nl && nu.synced && now_ms() - tdown > 500) { lp = 1; break; }   /* pulsacion larga: ajustar */
         }
         if (moved == 2) { last = now_ms(); continue; }
+        if (lp) { drain_until_up(); nu_lx(1); last = now_ms(); continue; }
         int up_hit = nu_hit(cur_x, cur_y);
         if (nu.pressed >= 0) {
             int b = nu.pressed; nu.pressed = -1;
             if (up_hit == b) {
                 nu_key(b);
-                if (b == 1) { nu.playing = !nu.playing; nu.hold = 1; nu.hold_t = now_ms(); }
+                if (b == 1) { nu.anc = nu_pos(); nu.anc_t = now_ms(); nu.playing = !nu.playing; nu.hold = 1; nu.hold_t = now_ms(); }   /* la letra se para/sigue ya */
             }
             nu_band(NU_CB0, NU_CB1); present_rows(NU_CB0, NU_CB1);
             continue;
@@ -851,6 +1166,7 @@ static int nu_loop(int *arg)
         if (moved || up_hit != hit) continue;
         if (hit == 3) { int r = nu_song_menu(arg); if (r != NU_NONE) { if (mu_open > 0 && mu_st[mu_sp]) mu_render(img_under, mu_st[mu_sp], 1); nu_sheet_build(); nu_sheet_anim(0, 0, NU_HM, 0.36f, 2, 0); return r; } last = now_ms(); continue; }
         if (hit == 4 || hit == 5) { nu_toggle_lyrics(); last = now_ms(); continue; }
+        if (hit == 7) { nu_lx(0); last = now_ms(); continue; }      /* sin letra: buscarla aqui mismo */
     }
 }
 /* abre Reproduciendo desde el mini reproductor (toque o arrastre hacia arriba). sx, sy: donde
@@ -903,11 +1219,12 @@ static void nu_icon(uint16_t *d, int ic, int cx, int cy, uint16_t col, uint16_t 
         fill_rrect(d, cx - 9, cy - 9, 2, 18, 1, col, 255); fill_rrect(d, cx + 7, cy - 9, 2, 18, 1, col, 255);
         nu_ring(d, cx, cy, 4, 1.6f, col, 0); nu_disc(d, cx, cy, 1.2f, col, 255, 0, H); break;
     case NI_ART: nu_disc(d, cx, cy - 4.5f, 4.2f, col, 255, 0, H); nu_disc(d, cx, cy + 10, 8.5f, col, 255, 0, cy + 9); break;
-    case NI_TAGS:
+    case NI_TAGS: case NI_ALBTAGS:
         mu_line(d, cx - 5, cy + 5, cx + 5, cy - 5, 3.4f, col);
         nu_disc(d, cx - 7.2f, cy + 7.2f, 1.6f, col, 255, 0, H);
         mu_line(d, cx + 2.6f, cy - 6.4f, cx + 6.4f, cy - 2.6f, 1.2f, bgc); break;
     case NI_LYR: nu_quote_icon(d, cx, cy, col, bgc); break;
+    case NI_LYRSYNC: nu_ring(d, cx, cy, 9, 1.7f, col, 0); mu_line(d, cx, cy, cx, cy - 5.5f, 1.7f, col); mu_line(d, cx, cy, cx + 4, cy + 2, 1.7f, col); break;
     case NI_COV:
         fill_rrect(d, cx - 10, cy - 8, 20, 2, 1, col, 255); fill_rrect(d, cx - 10, cy + 6, 20, 2, 1, col, 255);
         fill_rrect(d, cx - 10, cy - 8, 2, 16, 1, col, 255); fill_rrect(d, cx + 8, cy - 8, 2, 16, 1, col, 255);

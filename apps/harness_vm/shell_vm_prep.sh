@@ -33,6 +33,7 @@ P=$R/out/sd/HiByOS/payload
 rm -rf $S/shell; mkdir -p $S/shell
 cp -r $P/shell/. $S/shell/
 cp $R/bin/hibynet $R/bin/cacert.pem $S/shell/
+[ -f $R/bin/hibywall ] && cp $R/bin/hibywall $S/shell/   # caratulas (Libros, Musica)
 mkdir -p $S/fonts
 [ -f $S/fonts/default.otf ] || cp $HOME/hiby/rootfs/usr/resource/fonts/default.otf $S/fonts/
 mkdir -p $S/sd/Apps; cp $R/out/apps/hola.hpk $S/sd/Apps/

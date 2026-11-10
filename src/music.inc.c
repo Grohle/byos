@@ -147,6 +147,13 @@ static int mu_find_sys(const struct mu_lib *L, const char *sys)
     return -1;
 }
 
+static int mu_sd_mounted(void)
+{
+    FILE *f = fopen("/proc/mounts", "r"); char l[256]; int ok = 0;
+    while (f && fgets(l, sizeof l, f)) if (strstr(l, " /usr/data/mnt/sd_0 ") || strstr(l, " /data/mnt/sd_0 ")) { ok = 1; break; }
+    if (f) fclose(f);
+    return ok;
+}
 static int mu_split(char *l, char **f, int max)
 {
     int n = 0; f[n++] = l;
@@ -820,7 +827,7 @@ static void mu_build(struct mpg *p)
         for (int i = 0; i < 6; i++) if (i < 5 || (mu_np.source && mu_np.path[0])) it_add(p, IT_MIX, 76, i, 0, 0);
     } else if (p->kind == PG_LIST) {
         it_add(p, IT_TITLE, 52, 0, 0, p->title);
-        if (p->job && !p->tl) it_add(p, IT_EMPTY, 160, 1, 0, p->jkind == 3 ? tr("Creando mezcla…") : 0);
+        if (p->job && !p->tl) it_add(p, IT_EMPTY, p->jkind == 3 ? 260 : 160, p->jkind == 3 ? 2 : 1, 0, p->jkind == 3 ? tr("Creando mezcla…") : 0);
         else mu_add_songs(p);
     }
     it_add(p, IT_EMPTY, 16, 0, 0, "");                /* margen final */
@@ -865,7 +872,14 @@ static void mu_job_done(struct mpg *p)
             int t = mu_find_path(ML, l); if (t >= 0) p->tl[p->ntl++] = t;
             if (!nl) break;
         }
-        if (!p->ntl) p->empty = p->jkind == 3 ? tr("No se pudo crear la mezcla") : tr("Lista vacía");
+        if (!p->ntl) {
+            p->empty = p->jkind == 3 ? tr("No se pudo crear la mezcla") : tr("Lista vacía");
+            /* la causa real, para no dejar un "no se pudo" sin explicacion */
+            if (access(MU_BIN, X_OK)) p->empty = tr("Falta el componente de mezclas (hibymix)");
+            else if (access("/usr/data/mnt/sd_0/.", F_OK) || !mu_sd_mounted()) p->empty = tr("No hay tarjeta SD");
+            else if (j->len < 0) p->empty = tr("No se pudo leer la biblioteca de HiBy");
+            lg("musica: mezcla vacia (len %d, salida %.80s)", j->len, j->out ? j->out : "");
+        }
         if (!p->tl) { p->tl = malloc(sizeof(int)); p->ntl = 0; }
     }
     mu_job_release(j); p->job = 0;
@@ -1079,7 +1093,29 @@ static void mu_draw_item(uint16_t *d, struct mpg *p, int idx, int y)
         if (mu_editing) draw_text(d, W - 16 - tw_n(tr("Cancelar"), 16, -1), y + 32, tr("Cancelar"), 16, MU_ACC, 0, 0, H);
         break; }
     case IT_EMPTY:
-        if (m->a) mu_spinner(d, W / 2, y + m->h / 2 - (m->s ? 12 : 0));
+        if (m->a == 2) {   /* generando una mezcla: portada de degradado que gira y late (como iOS) */
+            double t = now_ms() / 1000.0; int s = 132, cx = W / 2, cy = y + m->h / 2 - 22, x0 = cx - s / 2, y0 = cy - s / 2;
+            float pulse = 1 + 0.035f * sinf((float)(t * 3.2));
+            int ss = (int)(s * pulse); x0 = cx - ss / 2; y0 = cy - ss / 2;
+            float ca = cosf((float)t * 0.9f), sa = sinf((float)t * 0.9f);
+            for (int yy = 0; yy < ss; yy++) {
+                int Y = y0 + yy; if (Y < 30 || Y >= H) continue;
+                for (int xx = 0; xx < ss; xx++) {
+                    /* esquinas redondeadas (r = 22) */
+                    int dx = xx < 22 ? 22 - xx : xx > ss - 23 ? xx - (ss - 23) : 0, dy = yy < 22 ? 22 - yy : yy > ss - 23 ? yy - (ss - 23) : 0;
+                    if (dx * dx + dy * dy > 22 * 22) continue;
+                    float u = (xx - ss / 2.f) / ss, v = (yy - ss / 2.f) / ss, k = u * ca + v * sa + 0.5f;
+                    if (k < 0) k = 0; if (k > 1) k = 1;
+                    int r = (int)(255 * (1 - k) + 94 * k), g = (int)(45 * (1 - k) + 92 * k), bl = (int)(85 * (1 - k) + 230 * k);
+                    d[Y * W + x0 + xx] = rgb(r, g, bl);
+                }
+            }
+            mu_note(d, cx + ss / 14, cy, ss * 2 / 5, 0xFFFF);
+            mu_spinner(d, W / 2, y0 + ss + 26); mu_spin_on = 1;
+            if (m->s && m->s[0]) { int w = tw_n(m->s, 15, -1); if (w > W - 40) w = W - 40; draw_text(d, (W - w) / 2, y0 + ss + 44, m->s, 15, MU_GRAY, W - 40, 0, H); }
+            break;
+        }
+        if (m->a) { mu_spinner(d, W / 2, y + m->h / 2 - (m->s ? 12 : 0)); mu_spin_on = 1; }
         if (m->s && m->s[0]) { int w = tw_n(m->s, 15, -1); if (w > W - 40) w = W - 40; draw_text(d, (W - w) / 2, y + m->h / 2 + (m->a ? 22 : 5), m->s, 15, MU_GRAY, W - 40, 0, H); }
         break;
     }
@@ -1323,7 +1359,7 @@ static int mu_open_stock(void)
 
 /* --------- menus contextuales (dibujo y Reproduciendo en nowui.inc.c, incluido despues) */
 struct nu_mi { const char *t; int ic, grp; };    /* texto, icono (NI_*), empieza un grupo (separador ancho) */
-enum { NI_PLAY, NI_SHUF, NI_RADIO, NI_ALB, NI_ART, NI_TAGS, NI_LYR, NI_COV };
+enum { NI_PLAY, NI_SHUF, NI_RADIO, NI_ALB, NI_ART, NI_TAGS, NI_LYR, NI_COV, NI_ALBTAGS };
 enum { NU_NONE, NU_CLOSED, NU_HOME, NU_ALBUM, NU_ARTIST, NU_RADIO };
 static int nu_menu(const struct nu_mi *it, int n, const char *t1, const char *t2, int alb, const uint16_t *cov128, int ry, int rh);
 static int nu_open(int sx, int sy, int *arg);
@@ -1356,7 +1392,8 @@ static void mu_song_menu(int trk, struct mpg *pg, int idx, int ry, int rh)
     it[n++] = (struct nu_mi){ tr("Crear radio"), NI_RADIO, 0 };
     if (pg->kind != PG_ALBUM) { it[n++] = (struct nu_mi){ tr("Ir al álbum"), NI_ALB, 1 }; g = 1; }
     it[n++] = (struct nu_mi){ tr("Ir al artista"), NI_ART, !g };
-    it[n++] = (struct nu_mi){ tr("Editar etiquetas"), NI_TAGS, 1 };
+    it[n++] = (struct nu_mi){ tr("Editar canción"), NI_TAGS, 1 };
+    it[n++] = (struct nu_mi){ tr("Editar álbum"), NI_ALBTAGS, 0 };
     it[n++] = (struct nu_mi){ tr("Buscar letra"), NI_LYR, 0 };
     it[n++] = (struct nu_mi){ tr("Buscar carátula"), NI_COV, 0 };
     char sub[300]; snprintf(sub, sizeof sub, "%s · %s", t->artist, al->title);
@@ -1366,6 +1403,7 @@ static void mu_song_menu(int trk, struct mpg *pg, int idx, int ry, int rh)
     if (act == NI_PLAY) mu_play(pg->tl, pg->ntl, idx, 0, pg->title);
     else if (act == NI_RADIO) { mu_present(); mu_radio(trk); return; }
     else if (act == NI_TAGS) { char *v[1] = { path }; tag_editor(v, 1); }
+    else if (act == NI_ALBTAGS) { int na; char **v = mu_album_paths(t->alb, &na); if (v && na) tag_editor(v, na); if (v) free_list(v, na); }
     else if (act == NI_LYR) lyrics_search(path, t->artist, t->title, al->title);
     else if (act == NI_COV) { char *v[1] = { path }; cover_search(v, 1, al->artist, al->title); mu_cover_forget(t->alb); }
     else if (act == NI_ALB) { mu_present(); mu_push(mu_album_page(t->alb)); return; }

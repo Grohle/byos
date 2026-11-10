@@ -8,6 +8,15 @@
  *                                       (clave de MANAGER_TABLE, p. ej. 'album_artist\ABBA')
  *   hibyplay listpath check | drop      comprobar firmas y estado sin tocar nada | borrar nuestras tablas
  *     (necesitan hibymod_disp.so v6; MODO 0 orden, 1 repetir pista, 2 aleatorio, 3 repetir lista)
+ *   hibyplay pos                        posicion/duracion/estado segun el reproductor (v8)
+ *   hibyplay seek MS | +MS | -MS        saltar a MS de la pista (o relativo a la posicion actual)
+ *   hibyplay next-add [-d] [-u] [-r] [-b] RUTA   reproducir RUTA despues de la actual, sin cortar
+ *   hibyplay append [-d] [-u] [-r] [-b] RUTA     anadirla al final de la cola
+ *       -d repetir una que ya esta, -u fuera de la biblioteca, -r en aleatorio rehacer el orden,
+ *       -b lista de fabrica: copiarla a hibymod\q1 y seguir en el mismo punto (corte breve)
+ *   hibyplay vol [N]                    leer (valor y maximo) o poner el volumen absoluto
+ *   hibyplay qcheck                     comprobar firmas de la orden 'Q' sin tocar nada
+ *     (necesitan hibymod_disp.so v8, orden 'Q'; ver docs/research_seek_queue_volume.md)
  * Compilar: tools/build_hibyplay.sh (musl estatico, hard-float). */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -102,6 +111,44 @@ int main(int argc, char **argv)
         printf("id=%d rc=%d rows=%d index=%d slot=%d ms=%d %s\n", res.id, res.rc, res.rows, res.index, res.slot, res.ms, res.msg);
         return res.rc ? 1 : 0;
     }
+    if (!strcmp(c, "pos") || !strcmp(c, "seek") || !strcmp(c, "next-add") || !strcmp(c, "append") ||
+        !strcmp(c, "vol") || !strcmp(c, "qcheck")) {
+        struct pc_q_res res;
+        int rc;
+        if (!strcmp(c, "pos")) rc = pc_q_call("pos", INT_MIN, INT_MIN, 0, 0, &res);
+        else if (!strcmp(c, "qcheck")) rc = pc_q_call("check", INT_MIN, INT_MIN, 0, 0, &res);
+        else if (!strcmp(c, "seek")) {
+            if (argc < 3) goto usage;
+            int ms = atoi(argv[2]);
+            if (argv[2][0] == '+' || argv[2][0] == '-') {          /* relativo */
+                int p = 0, d = 0, s = 0;
+                if ((rc = pc_position(&p, &d, &s))) { fprintf(stderr, "seek: pos: %s\n", strerror(-rc)); return 1; }
+                ms += p; if (ms < 0) ms = 0;
+            }
+            rc = pc_q_call("seek", ms, INT_MIN, 0, 0, &res);
+        } else if (!strcmp(c, "vol")) {
+            if (argc >= 3) rc = pc_q_call("vol", INT_MIN, atoi(argv[2]), 0, 0, &res);
+            else rc = pc_q_call("volget", INT_MIN, INT_MIN, 0, 0, &res);
+        } else {
+            int a = 2, fl = 0;
+            for (; a < argc && argv[a][0] == '-' && argv[a][1] && !argv[a][2]; a++) {
+                if (argv[a][1] == 'd') fl |= PC_Q_DUP;
+                else if (argv[a][1] == 'u') fl |= PC_Q_UNSCANNED;
+                else if (argv[a][1] == 'r') fl |= PC_Q_RESHUFFLE;
+                else if (argv[a][1] == 'b') fl |= PC_Q_REBUILD;
+                else goto usage;
+            }
+            if (a != argc - 1) goto usage;
+            rc = pc_q_call(c[0] == 'a' ? "append" : "next", INT_MIN, INT_MIN, argv[a], fl, &res);
+        }
+        if (rc == -ETIMEDOUT || rc == -ENXIO || (rc < 0 && !res.id)) {
+            fprintf(stderr, "%s: %s%s\n", c, strerror(-rc), rc == -ETIMEDOUT ? " (libreria < v8?)" : "");
+            return 1;
+        }
+        printf("id=%d rc=%d op=%s pos=%d dur=%d state=%d index=%d count=%d val=%d max=%d ms=%d %s\n", res.id, res.rc,
+               res.op, res.pos, res.dur, res.state, res.index, res.count, res.val, res.max, res.ms, res.msg);
+        return res.rc ? 1 : 0;
+    }
     int r = 1;
     if (!strcmp(c, "toggle")) r = pc_toggle();
     else if (!strcmp(c, "play")) r = pc_play();
@@ -114,6 +161,7 @@ int main(int argc, char **argv)
     return 0;
 usage:
     fprintf(stderr, "uso: hibyplay status [-w MS] | raw | toggle | play | pause | next | prev | cover [RUTA] OUT.raw\n"
-                    "       | list [-i N] [-t TITULO] [-m MODO] [-u] FICHERO... | listpath RUTA_DE_LISTA N | listpath check | listpath drop\n");
+                    "       | list [-i N] [-t TITULO] [-m MODO] [-u] FICHERO... | listpath RUTA_DE_LISTA N | listpath check | listpath drop\n"
+                    "       | pos | seek MS|+MS|-MS | next-add [-d] [-u] [-r] [-b] RUTA | append [-d] [-u] [-r] [-b] RUTA | vol [N] | qcheck\n");
     return 2;
 }

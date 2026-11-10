@@ -28,7 +28,7 @@ enum { HT_FMT_NONE, HT_FMT_FLAC, HT_FMT_MP3, HT_FMT_M4A };
 /* codigos de error (negativos) */
 enum { HT_OK = 0, HT_EIO = -1, HT_EFORMAT = -2, HT_EUNSUP = -3, HT_ENOSPC = -4,
        HT_ECANCEL = -5, HT_ENOMEM = -6, HT_EOPEN = -7, HT_EDB = -8,
-       HT_ETOOBIG = -9, HT_EIMAGE = -10 };
+       HT_ETOOBIG = -9, HT_EIMAGE = -10, HT_EKEY = -11, HT_EEXIST = -12, HT_ENAME = -13 };
 /* tamano maximo de la imagen de ht_set_cover */
 #define HT_COVER_MAX (1024 * 1024)
 /* como se escribio un fichero */
@@ -73,6 +73,53 @@ HT_API int ht_set_cover(const char *path, const char *jpeg_path);
 /* solo para pruebas: si > 0, la reescritura falla adrede tras copiar estos bytes */
 extern uint64_t ht_test_fail_at;
 
+/* ------------------------------------------------------------------ todas las etiquetas de texto
+ * Claves canonicas (estilo Vorbis, en mayusculas): TITLE ARTIST ALBUM ALBUMARTIST GENRE DATE
+ * TRACKNUMBER DISCNUMBER (las 8 de siempre), TRACKTOTAL DISCTOTAL COMPOSER CONDUCTOR LYRICIST
+ * COMMENT LYRICS LABEL ISRC BPM COPYRIGHT ... y cualquier clave libre.
+ *   FLAC: cada comentario CLAVE=valor (alias: YEAR->DATE, TOTALTRACKS->TRACKTOTAL,
+ *         TOTALDISCS->DISCTOTAL, UNSYNCEDLYRICS->LYRICS, ALBUM ARTIST->ALBUMARTIST);
+ *         claves repetidas -> un elemento con los valores unidos por "; " (HT_ITEM_MULTI).
+ *   MP3:  tramas T*** conocidas (TCOM->COMPOSER, TPE3->CONDUCTOR, TPUB->LABEL, TSRC->ISRC...),
+ *         TRCK "3/12" -> TRACKNUMBER 3 + TRACKTOTAL 12 (igual TPOS), COMM -> COMMENT (o
+ *         COMMENT:descripcion), USLT -> LYRICS, TXXX:desc -> DESC. Tramas T*** desconocidas:
+ *         clave = su id (solo lectura). Imagenes, URL, PRIV... no se listan y no se tocan.
+ *   M4A:  solo lectura (fmt == HT_FMT_M4A: ht_write_kv devuelve HT_EUNSUP).
+ * Las imagenes incrustadas (PICTURE, APIC, METADATA_BLOCK_PICTURE) nunca se listan. */
+#define HT_ITEM_TRUNC 1      /* valor demasiado largo, leido a medias: no editar */
+#define HT_ITEM_RO    2      /* solo lectura (REPLAYGAIN_*, iTunNORM..., tramas desconocidas) */
+#define HT_ITEM_MULTI 4      /* varios valores en el fichero */
+#define HT_LONGMAX 32000     /* tope de un valor de ht_read_all (letras, comentarios) */
+typedef struct { char *key, *orig, *val; int flags; } ht_item;      /* key canonica; orig = como esta en el fichero */
+typedef struct { int fmt, n, cap; ht_item *it; } ht_all;
+HT_API int ht_read_all(const char *path, ht_all *a);    /* HT_OK o error; a siempre queda inicializado */
+HT_API void ht_all_free(ht_all *a);
+HT_API const ht_item *ht_all_find(const ht_all *a, const char *key);   /* key en cualquier forma */
+HT_API void ht_key_canon(const char *key, char *out, size_t outsz);
+HT_API int ht_key_valid(const char *key);               /* 1 si vale como clave (ASCII 0x20..0x7D sin '=') */
+HT_API int ht_key_base(const char *canon);              /* HT_TITLE.. si es una de las 8, si no -1 */
+
+/* cambio por clave: val NULL = no tocar, "" = borrar, otro = nuevo valor (sustituye a todos) */
+typedef struct { const char *key, *val; } ht_kv;
+/* Como ht_write, con claves libres. Mismas reglas de seguridad (en sitio si cabe en el relleno;
+ * si no, temporal + fsync + rename; audio e imagenes byte a byte). HT_EKEY si una clave no vale. */
+HT_API int ht_write_kv(const char *path, const ht_kv *kv, int nkv, ht_progress_fn cb, void *ud, int *mode);
+HT_API int ht_batch_kv(const char *const *paths, int n, const ht_kv *kv, int nkv, ht_batch_fn cb, void *ud, int *res);
+
+/* ------------------------------------------------------------------ nombres de fichero */
+HT_API int ht_name_valid(const char *name);             /* 1 si vale en FAT/exFAT (sin / \ : * ? " < > |) */
+HT_API void ht_name_clean(const char *in, char *out, size_t outsz);   /* lo no valido -> '_' */
+enum { HT_PAT_NUM_TITLE, HT_PAT_ARTIST_TITLE, HT_PAT_NUMTITLE, HT_PAT_N };   /* "01 - T", "A - T", "01 T" */
+/* nombre nuevo segun el patron (ext con punto, p. ej. ".flac"); multidisc: "1-01". 0 si falta el titulo */
+HT_API int ht_pattern_name(int pat, const char *track, const char *disc, int multidisc,
+                           const char *artist, const char *title, const char *ext, char *out, size_t outsz);
+/* renombra una cancion y su .lrc de al lado (misma raiz). HT_EEXIST si el destino ya existe,
+ * HT_ENAME si el nombre no vale. Si el .lrc no se puede mover, deshace el cambio. */
+HT_API int ht_rename_song(const char *from, const char *to);
+/* renombra/mueve una carpeta (con su cover.jpg, .lrc...). Crea la carpeta madre del destino si
+ * falta; rm_parent: borra la madre vieja si queda vacia. HT_EEXIST si el destino ya existe. */
+HT_API int ht_rename_dir(const char *from, const char *to, int rm_parent);
+
 #ifndef HIBYTAG_NO_DB
 #include "sqlite3.h"
 #define HT_SUGLEN 128
@@ -91,6 +138,10 @@ HT_API int ht_db_update(sqlite3 *db, const char *const *paths, int n, int *rows)
  * que empiezan por prefix (sin distinguir mayusculas ni acentos), luego los que lo contienen.
  * Ordenados por numero de pistas. Devuelve cuantos. */
 HT_API int ht_db_suggest(sqlite3 *db, int field, const char *prefix, char out[][HT_SUGLEN], int max);
+/* rutas tras renombrar: from[i] -> to[i] (ficheros o carpetas; carpeta = todo lo que cuelga).
+ * Cambia path, lrc_path y album_pic_path en todas las tablas con el esquema de pistas (MEDIA*,
+ * favoritos, historial, listas...). Una sola transaccion: o todo o nada. rows = filas cambiadas. */
+HT_API int ht_db_rename(sqlite3 *db, const char *const *from, const char *const *to, int n, int *rows);
 #endif
 
 #endif

@@ -1,20 +1,23 @@
 /* hibynet: letras (LRCLIB) y caratulas (iTunes Search + MusicBrainz/Cover Art Archive)
  * para HiByOS. Binario estatico pequeno: HTTP/1.1 propio + mbedTLS 2.28 + libjpeg + stb.
  *
- *   hibynet lyrics ARTIST TITLE [ALBUM] [DURATION_S]
- *       -> id \t artist \t title \t album \t duration \t synced(0/1)
+ *   hibynet lyrics ARTIST TITLE [ALBUM] [DURATION_S] [OUTDIR]
+ *       -> id \t artist \t title \t album \t duration \t synced(0/1) \t primer verso
+ *          (OUTDIR: guarda tambien cada resultado en OUTDIR/<id>.lrc, sin otra descarga)
  *   hibynet lyrics-get ID OUT.lrc
  *   hibynet covers ARTIST ALBUM
  *       -> source \t url \t artist \t album \t year
  *   hibynet cover-get URL OUT.jpg [SIZE]      (+ OUT.thumb.raw RGB565 LE 96x96)
- *   hibynet get URL OUT
+ *   hibynet get URL OUT                    (HIBYNET_RESUME=1: continua OUT.part con Range)
  *
  * stdout: resultados (UTF-8, uno por linea, separados por TAB). stderr: progreso/errores.
  * Codigos de salida: 0 ok, 1 sin resultados / no encontrado, 2 red/HTTP/TLS,
  *                    3 uso, 4 E/S o imagen.
  * Variables: HIBYNET_CA=ruta a cacert.pem (por defecto junto al binario),
  *            HIBYNET_NOBOM=1 (LRC sin BOM UTF-8), HIBYNET_VERBOSE=1,
- *            HIBYNET_STATS=1 (imprime VmHWM = pico de RSS al terminar).
+ *            HIBYNET_STATS=1 (imprime VmHWM = pico de RSS al terminar),
+ *            HIBYNET_TIMEOUT=s (plazo por llamada de red; por defecto 15 s),
+ *            HIBYNET_RESUME=1 (get: continuar OUT.part con Range).
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -84,7 +87,8 @@ static double now_s(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
-static void deadline_reset(void) { g_deadline = now_s() + NET_TIMEOUT; }
+static double g_timeout = NET_TIMEOUT;   /* HIBYNET_TIMEOUT=s: servidores lentos (Gutendex tarda > 1 min sin cache) */
+static void deadline_reset(void) { g_deadline = now_s() + g_timeout; }
 
 /* ====================================================================== TLS */
 static mbedtls_entropy_context g_ent;
@@ -408,7 +412,8 @@ static void urlenc(const char *s, char *out, size_t cap) {
 
 /* ================================================================== HTTP */
 typedef int (*sink_fn)(void *ctx, const unsigned char *d, int n);
-typedef struct { long long total, got; char ctype[96]; } http_info;
+typedef struct { long long total, got; char ctype[96]; int status; } http_info;
+static long long g_range;   /* > 0: pedir "Range: bytes=N-" (reanudar una descarga) */
 
 /* method "GET"/"HEAD". follow: seguir redirecciones. Devuelve status HTTP o -1. */
 static int http_req(const char *method, const char *url0, int follow, sink_fn sink, void *ctx,
@@ -424,13 +429,14 @@ static int http_req(const char *method, const char *url0, int follow, sink_fn si
         conn_t *c = calloc(1, sizeof *c);
         if (!c) return -1;
         if (conn_open(c, u.host, u.port, u.tls)) { free(c); return -1; }
-        char req[3072];
+        char req[3072], rng[48] = "";
+        if (g_range > 0) snprintf(rng, sizeof rng, "Range: bytes=%lld-\r\n", g_range);
         int defp = u.tls ? 443 : 80;
         char hostHdr[300];
         if (u.port == defp) snprintf(hostHdr, sizeof hostHdr, "%s", u.host); else snprintf(hostHdr, sizeof hostHdr, "%s:%d", u.host, u.port);
         int rl = snprintf(req, sizeof req,
             "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " UA "\r\nAccept: */*\r\n"
-            "Accept-Encoding: identity\r\nConnection: close\r\n\r\n", method, u.path, hostHdr);
+            "Accept-Encoding: identity\r\n%sConnection: close\r\n\r\n", method, u.path, hostHdr, rng);
         if (rl >= (int)sizeof req || conn_write(c, req, rl)) { conn_close(c); free(c); return -1; }
         char line[2048];
         if (conn_line(c, line, sizeof line) < 0) { logf_("sin respuesta de %s", u.host); conn_close(c); free(c); return -1; }
@@ -460,6 +466,7 @@ static int http_req(const char *method, const char *url0, int follow, sink_fn si
         }
         if (!strcmp(method, "HEAD") || status == 204 || status == 304) { conn_close(c); free(c); return status; }
         info->total = chunked ? -1 : clen;
+        info->status = status;
         unsigned char buf[4096];
         int rc = 0;
         if (chunked) {
@@ -513,14 +520,19 @@ static int sink_mem(void *ctx, const unsigned char *d, int n) {
     memcpy(m->p + m->n, d, n); m->n += n; m->p[m->n] = 0;
     return 0;
 }
-typedef struct { FILE *f; http_info *info; long long last, cap; } fsink;
+typedef struct { FILE *f; http_info *info; long long last, cap, off; } fsink;
 static int sink_file(void *ctx, const unsigned char *d, int n) {
     fsink *s = ctx;
+    if (s->info->status < 200 || s->info->status >= 300) return 0;   /* cuerpo de un error: no se guarda */
+    if (s->off > 0 && s->info->status != 206) {    /* el servidor ignoro el Range: desde cero */
+        if (fflush(s->f) || ftruncate(fileno(s->f), 0) || fseek(s->f, 0, SEEK_SET)) return -1;
+        s->off = 0;
+    }
     if (fwrite(d, 1, n, s->f) != (size_t)n) { logf_("error escribiendo: %s", strerror(errno)); return -1; }
     if (s->cap > 0 && s->info->got > s->cap) { logf_("descarga demasiado grande (>%lld)", s->cap); return -1; }
     if (s->info->got - s->last >= 65536) {
         s->last = s->info->got;
-        fprintf(stderr, "progress %lld %lld\n", s->info->got, s->info->total);
+        fprintf(stderr, "progress %lld %lld\n", s->off + s->info->got, s->info->total < 0 ? -1 : s->off + s->info->total);
     }
     return 0;
 }
@@ -533,17 +545,31 @@ static int get_mem(const char *url, mbuf *m) {
     return st;
 }
 
-/* GET a fichero, via OUT.part + rename. Devuelve status (200..299 = ok) o -1 */
+/* GET a fichero, via OUT.part + rename. Devuelve status (200..299 = ok) o -1.
+ * HIBYNET_RESUME=1 (descargas largas): si ya hay un OUT.part se pide el resto con Range y se
+ * anade (206); si el servidor manda el fichero entero (200) se empieza de cero; 416 = ya estaba
+ * completo. Si la red falla, OUT.part se conserva para la proxima vez. Sin la variable, como antes. */
 static int get_file(const char *url, const char *out, long long *bytes, long long cap) {
     char part[4096]; snprintf(part, sizeof part, "%s.part", out);
-    FILE *f = fopen(part, "wb");
+    int resume = getenv("HIBYNET_RESUME") != NULL;
+    struct stat ps; long long off = 0;
+    if (resume && !stat(part, &ps) && S_ISREG(ps.st_mode)) off = ps.st_size;
+    FILE *f = fopen(part, off > 0 ? "ab" : "wb");
     if (!f) { logf_("no se puede crear %s: %s", part, strerror(errno)); return -2; }
-    http_info info; fsink s = { f, &info, 0, cap };
+    http_info info; fsink s = { f, &info, 0, cap, off };
+    g_range = off;
+    if (off > 0) vlog("reanudando desde %lld", off);
     int st = http_req("GET", url, 1, sink_file, &s, &info, NULL, 0);
+    g_range = 0;
+    if (st == 416 && off > 0) st = 200;                        /* ya estaba entero */
     if (fclose(f)) st = -1;
-    if (st < 200 || st >= 300) { if (st > 0) logf_("HTTP %d", st); unlink(part); return st < 0 ? -1 : st; }
+    if (st < 200 || st >= 300) {
+        if (st > 0) logf_("HTTP %d", st);
+        if (!resume || st > 0) unlink(part);
+        return st < 0 ? -1 : st;
+    }
     if (rename(part, out)) { logf_("rename: %s", strerror(errno)); unlink(part); return -2; }
-    if (bytes) *bytes = info.got;
+    if (bytes) *bytes = s.off + info.got;
     return st;
 }
 
@@ -666,9 +692,32 @@ static void outf(const char *s, int last) {
 
 /* =============================================================== LYRICS */
 #define LRCLIB "https://lrclib.net"
-typedef struct { long id; char artist[160], title[160], album[160]; double dur; int synced; int score; } lyr_t;
-static lyr_t g_lyr[24]; static int g_nlyr;
+typedef struct { long id; char artist[160], title[160], album[160], first[160]; double dur; int synced; int score, ord; } lyr_t;
+static lyr_t g_lyr[40]; static int g_nlyr;
+static const char *g_lyr_dir;                    /* lyrics ... OUTDIR: cada resultado tambien en OUTDIR/<id>.lrc */
+static int lyr_save(const char *o, const char *out, int *synced);
 
+/* primera linea con texto (sin [mm:ss.xx], <mm:ss.xx> ni [ar:...]); sin cortar UTF-8 */
+static void lyr_first(const char *v, char *out, size_t cap) {
+    *out = 0;
+    char *s = jstrdup(v); if (!s) return;
+    for (char *l = s, *nl; l && *l; l = nl) {
+        nl = strpbrk(l, "\r\n"); if (nl) *nl++ = 0;
+        size_t k = 0;
+        for (const char *p = l; *p; ) {
+            if (*p == '[' || *p == '<') { const char *e = strchr(p, *p == '[' ? ']' : '>'); if (e) { p = e + 1; continue; } }
+            if (k + 1 < cap && !(k == 0 && (*p == ' ' || *p == '\t'))) out[k++] = *p == '\t' ? ' ' : *p;
+            p++;
+        }
+        while (k && out[k - 1] == ' ') k--;
+        out[k] = 0;
+        if (k) break;
+    }
+    free(s);
+    size_t n = strlen(out), j = n;
+    while (j && ((unsigned char)out[j - 1] & 0xC0) == 0x80) j--;
+    if (j) { unsigned char c = (unsigned char)out[j - 1]; size_t need = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4; if (j - 1 + need > n) out[j - 1] = 0; }
+}
 static void lyr_add(const char *o, double want_dur, int bonus) {
     if (g_nlyr >= (int)(sizeof g_lyr / sizeof g_lyr[0])) return;
     const char *v = jget(o, "id"); if (!v) return;
@@ -677,58 +726,64 @@ static void lyr_add(const char *o, double want_dur, int bonus) {
     const char *sl = jget(o, "syncedLyrics"), *pl = jget(o, "plainLyrics");
     int has_s = sl && !jnull(sl), has_p = pl && !jnull(pl);
     if (!has_s && !has_p) return;                /* instrumental / vacio */
-    lyr_t *L = &g_lyr[g_nlyr++];
+    lyr_t *L = &g_lyr[g_nlyr];
     memset(L, 0, sizeof *L);
-    L->id = id;
+    L->id = id; L->ord = g_nlyr++;
     jstr(jget(o, "artistName"), L->artist, sizeof L->artist);
     jstr(jget(o, "trackName"), L->title, sizeof L->title);
     jstr(jget(o, "albumName"), L->album, sizeof L->album);
     v = jget(o, "duration"); L->dur = v ? jnum(v) : 0;
     L->synced = has_s;
+    lyr_first(has_s ? sl : pl, L->first, sizeof L->first);
     int s = bonus + (has_s ? 0 : 40);
     if (want_dur > 0) { double d = L->dur - want_dur; if (d < 0) d = -d; s += d > 60 ? 60 : (int)d; }
     L->score = s;
+    if (g_lyr_dir) { char p[1200]; snprintf(p, sizeof p, "%s/%ld.lrc", g_lyr_dir, id); lyr_save(o, p, 0); }
 }
 static int lyr_cmp(const void *a, const void *b) {
     const lyr_t *x = a, *y = b;
-    return x->score != y->score ? x->score - y->score : 0;
+    return x->score != y->score ? x->score - y->score : x->ord - y->ord;
+}
+static void lyr_query(const char *url, double dur, int bonus, int one, int *neterr) {
+    mbuf m;
+    int st = get_mem(url, &m);
+    if (st == 200) { if (one) lyr_add(m.p, dur, bonus); else for (const char *e = jarr_first(m.p); e; e = jarr_next(e)) lyr_add(e, dur, bonus); }
+    else if (st < 0) (*neterr)++;
+    free(m.p);
 }
 
+/* varias consultas (exacta por duracion, artista+titulo, texto libre, solo titulo) sin repetir id */
 static int cmd_lyrics(int argc, char **argv) {
     if (argc < 2) return E_USAGE;
     const char *art = argv[0], *tit = argv[1];
-    const char *alb = argc > 2 ? argv[2] : "";
     double dur = argc > 3 ? atof(argv[3]) : 0;
-    char ea[600], et[600], eb[600], url[2400];
-    urlenc(art, ea, sizeof ea); urlenc(tit, et, sizeof et); urlenc(alb, eb, sizeof eb);
+    g_lyr_dir = argc > 4 && argv[4][0] ? argv[4] : NULL;
+    char ea[600], et[600], url[2400], q[1300], eq[3000];
+    urlenc(art, ea, sizeof ea); urlenc(tit, et, sizeof et);
     int neterr = 0;
-    mbuf m;
-    if (alb[0] && dur > 0) {
-        snprintf(url, sizeof url, LRCLIB "/api/get?artist_name=%s&track_name=%s&album_name=%s&duration=%d", ea, et, eb, (int)(dur + 0.5));
-        int st = get_mem(url, &m);
-        if (st == 200) lyr_add(m.p, dur, -100);
-        else if (st < 0) neterr++;
-        free(m.p);
+    if (art[0] && dur > 0) {                     /* /api/get acepta +-2 s de diferencia */
+        snprintf(url, sizeof url, LRCLIB "/api/get?artist_name=%s&track_name=%s&duration=%d", ea, et, (int)(dur + 0.5));
+        lyr_query(url, dur, -100, 1, &neterr);
     }
-    snprintf(url, sizeof url, LRCLIB "/api/search?track_name=%s&artist_name=%s", et, ea);
-    int st = get_mem(url, &m);
-    if (st == 200) for (const char *e = jarr_first(m.p); e; e = jarr_next(e)) lyr_add(e, dur, 0);
-    else if (st < 0) neterr++;
-    free(m.p);
-    if (g_nlyr == 0) {
-        char q[1300], eq[3000]; snprintf(q, sizeof q, "%s %s", art, tit); urlenc(q, eq, sizeof eq);
+    if (art[0]) {
+        snprintf(url, sizeof url, LRCLIB "/api/search?track_name=%s&artist_name=%s", et, ea);
+        lyr_query(url, dur, 0, 0, &neterr);
+    }
+    if (g_nlyr < 6) {
+        snprintf(q, sizeof q, "%s %s", tit, art); urlenc(q, eq, sizeof eq);
         snprintf(url, sizeof url, LRCLIB "/api/search?q=%s", eq);
-        st = get_mem(url, &m);
-        if (st == 200) for (const char *e = jarr_first(m.p); e; e = jarr_next(e)) lyr_add(e, dur, 10);
-        else if (st < 0) neterr++;
-        free(m.p);
+        lyr_query(url, dur, 10, 0, &neterr);
+    }
+    if (g_nlyr < 6 && tit[0]) {
+        snprintf(url, sizeof url, LRCLIB "/api/search?track_name=%s", et);
+        lyr_query(url, dur, 20, 0, &neterr);
     }
     qsort(g_lyr, g_nlyr, sizeof g_lyr[0], lyr_cmp);
-    int n = g_nlyr > 12 ? 12 : g_nlyr;
+    int n = g_nlyr > 16 ? 16 : g_nlyr;
     for (int i = 0; i < n; i++) {
         lyr_t *L = &g_lyr[i];
         printf("%ld\t", L->id); outf(L->artist, 0); outf(L->title, 0); outf(L->album, 0);
-        printf("%d\t%d\n", (int)(L->dur + 0.5), L->synced);
+        printf("%d\t%d\t", (int)(L->dur + 0.5), L->synced); outf(L->first, 1);
     }
     if (n) return E_OK;
     if (neterr) return E_NET;
@@ -747,6 +802,36 @@ static int write_atomic(const char *out, const char *data, size_t n) {
     return 0;
 }
 
+/* objeto JSON de LRCLIB -> fichero .lrc (cabecera [ar:][ti:][al:][length:][re:]). 0 ok, E_NONE sin letra */
+static int lyr_save(const char *o, const char *out, int *synced) {
+    const char *sl = jget(o, "syncedLyrics"), *pl = jget(o, "plainLyrics");
+    const char *src = (sl && !jnull(sl)) ? sl : (pl && !jnull(pl)) ? pl : NULL;
+    if (!src) { logf_("sin letra (instrumental)"); return E_NONE; }
+    char ar[300], ti[300], al[300];
+    jstr(jget(o, "artistName"), ar, sizeof ar);
+    jstr(jget(o, "trackName"), ti, sizeof ti);
+    jstr(jget(o, "albumName"), al, sizeof al);
+    const char *dv = jget(o, "duration"); int dur = dv ? (int)(jnum(dv) + 0.5) : 0;
+    char *body = jstrdup(src);
+    if (!body) return E_IO;
+    for (char *s = ar; *s; s++) if (*s == '\n' || *s == '\r') *s = ' ';
+    for (char *s = ti; *s; s++) if (*s == '\n' || *s == '\r') *s = ' ';
+    for (char *s = al; *s; s++) if (*s == '\n' || *s == '\r') *s = ' ';
+    size_t bl = strlen(body);
+    size_t cap = bl + 1200;
+    char *b = malloc(cap); if (!b) { free(body); return E_IO; }
+    size_t k = 0;
+    if (!getenv("HIBYNET_NOBOM")) { memcpy(b, "\xEF\xBB\xBF", 3); k = 3; }
+    k += snprintf(b + k, cap - k, "[ar:%s]\n[ti:%s]\n[al:%s]\n", ar, ti, al);
+    if (dur > 0) k += snprintf(b + k, cap - k, "[length:%02d:%02d]\n", dur / 60, dur % 60);
+    k += snprintf(b + k, cap - k, "[re:LRCLIB]\n");
+    for (size_t i = 0; i < bl && k < cap - 2; i++) if (body[i] != '\r') b[k++] = body[i];
+    if (k && b[k - 1] != '\n') b[k++] = '\n';
+    int rc = write_atomic(out, b, k);
+    if (synced) *synced = src == sl;
+    free(b); free(body);
+    return rc ? E_IO : E_OK;
+}
 static int cmd_lyrics_get(int argc, char **argv) {
     if (argc < 2) return E_USAGE;
     char url[256]; snprintf(url, sizeof url, LRCLIB "/api/get/%ld", atol(argv[0]));
@@ -754,33 +839,10 @@ static int cmd_lyrics_get(int argc, char **argv) {
     int st = get_mem(url, &m);
     if (st < 0) { free(m.p); return E_NET; }
     if (st != 200) { logf_("HTTP %d", st); free(m.p); return st == 404 ? E_NONE : E_NET; }
-    const char *sl = jget(m.p, "syncedLyrics"), *pl = jget(m.p, "plainLyrics");
-    const char *src = (sl && !jnull(sl)) ? sl : (pl && !jnull(pl)) ? pl : NULL;
-    if (!src) { logf_("sin letra (instrumental)"); free(m.p); return E_NONE; }
-    char ar[300], ti[300], al[300];
-    jstr(jget(m.p, "artistName"), ar, sizeof ar);
-    jstr(jget(m.p, "trackName"), ti, sizeof ti);
-    jstr(jget(m.p, "albumName"), al, sizeof al);
-    const char *dv = jget(m.p, "duration"); int dur = dv ? (int)(jnum(dv) + 0.5) : 0;
-    char *body = jstrdup(src);
-    if (!body) { free(m.p); return E_IO; }
-    for (char *s = ar; *s; s++) if (*s == '\n' || *s == '\r') *s = ' ';
-    for (char *s = ti; *s; s++) if (*s == '\n' || *s == '\r') *s = ' ';
-    for (char *s = al; *s; s++) if (*s == '\n' || *s == '\r') *s = ' ';
-    size_t bl = strlen(body);
-    size_t cap = bl + 1200;
-    char *o = malloc(cap); if (!o) { free(body); free(m.p); return E_IO; }
-    size_t k = 0;
-    if (!getenv("HIBYNET_NOBOM")) { memcpy(o, "\xEF\xBB\xBF", 3); k = 3; }
-    k += snprintf(o + k, cap - k, "[ar:%s]\n[ti:%s]\n[al:%s]\n", ar, ti, al);
-    if (dur > 0) k += snprintf(o + k, cap - k, "[length:%02d:%02d]\n", dur / 60, dur % 60);
-    k += snprintf(o + k, cap - k, "[re:LRCLIB]\n");
-    for (size_t i = 0; i < bl && k < cap - 2; i++) if (body[i] != '\r') o[k++] = body[i];
-    if (k && o[k - 1] != '\n') o[k++] = '\n';
-    int rc = write_atomic(argv[1], o, k);
-    if (!rc) printf("%s\t%d\n", argv[1], src == sl ? 1 : 0);
-    free(o); free(body); free(m.p);
-    return rc ? E_IO : E_OK;
+    int syn = 0, rc = lyr_save(m.p, argv[1], &syn);
+    if (rc == E_OK) printf("%s\t%d\n", argv[1], syn);
+    free(m.p);
+    return rc;
 }
 
 /* =============================================================== COVERS */
@@ -1136,7 +1198,7 @@ static int cmd_get(int argc, char **argv) {
 /* ================================================================== main */
 static void usage(void) {
     fputs("uso:\n"
-          "  hibynet lyrics ARTIST TITLE [ALBUM] [DURATION_S]\n"
+          "  hibynet lyrics ARTIST TITLE [ALBUM] [DURATION_S] [OUTDIR]\n"
           "  hibynet lyrics-get ID OUT.lrc\n"
           "  hibynet covers ARTIST ALBUM\n"
           "  hibynet cover-get URL OUT.jpg [SIZE]\n"
@@ -1146,6 +1208,7 @@ static void usage(void) {
 int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
     g_verbose = getenv("HIBYNET_VERBOSE") != NULL;
+    if (getenv("HIBYNET_TIMEOUT")) { double t = atof(getenv("HIBYNET_TIMEOUT")); if (t >= 1 && t <= 600) g_timeout = t; }
     const char *ca = getenv("HIBYNET_CA");
     if (ca) snprintf(g_ca, sizeof g_ca, "%s", ca);
     else {

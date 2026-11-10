@@ -781,6 +781,7 @@ static int app_back_gesture(int sx, int sy);
 #include "store.inc.c"
 #include "books.inc.c"
 #include "wireless.inc.c"
+#include "freemusic.inc.c"
 
 /* ------------------------------------------------------------------ volumen de la barra */
 /* Lee la cifra del volumen de la barra de estado del reproductor (fondo negro): cada

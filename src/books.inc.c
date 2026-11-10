@@ -33,6 +33,8 @@
 static const int bk_sizes[] = { 14, 15, 16, 17, 19, 21, 24, 27 };
 #define BK_NSIZES ((int)(sizeof bk_sizes / sizeof bk_sizes[0]))
 static int bk_size_i = 3, bk_theme = 0;
+static int bk_tab;                           /* 0 biblioteca, 1 audiolibros, 2 tienda (books_ab.inc.c) */
+static char ab_langc[16] = "";               /* idioma de la tienda (clave de ab_langs; "" = el de la interfaz) */
 struct bk_th { uint16_t bg, fg, dim, chrome, sheet, card, accent; };
 static struct bk_th bk_T(void)
 {
@@ -74,10 +76,12 @@ static void bk_xbtn(uint16_t *d, int cx, int cy, uint16_t bg, uint16_t fg)
 static void bk_conf_load(void)
 {
     FILE *f = fopen(BK_DIR "/settings", "r"); if (!f) return;
-    int s, t; if (fscanf(f, "%d %d", &s, &t) == 2) { if (s >= 0 && s < BK_NSIZES) bk_size_i = s; if (t >= 0 && t < 3) bk_theme = t; }
+    int s, t; char lc[16] = "";
+    if (fscanf(f, "%d %d %15s", &s, &t, lc) >= 2) { if (s >= 0 && s < BK_NSIZES) bk_size_i = s; if (t >= 0 && t < 3) bk_theme = t; }
+    if (lc[0] && strcmp(lc, "-")) snprintf(ab_langc, sizeof ab_langc, "%s", lc);
     fclose(f);
 }
-static void bk_conf_save(void) { bk_mkdirs(); char b[32]; int n = snprintf(b, sizeof b, "%d %d\n", bk_size_i, bk_theme); bk_write_atomic(BK_DIR "/settings", b, n); }
+static void bk_conf_save(void) { bk_mkdirs(); char b[48]; int n = snprintf(b, sizeof b, "%d %d %s\n", bk_size_i, bk_theme, ab_langc[0] ? ab_langc : "-"); bk_write_atomic(BK_DIR "/settings", b, n); }
 struct bk_pos { int ch, off; double opened; float pct; int done; };
 static int bk_pos_load(uint64_t h, struct bk_pos *p)
 {
@@ -331,9 +335,11 @@ static void bk_blit_scaled(uint16_t *d, const uint16_t *s, int sw, int sh, int r
     }
 }
 
+#include "books_ab.inc.c"                    /* pestanas Audiolibros y Tienda */
+
 /* --------------------------------------------- dibujo de la biblioteca */
 static void bk_cell_xy(int i, int *x, int *y) { *x = 20 + (i & 1) * (BK_CW + 16); *y = BK_LIST_Y + 14 + (i >> 1) * BK_PITCH - (int)bk_lscroll; }
-static float bk_lmax(void) { float m = ((bln + 1) / 2) * BK_PITCH + 14 - (H - BK_LIST_Y); return m < 0 ? 0 : m; }
+static float bk_lmax(void) { float m = ((bln + 1) / 2) * BK_PITCH + 14 - (AB_TABY - BK_LIST_Y); return m < 0 ? 0 : m; }
 static void bk_lib_render(uint16_t *d, int pressed)
 {
     for (int i = 0; i < W * H; i++) d[i] = 0;
@@ -341,16 +347,16 @@ static void bk_lib_render(uint16_t *d, int pressed)
     pthread_mutex_lock(&bk_mu);
     for (int i = 0; i < bln; i++) {
         int x, y; bk_cell_xy(i, &x, &y);
-        if (y + BK_PITCH < BK_LIST_Y || y > H) continue;
+        if (y + BK_PITCH < BK_LIST_Y || y > AB_TABY) continue;
         const uint16_t *cv = bk_cover(&bl[i]);
-        if (cv) bk_blit_scaled(d, cv, BK_CW, BK_CHT, x, y, BK_CW, BK_CHT, i == pressed ? 22 : 32, 4, BK_LIST_Y, H);
-        draw_text(d, x, y + BK_CHT + 19, bl[i].title, 13, 0xFFFF, BK_CW - 4, BK_LIST_Y, H);
+        if (cv) bk_blit_scaled(d, cv, BK_CW, BK_CHT, x, y, BK_CW, BK_CHT, i == pressed ? 22 : 32, 4, BK_LIST_Y, AB_TABY);
+        draw_text(d, x, y + BK_CHT + 19, bl[i].title, 13, 0xFFFF, BK_CW - 4, BK_LIST_Y, AB_TABY);
         char st[32]; uint16_t sc = rgb(142, 142, 147);
         if (bl[i].done) snprintf(st, sizeof st, "%s", tr("Terminado"));
         else if (bl[i].opened <= 0) { snprintf(st, sizeof st, "%s", tr("NUEVO")); sc = rgb(10, 132, 255); }
         else snprintf(st, sizeof st, "%d %%", (int)(bl[i].pct * 100 + 0.5f) < 1 ? 1 : (int)(bl[i].pct * 100 + 0.5f));
-        draw_text(d, x, y + BK_CHT + 37, st, 12, sc, BK_CW - 30, BK_LIST_Y, H);
-        for (int k = 0; k < 3; k++) { int cy = y + BK_CHT + 33; if (cy > BK_LIST_Y + 3 && cy < H - 3) fill_circle(d, x + BK_CW - 16 + k * 6, cy, 1.6f, rgb(142, 142, 147), 255); }
+        draw_text(d, x, y + BK_CHT + 37, st, 12, sc, BK_CW - 30, BK_LIST_Y, AB_TABY);
+        for (int k = 0; k < 3; k++) { int cy = y + BK_CHT + 33; if (cy > BK_LIST_Y + 3 && cy < AB_TABY - 3) fill_circle(d, x + BK_CW - 16 + k * 6, cy, 1.6f, rgb(142, 142, 147), 255); }
     }
     int n = bln;
     pthread_mutex_unlock(&bk_mu);
@@ -365,6 +371,7 @@ static void bk_lib_render(uint16_t *d, int pressed)
         const char *t = tr("No hay libros"); draw_text(d, (W - tw_n(t, 20, -1)) / 2, cy + 56, t, 20, 0xFFFF, 0, 0, H);
         draw_wrapped(d, 28, cy + 78, W - 56, sd_mounted() ? tr("BOOKS_HELP") : tr("La SD está conectada al ordenador"), 14, rgb(142, 142, 147), 19, 1);
     }
+    ab_tabbar(d, 0, 0);
     draw_toast(d);
 }
 
@@ -1168,6 +1175,7 @@ static void books_app_at(int ix, int iy)
     bk_conf_load();
     bk_lib_scan();
     bk_lscroll = 0;
+    ab_open();
     int gone = 0;
     /* volver al libro que estaba abierto (como iOS) */
     if (bk_resume_h) {
@@ -1176,7 +1184,7 @@ static void books_app_at(int ix, int iy)
         bk_resume_h = 0;
         bk_lib_present(-1);
     } else {
-        bk_lib_render(img_app, -1);
+        if (bk_tab) ab_render_tab(img_app); else bk_lib_render(img_app, -1);
         render_launcher(img_base, now_ms());
         double t0 = now_ms();
         for (;;) {   /* apertura con zoom desde el icono */
@@ -1187,9 +1195,14 @@ static void books_app_at(int ix, int iy)
             present(); if (t >= 1) break;
         }
     }
-    bk_lib_present(-1);
+    if (!bk_tab) bk_lib_present(-1);
     float vel = 0; struct pkt p;
     for (;;) {
+        if (bk_tab) {   /* Audiolibros / Tienda */
+            if (ab_run()) { gone = 1; break; }
+            bk_lib_scan();                        /* (puede haber EPUB nuevos de la Tienda) */
+            bk_lib_present(-1); continue;
+        }
         if (fabsf(vel) > 0.03f) {
             static double lt; double t = now_ms(); if (!lt || t - lt > 100) lt = t - 16;
             float dt = (float)(t - lt); lt = t; bk_lscroll -= vel * dt; vel *= powf(0.9975f, dt);
@@ -1199,6 +1212,8 @@ static void books_app_at(int ix, int iy)
             vel = 0; if (p.down) { drain_until_up(); continue; }
         } else if (!read_pkt(&p, bk_meta_run || now_ms() < toast_until + 40 ? 60 : 400)) {
             if (bk_lib_dirty || now_ms() < toast_until + 40) { bk_lib_dirty = 0; bk_lib_present(-1); }
+            ab_np_tick(0);                        /* progreso del audiolibro que suena */
+            if (ab_lib_epub_done()) { bk_lib_scan(); bk_lib_present(-1); }   /* EPUB de la Tienda */
             continue;
         }
         if (!p.down) continue;
@@ -1208,6 +1223,13 @@ static void books_app_at(int ix, int iy)
             while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
             if (up) { bk_lib_render(fr0, -1); if (own_home_gesture(sx, sy, app_by_id("books"))) { gone = 1; break; } bk_lib_present(-1); continue; }
             while (cur_down && read_pkt(&p, 1000)) {}
+            if (sx >= W / 3) bk_tab = sx < 2 * W / 3 ? 1 : 2;   /* toque en la barra de pestanas */
+            continue;
+        }
+        if (sy >= AB_TABY) {   /* barra de pestanas */
+            while (cur_down && read_pkt(&p, 3000)) {}
+            if (sx >= W / 3) bk_tab = sx < 2 * W / 3 ? 1 : 2;
+            else { bk_lscroll = 0; bk_lib_present(-1); }
             continue;
         }
         if (sy < BK_LIST_Y) { while (cur_down && read_pkt(&p, 3000)) {} continue; }
@@ -1268,6 +1290,7 @@ out:
         bk_lib_render(img_app, -1); render_launcher(img_base, now_ms());
     }
     bk_meta_join();                               /* (el hilo guarda el indice si cambio algo) */
+    ab_close();
     bk_cover_free();
     free(bl); bl = 0; bln = 0;
     free(bk_tl); bk_tl = 0; bk_ntl = 0;
