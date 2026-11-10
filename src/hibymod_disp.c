@@ -1,4 +1,4 @@
-/* hibymod_disp.so v5 - puente de pantalla y entrada entre hiby_player y hibyshell
+/* hibymod_disp.so v6 - puente de pantalla y entrada entre hiby_player y hibyshell
  * (LD_PRELOAD en hiby_player; ver hm_shared.h).
  *
  * PANTALLA: hiby_player compone con su DMA directamente en /dev/fb0 (2 bufers, sin
@@ -25,6 +25,9 @@
  * close/lseek) y lo que escribe al PCM (ioctl WRITEI de tinyalsa o snd_pcm_writei de
  * libasound): tramas, frecuencia, vaciados. El shell lo interpreta (src/nowplaying.inc.c).
  * Coste: unas comparaciones de fd por llamada; nada de esto toca el mutex de la pantalla.
+ *
+ * REPRODUCIR UNA LISTA (v6, orden 'L'): ver la seccion final y docs/investigacion_reproducir_lista.md.
+ * Inerte mientras nadie mande 'L'.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -57,6 +60,8 @@
 #include "hm_shared.h"
 
 #define HOLD_MAX_S 120
+#define BOOT_HOLD_S 30         /* retencion maxima durante la animacion de arranque */
+static int boot_hold;
 _Static_assert(sizeof(struct hm_state) <= HM_STATE_SIZE, "hm_state no cabe en HM_STATE_SIZE");
 
 static int active, fb_fd = -1;
@@ -189,9 +194,17 @@ static void wait_even(volatile uint32_t *seq)
     for (int i = 0; i < 300 && (*seq & 1); i++) usleep(10);
 }
 
-/* El panel (SLCD con memoria propia) recibe la imagen en cada FBIOPAN: se escribe el
- * bufer y DESPUES se presenta. Escribir tras presentar corrompe la transferencia en curso. */
+/* El panel (ST77903) NO tiene memoria: el DPU barre sin parar el bufer de la DDR a 44,3 Hz
+ * (docs/investigacion_60fps.md). FBIOPAN_DISPLAY solo cambia la direccion y duerme hasta el
+ * fin del fotograma en curso. Para el bufer de otro (el que ya se ve), escribir "y luego
+ * presentar" deja un corte donde estuviera el barrido. Por eso, cuando hay que escribir en
+ * el bufer VISIBLE: primero frame_edge() (pan del mismo bufer = esperar al fin de fotograma)
+ * y justo despues copiar de arriba abajo. La copia (300 KB, ~1 ms) va mas rapida que el
+ * barrido (22,6 ms por pantalla) y empieza en el vblank, asi que siempre le va por delante.
+ * Los bufers que el reproductor esta a punto de presentar (gancho de ioctl) no se ven aun:
+ * ahi se sigue escribiendo antes de su pan. */
 static void present_now(void) { r_ioctl(fb_fd, FBIOPAN_DISPLAY, &last_var); }
+static void frame_edge(void) { present_now(); }
 
 static void ov_apply(unsigned char *b)
 {
@@ -220,7 +233,22 @@ static void ov_apply(unsigned char *b)
     st->ov_saved = 1;
 }
 
+/* copia src -> d (bufer visible, tras frame_edge) y pone la capa en el orden del barrido:
+ * filas hasta el final de la capa, la capa, el resto. Asi ninguna fila de la capa se barre
+ * antes de estar puesta. */
+static void copy_then_ov(unsigned char *d, const unsigned char *src)
+{
+    uint32_t y = st->ov_y, h = st->ov_h;
+    st->ov_saved = 0;
+    if (!st->ov_on || !h || y + h > HM_H) { memcpy(d, src, fsize); ov_apply(d); return; }
+    size_t cut = (size_t)(y + h) * fline;
+    memcpy(d, src, cut);
+    ov_apply(d);
+    memcpy(d + cut, src + cut, fsize - cut);
+}
+
 /* ---------------------------------------------------------------- ordenes */
+static void pl_kick(void);     /* v6, al final del fichero */
 static void *control(void *arg)
 {
     (void)arg;
@@ -229,6 +257,7 @@ static void *control(void *arg)
         if (f < 0) { sleep(1); continue; }
         char c;
         while (read(f, &c, 1) == 1) {
+            if (c == 'L') { pl_kick(); continue; }   /* v6: sin el mutex de la pantalla */
             pthread_mutex_lock(&mu);
             if (c == 'C') {
                 if (!st->held && !st->capture && map_frames()) {
@@ -243,11 +272,11 @@ static void *control(void *arg)
                 }
             } else if (c == 'P') {
                 if (st->capture && frames) {
-                    wait_even(&st->fr0_seq);
+                    frame_edge();                       /* primero el fin de fotograma, luego copiar */
+                    wait_even(&st->fr0_seq);            /* casi siempre par: no retrasa la copia */
                     uint32_t y0 = st->dirty_y0, y1 = st->dirty_y1;
                     if (y1 > y0 && y1 <= HM_H) memcpy(buf_at(last_var.yoffset) + y0 * fline, frames + y0 * fline, (y1 - y0) * fline);
                     else memcpy(buf_at(last_var.yoffset), frames, fsize);
-                    present_now();
                 }
                 st->presents++;
             } else if (c == 'H') {
@@ -259,18 +288,17 @@ static void *control(void *arg)
                 if (st->waiting) pthread_cond_broadcast(&cv);
                 else if (have_var && fbmem) {
                     unsigned char *d = buf_at(last_var.yoffset);
-                    if (was_capture && frames) memcpy(d, frames + fsize, fsize);
-                    st->ov_saved = 0;
-                    ov_apply(d);
-                    present_now();
+                    frame_edge();
+                    if (was_capture && frames) copy_then_ov(d, frames + fsize);
+                    else { st->ov_saved = 0; ov_apply(d); }
                 }
                 st->presents++;
             } else if (c == 'O') {
                 if (!st->capture && !st->held && map_fb()) {
                     unsigned char *d = buf_at(last_var.yoffset);
-                    ov_restore(d);           /* quitar y poner la capa antes de presentar: */
-                    ov_apply(d);             /* nunca se ve un fotograma "sin capa" */
-                    present_now();
+                    frame_edge();            /* al empezar el vblank: quitar y poner seguidos */
+                    ov_restore(d);           /* (decenas de us), nunca se barre a medias */
+                    ov_apply(d);
                 }
                 st->presents++;
             }
@@ -384,10 +412,10 @@ static void *input_thread(void *arg)
                 if (st->capture || st->held) {
                     st->capture = 0; st->held = 0;
                     if (st->waiting) pthread_cond_broadcast(&cv);
-                    else if (fbmem && frames) { memcpy(buf_at(last_var.yoffset), frames + fsize, fsize); r_ioctl(fb_fd, FBIOPAN_DISPLAY, &last_var); }
+                    else if (fbmem && frames) { frame_edge(); memcpy(buf_at(last_var.yoffset), frames + fsize, fsize); st->ov_saved = 0; }
                 }
                 st->ov_on = 0;
-                if (fbmem) { ov_restore(buf_at(last_var.yoffset)); r_ioctl(fb_fd, FBIOPAN_DISPLAY, &last_var); }
+                if (fbmem) { frame_edge(); ov_restore(buf_at(last_var.yoffset)); }
                 pthread_mutex_unlock(&mu);
                 continue;
             }
@@ -399,6 +427,33 @@ static void *input_thread(void *arg)
 }
 
 /* si el shell se cuelga (sin morir) seguiria con la tactil capturada: matarlo */
+
+/* Fin de la animacion de arranque, sin depender de la version del shell: cuando el shell da
+ * senales de vida (shell_beat) o pasan BOOT_HOLD_S, se pide el final a hibyboot
+ * (/tmp/hibyos_boot_stop), se espera su fundido (<= 1,5 s) y se suelta al reproductor. */
+static void *boot_release(void *arg)
+{
+    (void)arg;
+    struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+    uint32_t beat0 = st->shell_beat;
+    for (;;) {
+        usleep(100000);
+        struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+        double el = (t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) / 1e9;
+        if (!st->held) break;                                  /* ya lo solto el shell ('R') */
+        if (st->shell_beat != beat0 || el > BOOT_HOLD_S - 2) {
+            int f = r_open("/tmp/hibyos_boot_stop", O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f >= 0) close(f);
+            for (int i = 0; i < 15 && !access("/tmp/hibyos_boot", F_OK); i++) usleep(100000);
+            pthread_mutex_lock(&mu);
+            st->held = 0;
+            if (st->waiting) pthread_cond_broadcast(&cv);
+            pthread_mutex_unlock(&mu);
+            break;
+        }
+    }
+    return 0;
+}
+
 static void *watchdog(void *arg)
 {
     (void)arg;
@@ -433,7 +488,11 @@ __attribute__((constructor)) static void init(void)
     if (m == MAP_FAILED) return;
     st = m;
     memset((void *)st, 0, sizeof *st);
+    /* animacion de arranque (hibyboot) en pantalla: el reproductor espera en su primer pan
+     * hasta que el shell lo suelte ('R') o pasen BOOT_HOLD_S; su carga sigue por debajo */
+    if (!access("/tmp/hibyos_boot", F_OK) && access("/tmp/hibyos_boot_stop", F_OK)) { st->held = 1; boot_hold = 1; }
     unlink(HM_FIFO);
+    if (boot_hold) { pthread_t tb; if (!pthread_create(&tb, 0, boot_release, 0)) pthread_detach(tb); else st->held = 0; }
     if (mkfifo(HM_FIFO, 0600)) return;
     pthread_t t;
     if (pthread_create(&t, 0, control, 0)) return;
@@ -702,7 +761,7 @@ int ioctl(int fd, unsigned long req, ...)
         st->yoffset = last_var.yoffset;
         if (st->held) {
             struct timespec until; clock_gettime(CLOCK_REALTIME, &until);
-            until.tv_sec += HOLD_MAX_S;
+            until.tv_sec += boot_hold ? BOOT_HOLD_S : HOLD_MAX_S; boot_hold = 0;
             st->waiting = 1;
             while (st->held)
                 if (pthread_cond_timedwait(&cv, &mu, &until) == ETIMEDOUT) { st->held = 0; break; }
@@ -805,4 +864,348 @@ int snd_pcm_drop(void *pcm)
     in_alsa = sv;
     if (active && !sv) { st->pcm_drops++; st->pcm_drop_ms = np_now(); }
     return k;
+}
+
+/* ---------------------------------------------------------------- v6: reproducir una lista
+ * Orden 'L' por la FIFO (ver docs/investigacion_reproducir_lista.md). INERTE si nadie la manda.
+ * El shell deja la peticion en PL_REQ (texto UTF-8) y manda 'L'; un hilo propio (nunca el de
+ * control, que sirve las animaciones) hace lo mismo que la interfaz de fabrica al tocar una
+ * cancion de una lista (manejador 0x4b4420) y que el servidor HiBy Link (playUuid, 0x4577a0),
+ * que tambien lo llama desde su propio hilo:
+ *     set_param(0x17,0,0); set_param(0x15, L"ruta de lista"); set_param(8, n);
+ *     get_param(0xb,&cur); set_param(0x10,cur); play_index(i, -1, 0x10002)
+ * La "ruta de lista" es la clave de MANAGER_TABLE; su contenido sale de list_tb_<id>. Con
+ * "f=" el hilo crea esa tabla (list_tb_7701/7702, ruta L"hibymod\q1"/"q2", alternando para
+ * no tocar la que suena) usando la conexion SQLite del propio reproductor y su cerrojo.
+ * Todas las direcciones se comprueban (firma de 16 bytes y punteros del contexto) antes de
+ * llamar a nada: con otro firmware la orden responde rc=-ENOEXEC y no hace nada.
+ * Peticion:  HMPL1 / id=N / index=I / [title=..] [mode=0..3] [pos=MS] [unscanned=1] [check=1] [drop=1]
+ *            [list=RUTA_DE_LISTA]  o  f=RUTA (una por linea, en orden; opcional "cue|ruta")
+ * Respuesta: PL_RES  "id=N rc=R rows=M index=I slot=S ms=T msg" */
+#define PL_REQ "/tmp/hibymod_playreq"
+#define PL_RES "/tmp/hibymod_playres"
+#define PL_MAX_ENTRIES 5000
+#define PL_TB0 7701                       /* list_tb_7701 / list_tb_7702 */
+
+typedef uint16_t hw16;                    /* las cadenas anchas del reproductor son UTF-16LE */
+/* hiby_player d1dea413a91ca3c6759c9029744bc52c (EXEC no PIE, base 0x400000) */
+#define HP_P            0x969ac8u         /* estado del reproductor; +0x48/+0x4c cerrojo */
+#define HP_DBCTX        0x991364u         /* puntero al contexto de la base: +0 sqlite3*, +0x564/+0x568 cerrojo */
+static const struct { uint32_t addr, w[4]; } pl_sig[] = {
+    { 0x4366a0, { 0x27bdffd0, 0xafb0001c, 0x3c100097, 0x26109ac8 } },   /* 0 set_param(id, ptr, val) */
+    { 0x4368e0, { 0x27bdf540, 0xafb10aac, 0x3c110097, 0x26319ac8 } },   /* 1 get_param(id, out, out2) */
+    { 0x43e8a0, { 0x27bdf348, 0xafb20cb0, 0xafb10cac, 0xafb00ca8 } },   /* 2 play_index(i, pos, flags) */
+    { 0x42baa0, { 0x27bdfdd0, 0xafb10224, 0x3c110097, 0xafb20228 } },   /* 3 setting_set(id, val) */
+    { 0x70eee0, { 0x3c020099, 0x8c421364, 0x2405ffff, 0x0811ed18 } },   /* 4 db_lock() */
+    { 0x70ef00, { 0x3c020099, 0x8c421364, 0x0811ed20, 0x8c44055c } },   /* 5 db_unlock() */
+    { 0x62e740, { 0x27bdffd0, 0x8fa20040, 0xafa70014, 0xafa00010 } },   /* 6 sqlite3_prepare_v2 */
+    { 0x618480, { 0x27bdfec0, 0xafbf013c, 0xafbe0138, 0xafb70134 } },   /* 7 sqlite3_step */
+    { 0x5fbae0, { 0x10800028, 0x00000000, 0x27bdffd0, 0xafbf002c } },   /* 8 sqlite3_finalize */
+    { 0x5db5a0, { 0x3c080083, 0x81083a94, 0x27bdffd8, 0x24030002 } },   /* 9 sqlite3_bind_text16 */
+    { 0x5db700, { 0x08176d98, 0x00063fc3, 0x00000000, 0x00000000 } },   /* 10 sqlite3_bind_int */
+    { 0x5c9840, { 0x27bdffd8, 0xafbf0024, 0xafb00020, 0x0c16fb68 } },   /* 11 sqlite3_column_int */
+    { 0x42a500, { 0x3c020097, 0x8c429590, 0x27bdffe0, 0x1040013b } },   /* 12 setting_get(id) */
+};
+typedef int (*pl_setp_t)(int, const void *, int);
+typedef int (*pl_getp_t)(int, void *, void *);
+typedef int (*pl_play_t)(int, int, int);
+typedef int (*pl_sset_t)(int, int);
+typedef intptr_t (*pl_sget_t)(int);
+typedef void (*pl_void_t)(void);
+typedef int (*sq_prep_t)(void *, const char *, int, void **, const char **);
+typedef int (*sq_stmt_t)(void *);
+typedef int (*sq_btxt_t)(void *, int, const void *, int, void *);
+typedef int (*sq_bint_t)(void *, int, int);
+typedef int (*sq_cint_t)(void *, int);
+#define PLF(i, t) ((t)(uintptr_t)pl_sig[i].addr)
+
+static volatile int pl_busy;
+
+/* [a, a+n) dentro de una proyeccion legible (y ejecutable si x) de este proceso: con otro
+ * binario, leer una direccion fija sin comprobarlo podria tumbar el reproductor */
+static int pl_mapped(uint32_t a, uint32_t n, int x)
+{
+    FILE *f = r_fopen("/proc/self/maps", "r");
+    if (!f) return 0;
+    char l[256]; int ok = 0;
+    while (!ok && fgets(l, sizeof l, f)) {
+        unsigned long lo, hi; char pr[8];
+        if (sscanf(l, "%lx-%lx %7s", &lo, &hi, pr) == 3 && a >= lo && a + n <= hi && pr[0] == 'r' && (!x || pr[2] == 'x')) ok = 1;
+    }
+    fclose(f);
+    return ok;
+}
+
+static int pl_check(void)
+{
+    for (size_t i = 0; i < sizeof pl_sig / sizeof pl_sig[0]; i++)
+        if (!pl_mapped(pl_sig[i].addr, 16, 1) || memcmp((const void *)(uintptr_t)pl_sig[i].addr, pl_sig[i].w, 16)) return -ENOEXEC;
+    if (!pl_mapped(HP_P, 0x100, 0) || !pl_mapped(HP_DBCTX, 4, 0)) return -ENOEXEC;
+    const uint32_t *p = (const uint32_t *)(uintptr_t)HP_P;
+    if (!p[0x48 / 4] || !p[0x4c / 4]) return -EAGAIN;              /* reproductor sin iniciar */
+    const uint32_t *ctx = *(uint32_t *const *)(uintptr_t)HP_DBCTX;
+    if (!ctx || !pl_mapped((uint32_t)(uintptr_t)ctx, 0x570, 0) || !ctx[0] || ctx[0x564 / 4] != 0x70eee0 || ctx[0x568 / 4] != 0x70ef00) return -EAGAIN;
+    return 0;
+}
+
+/* UTF-8 -> UTF-16 (con sustitutos), siempre terminada; devuelve unidades sin el 0 */
+static int pl_w16(const char *s, hw16 *o, int max)
+{
+    int n = 0;
+    const unsigned char *u = (const unsigned char *)s;
+    while (*u && n < max - 2) {
+        uint32_t c = *u++;
+        if (c >= 0xf0 && (u[0] & 0xc0) == 0x80 && (u[1] & 0xc0) == 0x80 && (u[2] & 0xc0) == 0x80) {
+            c = (c & 7) << 18 | (u[0] & 63) << 12 | (u[1] & 63) << 6 | (u[2] & 63); u += 3;
+        } else if (c >= 0xe0 && (u[0] & 0xc0) == 0x80 && (u[1] & 0xc0) == 0x80) {
+            c = (c & 15) << 12 | (u[0] & 63) << 6 | (u[1] & 63); u += 2;
+        } else if (c >= 0xc0 && (u[0] & 0xc0) == 0x80) {
+            c = (c & 31) << 6 | (u[0] & 63); u += 1;
+        } else if (c >= 0x80) c = 0xfffd;
+        if (c >= 0x10000) { c -= 0x10000; o[n++] = (hw16)(0xd800 | c >> 10); o[n++] = (hw16)(0xdc00 | (c & 1023)); }
+        else o[n++] = (hw16)c;
+    }
+    o[n] = 0;
+    return n;
+}
+
+/* ruta Linux -> ruta del reproductor ("a:\Artista\Album\x.flac"); las que ya son "x:\" pasan */
+static void pl_hpath(const char *in, char *out, size_t n)
+{
+    static const struct { const char *pre, *drv; } m[] = {
+        { "/usr/data/mnt/sd_0/", "a:\\" }, { "/data/mnt/sd_0/", "a:\\" }, { "/mnt/sd_0/", "a:\\" },
+        { "/usr/data/mnt/sd_1/", "b:\\" }, { "/data/mnt/sd_1/", "b:\\" }, { "/mnt/sd_1/", "b:\\" },  /* b: = sd_1 [I] */
+    };
+    const char *rest = in, *drv = "";
+    for (size_t i = 0; i < sizeof m / sizeof m[0]; i++)
+        if (!strncmp(in, m[i].pre, strlen(m[i].pre))) { drv = m[i].drv; rest = in + strlen(m[i].pre); break; }
+    size_t k = (size_t)snprintf(out, n, "%s", drv);
+    for (; *rest && k + 1 < n; rest++) out[k++] = *rest == '/' ? '\\' : *rest;
+    out[k < n ? k : n - 1] = 0;
+}
+
+struct pl_db { void *db; const char *err; int rc; };
+
+/* prepara, enlaza y ejecuta hasta DONE; si one != NULL devuelve la primera columna entera */
+static int pl_sql(struct pl_db *d, const char *sql, const hw16 *t1, int n1, const hw16 *t2, int n2, int i3, int *one)
+{
+    if (d->rc) return d->rc;
+    void *s = 0;
+    int r = PLF(6, sq_prep_t)(d->db, sql, -1, &s, 0);
+    if (r || !s) { d->rc = r ? r : -1; d->err = sql; return d->rc; }
+    /* los textos llevan el 0 final dentro, como los guarda el reproductor (bind de wcslen+1) */
+    if (t1) PLF(9, sq_btxt_t)(s, 1, t1, (n1 + 1) * 2, (void *)-1);   /* SQLITE_TRANSIENT */
+    if (t2) PLF(9, sq_btxt_t)(s, 2, t2, (n2 + 1) * 2, (void *)-1);
+    if (i3 != INT32_MIN) PLF(10, sq_bint_t)(s, 3, i3);
+    for (;;) {
+        r = PLF(7, sq_stmt_t)(s);
+        if (r == 100) { if (one) { *one = PLF(11, sq_cint_t)(s, 0); one = 0; } continue; }   /* SQLITE_ROW */
+        break;
+    }
+    PLF(8, sq_stmt_t)(s);
+    if (r != 101) { d->rc = r; d->err = sql; }                    /* SQLITE_DONE */
+    return d->rc;
+}
+
+#define PL_COLS "id,path,name,album,artist,genre,year,dis_id,ck_id,has_child_file,begin_time,end_time,cue_id,character," \
+                "size,sample_rate,bit_rate,bit,channel,format,quality,album_pic_path,lrc_path,track_gain,track_peak,ctime,mtime"
+#define PL_CREATE "(id INT,path TEXT COLLATE NOCASE,name TEXT COLLATE NOCASE,album TEXT COLLATE NOCASE,artist TEXT COLLATE NOCASE," \
+    "genre TEXT COLLATE NOCASE,year INT,dis_id INT,ck_id INT,has_child_file INT,begin_time INT,end_time INT,cue_id INT," \
+    "character TEXT COLLATE NOCASE,size INT,sample_rate INT,bit_rate INT,bit INT,channel INT,format INT,quality TEXT COLLATE NOCASE," \
+    "album_pic_path TEXT COLLATE NOCASE,lrc_path TEXT COLLATE NOCASE,track_gain REAL,track_peak REAL,ctime INT,mtime INT," \
+    "PRIMARY KEY(id, path, cue_id))"      /* = "CREATE TABLE IF NOT EXISTS %s%d(...)" del binario */
+
+struct pl_ent { char *path; int cue; };
+
+/* crea list_tb_<tb> con las entradas (en orden) y su fila de MANAGER_TABLE; devuelve filas o <0 */
+static int pl_build(int tb, const hw16 *lpath, int lpn, struct pl_ent *e, int n, int unscanned,
+                    int want, int *idx, const char **err)
+{
+    struct pl_db d = { *(void **)*(uint32_t *const *)(uintptr_t)HP_DBCTX, 0, 0 };
+    static hw16 w[1024];
+    char q[1400];
+    int rows = 0, found = 0;
+    PLF(4, pl_void_t)();                                          /* cerrojo de la base del reproductor */
+    pl_sql(&d, "BEGIN", 0, 0, 0, 0, INT32_MIN, 0);
+    if (d.rc) { *err = "BEGIN (transaccion abierta?)"; PLF(5, pl_void_t)(); return -EBUSY; }
+    pl_sql(&d, "CREATE TEMP TABLE IF NOT EXISTS hm_req(pos INTEGER PRIMARY KEY, path TEXT COLLATE NOCASE, cue INT)", 0, 0, 0, 0, INT32_MIN, 0);
+    pl_sql(&d, "DELETE FROM hm_req", 0, 0, 0, 0, INT32_MIN, 0);
+    for (int i = 0; i < n && !d.rc; i++) {
+        char hp[1024]; pl_hpath(e[i].path, hp, sizeof hp);
+        int k = pl_w16(hp, w, 1024);
+        snprintf(q, sizeof q, "INSERT INTO hm_req(pos, path, cue) VALUES (%d, ?1, %d)", i, e[i].cue);
+        pl_sql(&d, q, w, k, 0, 0, INT32_MIN, 0);
+    }
+    snprintf(q, sizeof q, "DROP TABLE IF EXISTS list_tb_%d", tb);           pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, 0);
+    snprintf(q, sizeof q, "CREATE TABLE IF NOT EXISTS list_tb_%d" PL_CREATE, tb); pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, 0);
+    /* una fila por cancion de la biblioteca, en el orden pedido (rowid = posicion en la lista).
+     * Sin unscanned, lo que no este en MEDIA_TABLE se descarta; con unscanned=1 entra con lo minimo. */
+    snprintf(q, sizeof q,
+        "INSERT OR IGNORE INTO list_tb_%d(" PL_COLS ") SELECT "
+        "COALESCE(m.id,-1-r.pos),r.path,COALESCE(m.name,r.path),COALESCE(m.album,''),COALESCE(m.artist,''),COALESCE(m.genre,''),"
+        "COALESCE(m.year,0),COALESCE(m.dis_id,0),COALESCE(m.ck_id,0),COALESCE(m.has_child_file,0),COALESCE(m.begin_time,0),"
+        "COALESCE(m.end_time,0),COALESCE(m.cue_id,-1),COALESCE(m.character,''),COALESCE(m.size,0),COALESCE(m.sample_rate,0),"
+        "COALESCE(m.bit_rate,0),COALESCE(m.bit,0),COALESCE(m.channel,0),COALESCE(m.format,0),COALESCE(m.quality,''),"
+        "COALESCE(m.album_pic_path,''),COALESCE(m.lrc_path,''),COALESCE(m.track_gain,0),COALESCE(m.track_peak,0),"
+        "COALESCE(m.ctime,0),COALESCE(m.mtime,0) "
+        "FROM hm_req r LEFT JOIN MEDIA_TABLE m ON m.path = r.path AND (r.cue < 0 OR m.cue_id = r.cue) "
+        "WHERE m.path IS NOT NULL OR %d ORDER BY r.pos, m.cue_id", tb, unscanned ? 1 : 0);
+    pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, 0);
+    snprintf(q, sizeof q, "SELECT count(*) FROM list_tb_%d", tb);   pl_sql(&d, q, 0, 0, 0, 0, INT32_MIN, &rows);
+    /* indice real de la entrada pedida (pudo haber descartes o duplicados) */
+    *idx = 0;
+    if (want >= 0 && want < n && !d.rc) {
+        char hp[1024]; pl_hpath(e[want].path, hp, sizeof hp);
+        int k = pl_w16(hp, w, 1024);
+        snprintf(q, sizeof q, "SELECT count(*) FROM list_tb_%d WHERE path = ?1", tb);   pl_sql(&d, q, w, k, 0, 0, INT32_MIN, &found);
+        snprintf(q, sizeof q, "SELECT count(*) FROM list_tb_%d WHERE rowid < (SELECT min(rowid) FROM list_tb_%d WHERE path = ?1)", tb, tb);
+        pl_sql(&d, q, w, k, 0, 0, INT32_MIN, idx);
+        if (!found) *idx = 0;
+    }
+    pl_sql(&d, "DELETE FROM MANAGER_TABLE WHERE id = ?3 OR path = ?1", lpath, lpn, 0, 0, tb, 0);
+    snprintf(q, sizeof q, "INSERT INTO MANAGER_TABLE(id, path, count, music_count, dir_count, m3u_count) VALUES (?3, ?1, %d, %d, 0, 0)", rows, rows);
+    pl_sql(&d, q, lpath, lpn, 0, 0, tb, 0);
+    if (!d.rc && rows <= 0) { d.rc = -1; d.err = "lista vacia (ninguna ruta esta en MEDIA_TABLE)"; }
+    if (d.rc) {
+        int keep = d.rc; const char *ke = d.err;
+        d.rc = 0; pl_sql(&d, "ROLLBACK", 0, 0, 0, 0, INT32_MIN, 0);
+        PLF(5, pl_void_t)();
+        *err = ke; return keep > 0 ? -1000 - keep : -EIO;
+    }
+    pl_sql(&d, "COMMIT", 0, 0, 0, 0, INT32_MIN, 0);
+    PLF(5, pl_void_t)();
+    if (d.rc) { *err = "COMMIT"; return -1000 - d.rc; }
+    return rows;
+}
+
+static void pl_result(int id, int rc, int rows, int idx, int slot, uint32_t ms, const char *msg)
+{
+    char l[400];
+    int n = snprintf(l, sizeof l, "id=%d rc=%d rows=%d index=%d slot=%d ms=%u %s\n", id, rc, rows, idx, slot, ms, msg ? msg : "");
+    int f = r_open(PL_RES ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (f >= 0) { if (write(f, l, n) < 0) {} r_close(f); rename(PL_RES ".tmp", PL_RES); }
+    f = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (f >= 0) { if (write(f, "pl: ", 4) < 0 || write(f, l, n) < 0) {} r_close(f); }
+}
+
+static void *pl_thread(void *arg)
+{
+    (void)arg;
+    uint32_t t0 = np_now();
+    int id = -1, idx = 0, mode = -1, pos = -1, unscanned = 0, rows = 0, slot = 0, rc = 0, n = 0, check = 0, drop = 0;
+    static char cmsg[160];
+    char title[64] = "", list[1024] = "";
+    const char *msg = "";
+    char *buf = 0;
+    struct pl_ent *e = 0;
+    static hw16 lw[1024];
+    if ((rc = pl_check())) { msg = rc == -ENOEXEC ? "firmware distinto: no se llama a nada" : "reproductor sin iniciar"; goto out; }
+    int f = r_open(PL_REQ, O_RDONLY);
+    if (f < 0) { rc = -ENOENT; msg = PL_REQ; goto out; }
+    struct stat sb;
+    if (fstat(f, &sb) || sb.st_size <= 0 || sb.st_size > (1 << 20) || !(buf = malloc(sb.st_size + 1))) { r_close(f); rc = -EINVAL; msg = "peticion vacia o enorme"; goto out; }
+    ssize_t got = read(f, buf, sb.st_size); r_close(f);
+    if (got != sb.st_size) { rc = -EIO; msg = "lectura"; goto out; }
+    buf[got] = 0;
+    if (strncmp(buf, "HMPL1\n", 6)) { rc = -EINVAL; msg = "falta HMPL1"; goto out; }
+    if (!(e = calloc(PL_MAX_ENTRIES, sizeof *e))) { rc = -ENOMEM; goto out; }
+    for (char *l = buf + 6, *nx; l && *l; l = nx) {
+        nx = strchr(l, '\n'); if (nx) *nx++ = 0;
+        size_t L = strlen(l); if (L && l[L - 1] == '\r') l[--L] = 0;
+        if (!strncmp(l, "id=", 3)) id = atoi(l + 3);
+        else if (!strncmp(l, "index=", 6)) idx = atoi(l + 6);
+        else if (!strncmp(l, "mode=", 5)) mode = atoi(l + 5);
+        else if (!strncmp(l, "pos=", 4)) pos = atoi(l + 4);
+        else if (!strncmp(l, "unscanned=", 10)) unscanned = atoi(l + 10);
+        else if (!strncmp(l, "title=", 6)) snprintf(title, sizeof title, "%s", l + 6);
+        else if (!strncmp(l, "list=", 5)) snprintf(list, sizeof list, "%s", l + 5);
+        else if (!strcmp(l, "check=1")) check = 1;
+        else if (!strcmp(l, "drop=1")) drop = 1;
+        else if (!strncmp(l, "f=", 2) && n < PL_MAX_ENTRIES) {
+            char *p = l + 2, *bar = strchr(p, '|');
+            e[n].cue = -1;
+            if (bar && bar - p < 6 && (bar == p || (p[0] >= '0' && p[0] <= '9') || p[0] == '-')) { e[n].cue = atoi(p); p = bar + 1; }
+            e[n++].path = p;
+        }
+    }
+    if (check) {                          /* solo comprobar: firmas ok + estado actual, sin tocar nada */
+        static hw16 cur[0x104]; char cu[0x104];
+        memset(cur, 0, sizeof cur);
+        PLF(1, pl_getp_t)(0x15, cur, 0);
+        int k = 0; for (; k < 0x103 && cur[k]; k++) cu[k] = cur[k] < 0x80 ? (char)cur[k] : '?';
+        cu[k] = 0;
+        int ci = -1, cnt = -1; PLF(1, pl_getp_t)(0x0b, &ci, 0); PLF(1, pl_getp_t)(0x08, &cnt, 0);
+        snprintf(cmsg, sizeof cmsg, "firmas ok; modo=%d lista='%s' indice=%d total=%d", (int)PLF(12, pl_sget_t)(0x1a), cu, ci, cnt);
+        idx = ci; rows = cnt; msg = cmsg; goto out;
+    }
+    if (drop) {                           /* quitar list_tb_7701/7702 y sus filas (no la que suena) */
+        static hw16 cur[0x104];
+        memset(cur, 0, sizeof cur);
+        PLF(1, pl_getp_t)(0x15, cur, 0);
+        if (cur[0] == 'h' && cur[1] == 'i' && cur[2] == 'b' && cur[3] == 'y' && cur[7] == '\\') { rc = -EBUSY; msg = "suena una lista de hibymod: cambia de lista antes"; goto out; }
+        struct pl_db d = { *(void **)*(uint32_t *const *)(uintptr_t)HP_DBCTX, 0, 0 };
+        PLF(4, pl_void_t)();
+        pl_sql(&d, "DROP TABLE IF EXISTS list_tb_7701", 0, 0, 0, 0, INT32_MIN, 0);
+        pl_sql(&d, "DROP TABLE IF EXISTS list_tb_7702", 0, 0, 0, 0, INT32_MIN, 0);
+        pl_sql(&d, "DELETE FROM MANAGER_TABLE WHERE id IN (7701, 7702)", 0, 0, 0, 0, INT32_MIN, 0);
+        PLF(5, pl_void_t)();
+        rc = d.rc ? -1000 - d.rc : 0; msg = d.rc ? d.err : "borradas"; goto out;
+    }
+    int lpn;
+    if (list[0]) {                        /* lista que ya existe en el reproductor: nada que escribir */
+        lpn = pl_w16(list, lw, 1024);
+        rows = -1;                        /* n de la lista (param 8) = su fila de MANAGER_TABLE, si la hay */
+        struct pl_db d = { *(void **)*(uint32_t *const *)(uintptr_t)HP_DBCTX, 0, 0 };
+        PLF(4, pl_void_t)();
+        pl_sql(&d, "SELECT count FROM MANAGER_TABLE WHERE path = ?1", lw, lpn, 0, 0, INT32_MIN, &rows);
+        PLF(5, pl_void_t)();
+        if (d.rc) rows = -1;
+    } else {
+        if (!n) { rc = -EINVAL; msg = "sin entradas f="; goto out; }
+        /* la ranura que no suena */
+        static hw16 cur[0x104];
+        memset(cur, 0, sizeof cur);
+        PLF(1, pl_getp_t)(0x15, cur, 0);
+        static const hw16 q1[] = { 'h','i','b','y','m','o','d','\\','q','1',0 };
+        slot = memcmp(cur, q1, sizeof q1) ? 1 : 2;
+        char lp[16]; snprintf(lp, sizeof lp, "hibymod\\q%d", slot);
+        lpn = pl_w16(lp, lw, 1024);
+        rows = pl_build(PL_TB0 + slot - 1, lw, lpn, e, n, unscanned, idx, &idx, &msg);
+        if (rows < 0) { rc = rows; goto out; }
+    }
+    /* secuencia de la interfaz de fabrica (0x4b45c8..0x4b4634) */
+    if (mode >= 0 && mode <= 3) {         /* 0 en orden, 1 repetir pista, 2 aleatorio, 3 repetir lista */
+        PLF(3, pl_sset_t)(0x1a, mode);    /* como setPlayMode de HiBy Link (0x4578e0) */
+        PLF(0, pl_setp_t)(0x0a, (const void *)(intptr_t)mode, 0);
+    }
+    if (title[0]) PLF(0, pl_setp_t)(0x1b, title, 0);
+    PLF(0, pl_setp_t)(0x17, 0, 0);
+    PLF(0, pl_setp_t)(0x15, lw, 0);
+    if (rows > 0) PLF(0, pl_setp_t)(0x08, (const void *)(intptr_t)rows, 0);
+    int curi = 0;
+    PLF(1, pl_getp_t)(0x0b, &curi, 0);
+    PLF(0, pl_setp_t)(0x10, (const void *)(intptr_t)curi, 0);
+    rc = PLF(2, pl_play_t)(idx, pos >= 0 ? pos : -1, 0x10002);
+    msg = rc ? "play_index fallo" : "ok";
+out:
+    pl_result(id, rc, rows, idx, slot, np_now() - t0, msg);
+    free(e); free(buf);
+    __sync_synchronize();
+    pl_busy = 0;
+    return 0;
+}
+
+static void pl_kick(void)
+{
+    if (__sync_lock_test_and_set(&pl_busy, 1)) {      /* solo al registro: PL_RES es de la peticion en curso */
+        int f = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (f >= 0) { if (write(f, "pl: ocupado, orden 'L' ignorada\n", 32) < 0) {} r_close(f); }
+        return;
+    }
+    pthread_attr_t a; pthread_t t;
+    pthread_attr_init(&a);
+    pthread_attr_setstacksize(&a, 512 * 1024);    /* las funciones del reproductor usan marcos de 3-12 KB */
+    pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&t, &a, pl_thread, 0)) { pl_busy = 0; pl_result(-1, -EAGAIN, 0, 0, 0, 0, "pthread_create"); }
+    pthread_attr_destroy(&a);
 }

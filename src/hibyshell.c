@@ -767,6 +767,7 @@ static void draw_toast(uint16_t *dst);
 #include "cc.inc.c"
 #include "ota.inc.c"
 #include "lyrics.inc.c"
+#include "music.inc.c"
 #include "widgets.inc.c"
 #include "hpk.h"
 #include "hpk.inc.c"
@@ -973,6 +974,11 @@ int main(int argc, char **argv)
     pthread_t th; pthread_create(&th, 0, nav_thread, 0);
     text_init();
     register_installed_apps();
+    {   /* animacion de arranque: pedir el final, esperar al fundido (<= 1,5 s) y soltar al reproductor */
+        int f = open("/tmp/hibyos_boot_stop", O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f >= 0) close(f);
+        double tb = now_ms(); while (!access("/tmp/hibyos_boot", F_OK) && now_ms() - tb < 1500) msleep(20);
+        if (st->held) cmd('R');
+    }
     lconf_load();
     pw_load();
     npx_start();

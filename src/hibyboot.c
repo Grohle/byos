@@ -1,7 +1,8 @@
 /* hibyboot - animacion de arranque de HiByOS (formato HBA1, ver tools/bootanim.py).
  *
  * Lo lanza S11jpeg_display_shell en cuanto existe /dev/fb0. Reproduce la intro una vez
- * y repite el bucle hasta que arranca hiby_player; entonces funde hacia el fotograma de
+ * y repite el bucle hasta que el inicio esta listo (el shell crea /tmp/hibyos_boot_stop; la
+ * libreria de pantalla retiene al reproductor mientras tanto); entonces funde hacia el fotograma de
  * reposo (identico al boot_animation/0.png del reproductor) y sale, sin salto visible.
  * Panel SLCD con GRAM propia: SIEMPRE escribir el bufer y despues hacer el pan.
  * Uso: hibyboot [fichero.hba]   (por defecto /usr/share/hibyos/hibyos.hba) */
@@ -68,6 +69,7 @@ int main(int argc, char **argv)
       if (d && len == bw * bh * 2) memcpy(rest, d, len); else memset(rest, 0, bw * bh * 2); free(d); }
 
     double frame_ms = 1000.0 / (fps ? fps : 24), t0 = now_ms(), next = t0, last_check = 0;
+    { int f = open("/tmp/hibyos_boot", O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f >= 0) close(f); }   /* la libreria retiene al reproductor */
     int i = 0, back = nbuf > 1 ? 1 : 0, ending = 0, fade = 0;
     for (;;) {
         if (!ending) {
@@ -95,12 +97,18 @@ int main(int argc, char **argv)
         double t = now_ms();
         if (!ending && t - last_check > 250) {
             last_check = t;
-            if ((test_s ? t - t0 > test_s * 1000 : player_running()) || !access("/tmp/hibyos_boot_stop", F_OK) || t - t0 > 120000) ending = 1;
+            /* fin: lo pide el shell (inicio listo); o el reproductor arranco SIN la libreria de
+             * pantalla (nadie lo retiene: dibujaria encima); o 32 s como maximo */
+            int player = !test_s && player_running();
+            static double player_t; if (player && !player_t) player_t = t;
+            int no_shim = player && t - player_t > 1500 && access("/tmp/hibymod_disp", F_OK);
+            if ((test_s && t - t0 > test_s * 1000) || !access("/tmp/hibyos_boot_stop", F_OK) || no_shim || t - t0 > 32000) ending = 1;
         }
         next += frame_ms;
         double w = next - now_ms();
         if (w > 0) usleep((useconds_t)(w * 1000)); else next = now_ms();
     }
+    unlink("/tmp/hibyos_boot");
     /* deja el reposo en los dos buferes: el reproductor parte de una imagen identica */
     for (int b = 0; b < nbuf; b++) { uint16_t *dst = fbm + b * stride * H;
         for (int y = 0; y < bh; y++) memcpy(dst + (by + y) * stride + ox, rest + y * bw, bw * 2); }
