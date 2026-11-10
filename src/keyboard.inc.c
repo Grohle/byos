@@ -332,6 +332,36 @@ static void kb_icon_check(uint16_t *d, float cx, float cy, uint16_t c)
     kb_stroke(d, C, 3, 0, cx, cy, 1, 1.8f, c);
 }
 
+/* iconos en cache: se rasterizan una vez (por tamano y subpixel) y luego solo se funden */
+enum { KI_SHIFT, KI_SHIFT_ON, KI_CAPS, KI_BACK, KI_GLOBE, KI_HIDE };
+static uint8_t kb_icm[10][32 * 32]; static int kb_ick[10], kb_icn;
+static void kb_icon(uint16_t *d, int id, float cx, float cy, float s, uint16_t c, int cy0)
+{
+    int ix = (int)floorf(cx), iy = (int)floorf(cy), fx = (int)((cx - ix) * 2), fy = (int)((cy - iy) * 2);
+    int key = 1 + id * 100000 + (int)(s * 100) * 10 + fx * 3 + fy, slot = -1;
+    for (int i = 0; i < 10; i++) if (kb_ick[i] == key) { slot = i; break; }
+    if (slot < 0) {
+        static uint16_t tile[W * 32];
+        memset(tile, 0, sizeof tile);
+        float ox = 16 + fx * .5f, oy = 16 + fy * .5f;
+        if (id <= KI_CAPS) kb_icon_shift(tile, ox, oy, s, id != KI_SHIFT, id == KI_CAPS, 0xFFFF);
+        else if (id == KI_BACK) kb_icon_back(tile, ox, oy, s, 0xFFFF);
+        else if (id == KI_GLOBE) kb_icon_globe(tile, ox, oy, 0xFFFF);
+        else kb_icon_hide(tile, ox, oy, 0xFFFF);
+        slot = kb_icn; kb_icn = (kb_icn + 1) % 10; kb_ick[slot] = key;
+        for (int y = 0; y < 32; y++) for (int x = 0; x < 32; x++) kb_icm[slot][y * 32 + x] = (uint8_t)(((tile[y * W + x] >> 5) & 63) * 255 / 63);
+    }
+    const uint8_t *m = kb_icm[slot];
+    for (int y = 0; y < 32; y++) {
+        int dy = iy - 16 + y; if (dy < cy0 || dy >= H || dy < 0) continue;
+        for (int x = 0; x < 32; x++) {
+            int dx = ix - 16 + x; unsigned a = m[y * 32 + x];
+            if (!a || (unsigned)dx >= W) continue;
+            d[dy * W + dx] = a >= 255 ? c : kb_mix(d[dy * W + dx], c, a);
+        }
+    }
+}
+
 /* zona salvada bajo la burbuja (lo de encima del teclado se restaura sin repintar la pantalla) */
 static uint16_t kb_ovbuf[36000];
 static int kb_ov_on, kb_ov_x, kb_ov_y, kb_ov_w, kb_ov_h; static uint16_t *kb_ov_dst;
@@ -433,8 +463,8 @@ static void kb_draw_key(uint16_t *d, int i, int pressed, int y0, int cy0)
     kb_blit(d, x, y, w, h, 6, bg, 255, cy0, H);
     if (kb_trackpad) return;
     float s = h / 42.f; if (s < .85f) s = .85f; if (s > 1.1f) s = 1.1f;
-    if (k->code == K_SHIFT && kb_layer == 0) { kb_icon_shift(d, x + w / 2.f, y + h / 2.f + .5f, s, shift_on, kb_caps, fg); return; }
-    if (k->code == K_BACK) { kb_icon_back(d, x + w / 2.f - .5f, y + h / 2.f, s, fg); return; }
+    if (k->code == K_SHIFT && kb_layer == 0) { kb_icon(d, !shift_on ? KI_SHIFT : kb_caps ? KI_CAPS : KI_SHIFT_ON, x + w / 2.f, y + h / 2.f + .5f, s, fg, cy0); return; }
+    if (k->code == K_BACK) { kb_icon(d, KI_BACK, x + w / 2.f - .5f, y + h / 2.f, s, fg, cy0); return; }
     char lb[8]; const char *l = k->lbl;
     if (k->code > 0 && kb_upper()) { put_utf8(lb, up_case(k->code)); l = lb; }
     int size = k->code > 0 ? (h >= 38 ? 21 : 19) : (k->code == K_SPACE ? 14 : 15);
@@ -524,8 +554,8 @@ static void kb_draw(uint16_t *dst, int pressed)
         uint16_t ic = rgb(200, 200, 205);
         if (kb_bar_press == 1 || kb_menu) kb_blit(dst, 6, by + 1, 38, 26, 8, KB_C_SPEC, 255, cy0, H);
         if (kb_bar_press == 2) kb_blit(dst, W - 46, by + 1, 40, 26, 8, KB_C_SPEC, 255, cy0, H);
-        kb_icon_globe(dst, 25, by + 14, ic);
-        kb_icon_hide(dst, W - 26, by + 14, ic);
+        kb_icon(dst, KI_GLOBE, 25, by + 14, 1, ic, cy0);
+        kb_icon(dst, KI_HIDE, W - 26, by + 14, 1, ic, cy0);
     }
     if (kb_sheet_h > 0) kb_draw_sheet(dst);
     if (kb_menu) kb_draw_menu(dst);
@@ -724,7 +754,7 @@ static void kb_height_drag(struct pkt *p)
 static void kb_sheet_touch(struct pkt *p, int x, int y)
 {
     int rel = y - kb_sheet_top();
-    if (rel >= 136 || y >= kb_keys_top() - 4) { kb_height_drag(p); return; }
+    if (rel >= 140 || y >= kb_keys_top() - 4) { kb_height_drag(p); return; }
     if (rel < 28) {                                   /* Listo */
         if (x < W - 90) { while (kb_pump(p, 3000)) {} return; }
         kb_sheet_press = 0; kb_show();

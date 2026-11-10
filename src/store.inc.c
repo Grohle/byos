@@ -117,12 +117,14 @@ static void run_ext_app(int a, int ix, int iy)
     char *envp[] = { env_dir, env_data, env_lang, env_touch, env_keys, "HM_FB=/dev/fb0", "PATH=/usr/bin:/bin:/usr/sbin:/sbin", 0 };
     char *argv[] = { exe, 0 };
     pid_t pid;
+    int hold = pk->refresh_full; if (hold) hz_hold++;   /* refresh=full: sin refresco de reposo */
+    lcd_boost();
     lg("abrir app externa %s", pk->id);
     if (posix_spawn(&pid, exe, 0, 0, argv, envp)) { lg("no se pudo lanzar %s", exe); toast(tr("No se pudo abrir")); pid = -1; }
     /* reenviar la tactil a la app; la barra de inicio la cierra */
-    struct pkt p; double term_t = 0;
+    struct pkt p; double term_t = 0; int stt = 0;
     while (pid > 0) {
-        int stt; if (waitpid(pid, &stt, WNOHANG) == pid) break;
+        if (waitpid(pid, &stt, WNOHANG) == pid) break;
         if (term_t && now_ms() - term_t > 1000) { kill(pid, SIGKILL); waitpid(pid, &stt, 0); break; }
         if (!read_pkt(&p, 50)) continue;
         if (p.down && p.y >= 456 && !term_t) {
@@ -133,6 +135,7 @@ static void run_ext_app(int a, int ix, int iy)
         }
         if (p.n) write(app_uin, p.ev, p.n * sizeof p.ev[0]);
     }
+    if (hold) hz_hold--;
     lg("app externa cerrada");
     /* volver: la ultima imagen de la app se encoge hasta su icono */
     memcpy(img_sheet, visible(), HM_FRAME_BYTES); have_under = 0;
@@ -151,6 +154,8 @@ static void run_ext_app(int a, int ix, int iy)
         draw_scaled(fr0, img_sheet, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
+    /* 99 = la app se cerro sola por falta de memoria (vigilante del Navegador) */
+    if (pid > 0 && !term_t && WIFEXITED(stt) && WEXITSTATUS(stt) == 99) toast(tr("La app se cerró por falta de memoria"));
     launcher_present();
 }
 
@@ -986,9 +991,10 @@ static int st_pill(uint16_t *d, int xr, int y, int state, double frac, int fille
     if (state == S_LOADING || state == S_INSTALLING) { st_ring(d, xr - 16, y + 14, (float)frac, now_ms(), state == S_INSTALLING && frac <= 0.01); return 32; }
     const char *t = state == S_GET || state == S_NEWER ? tr("OBTENER") : state == S_UPDATE ? tr("ACTUALIZAR") : tr("ABRIR");
     int pw = tw_n(t, 13, -1) + 30; if (pw < 74) pw = 74;
-    int blue = filled && state != S_OPEN;
-    fill_rrect(d, xr - pw, y, pw, 28, 14, blue ? rgb(10, 132, 255) : rgb(44, 44, 48), 255);
-    draw_text(d, xr - pw + (pw - tw_n(t, 13, -1)) / 2, y + 19, t, 13, blue ? 0xFFFF : state == S_NEWER ? rgb(99, 99, 102) : rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
+    int blue = filled == 1 && state != S_OPEN, glass = filled == 2;   /* 2: sobre tarjeta de color */
+    if (glass) fill_rrect(d, xr - pw, y, pw, 28, 14, 0xFFFF, 64);
+    else fill_rrect(d, xr - pw, y, pw, 28, 14, blue ? rgb(10, 132, 255) : rgb(44, 44, 48), 255);
+    draw_text(d, xr - pw + (pw - tw_n(t, 13, -1)) / 2, y + 19, t, 13, blue || glass ? 0xFFFF : state == S_NEWER ? rgb(99, 99, 102) : rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
     return pw;
 }
 static void st_icon_box(uint16_t *d, const struct sprite *ic, int x, int y, int s)
@@ -1089,7 +1095,7 @@ static int st_render_today(uint16_t *d, int y0)
             for (int x = 16; x < W - 16; x++) if (y + 140 >= ST_TOP && y + 140 < ST_TABY) d[(y + 140) * W + x] = dim565(base, 10);
             st_icon_box(d, &a->ic, 32, y + 152, 48);
             int s = st_state(i);
-            int pw = st_pill(d, W - 32, y + 162, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 0);
+            int pw = st_pill(d, W - 32, y + 162, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 2);
             draw_text(d, 90, y + 172, a->name, 14, 0xFFFF, W - 90 - pw - 40, ST_TOP, ST_TABY);
             draw_text(d, 90, y + 190, a->author[0] ? a->author : st_repos[a->repo].name, 12, rgb(200, 200, 210), W - 90 - pw - 40, ST_TOP, ST_TABY);
             st_hit_add(16, y, W - 16, y + ch, HT_APP, i);

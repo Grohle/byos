@@ -257,7 +257,7 @@ static void plane_home_drag(int sy);
 /* gestos configurables (gestures.inc.c) */
 enum { GA_NONE, GA_HOME, GA_PLAYER, GA_CC, GA_BACK };
 /* top = mitad izquierda del borde superior, top_r = mitad derecha */
-static struct { int bottom_app, bottom_home, top, left, right, chevron, top_r; } G = { GA_HOME, GA_PLAYER, GA_CC, GA_BACK, GA_BACK, 1, GA_PLAYER };
+static struct { int bottom_app, bottom_home, top, left, right, chevron, top_r; } G = { GA_HOME, GA_HOME, GA_CC, GA_BACK, GA_BACK, 1, GA_PLAYER };
 static int last_app = -1;   /* ultima app abierta desde el launcher */
 static void gestures_conf_line(char *k, char *v);
 static void gestures_conf_save(FILE *f);

@@ -223,8 +223,8 @@ static const char *const O_KBL[] = { "Español (QWERTY)", "Inglés (QWERTY)", "F
 static const char *const O_ADB[] = { "Desactivado", "Wi-Fi", "USB" };
 static const char *const O_G_BOTTOM_APP[] = { "Inicio y multitarea", "Reproductor", "Centro de control", "Nada" };
 static const int V_G_BOTTOM_APP[] = { GA_HOME, GA_PLAYER, GA_CC, GA_NONE };
-static const char *const O_G_BOTTOM_HOME[] = { "Reproductor", "Centro de control", "Nada" };
-static const int V_G_BOTTOM_HOME[] = { GA_PLAYER, GA_CC, GA_NONE };
+static const char *const O_G_BOTTOM_HOME[] = { "Multitarea", "Reproductor", "Centro de control", "Nada" };
+static const int V_G_BOTTOM_HOME[] = { GA_HOME, GA_PLAYER, GA_CC, GA_NONE };
 static const char *const O_G_TOP[] = { "Centro de control", "Reproductor", "Nada" };
 static const int V_G_TOP[] = { GA_CC, GA_PLAYER, GA_NONE };
 static const char *const O_G_LEFT[] = { "Atrás", "Reproductor", "Centro de control", "Nada" };
@@ -236,7 +236,7 @@ static int idx_of(const int *v, int n, int x) { for (int i = 0; i < n; i++) if (
 static void sync_from_state(void)
 {
     set_lang_idx = ui_lang_sys ? -1 : ui_lang; set_icon_idx = sz_idx(); set_cols_idx = L.cols - 3;
-    g_bottom_app_i = idx_of(V_G_BOTTOM_APP, 4, G.bottom_app); g_bottom_home_i = idx_of(V_G_BOTTOM_HOME, 3, G.bottom_home);
+    g_bottom_app_i = idx_of(V_G_BOTTOM_APP, 4, G.bottom_app); g_bottom_home_i = idx_of(V_G_BOTTOM_HOME, 4, G.bottom_home);
     g_top_i = idx_of(V_G_TOP, 3, G.top); g_topr_i = idx_of(V_G_TOP, 3, G.top_r); g_left_i = idx_of(V_G_LEFT, 4, G.left); g_right_i = idx_of(V_G_RIGHT, 4, G.right);
     g_chev = G.chevron;
     FILE *f = fopen("/data/.hibymod_adbmode", "r"); char m[16] = "";
@@ -357,7 +357,7 @@ static void page_gestures(struct spage *p)
     *p = (struct spage){ "Gestos" };
     p->secs[0] = (struct ssec){ "BORDES", "Desliza desde el borde para ver la animación de ejemplo.", {
         ROW("Abajo, en apps", R_CHOICE, &g_bottom_app_i, O_G_BOTTOM_APP, 4, apply_gestures, 0, 1),
-        ROW("Abajo, en el inicio", R_CHOICE, &g_bottom_home_i, O_G_BOTTOM_HOME, 3, apply_gestures, 0, 2),
+        ROW("Abajo, en el inicio", R_CHOICE, &g_bottom_home_i, O_G_BOTTOM_HOME, 4, apply_gestures, 0, 2),
         ROW("Arriba, izquierda", R_CHOICE, &g_top_i, O_G_TOP, 3, apply_gestures, 0, 3),
         ROW("Arriba, derecha", R_CHOICE, &g_topr_i, O_G_TOP, 3, apply_gestures, 0, 6),
         ROW("Borde izquierdo", R_CHOICE, &g_left_i, O_G_LEFT, 4, apply_gestures, 0, 4),
@@ -613,7 +613,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
         }
         if (hi >= 0) { sp_render(fr0, &pg, hi, back); present(); }
         while (cur_down && read_pkt(&p, 30)) {
-            if (abs(cur_y - sy) > 8) moved = 1;
+            if (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 10) moved = 1;
             if (moved) {
                 double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }
                 float maxs = sp_content_h(&pg) - (H - NAVH - 30); if (maxs < 0) maxs = 0;
@@ -631,13 +631,13 @@ static void open_page(void (*build)(struct spage *), const char *back)
                 sp_scroll -= vel * dt; vel *= powf(0.9975f, dt);
                 if (sp_scroll < 0) { sp_scroll = 0; vel = 0; } if (sp_scroll > maxs) { sp_scroll = maxs; vel = 0; }
                 sp_render(fr0, &pg, -1, back); present();
-                struct pkt q; if (read_pkt(&q, 0) && q.down) { vel = 0; break; }
+                struct pkt q; if (read_pkt(&q, 0) && q.down) { vel = 0; drain_until_up(); break; }   /* el toque que frena no activa nada (iOS) */
             }
             vel = 0;
             continue;
         }
         if (back && sy < NAVH + 30 && sx < 110) break;
-        if (hi < 0 || !rw) continue;
+        if (hi < 0 || !rw || now_ms() - ts > 700) continue;           /* pulsacion corta y quieta */
         if (rw->type == R_NAV && rw->fn) rw->fn();
         else if (rw->type == R_TOGGLE && rw->ival) { *rw->ival = !*rw->ival; if (rw->fn) rw->fn(); }
         else if (rw->type == R_CHECK && rw->ival) { if (*rw->ival != rw->nopts) { *rw->ival = rw->nopts; if (rw->fn) rw->fn(); } }

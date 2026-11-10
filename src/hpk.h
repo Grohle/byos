@@ -62,6 +62,7 @@ struct hpk_info {
     char homepage[96];
     char input[8];                     /* touch | keys | both */
     int stop_player;                   /* 1: hay que parar la musica antes de abrirla */
+    int refresh_full;                  /* refresh=full: la pantalla no baja al refresco de reposo */
     int ram_kb;
     long long size;                    /* bytes del .hpk (scan) o del contenido (instalada) */
     char path[256];                    /* ruta del .hpk o del directorio instalado */

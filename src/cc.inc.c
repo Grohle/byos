@@ -199,6 +199,33 @@ static int cc_hit(int x, int y)
     for (int i = 0; i < cc_ntiles; i++) { int tx, ty; cc_tile_rect(i, &tx, &ty); if (x >= tx - 4 && x < tx + CC_T + 4 && y >= ty - 4 && y < ty + CC_T + 4) return i; }
     return -1;
 }
+
+/* ---- animacion de iOS 26: el fondo real se desenfoca (mezcla bajo -> desenfoque) y la capa
+ * de controles aparece bajando unos pixeles. El fondo nunca se desplaza. Coste por fotograma:
+ * una mezcla de pantalla + los pixeles de controles (mascara), ~5 ms. */
+static uint8_t *cc_ctl; static const uint16_t *cc_blur_buf;                       /* 1 = pixel de un control (panel != desenfoque) */
+static void cc_mask_build(const uint16_t *panel, const uint16_t *blur)
+{
+    if (!cc_ctl) cc_ctl = malloc(W * H);
+    if (!cc_ctl) return;
+    for (int i = 0; i < W * H; i++) cc_ctl[i] = panel[i] != blur[i];
+}
+static void cc_frame(const uint16_t *under, const uint16_t *blur, const uint16_t *panel, double e)
+{
+    if (e < 0) e = 0; if (e > 1) e = 1;
+    int k = (int)(e * 32 + .5), kc = (int)(e * e * 32 + .5);   /* los controles entran algo despues */
+    int dy = (int)((1 - e) * 28);                     /* bajan 28 px mientras aparecen */
+    for (int y = 0; y < H; y++) {
+        uint16_t *d = fr0 + y * W; const uint16_t *u = under + y * W, *b = blur + y * W;
+        if (k <= 0) memcpy(d, u, W * 2); else if (k >= 32) memcpy(d, b, W * 2); else for (int x = 0; x < W; x++) d[x] = blend565(u[x], b[x], k);
+        int sy = y + dy; if (!cc_ctl || sy < 0 || sy >= H || kc <= 0) continue;
+        const uint8_t *m = cc_ctl + sy * W; const uint16_t *pp = panel + sy * W;
+        if (y < 30) continue;                         /* la barra de estado no se desplaza */
+        for (int x = 0; x < W; x++) if (m[x]) d[x] = kc >= 32 ? pp[x] : blend565(d[x], pp[x], kc);
+    }
+    if (k >= 32) memcpy(fr0, panel, 30 * W * 2); else for (int i = 0; i < 30 * W; i++) fr0[i] = blend565(under[i], panel[i], k);
+}
+
 static void cc_mix(const uint16_t *under, const uint16_t *panel, double e)
 {
     int k = (int)(e * 32 + .5); if (k <= 0) { memcpy(fr0, under, HM_FRAME_BYTES); return; } if (k >= 32) { memcpy(fr0, panel, HM_FRAME_BYTES); return; }
@@ -207,7 +234,8 @@ static void cc_mix(const uint16_t *under, const uint16_t *panel, double e)
 static void cc_animate(const uint16_t *under, const uint16_t *panel, double from, double to, int ms)
 {
     double t0 = now_ms();
-    for (;;) { double t = (now_ms() - t0) / ms; if (t > 1) t = 1; cc_mix(under, panel, from + (to - from) * ease_out(t)); present(); if (t >= 1) break; }
+    for (;;) { double t = (now_ms() - t0) / ms; if (t > 1) t = 1; double e = from + (to - from) * ease_out(t);
+        if (cc_ctl && cc_blur_buf) cc_frame(under, cc_blur_buf, panel, e); else cc_mix(under, panel, e); present(); if (t >= 1) break; }
 }
 static void cc_set_caption(const char *s) { cc_caption = s; cc_caption_t = now_ms(); }
 static void launch_app(int a, int ix, int iy);
@@ -345,6 +373,7 @@ static int cc_prepare(void)
     double tb2 = now_ms();
     cc_caption = 0;
     cc_render(img_base, img_sheet, -1);
+    cc_mask_build(img_base, img_sheet); cc_blur_buf = img_sheet;
     lg("centro de control: desenfoque %.0f ms, panel %.0f ms", tb2 - tb, now_ms() - tb2);
     return 1;
 }
@@ -446,9 +475,38 @@ static void cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
         cc_slider_draw(fr0, blur, lv, s0 + (1 - s0) * e, g0 * (1 - e));
         if (t >= 1) break;
     }
-    cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+    cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
 }
 
+
+/* deslizar hacia arriba en el centro de control = al inicio (especificacion del usuario): los
+ * controles suben y se desvanecen y el desenfoque pasa al inicio real, que no se mueve. */
+static int cc_close_drag(const uint16_t *under, uint16_t *panel, const uint16_t *blur, int sy, int from_launcher, int to_home)
+{
+    (void)under; (void)to_home;
+    uint16_t *home = img_app;
+    if (launcher_enabled) render_launcher(home, now_ms()); else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES); else memset(home, 0, HM_FRAME_BYTES);
+    struct pkt p; double vel = 0, lt = now_ms(); int ly = sy; double e = 1;
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lt = t; }
+        e = 1 - (sy - cur_y) / 200.0; if (e > 1) e = 1; if (e < 0) e = 0;
+        cc_frame(home, blur, panel, e); present();
+        if (got && !p.down) break;
+        if (!got) msleep(2);
+    }
+    if (e > 0.7 && vel > -0.4) {                              /* no llega: el panel vuelve */
+        double t0 = now_ms(), e0 = e;
+        for (;;) { double t = (now_ms() - t0) / 160.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 + (1 - e0) * ease_out(t)); present(); if (t >= 1) break; }
+        return 0;
+    }
+    if (!from_launcher) nav_start(NAV_HOME);                 /* el reproductor va al inicio durante el fundido */
+    double t0 = now_ms(), e0 = e;
+    for (;;) { double t = (now_ms() - t0) / 180.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 * (1 - ease_out(t))); present(); if (t >= 1) break; }
+    if (from_launcher) { launcher_present(); return 1; }
+    nav_wait(3000); if (!launcher_resume()) cmd('R');
+    return 1;
+}
 static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y)
 {
     int from_launcher = cc_from_launcher;
@@ -458,8 +516,8 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
         while (cur_down) {
             int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
             double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lt = t; }
-            e = (cur_y - start_y) / 260.0; if (e < 0) e = 0; if (e > 1) e = 1;
-            cc_mix(under, panel, e); present();
+            e = (cur_y - start_y) / 240.0; if (e < 0) e = 0; if (e > 1) e = 1;
+            cc_frame(under, blur, panel, e); present();
             if (got && !p.down) break;
         }
         lg("cc: suelta e=%.2f vel=%.2f", e, vel);
@@ -468,7 +526,7 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
     if (start_y != -2) cc_animate(under, panel, e, 1, start_y >= 0 ? 200 : 260);
     for (;;) {
         if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 500)) {
-            if ((cc_caption && now_ms() - cc_caption_t >= 1800) || npx_changed) { npx_changed = 0; cc_caption = 0; cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
+            if ((cc_caption && now_ms() - cc_caption_t >= 1800) || npx_changed) { npx_changed = 0; cc_caption = 0; cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
             continue;
         }
         if (!p.down) continue;
@@ -484,15 +542,15 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
             if (abs(dx) > 14 || dy > 14) { dir = 3; }
         }
         if (dir == 1) { if (cc_to_player(panel, sx)) return; continue; }
-        if (dir == 2) { if (panel_up_home(panel, sy, from_launcher)) return; continue; }
-        if (dir == 3) { while (cur_down && read_pkt(&p, 3000)) {} cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); continue; }
+        if (dir == 2) { if (cc_close_drag(under, panel, blur, sy, from_launcher, sy >= 440)) return; continue; }
+        if (dir == 3) { while (cur_down && read_pkt(&p, 3000)) {} cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present(); continue; }
         if (hit < 0) break;                                   /* toque fuera: cerrar */
         if (hit == 100 && sy > CC_Y + BR_H - 40) {          /* controles de reproduccion */
             int cx = NP_X + NP_W / 2;
             if (sx < cx - 22) pc_prev(); else if (sx > cx + 22) pc_next(); else pc_toggle();
             msleep(350); npx_changed = 1;
             { struct np_info ni; memset(&ni, 0, sizeof ni); if (np_get(&ni) > 0) { pthread_mutex_lock(&npx_mu); npx = ni; pthread_mutex_unlock(&npx_mu); } }
-            cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+            cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
             continue;
         }
         if (hit == 100) {
@@ -523,7 +581,7 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
         case CT_FILES: cc_animate(under, panel, 1, 0, 160); cc_open_app("files"); return;
         case CT_SETTINGS: cc_animate(under, panel, 1, 0, 160); cc_open_app("personalize"); return;
         }
-        cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+        cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
     }
     cc_animate(under, panel, 1, 0, 200);
 out:

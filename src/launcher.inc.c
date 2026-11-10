@@ -53,6 +53,7 @@ static struct {
     int npages, pn[MAXPAGES], page[MAXPAGES][MAXAPPS];
     int dn, dock[4];
     char wall[200];
+    int labels, dots, dockbg, dim;   /* nombres de las apps, puntos de pagina, fondo del dock, oscurecer el fondo */
 } L;
 
 static int launcher_enabled = 1, cur_page;
@@ -80,6 +81,7 @@ static void lconf_default(void)
 {
     memset(&L, 0, sizeof L);
     L.icon = 56; L.cols = 4; L.npages = 1;
+    L.labels = L.dots = L.dockbg = 1; L.dim = 0;
     const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "tidal", "qobuz" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_by_id(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
     L.dock[L.dn++] = app_by_id("music");
@@ -140,7 +142,7 @@ static void lconf_save(void)
         fprintf(f, "\npage");
         for (int i = 0; i < L.pn[p]; i++) fprintf(f, " %s", apps[L.page[p][i]].id);
     }
-    fprintf(f, "\n");
+    fprintf(f, "\nlook %d %d %d %d\n", L.labels, L.dots, L.dockbg, L.dim);
     gestures_conf_save(f);
     cc_conf_save(f);
     wg_conf_save(f);
@@ -177,6 +179,8 @@ static void lconf_load(void)
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
             if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; got_kb = 1; } }
+        else if (!strcmp(t, "look")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n"), *d = strtok(0, " \t\r\n");
+            if (a && b && c && d) { L.labels = atoi(a) != 0; L.dots = atoi(b) != 0; L.dockbg = atoi(c) != 0; L.dim = atoi(d) != 0; } }
         else if (!strcmp(t, "widgets")) wg_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "cc")) cc_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
@@ -318,13 +322,16 @@ static void build_dock_glass(void)
     }
 }
 
+static int wall_gen;                 /* cambia con cada fondo cargado (widgets: cristal precalculado) */
 static int load_wall(void)
 {
+    wall_gen++;
     const char *p = ASSETS "/wall_custom.raw";
     int f = L.wall[0] ? open(p, O_RDONLY) : -1;
     if (f < 0) f = open(ASSETS "/wall.raw", O_RDONLY);
     if (f < 0) { for (int i = 0; i < W * H; i++) wall[i] = rgb(40, 30, 90); build_dock_glass(); return 0; }
     ssize_t n = read(f, wall, sizeof wall); close(f);
+    if (L.dim) for (int i = 0; i < W * H; i++) wall[i] = dim565(wall[i], 21);   /* "Oscurecer fondo" (~65 %) */
     build_dock_glass();
     mirror_dirty = 1; edit_bg_ok = 0;
     return n == (ssize_t)sizeof wall;
@@ -405,7 +412,7 @@ static void draw_app_at(uint16_t *dst, int a, int x, int y, int show_label, doub
 {
     const struct sprite *ic = &apps[a].icon[sz_idx()];
     if (rl_mode == 1) {
-        if (show_label && apps[a].lbl.w && a != V.drag_app) { const struct sprite *l = &apps[a].lbl; blit(dst, l, x + (L.icon - l->w) / 2, y + L.icon + 3, 32, 255); }
+        if (show_label && L.labels && apps[a].lbl.w && a != V.drag_app) { const struct sprite *l = &apps[a].lbl; blit(dst, l, x + (L.icon - l->w) / 2, y + L.icon + 3, 32, 255); }
         return;
     }
     int k = (a == V.pressed_app) ? 22 : 32;
@@ -415,7 +422,7 @@ static void draw_app_at(uint16_t *dst, int a, int x, int y, int show_label, doub
         float ang = 0.026f * sinf((float)(t / 260.0 * 6.2831853) + a * 1.9f);
         blit_rotated(dst, ic, x, y, ang, alpha);
     } else blit(dst, ic, x, y, k, alpha);
-    if (rl_mode != 2 && show_label && apps[a].lbl.w && alpha == 255) {
+    if (rl_mode != 2 && show_label && L.labels && apps[a].lbl.w && alpha == 255) {
         const struct sprite *l = &apps[a].lbl;
         blit(dst, l, x + (L.icon - l->w) / 2, y + L.icon + 3, 32, 255);
     }
@@ -476,7 +483,7 @@ static void render_launcher(uint16_t *dst, double t)
         }
     }
     /* puntos de pagina */
-    if (L.npages > 1 && rl_mode != 2 && V.scroll > -W / 2) {
+    if (L.npages > 1 && L.dots && rl_mode != 2 && V.scroll > -W / 2) {
         int tot = L.npages * 12 - 6, x0 = (W - tot) / 2;
         float cur = V.scroll / W;
         for (int p = 0; p < L.npages; p++) {
@@ -486,7 +493,7 @@ static void render_launcher(uint16_t *dst, double t)
     }
     /* dock */
     int dkx = V.scroll < 0 ? (int)-V.scroll : 0;     /* el dock se va con la primera pagina */
-    if (rl_mode != 2 && dkx < W) blit(dst, &dock_glass, DOCK_X + dkx, DOCK_Y, 32, 255);
+    if (rl_mode != 2 && dkx < W && L.dockbg) blit(dst, &dock_glass, DOCK_X + dkx, DOCK_Y, 32, 255);
     if (dkx < W) {
         int n = L.dn, slot = 0, total = n + (V.drag_app >= 0 && V.drag_dock >= 0 ? 1 : 0);
         for (int i = 0; i < n; i++) if (L.dock[i] == V.drag_app) total--;

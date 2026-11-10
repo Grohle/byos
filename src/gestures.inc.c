@@ -18,12 +18,12 @@ static void gestures_conf_line(char *k, char *v)
 {
     int a = ga_parse(v);
     if (!k || !v) return;
-    if (!strcmp(k, "v")) { g_conf_v2 = atoi(v) >= 2; return; }
+    if (!strcmp(k, "v")) { g_conf_v2 = atoi(v) >= 3; return; }
     if (!g_conf_v2) return;
     if (!strcmp(k, "chevron")) { G.chevron = atoi(v) != 0; return; }
     if (a < 0) return;
     if (!strcmp(k, "bottom_app") && a != GA_BACK) G.bottom_app = a;
-    else if (!strcmp(k, "bottom_home") && a != GA_BACK && a != GA_HOME) G.bottom_home = a;
+    else if (!strcmp(k, "bottom_home") && a != GA_BACK) G.bottom_home = a;
     else if (!strcmp(k, "top") && a != GA_HOME && a != GA_BACK) G.top = a;
     else if (!strcmp(k, "left") && a != GA_HOME) G.left = a;
     else if (!strcmp(k, "right") && a != GA_HOME) G.right = a;
@@ -31,7 +31,7 @@ static void gestures_conf_line(char *k, char *v)
 }
 static void gestures_conf_save(FILE *f)
 {
-    fprintf(f, "gesture v 2\ngesture top_r %s\n", ga_names[G.top_r]);
+    fprintf(f, "gesture v 3\ngesture top_r %s\n", ga_names[G.top_r]);
     fprintf(f, "gesture bottom_app %s\ngesture bottom_home %s\ngesture top %s\ngesture left %s\ngesture right %s\ngesture chevron %d\n",
             ga_names[G.bottom_app], ga_names[G.bottom_home], ga_names[G.top], ga_names[G.left], ga_names[G.right], G.chevron);
 }
@@ -141,7 +141,7 @@ static void switcher_frame(const uint16_t *bg, const uint16_t *c0, const uint16_
         draw_scaled(fr0, cards[i], x, y, w, h, 20 * s / CARD_S + (1 - s) * 10);
         if (labels) {
             const struct sprite *ic = i == 1 ? &apps[app_by_id("nowplaying")].icon[0] : (last_app >= 0 ? &apps[last_app].icon[0] : 0);
-            card_label(fr0, x + w / 2, y - 4, ic, i == 1 ? tr("Reproduciendo") : (last_app >= 0 ? apps[last_app].label : tr("HiBy")));
+            card_label(fr0, x + w / 2, y - 4, ic, i == 1 ? tr("Reproduciendo") : (last_app >= 0 ? app_label(last_app) : tr("HiBy")));
         }
     }
     present();
@@ -411,12 +411,111 @@ static void back_gesture(int right, int sx, int sy)
     if (!home || !launcher_resume()) cmd('R');
 }
 
+
+/* ------------------------------------------------------------------ multitarea desde el inicio */
+/* Deslizar hacia arriba desde la barra en el inicio (iOS): las tarjetas de la ultima app y del
+ * reproductor suben desde abajo siguiendo al dedo; al soltar a media altura quedan en el
+ * carrusel; tocar una la abre; tocar fuera o deslizar de nuevo vuelve al inicio. */
+static void launch_app(int a, int ix, int iy);
+static void home_switcher(int sy)
+{
+    uint16_t *home = img_base, *bg = img_under;
+    static uint16_t *appc; if (!appc) appc = malloc(HM_FRAME_BYTES);
+    if (!appc) return;
+    render_launcher(home, now_ms());
+    int have_app = last_app >= 0 && app_cache(last_app, 0);
+    if (have_app) memcpy(appc, img_app, HM_FRAME_BYTES);
+    const uint16_t *ph = have_cache_plane ? img_cache_plane : 0;
+    static uint16_t *ph_card;
+    if (!ph) {
+        if (!ph_card) ph_card = malloc(W * H * 2);
+        for (int i = 0; i < W * H; i++) ph_card[i] = rgb(22, 22, 24);
+        int a = app_by_id("nowplaying");
+        if (a >= 0) blit_scaled(ph_card, &apps[a].icon[2], W / 2 - 48, H / 2 - 70, 96, 96, 255);
+        ph = ph_card;
+    }
+    /* sin ultima app: el reproductor es la unica tarjeta (en la posicion 0) */
+    const uint16_t *c0 = have_app ? appc : ph, *c1 = have_app ? ph : 0;
+    have_under = 0;
+    struct pkt p; double vel = 0, lt = now_ms(); int ly = sy; double prog = 0;
+    for (;;) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lt = t; }
+        prog = (sy - cur_y) / 260.0; if (prog < 0) prog = 0; if (prog > 1.1) prog = 1.1;
+        int k = 32 - (int)(21 * (prog > 1 ? 1 : prog));
+        for (int i = 0; i < W * H; i++) bg[i] = dim565(home[i], k);
+        switcher_frame(bg, c0, c1, 0, CARD_S, -(1 - (prog > 1 ? 1 : prog)) * H * 0.75, c1 != 0, prog > 0.8);
+        if (got && !p.down) break;
+        if (!cur_down) break;
+        if (!got) msleep(2);
+    }
+    int open = prog > 0.3 || vel < -0.45;
+    double t0 = now_ms(), p0 = prog;
+    for (;;) {
+        double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1;
+        double e = ease_out(t), pr = open ? p0 + (1 - p0) * e : p0 * (1 - e); if (pr > 1) pr = 1;
+        int k = 32 - (int)(21 * pr);
+        for (int i = 0; i < W * H; i++) bg[i] = dim565(home[i], k);
+        switcher_frame(bg, c0, c1, 0, CARD_S, -(1 - pr) * H * 0.75, c1 != 0, open && t >= 1);
+        if (t >= 1) break;
+    }
+    if (!open) { launcher_present(); return; }
+    lg("multitarea (inicio)");
+    double off = 0; int ncard = c1 ? 2 : 1;
+    for (;;) {
+        switcher_frame(bg, c0, c1, off, CARD_S, 0, c1 != 0, 1);
+        if (!read_pkt(&p, 300) || !p.down) continue;
+        int tx = p.x, ty = p.y; double o0 = off, v2 = 0, l2 = now_ms(); int lx2 = tx, moved = 0;
+        while (cur_down && read_pkt(&p, 30)) {
+            if (abs(cur_x - tx) > 10 || abs(cur_y - ty) > 10) moved = 1;
+            double t = now_ms(); if (t > l2) { v2 = 0.6 * v2 + 0.4 * (cur_x - lx2) / (t - l2); lx2 = cur_x; l2 = t; }
+            if (moved && ncard > 1) { off = o0 + (cur_x - tx) / (W * CARD_S + 18.0); if (off < -0.25) off = -0.25; if (off > 1.25) off = 1.25; switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1); }
+        }
+        if (moved && abs(cur_y - ty) > abs(cur_x - tx) && cur_y < ty) break;     /* hacia arriba: cerrar */
+        if (moved && ncard > 1) {
+            double target = (off > 0.5 || v2 > 0.3) && !(v2 < -0.3) ? 1 : 0, f = off, t1 = now_ms();
+            for (;;) { double t = (now_ms() - t1) / 200.0; if (t > 1) t = 1; off = f + (target - f) * ease_out(t); switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1); if (t >= 1) break; }
+            continue;
+        }
+        if (moved) continue;
+        int hit = -1;
+        for (int i = 0; i < ncard; i++) { int x, y, w, h; card_geom(i, off, CARD_S, 0, &x, &y, &w, &h); if (tx >= x && tx < x + w && ty >= y - 30 && ty < y + h) hit = i; }
+        if (hit < 0) break;
+        int is_player = (hit == 1) || !have_app;
+        card_zoom_in(bg, hit == 0 ? c0 : c1, hit, off);
+        if (is_player) {
+            nav_start(NAV_TO_PLANE);
+            int ok = nav_wait(3000);
+            if (ok == 1) { memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1; memcpy(fr0, fr1, HM_FRAME_BYTES); present(); }
+            launcher_on = 0; home_publish(); cmd('R');
+            return;
+        }
+        int ix = W / 2 - L.icon / 2, iy = H / 2 - L.icon / 2;
+        launch_app(last_app, ix, iy);
+        return;
+    }
+    /* volver al inicio: las tarjetas bajan */
+    double t1 = now_ms();
+    for (;;) {
+        double t = (now_ms() - t1) / 220.0; if (t > 1) t = 1; double e = ease_out(t);
+        int k = 11 + (int)(21 * e);
+        for (int i = 0; i < W * H; i++) bg[i] = dim565(home[i], k);
+        switcher_frame(bg, c0, c1, off, CARD_S, -e * H * 0.75, c1 != 0, 0);
+        if (t >= 1) break;
+    }
+    launcher_present();
+}
+
 /* ------------------------------------------------------------------ despacho */
 /* Llamado al empezar un toque fuera del launcher. Devuelve 1 si era un gesto del sistema. */
 static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
 {
     int sx = p->x, sy = p->y, zone = 0;
-    if (sy >= 456) zone = 1; else if (sy < 14) zone = 3; else if (sx < 10) zone = 4; else if (sx > W - 10) zone = 5;
+    /* bordes de 24 px; atras tambien desde cerca del borde izquierdo (60 px) si el gesto es
+     * claramente hacia la derecha: asi el "atras" antiguo de HiBy nunca llega a dispararse */
+    int wide = 0;
+    if (sy >= 456) zone = 1; else if (sy < 30) zone = 3; else if (sx < 24) zone = 4; else if (sx > W - 24) zone = 5;
+    else if (sx < 60 && G.left == GA_BACK) { zone = 4; wide = 1; }
     if (!zone) return 0;
     int act = zone == 1 ? (plane ? GA_HOME : G.bottom_app) : zone == 3 ? (sx < W / 2 ? G.top : G.top_r) : zone == 4 ? G.left : G.right;
     if (zone == 1 && is_cc(v)) return 0;                     /* cerrar el centro de control: es de HiBy */
@@ -428,7 +527,7 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
         int dx = p->x - sx, dy = p->y - sy;
         int along = zone == 1 ? -dy : zone == 3 ? dy : zone == 4 ? dx : -dx;
         int across = zone == 1 || zone == 3 ? abs(dx) : abs(dy);
-        if (along > 12 && along > across) { decided = 2; break; }
+        if (along > (wide ? 18 : 12) && along > across * (wide ? 2 : 1)) { decided = 2; break; }
         if (across > 24 || along < -10) { decided = 1; break; }
         if (nh < 16) held[nh++] = *p; else { decided = 1; break; }
     }

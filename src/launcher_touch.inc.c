@@ -291,6 +291,7 @@ static void animate_scroll_to(int page)
 }
 
 static void launcher_settings(void);
+static void home_switcher(int sy);
 static void widgets_touch(struct pkt *p);
 
 /* ------------------------------------------------------------------ toque en el launcher */
@@ -324,7 +325,8 @@ static void launcher_touch(struct pkt *p)
         }
         if (decided == 2) {
             lg("gesto desde abajo (launcher)");
-            if (G.bottom_home == GA_PLAYER) sheet_open_drag(sy);
+            if (G.bottom_home == GA_HOME) home_switcher(sy);
+            else if (G.bottom_home == GA_PLAYER) sheet_open_drag(sy);
             else if (G.bottom_home == GA_CC) { drain_until_up(); cc_open(-1); }
             drain_until_up();
         }
