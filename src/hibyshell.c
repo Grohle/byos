@@ -341,11 +341,18 @@ static void compose_sheet(uint16_t *dst, const uint16_t *under, const uint16_t *
             for (int i = 0; i < cut; i++) { d[i] = dim565(o[i], k); d[W - 1 - i] = dim565(o[W - 1 - i], k); }
         }
     }
-    /* sombra suave sobre el borde de la hoja */
-    for (int s = 1; s <= 6 && top - s >= 0; s++) {
-        uint16_t *d = dst + (top - s) * W;
-        int kk = 32 - (7 - s) * 2;
-        for (int i = 0; i < W; i++) d[i] = dim565(d[i], kk);
+    /* sombra suave alrededor del borde redondeado de la hoja (no una franja recta) */
+    if (top <= 0) return;
+    for (int y = top - 6 > 0 ? top - 6 : 0; y < top + R && y < H; y++) {
+        uint16_t *d = dst + y * W;
+        for (int i = 0; i < W; i++) {
+            if (y >= top && i == R) i = W - R;               /* filas de las esquinas: solo las esquinas */
+            int cx = i < R ? R : i >= W - R ? W - 1 - R : -1;
+            float dist;
+            if (cx < 0) dist = (float)(top - y);
+            else { float dx = (float)(i - cx), dy = (float)(y - (top + R)); if (dy > 0) dy = 0; dist = sqrtf(dx * dx + dy * dy) - R; }
+            if (dist > 0 && dist <= 6) d[i] = dim565(d[i], 32 - (int)((7 - dist) * 2));
+        }
     }
 }
 

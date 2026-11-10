@@ -619,6 +619,7 @@ static void nu_band(int y0, int y1)
     if (y0 == NU_AB0 || (nu.lyr && y0 == 30)) nu_art_draw(fr0, 1, 0, y0, y1);
 }
 static void nu_sheet_build(void) { nu_render(img_sheet, 0); }
+static int nu_loose;     /* abierto suelto (sin mini reproductor debajo): se cierra hacia abajo entero */
 /* fotograma de la hoja con su borde en top; m: caratula (0 en el mini, 1 en la hoja) */
 static void nu_sheet_frame(int top, float m)
 {
@@ -626,7 +627,7 @@ static void nu_sheet_frame(int top, float m)
     int k = 32 - (12 * (NU_HM - (top > NU_HM ? NU_HM : top))) / NU_HM;
     compose_sheet(fr0, img_under, img_sheet, top, k);
     /* el mini reproductor se funde en la hoja al principio del recorrido */
-    float a = 1 - (NU_HM - top) / 110.f;
+    float a = nu_loose ? 0 : 1 - (NU_HM - top) / 110.f;
     if (a > 0) {
         unsigned al = (unsigned)(nu_clampf(a, 0, 1) * 255);
         for (int y = top; y < top + MU_MINI_H && y < H; y++) {
@@ -714,7 +715,11 @@ static int nu_drag(int sy)
     }
     nu_prof_log(&pr, "arrastrar");
     if (now_ms() - lt > 80) v = 0;                         /* se paro antes de soltar */
-    if (top > 110 || (v > 600 && top > 12)) { nu_sheet_anim((float)top, v, NU_HM, 0.36f, 2, (float)top); return 1; }
+    if (top > 110 || (v > 600 && top > 12)) {
+        if (nu_loose) nu_sheet_anim((float)top, v, H, 0.30f, 1, (float)top);   /* entera hacia abajo */
+        else nu_sheet_anim((float)top, v, NU_HM, 0.36f, 2, (float)top);
+        return 1;
+    }
     nu_sheet_anim((float)top, v, 0, 0.32f, 1, 0);
     return 0;
 }
@@ -1193,7 +1198,7 @@ static int nu_loop(int *arg)
         /* desde cualquiera de los bordes: el gesto comun de atras (burbuja) cierra la hoja */
         if (back_zone(sx, sy)) {
             int bk = app_back_gesture(sx, sy);
-            if (bk > 0) { nu_sheet_build(); nu_sheet_anim(0, 0, NU_HM, 0.38f, 2, 0); return NU_CLOSED; }
+            if (bk > 0) { nu_sheet_build(); if (nu_loose) nu_sheet_anim(0, 0, H, 0.32f, 1, 0); else nu_sheet_anim(0, 0, NU_HM, 0.38f, 2, 0); return NU_CLOSED; }
             if (bk < 0) { last = now_ms(); continue; }
         }
         if (hit >= 0 && hit <= 2) { nu.pressed = hit; nu_band(NU_CB0, NU_CB1); present_rows(NU_CB0, NU_CB1); }
@@ -1454,6 +1459,7 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
     nu_render(fr0, 1); present();
     lg("reproduciendo (suelto) en %.0f ms", now_ms() - t0);
     int arg = -1, r;
+    nu_loose = 1;
     for (;;) {
         r = nu_loop(&arg);
         if (r != NU_HOME || ix >= 0) break;
@@ -1484,6 +1490,7 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
         memcpy(img_app, fr0, HM_FRAME_BYTES);
         card_to_home(home, img_app, 0, 0, W, H);
     } else if (r != NU_CLOSED) sw_reveal_home(home, 22);
+    nu_loose = 0;
     nu_free(); mu_busy = 0;
     drain_until_up();
     return r;
