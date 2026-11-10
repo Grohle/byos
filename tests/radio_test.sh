@@ -1,7 +1,8 @@
 #!/bin/bash
 # PC tests of the Radio app (docs/RADIO.md). Does not touch the device.
 #   1. pure parts (tests/radio_test.c, ASan/UBSan): Radio Browser JSON, station library TSV,
-#      helper state and settings, .m3u/.pls, ICY metadata, chunked bodies, MP3/ADTS frame sync
+#      helper state and settings, .m3u/.pls, ICY metadata, chunked bodies, MP3/ADTS frame sync,
+#      HLS playlists, MPEG-TS demux (a real RNE segment), station sources and the European list
 #   2. every tr() key of the app (and the genre names) in the 13 languages (keys, %d, glyphs)
 #   3. the stream helper (hibynet radio) end to end: tests/radio_helper_test.sh
 #   4. frames of the app in 7 languages (tests/radio_render.sh, out/radio_render) + touch zone checks

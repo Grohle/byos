@@ -18,6 +18,7 @@ ext() { awk -v n="$2" '{sub(/\r$/, "")} !p && $0 ~ "^static[^(]*[ *]"n"\\(" && $
   ext $S/launcher.inc.c fill_rrect
   grep -m1 '^static int wrap_cw;' $S/settings_app.inc.c
   ext $S/settings_app.inc.c wrap_cjk; ext $S/settings_app.inc.c wrap_nostart; ext $S/settings_app.inc.c wrap_emit; ext $S/settings_app.inc.c draw_wrapped
+  ext $S/settings_app.inc.c sp_mix; ext $S/settings_app.inc.c sp_switch
   grep -m1 '^#define SPN ' $S/store.inc.c; grep -m1 '^static uint8_t spn_cov' $S/store.inc.c; grep -m1 '^static int spn_fade' $S/store.inc.c
   ext $S/store.inc.c spn_init; ext $S/store.inc.c spn_phase; ext $S/store.inc.c spn_draw
   grep '^#define FMC_' $S/freemusic.inc.c

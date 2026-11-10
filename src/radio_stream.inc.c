@@ -271,6 +271,235 @@ static int rs_sync(const unsigned char *b, int n, int kind, struct rs_frame *f)
     return -1;
 }
 
+/* ------------------------------------------------------------------ duracion de lo escrito
+ * Cuenta las tramas MPEG audio / ADTS de un flujo que llega a trozos (una trama puede quedar
+ * partida entre dos trozos) y suma su duracion: el ayudante sabe asi cuantos segundos de audio
+ * hay en el fichero y cuantos le quedan al reproductor por delante. Lo que no es trama (basura
+ * tras un corte) se salta byte a byte (lost). Empezar con memset(d, 0, ...). */
+struct rs_dur { unsigned char h[8]; int hn, kind; long long skip, frames, lost; double sec; };
+static void rs_dur_feed(struct rs_dur *d, const unsigned char *b, int n)
+{
+    for (int i = 0; i < n; ) {
+        if (d->skip > 0) {
+            long long k = n - i; if (k > d->skip) k = d->skip;
+            d->skip -= k; i += (int)k; continue;
+        }
+        d->h[d->hn++] = b[i++];
+        if (d->hn == 1 && d->h[0] != 0xFF) { d->hn = 0; d->lost++; continue; }
+        if (d->hn < 7) continue;
+        struct rs_frame f;
+        if (rs_hdr(d->h, d->kind ? d->kind : RS_UNKNOWN, &f) && f.hz > 0) {
+            int smp = f.kind == RS_AAC ? 1024 * ((d->h[6] & 3) + 1) : f.layer == 1 ? 384 : f.layer == 3 && f.ver != 3 ? 576 : 1152;
+            d->kind = f.kind; d->frames++; d->sec += (double)smp / f.hz;
+            d->skip = f.len - 7; d->hn = 0;
+        } else { memmove(d->h, d->h + 1, 6); d->hn = 6; d->lost++; }
+    }
+}
+
+/* ------------------------------------------------------------------ HLS (listas .m3u8)
+ * Lector de listas HLS por lineas, a trozos segun llegan (sin guardar el cuerpo entero):
+ *   - maestra (#EXT-X-STREAM-INF): se queda con la variante de MENOS ancho de banda que sea solo
+ *     audio (si todas llevan video y hay una pista #EXT-X-MEDIA TYPE=AUDIO con URI, esa; si no,
+ *     la variante mas ligera: del TS solo se saca el audio)
+ *   - de medios: TARGETDURATION, MEDIA-SEQUENCE, ENDLIST y los ultimos RS_HLS_SEGS segmentos
+ *     (numero de secuencia, duracion, URI tal cual: relativa o absoluta) en un anillo
+ *   - lo que no se sabe tocar: cifrado (#EXT-X-KEY distinto de NONE), fMP4 (#EXT-X-MAP) y
+ *     trozos de fichero (#EXT-X-BYTERANGE)
+ * Uso: rs_hls_init, rs_hls_feed (las veces que haga falta), rs_hls_end. ok = empezaba por #EXTM3U
+ * y tiene etiquetas #EXT-X- (una lista .m3u de emisoras no es HLS). */
+#define RS_HLS_SEGS 24
+struct rs_hseg { long long seq; int ms; char uri[RS_URL]; };
+struct rs_hls {
+    int ok, ext, master, target, endlist, enc, fmp4, brange, nseg, nvar; long long seq0;
+    struct rs_hseg seg[RS_HLS_SEGS];             /* el segmento i (0..nseg-1) esta en seg[i % RS_HLS_SEGS] */
+    long long vbw; int vvideo; char var[RS_URL], amedia[RS_URL];
+    /* lector */
+    char l[RS_URL + 768]; int ln, lines, inf_ms, sinf, svideo; long long sbw;
+};
+static void rs_hls_init(struct rs_hls *h) { memset(h, 0, sizeof *h); h->vbw = -1; }
+/* valor de ATRIBUTO=valor o ATRIBUTO="valor" de una etiqueta */
+static int rs_hls_attr(const char *l, const char *key, char *o, int cap)
+{
+    int kl = (int)strlen(key);
+    for (const char *p = strchr(l, ':'); p && *p; p++) {
+        if ((*p == ':' || *p == ',') && !strncasecmp(p + 1, key, kl) && p[1 + kl] == '=') {
+            const char *v = p + 2 + kl; int n = 0;
+            if (*v == '"') { v++; while (v[n] && v[n] != '"') n++; }
+            else while (v[n] && v[n] != ',') n++;
+            if (n > cap - 1) n = cap - 1;
+            memcpy(o, v, n); o[n] = 0;
+            return 1;
+        }
+        if (*p == '"') { p = strchr(p + 1, '"'); if (!p) break; }
+    }
+    if (cap > 0) o[0] = 0;
+    return 0;
+}
+static int rs_hls_video(const char *l)
+{
+    char c[160]; rs_hls_attr(l, "CODECS", c, sizeof c);
+    if (rs_has(c, "avc") || rs_has(c, "hvc") || rs_has(c, "hev") || rs_has(c, "vp09") || rs_has(c, "av01")) return 1;
+    return !c[0] && rs_hls_attr(l, "RESOLUTION", c, sizeof c);
+}
+static void rs_hls_line(struct rs_hls *h, char *l)
+{
+    rs_trim(l);
+    if (!l[0]) return;
+    if (!h->lines++) {
+        const char *s = l; if ((unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) s += 3;
+        h->ok = !strncmp(s, "#EXTM3U", 7);
+        return;
+    }
+    if (!h->ok) return;
+    if (l[0] == '#') {
+        if (strncmp(l, "#EXT-X-", 7)) { if (!strncmp(l, "#EXTINF:", 8)) h->inf_ms = (int)(atof(l + 8) * 1000 + 0.5); return; }
+        h->ext = 1;
+        const char *t = l + 7;
+        if (!strncmp(t, "TARGETDURATION:", 15)) h->target = atoi(t + 15);
+        else if (!strncmp(t, "MEDIA-SEQUENCE:", 15)) h->seq0 = atoll(t + 15);
+        else if (!strncmp(t, "ENDLIST", 7)) h->endlist = 1;
+        else if (!strncmp(t, "KEY:", 4)) { char m[24]; rs_hls_attr(l, "METHOD", m, sizeof m); if (strcasecmp(m, "NONE")) h->enc = 1; }
+        else if (!strncmp(t, "MAP:", 4)) h->fmp4 = 1;
+        else if (!strncmp(t, "BYTERANGE:", 10)) h->brange = 1;
+        else if (!strncmp(t, "STREAM-INF:", 11)) {
+            char bw[24]; rs_hls_attr(l, "BANDWIDTH", bw, sizeof bw);
+            h->sinf = 1; h->sbw = atoll(bw); h->svideo = rs_hls_video(l);
+        } else if (!strncmp(t, "MEDIA:", 6)) {
+            char ty[16], u[RS_URL], df[8]; rs_hls_attr(l, "TYPE", ty, sizeof ty);
+            if (!strcasecmp(ty, "AUDIO") && rs_hls_attr(l, "URI", u, sizeof u) && u[0] && strlen(u) < RS_URL - 1) {
+                rs_hls_attr(l, "DEFAULT", df, sizeof df);
+                if (!h->amedia[0] || !strcasecmp(df, "YES")) snprintf(h->amedia, sizeof h->amedia, "%s", u);
+            }
+        }
+        return;
+    }
+    if ((int)strlen(l) >= RS_URL) { h->sinf = 0; h->inf_ms = 0; return; }   /* URI imposible: se ignora */
+    if (h->sinf) {                                   /* variante de una lista maestra */
+        h->nvar++;
+        int better = h->vbw < 0 || (h->vvideo && !h->svideo) || (h->vvideo == h->svideo && h->sbw < h->vbw);
+        if (better) { h->vbw = h->sbw; h->vvideo = h->svideo; snprintf(h->var, sizeof h->var, "%s", l); }
+        h->master = 1; h->sinf = 0;
+        return;
+    }
+    struct rs_hseg *s = &h->seg[h->nseg % RS_HLS_SEGS];
+    s->seq = h->seq0 + h->nseg; s->ms = h->inf_ms > 0 ? h->inf_ms : h->target * 1000; snprintf(s->uri, sizeof s->uri, "%s", l);
+    h->nseg++; h->inf_ms = 0;
+}
+static void rs_hls_feed(struct rs_hls *h, const char *b, int n)
+{
+    for (int i = 0; i < n; i++) {
+        char c = b[i];
+        if (c == '\n' || c == '\r') { h->l[h->ln] = 0; rs_hls_line(h, h->l); h->ln = 0; continue; }
+        if (h->ln < (int)sizeof h->l - 1) h->l[h->ln++] = c;
+    }
+}
+static void rs_hls_end(struct rs_hls *h)
+{
+    if (h->ln) { h->l[h->ln] = 0; rs_hls_line(h, h->l); h->ln = 0; }
+    if (!h->ext) h->ok = 0;                          /* sin #EXT-X-: una lista .m3u normal */
+}
+/* la URI que hay que abrir de una maestra ("" si no hay) */
+static const char *rs_hls_variant(const struct rs_hls *h) { return h->vvideo && h->amedia[0] ? h->amedia : h->var; }
+/* segmento numero i (0..nseg-1); 0 si ya no esta en el anillo */
+static const struct rs_hseg *rs_hls_seg(const struct rs_hls *h, int i)
+{
+    if (i < 0 || i >= h->nseg || i < h->nseg - RS_HLS_SEGS) return 0;
+    return &h->seg[i % RS_HLS_SEGS];
+}
+/* Primer segmento (indice para rs_hls_seg) que toca bajar; h->nseg si no hay nada nuevo.
+ *   last < 0 (arranque): hacia atras desde el ultimo hasta juntar need_ms de audio (asi el
+ *   prebufer se llena en el acto con lo que el servidor ya tiene), al menos uno.
+ *   last >= 0: el siguiente a last. *gap = 1 si last ya salio de la ventana (se pierde un trozo)
+ *   o si la secuencia volvio muy atras (la emision se reinicio: se arranca de nuevo). */
+static int rs_hls_first(const struct rs_hls *h, long long last, int need_ms, int *gap)
+{
+    *gap = 0;
+    if (h->nseg <= 0) return 0;
+    int lo = h->nseg > RS_HLS_SEGS ? h->nseg - RS_HLS_SEGS : 0;
+    long long newest = h->seq0 + h->nseg - 1;
+    if (last >= 0 && newest < last - RS_HLS_SEGS) { *gap = 1; last = -1; }
+    if (last < 0) {
+        int i = h->nseg - 1, acc = h->seg[i % RS_HLS_SEGS].ms;
+        while (i > lo && acc < need_ms) { i--; acc += h->seg[i % RS_HLS_SEGS].ms; }
+        return i;
+    }
+    if (last >= newest) return h->nseg;
+    if (last + 1 < h->seq0 + lo) { *gap = 1; return lo; }
+    return (int)(last + 1 - h->seq0);
+}
+
+/* ------------------------------------------------------------------ MPEG-TS -> audio
+ * Demultiplexor de un transport stream que llega a trozos: PAT -> PMT -> la primera pista de
+ * audio que suena (0x0F AAC ADTS, 0x03/0x04 MPEG audio) y de sus PES solo la carga util. Lo
+ * que sale es el flujo ADTS / MP3 tal cual, listo para el fichero. Memoria: un paquete (188).
+ * out debe tener sitio para n + 188 bytes (sale menos de lo que entra) y no puede ser in.
+ * latm = 1 si la unica pista de audio es AAC LATM (0x11): no sirve. */
+struct rs_ts { unsigned char pk[188]; int pn, pmt, apid, atype, latm, skip, started; long long pkts, junk; };
+static void rs_ts_init(struct rs_ts *t) { memset(t, 0, sizeof *t); t->pmt = t->apid = -1; }
+/* al empezar un segmento nuevo: el paquete a medias no sirve; las pistas se conservan */
+static void rs_ts_cut(struct rs_ts *t) { t->pn = 0; }
+static int rs_ts_packet(struct rs_ts *t, const unsigned char *p, unsigned char *out)
+{
+    t->pkts++;
+    if (p[1] & 0x80) return 0;                       /* error de transporte */
+    int pid = (p[1] & 0x1F) << 8 | p[2], pusi = p[1] & 0x40, afc = (p[3] >> 4) & 3, ps = 4;
+    if (afc & 2) ps += 1 + p[4];
+    if (!(afc & 1) || ps >= 188) return 0;
+    if ((pid == 0 || pid == t->pmt) && pusi) {
+        int s = ps + 1 + p[ps];
+        if (s + 12 > 188) return 0;
+        int len = (p[s + 1] & 0x0F) << 8 | p[s + 2], end = s + 3 + len - 4;
+        if (end > 188) end = 188;
+        if (pid == 0 && p[s] == 0x00) {
+            for (int k = s + 8; k + 4 <= end; k += 4)
+                if ((p[k] << 8 | p[k + 1]) != 0) { t->pmt = (p[k + 2] & 0x1F) << 8 | p[k + 3]; break; }
+        } else if (pid == t->pmt && p[s] == 0x02 && t->apid < 0) {
+            int k = s + 12 + ((p[s + 10] & 0x0F) << 8 | p[s + 11]);
+            while (k + 5 <= end) {
+                int st = p[k], ep = (p[k + 1] & 0x1F) << 8 | p[k + 2], el = (p[k + 3] & 0x0F) << 8 | p[k + 4];
+                if (st == 0x0F || st == 0x03 || st == 0x04) { t->apid = ep; t->atype = st; t->latm = 0; break; }
+                if (st == 0x11) t->latm = 1;
+                k += 5 + el;
+            }
+        }
+        return 0;
+    }
+    if (pid != t->apid || pid < 0) return 0;
+    if (pusi) {
+        if (ps + 9 > 188 || p[ps] || p[ps + 1] || p[ps + 2] != 1) { t->started = 0; return 0; }
+        t->skip = 9 + p[ps + 8]; t->started = 1;
+    }
+    if (!t->started) return 0;                       /* el principio de este PES no lo vimos */
+    if (t->skip > 0) { int k = 188 - ps; if (k > t->skip) k = t->skip; ps += k; t->skip -= k; }
+    memcpy(out, p + ps, 188 - ps);
+    return 188 - ps;
+}
+static int rs_ts_feed(struct rs_ts *t, const unsigned char *in, int n, unsigned char *out)
+{
+    int o = 0;
+    for (int i = 0; i < n; ) {
+        if (!t->pn) {
+            if (in[i] != 0x47) { t->junk++; i++; continue; }
+            if (n - i >= 188) { o += rs_ts_packet(t, in + i, out + o); i += 188; continue; }
+        }
+        int k = 188 - t->pn; if (k > n - i) k = n - i;
+        memcpy(t->pk + t->pn, in + i, k); t->pn += k; i += k;
+        if (t->pn == 188) { o += rs_ts_packet(t, t->pk, out + o); t->pn = 0; }
+    }
+    return o;
+}
+/* largo de una etiqueta ID3v2 al principio de b (audio "empaquetado" de HLS); 0 = no hay,
+ * -1 = faltan bytes para saberlo */
+static long rs_id3_len(const unsigned char *b, int n)
+{
+    if (n < 3) return n && b[0] != 'I' ? 0 : -1;
+    if (memcmp(b, "ID3", 3)) return 0;
+    if (n < 10) return -1;
+    if ((b[6] | b[7] | b[8] | b[9]) & 0x80) return 0;
+    long sz = (long)b[6] << 21 | (long)b[7] << 14 | (long)b[8] << 7 | b[9];
+    return 10 + sz + (b[5] & 0x10 ? 10 : 0);
+}
+
 /* nombre de emisora -> nombre de fichero (sin / \ : * ? " < > | ni controles, <= 60 bytes) */
 static void rs_safe_name(const char *name, char *o, int cap)
 {

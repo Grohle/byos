@@ -1,0 +1,9 @@
+#EXTM3U
+#EXTINF:-1 tvg-country="ES" group-title="Spain",RNE Radio 3
+https://rtvelivestream.rtve.es/rtvesec/rne/rne_r3_main.m3u8
+#EXTINF:-1 tvg-logo="https://x.example.com/a,b.png",FIP, Paris
+https://icecast.radiofrance.fr/fip-midfi.mp3
+
+https://stream.example.org/live
+#EXTINF:0,AAC FM
+http://aac.example.net/live.aac

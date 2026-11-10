@@ -9,7 +9,7 @@
  *       -> source \t url \t artist \t album \t year
  *   hibynet cover-get URL OUT.jpg [SIZE]      (+ OUT.thumb.raw RGB565 LE 96x96)
  *   hibynet get URL OUT                    (HIBYNET_RESUME=1: continua OUT.part con Range)
- *   hibynet radio URL DIR NAME [PRESIZE_MB] [PREBUF_KB]   (emisora -> fichero; hibynet_radio.inc.c)
+ *   hibynet radio URL DIR NAME [LEAD_S] [CAP_MB] [STATEDIR]   (emisora o HLS -> fichero en la SD; hibynet_radio.inc.c)
  *
  * stdout: resultados (UTF-8, uno por linea, separados por TAB). stderr: progreso/errores.
  * Codigos de salida: 0 ok, 1 sin resultados / no encontrado, 2 red/HTTP/TLS,
@@ -1208,7 +1208,7 @@ static void usage(void) {
           "  hibynet covers ARTIST ALBUM\n"
           "  hibynet cover-get URL OUT.jpg [SIZE]\n"
           "  hibynet get URL OUT\n"
-          "  hibynet radio URL DIR NAME [PRESIZE_MB] [PREBUF_KB]\n", stderr);
+          "  hibynet radio URL DIR NAME [LEAD_S] [CAP_MB] [STATEDIR]\n", stderr);
 }
 
 int main(int argc, char **argv) {

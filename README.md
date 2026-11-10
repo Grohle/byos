@@ -78,7 +78,7 @@ known limitations: see the **[app index](apps/README.md)**.
 | <img src="docs/media/apps/icons/books_64.png" width="32" alt=""> | [Books](apps/books/README.md) | EPUB / TXT reader, audiobooks, free catalogs you can add (OPDS) | Beta |
 | <img src="docs/media/apps/icons/gutenberg_64.png" width="32" alt=""> | [Gutenberg](apps/gutenberg/README.md) | Project Gutenberg books and LibriVox audiobooks, to download and read | Beta |
 | <img src="docs/media/apps/icons/freemusic_64.png" width="32" alt=""> | [Vinyl](apps/freemusic/README.md) | Free and Creative Commons music (Internet Archive, Jamendo, your own sources), with format and quality | Beta |
-| <img src="docs/media/apps/icons/radio_64.png" width="32" alt=""> | Radio ([docs/RADIO.md](docs/RADIO.md)) | Internet radio from the Radio Browser directory, favourites and your own stations | Beta |
+| <img src="docs/media/apps/icons/radio_64.png" width="32" alt=""> | Radio ([docs/RADIO.md](docs/RADIO.md)) | Internet radio: the Radio Browser directory, a built-in list of European public radio (HLS included), your own sources and stations | Beta |
 | <img src="docs/media/apps/icons/settings_64.png" width="32" alt=""> | [Settings](apps/settings/README.md) | Player and system settings, USB DAC, home screen, gestures, Control Center, keyboard, updates (the old Customize app is now part of it) | Beta |
 | <img src="docs/media/apps/icons/wireless_64.png" width="32" alt=""> | [Wireless](apps/wireless/README.md) | Wi-Fi and Bluetooth | Beta |
 | <img src="docs/media/apps/icons/appstore_64.png" width="32" alt=""> | [Apps](apps/store/README.md) | App store: repositories, `.hpk` files, SD card installs, backups | Beta |
@@ -356,8 +356,9 @@ The player applies the command once and renames the file to `<name>.done`.
   sample rate before you download.
 - **Gutenberg.** Project Gutenberg books and LibriVox audiobooks, kept as a separate app in
   case Books' built-in catalogs are not enough.
-- **Radio.** Internet radio stations from the community Radio Browser directory, plus your
-  own stations; see [docs/RADIO.md](docs/RADIO.md).
+- **Radio.** Internet radio stations from the community Radio Browser directory, a built-in
+  list of European public radio (RNE, Radio France, ARD, RAI, BBC and more, HLS streams
+  included), station lists you add yourself and your own stations; see [docs/RADIO.md](docs/RADIO.md).
 - **Headphones.** Battery and noise control for AirPods, Galaxy Buds, Nothing, Sony,
   Soundcore and Fast Pair headphones, with an iOS-style battery card when they connect.
 - **App Store.** Install `.hpk` apps from online repositories (this project's by default,

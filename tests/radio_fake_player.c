@@ -6,12 +6,17 @@
  * helper that other music started).
  *   radio_fake_player STATE RATE READ_S PAUSE_S [OTHER]
  * OTHER: an audio file opened (and kept open) when it closes ours: the user picked other music.
- * Prints "opened FILE gen=N" per generation, one "t=<s> pos=<bytes> phase=<read|pause>" line per
- * second and "closed gens=N". */
+ * FAKE_EOFSTOP=1: like the real engine, reaching the end of the file stops playback: the file is
+ * closed and the player waits for the next generation (the helper must start a new one).
+ * Prints "opened FILE gen=N" per generation, "eof gen=N" when it stops at the end, one
+ * "t=<s> pos=<bytes> phase=<read|pause> ahead=<bytes>" line per second and, at the end,
+ * "closed gens=N total=BYTES minahead=BYTES" (minahead: the least that was written ahead of the
+ * read position while reading, after the first second). */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -30,33 +35,45 @@ static int ready_gen(const char *state, char *file, int cap)
     fclose(f);
     return ready && file[0] ? gen : 0;
 }
+static long long fsize(FILE *f) { struct stat sb; return f && !fstat(fileno(f), &sb) ? sb.st_size : 0; }
 int main(int argc, char **argv)
 {
     if (argc < 5) return 2;
     const char *state = argv[1]; int rate = atoi(argv[2]); double rd = atof(argv[3]), ps = atof(argv[4]);
+    int eofstop = getenv("FAKE_EOFSTOP") != NULL;
     char file[512]; double t0 = now(); int gen;
-    while (!(gen = ready_gen(state, file, sizeof file))) { if (now() - t0 > 20) { printf("never ready\n"); return 1; } usleep(100000); }
+    while (!(gen = ready_gen(state, file, sizeof file))) { if (now() - t0 > 30) { printf("never ready\n"); return 1; } usleep(100000); }
     FILE *f = fopen(file, "rb"); if (!f) { printf("cannot open %s\n", file); return 1; }
-    printf("opened %s gen=%d\n", file, gen); fflush(stdout);
-    double t1 = now(), tg = t1, last = 0, tchk = 0; long long pos = 0, total = 0; char buf[4096]; int gens = 1;
+    printf("opened %s gen=%d size=%lld\n", file, gen, fsize(f)); fflush(stdout);
+    setvbuf(f, 0, _IONBF, 0);                                  /* the read position is what we read */
+    double t1 = now(), tg = t1, last = 0, tchk = 0, teof = 0; long long pos = 0, total = 0, minahead = -1; char buf[4096]; int gens = 1;
     while (now() - t1 < rd + ps) {
         double t = now() - t1;
         if (t - tchk > 0.3) {                                   /* the shell: a new generation -> new list */
             tchk = t; char nf[512]; int g = ready_gen(state, nf, sizeof nf);
             if (g && g != gen) {
                 FILE *n = fopen(nf, "rb");
-                if (n) { fclose(f); f = n; gen = g; gens++; pos = 0; tg = now(); snprintf(file, sizeof file, "%s", nf); printf("opened %s gen=%d\n", file, gen); fflush(stdout); }
+                if (n) { if (f) fclose(f); f = n; setvbuf(f, 0, _IONBF, 0); gen = g; gens++; pos = 0; tg = now(); teof = 0; snprintf(file, sizeof file, "%s", nf); printf("opened %s gen=%d size=%lld\n", file, gen, fsize(f)); fflush(stdout); }
             }
         }
-        if (t < rd && pos < (long long)((now() - tg) * rate) + 32 * 1024) {
+        if (f && t < rd && pos < (long long)((now() - tg) * rate) + 32 * 1024) {
             size_t r = fread(buf, 1, sizeof buf, f);
-            if (r > 0) { pos += r; total += r; } else { clearerr(f); usleep(20000); }
+            if (r > 0) { pos += r; total += r; teof = 0; }
+            else {
+                clearerr(f);
+                if (eofstop) {                                  /* the engine: end of the file = end of the song */
+                    if (!teof) teof = now();
+                    else if (now() - teof > 0.3) { printf("eof gen=%d pos=%lld\n", gen, pos); fflush(stdout); fclose(f); f = 0; }
+                }
+                usleep(20000);
+            }
         } else usleep(20000);
-        if (t - last >= 1) { last = t; printf("t=%.0f pos=%lld phase=%s\n", t, pos, t < rd ? "read" : "pause"); fflush(stdout); }
+        if (f && t < rd && now() - tg > 1) { long long a = fsize(f) - pos; if (minahead < 0 || a < minahead) minahead = a; }
+        if (t - last >= 1) { last = t; printf("t=%.0f pos=%lld phase=%s ahead=%lld\n", t, pos, t < rd ? "read" : "pause", f ? fsize(f) - pos : -1); fflush(stdout); }
     }
     FILE *o = argc > 5 ? fopen(argv[5], "rb") : 0;
-    fclose(f);
-    printf("closed gens=%d total=%lld%s\n", gens, total, o ? " other" : ""); fflush(stdout);
+    if (f) fclose(f);
+    printf("closed gens=%d total=%lld minahead=%lld%s\n", gens, total, minahead, o ? " other" : ""); fflush(stdout);
     sleep(12);
     if (o) fclose(o);
     return 0;
