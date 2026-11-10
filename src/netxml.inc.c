@@ -95,10 +95,16 @@ static void fm_url_host(const char *url, char *o, int cap)
 static void fm_url_join(const char *base, const char *rel, char *o, int cap)
 {
     *o = 0; if (!rel || !*rel) return;
-    if (strstr(rel, "://")) { fm_cpy(o, cap, rel); return; }
+    /* absolute: it starts with a scheme (a "://" further on, as in "feed.php?u=http://x", is not one) */
+    { const char *sc = strstr(rel, "://"); if (sc && (size_t)(sc - rel) == strcspn(rel, "/?#:")) { fm_cpy(o, cap, rel); return; } }
     const char *sch = strstr(base, "://"); if (!sch) { fm_cpy(o, cap, rel); return; }
     if (rel[0] == '/' && rel[1] == '/') { snprintf(o, cap, "%.*s:%s", (int)(sch - base), base, rel); return; }
     const char *hs = sch + 3, *pe = hs; while (*pe && *pe != '/' && *pe != '?' && *pe != '#') pe++;
+    if (rel[0] == '?' || rel[0] == '#') {                    /* only a query or a fragment: same document */
+        const char *q = pe; while (*q && *q != rel[0] && *q != '#') q++;
+        snprintf(o, cap, "%.*s%s%s", (int)(q - base), base, q == pe ? "/" : "", rel);
+        return;
+    }
     char path[600] = "";
     if (rel[0] == '/') fm_cpy(path, sizeof path, rel);
     else {

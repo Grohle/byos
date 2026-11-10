@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns:dcterms="http://purl.org/dc/terms/"
+      xmlns:opds="http://opds-spec.org/"
+      xmlns="http://www.w3.org/2005/Atom"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:schema="http://schema.org/"
+      xsi:noNamespaceSchemaLocation="http://www.kbcafe.com/rss/atom.xsd.xml"
+      xsi:schemaLocation="http://purl.org/dc/elements/1.1/ http://dublincore.org/schemas/xmls/qdc/2008/02/11/dc.xsd
+      http://purl.org/dc/terms/ http://dublincore.org/schemas/xmls/qdc/2008/02/11/dcterms.xsd">
+      <title>
+ Unglue.it eBooks available in format: epub - sorted by newest
+</title><id>
+ https://unglue.it/api/opds/epub/?order_by=newest
+</id><updated>
+ 2026-11-10T13:15:01.543650+00:00
+</updated><author>
+ <name>
+  unglue.it
+ </name>
+ <uri>
+  https://unglue.it
+ </uri>
+</author><link href="https://unglue.it/api/opds/epub/?order_by=newest" rel="start" title="First 10" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/?order_by=newest&amp;page=1" rel="next" title="Next 10" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/?order_by=popular" opds:facetGroup="Order" rel="http://opds-spec.org/facet" title="Sorted by popularity" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/?order_by=newest" opds:activeFacet="true" opds:facetGroup="Order" rel="http://opds-spec.org/facet" title="Sorted by newest" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/by-nc-nd/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Creative Commons Attribution-NonCommercial-NoDerivs" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/by-nc-sa/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Creative Commons Attribution-NonCommercial-ShareAlike" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/by-nc/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Creative Commons Attribution-NonCommercial" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/by-nd/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Creative Commons Attribution-NoDerivs" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/by-sa/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Creative Commons Attribution-ShareAlike" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/by/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Creative Commons Attribution" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/cc0/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: No Rights Reserved (CC0)" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/gdfl/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: GNU Free Documentation License" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/lal/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Licence Art Libre" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/opensource/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: OSI Approved License" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/pd-us/?order_by=newest" opds:facetGroup="License" rel="http://opds-spec.org/facet" title="license: Public Domain, US" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/doab/?order_by=newest" opds:facetGroup="Collection" rel="http://opds-spec.org/facet" title="indexed in DOAB" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/gtbg/?order_by=newest" opds:facetGroup="Collection" rel="http://opds-spec.org/facet" title="available in Project Gutenberg" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/-doab/?order_by=newest" opds:facetGroup="Collection" rel="http://opds-spec.org/facet" title="not in DOAB" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<link href="https://unglue.it/api/opds/epub/-gtbg/?order_by=newest" opds:facetGroup="Collection" rel="http://opds-spec.org/facet" title="not from Project Gutenberg" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+<entry>
+ <title>
+  Lagos__2060
+ </title>
+ <id>
+  https://unglue.it/api/id/work/128685/
+ </id>
+ <updated>
+  2026-10-21T14:00:06
+ </updated>
+ <link dcterms:rights="CC BY-NC-ND" href="https://unglue.it/download_ebook/779416/?feed=opds" rel="http://opds-spec.org/acquisition/open-access" type="application/epub+zip"/>
+ <link href="https://files.unglue.it/cache/0b/e1/0be1d5e1ff3197234f556f48e0f790e6.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+ <link href="https://files.unglue.it/cache/dc/ca/dcca80014b7cf6e361664cdab5004baf.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+ <dcterms:issued>
+  2013
+ </dcterms:issued>
+ <author>
+  <name>
+   Afolabi Muheez Ashiru
+  </name>
+ </author>
+ <dcterms:language>
+  en
+ </dcterms:language>
+ <content type="html">
+  EXCITING SCI-FI STORIES FROM NIGERIA
+Curated by Ayodele Arigbabu
+
+Authors: Afolabi Muheez Ashiru. Okey Egboluche.
+Chiagozie Fred Nwonwu. Kofo Akib.
+Ayodele Arigbabu. Adebola Rayo. Terh Agbedeh.
+Temitayo Olofinlua.
+ </content>
+ <dcterms:identifier xsi:type="dcterms:URI">
+  urn:ISBN:9789789344116
+ </dcterms:identifier>
+ <schema:Rating schema:ratingValue="5">
+ </schema:Rating>
+</entry><entry>
+ <title>
+  Lecturas fáciles con ejercicios
+ </title>
+ <id>
+  https://unglue.it/api/id/work/358402/
+ </id>
+ <updated>
+  2021-09-16T18:23:17
+ </updated>
+ <link dcterms:rights="PD-US" href="https://unglue.it/download_ebook/343495/?feed=opds" rel="http://opds-spec.org/acquisition/open-access" schema:version="0.1" type="application/epub+zip"/>
+ <link href="https://files.unglue.it/cache/fe/a6/fea68091e2545032a38d2bf42ca87322.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+ <link href="https://files.unglue.it/cache/52/33/523364d4246a34d604eb735870a5fec9.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+ <dcterms:issued>
+  2008
+ </dcterms:issued>
+ <author>
+  <name>
+   Max Aaron Luria
+  </name>
+ </author>
+ <dcterms:language>
+  es
+ </dcterms:language>
+ <content type="html">
+ </content>
+ <category term="PC">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.PC/?order_by=popular&amp;page=0" rel="related" title="PC" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <category term="Spanish language -- Composition and exercises">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Spanish%20language%20--%20Composition%20and%20exercises/?order_by=popular&amp;page=0" rel="related" title="Spanish language -- Composition and exercises" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <category term="Spanish language -- Readers">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Spanish%20language%20--%20Readers/?order_by=popular&amp;page=0" rel="related" title="Spanish language -- Readers" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <schema:Rating schema:ratingValue="2">
+ </schema:Rating>
+</entry><entry>
+ <title>
+  メイカーズ
+ </title>
+ <id>
+  https://unglue.it/api/id/work/152952/
+ </id>
+ <updated>
+  2015-12-06T22:31:24
+ </updated>
+ <link dcterms:rights="CC BY-NC-SA" href="https://unglue.it/download_ebook/3168/?feed=opds" rel="http://opds-spec.org/acquisition/open-access" type="application/epub+zip"/>
+ <link href="https://files.unglue.it/cache/ef/37/ef3747233b3f71300314ceb7bd99ff59.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+ <link href="https://files.unglue.it/cache/03/d0/03d043545aa75799bb98ee21db4aa067.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+ <dcterms:issued>
+ </dcterms:issued>
+ <author>
+  <name>
+   Cory Doctorow
+  </name>
+ </author>
+ <dcterms:language>
+  ja
+ </dcterms:language>
+ <content type="html">
+  &lt;p&gt;シリコンバレーで働く新聞記者兼ブロガーのスザンヌ・チャーチは巨大企業を買収した起業家ランドン・ケトルウェルにスカウトされて彼の新たなプロジェクトの取材を依頼される。取材のためにフロリダに飛んだ彼女の前に現れたのはショッピングモールの廃墟を本拠地にする2人の天才的ハードウェアハッカーだった。&lt;/p&gt;
+
+&lt;p&gt;&amp;nbsp;&lt;/p&gt;
+ </content>
+ <category term="Fiction">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Fiction/?order_by=popular&amp;page=0" rel="related" title="Fiction" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <category term="Fiction / Technological">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Fiction%20/%20Technological/?order_by=popular&amp;page=0" rel="related" title="Fiction / Technological" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <category term="Intellectual property">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Intellectual%20property/?order_by=popular&amp;page=0" rel="related" title="Intellectual property" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <category term="Inventors">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Inventors/?order_by=popular&amp;page=0" rel="related" title="Inventors" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <category term="Technology">
+ </category>
+ <link href="https://unglue.it/api/opds/kw.Technology/?order_by=popular&amp;page=0" rel="related" title="Technology" type="application/atom+xml; profile=opds-catalog ;kind=acquisition; charset=utf-8"/>
+ <schema:Rating schema:ratingValue="3">
+ </schema:Rating>
+</entry></feed>

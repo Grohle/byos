@@ -1,0 +1,48 @@
+
+<feed xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/" xmlns="http://www.w3.org/2005/Atom">
+  <title>Magyar Elektronikus Könyvtár</title>
+  <id>https://bookserver.mek.oszk.hu/index.php</id>
+  <updated>2026-11-10T14:15:31Z</updated>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" title="Home" rel="start" href="https://bookserver.mek.oszk.hu/index.php"/>
+  <author>
+    <name>Magyar Elektronikus Könyvtár</name>
+    <uri>https://mek.oszk.hu</uri>
+  </author>
+   <link rel="search" type="application/opensearchdescription+xml" href="https://bookserver.mek.oszk.hu/opensearch.xml"/>
+  <entry>
+    <title>Cím szerint (csak EPUB+PDF)</title>
+    <id>https://bookserver.mek.oszk.hu/abcrend.atom</id>
+    <updated>2026-11-10T14:15:31Z</updated>
+    <link href="https://bookserver.mek.oszk.hu/abcrend.atom" type="application/atom+xml"/>
+    <content>ABC sorrendben, főcím szerint rendezve</content>
+  </entry>
+szerzoabcrend.atom
+  <entry>
+    <title>Szerző szerint (csak EPUB+PDF)</title>
+    <id>https://bookserver.mek.oszk.hu/szerzoabcrend.atom</id>
+    <updated>2026-11-10T14:15:31Z</updated>
+    <link href="https://bookserver.mek.oszk.hu/szerzoabcrend.atom" type="application/atom+xml"/>
+    <content>ABC sorrendben, az első szerző szerint rendezve</content>
+  </entry>
+  <entry>
+    <title>Dátum szerint (csak EPUB+PDF)</title>
+    <id>https://bookserver.mek.oszk.hu/ujak/0</id>
+    <updated>2026-11-10T14:15:31Z</updated>
+    <link href="https://bookserver.mek.oszk.hu/ujak/0" type="application/atom+xml;profile=opds-catalog;kind=navigation" />
+    <content>A felkerülés dátuma szerint visszafelé rendezve</content>
+  </entry>
+  <entry>
+    <title>Népszerűség szerint (csak EPUB+PDF)</title>
+    <id>https://bookserver.mek.oszk.hu/siker.php</id>
+    <updated>2026-11-10T14:15:31Z</updated>
+    <link href="https://bookserver.mek.oszk.hu/siker.php" type="application/atom+xml;profile=opds-catalog;kind=navigation" />
+    <content>Az elmúlt havi letöltésszám szerint rendezve</content>
+  </entry>
+  <entry>
+    <title>OPDS katalógus további formátumokkal</title>
+    <id>https://bookserver.mek.oszk.hu/all</id>
+    <updated>2026-11-10T14:15:31Z</updated>
+    <link href="https://bookserver.mek.oszk.hu/all" type="application/atom+xml;profile=opds-catalog;kind=navigation" />
+    <content>RTF, HTML, PRC, LIT könyvek is</content>
+  </entry>
+</feed>

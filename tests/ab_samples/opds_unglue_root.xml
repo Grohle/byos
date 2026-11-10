@@ -1,0 +1,200 @@
+<feed xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/"
+  xmlns="http://www.w3.org/2005/Atom"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:noNamespaceSchemaLocation="http://www.kbcafe.com/rss/atom.xsd.xml">
+  <title>Unglue.it Catalog</title>
+  <id>https://unglue.it/api/opds/</id>
+  <updated>2026-11-10T07:00:09+00:00</updated>
+  <author>
+    <name>unglue.it</name>
+    <uri>https://unglue.it/</uri>
+  </author>
+  <link rel="start" href="https://unglue.it/api/opds/" type="application/atom+xml;profile=opds-catalog;kind=navigation" />
+    <link href="all/?order_by=popular" 
+        rel="http://opds-spec.org/featured"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <link href="all/?order_by=popular" 
+        rel="http://opds-spec.org/featured"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+  <entry>
+    <title>Unglue.it Free eBooks - Popular</title>
+    <id>https://unglue.it/api/opds/all//?order_by=popular</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="all/?order_by=popular" 
+        rel="http://opds-spec.org/sort/popular"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Free eBooks - ordered by popularity</content>
+  </entry>
+  <entry>
+    <title>Unglue.it Free eBooks - New</title>
+    <id>https://unglue.it/api/opds/all//?order_by=newest</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="all/?order_by=newest" 
+        rel="http://opds-spec.org/sort/new"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Free eBooks - ordered by newest</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Catalog:  Creative Commons Books</title>
+    <id>https://unglue.it/api/opds/creative_commons/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/creative_commons/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">These Creative Commons licensed ebooks are free to read - the people
+        who created them want you to read and share them.</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Catalog:  Books under Active Campaign</title>
+    <id>https://unglue.it/api/opds/active_campaigns/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/active_campaigns/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">With your help we&#x27;re raising money
+        to make these books free to the world.</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it eBooks available in format: pdf</title>
+    <id>https://unglue.it/api/opds/pdf/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/pdf/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">These eBooks available in pdf format.</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it eBooks available in format: epub</title>
+    <id>https://unglue.it/api/opds/epub/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/epub/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">These eBooks available in epub format.</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Fiction</title>
+    <id>https://unglue.it/api/opds/kw.Fiction/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Fiction/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Fiction eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Nonfiction</title>
+    <id>https://unglue.it/api/opds/kw.Nonfiction/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Nonfiction/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Nonfiction eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Literature</title>
+    <id>https://unglue.it/api/opds/kw.Literature/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Literature/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Literature eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it History</title>
+    <id>https://unglue.it/api/opds/kw.History/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.History/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">History eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Classic Literature</title>
+    <id>https://unglue.it/api/opds/kw.Classic%20Literature/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Classic%20Literature/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Classic Literature eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Children&#x27;s literature, English</title>
+    <id>https://unglue.it/api/opds/kw.Children&#x27;s%20literature,%20English/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Children&#x27;s%20literature,%20English/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Children&#x27;s literature, English eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it History and criticism</title>
+    <id>https://unglue.it/api/opds/kw.History%20and%20criticism/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.History%20and%20criticism/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">History and criticism eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Science</title>
+    <id>https://unglue.it/api/opds/kw.Science/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Science/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Science eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Juvenile fiction</title>
+    <id>https://unglue.it/api/opds/kw.Juvenile%20fiction/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Juvenile%20fiction/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Juvenile fiction eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Sociology</title>
+    <id>https://unglue.it/api/opds/kw.Sociology/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Sociology/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Sociology eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Software</title>
+    <id>https://unglue.it/api/opds/kw.Software/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Software/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Software eBooks</content>
+  </entry>
+
+  <entry>
+    <title>Unglue.it Science Fiction</title>
+    <id>https://unglue.it/api/opds/kw.Science%20Fiction/</id>
+    <updated>2026-11-10T07:00:09+00:00</updated>
+    <link href="/api/opds/kw.Science%20Fiction/" 
+        rel="subsection"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <content type="text">Science Fiction eBooks</content>
+  </entry>
+
+</feed>
