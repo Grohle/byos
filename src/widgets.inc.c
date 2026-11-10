@@ -123,7 +123,8 @@ static void wg_refresh_now(void)
     }
     pthread_mutex_lock(&wg_mu); n.t = WD.t; WD = n; pthread_mutex_unlock(&wg_mu);
 }
-static void *wg_thread(void *a) { (void)a; wg_refresh_now(); wg_fresh = 1; wg_busy = 0; return 0; }
+static volatile int wg_loaded;              /* el hilo ya publico datos al menos una vez */
+static void *wg_thread(void *a) { (void)a; wg_refresh_now(); wg_loaded = 1; wg_fresh = 1; wg_busy = 0; return 0; }
 static void wg_refresh(void)            /* asincrono */
 {
     if (wg_busy) return;
@@ -136,6 +137,12 @@ static int wg_playing(void) { return now_ms() < wg_np_until ? wg_np_force : wg_n
 static void wg_snap(void)
 {
     pthread_mutex_lock(&wg_mu); double t = WDs.t; WDs = WD; WDs.t = t; pthread_mutex_unlock(&wg_mu);
+    if (!wg_loaded) {   /* aun sin datos del hilo: al menos la bateria (sysfs, inmediato), nunca "0 %" */
+        WDs.batt = sysfs_get("/sys/class/power_supply/battery/capacity", -1); WDs.usb = sysfs_get(USB_ONLINE, 0);
+        char st[24] = ""; int f = open("/sys/class/power_supply/battery/status", O_RDONLY);
+        if (f >= 0) { int k = read(f, st, sizeof st - 1); if (k > 0) st[k] = 0; close(f); }
+        WDs.charging = !strncmp(st, "Charging", 8);
+    }
     npx_snapshot(&wg_ni, wg_cov, &wg_cok);
 }
 
@@ -256,6 +263,14 @@ static void wg_card_bg(uint16_t *d, int w, int h, int sx, int sy, int szi)
 /* ------------------------------------------------------------------ primitivas */
 static int wg_cy0 = 0, wg_cy1 = WG_SH;      /* recorte vertical del texto (bufer de dibujo o pantalla) */
 static uint16_t wg_scr[W * WG_SH];           /* bufer de dibujo de un widget (paso W) */
+/* mezcla 565 sin divisiones (alfa 0..255 -> 0..32, truco de los campos separados) */
+static inline uint16_t wg_mix(uint16_t c, uint16_t d, unsigned a)
+{
+    unsigned k = (a * 33) >> 8; if (k >= 32) return c; if (!k) return d;
+    uint32_t cs = (c | ((uint32_t)c << 16)) & 0x07E0F81Fu, ds = (d | ((uint32_t)d << 16)) & 0x07E0F81Fu;
+    uint32_t v = ((cs * k + ds * (32 - k)) >> 5) & 0x07E0F81Fu;
+    return (uint16_t)(v | (v >> 16));
+}
 static inline void wg_px(uint16_t *d, int x, int y, uint16_t c, int a)
 {
     if (x < 0 || x >= W || y < wg_cy0 || y >= wg_cy1 || a <= 0) return;
@@ -414,10 +429,39 @@ static void wg_blit_m(uint16_t *dst, const uint16_t *src, int stride, const uint
         int yy = y0 + y; if (yy < ylo || yy >= H) continue;
         uint16_t *row = dst + yy * W; const uint16_t *s = src + y * stride - x0; const uint8_t *mr = m + y * w - x0;
         if (y >= WG_R && y < h - WG_R && h == WG_H) { memcpy(row + xa, s + xa, (xb - xa) * 2); continue; }
-        for (int x = xa; x < xb; x++) { unsigned a = mr[x]; if (a == 255) row[x] = s[x]; else if (a) row[x] = mix565(s[x], row[x], a); }
+        for (int x = xa; x < xb; x++) { unsigned a = mr[x]; if (a == 255) row[x] = s[x]; else if (a) row[x] = wg_mix(s[x], row[x], a); }
     }
 }
 static inline uint32_t wg_sp(uint16_t p) { return (p | ((uint32_t)p << 16)) & 0x07E0F81Fu; }
+/* k en [0, n) con lo <= a0 + d*k < hi (aritmetica entera exacta, como el bucle) */
+static void wg_range(long long a0, long long d, long long lo, long long hi, int n, int *k0, int *k1)
+{
+    long long r0, r1;
+    if (d == 0) { r0 = 0; r1 = a0 >= lo && a0 < hi ? n : 0; }
+    else if (d > 0) { r0 = lo - a0 <= 0 ? 0 : (lo - a0 + d - 1) / d; r1 = hi - a0 <= 0 ? 0 : (hi - a0 + d - 1) / d; }
+    else { long long e = -d; r1 = a0 - lo < 0 ? 0 : (a0 - lo) / e + 1; r0 = a0 - hi < 0 ? 0 : (a0 - hi) / e + 1; }
+    if (r0 < 0) r0 = 0; if (r1 > n) r1 = n; if (r0 > n) r0 = n; if (r1 < r0) r1 = r0;
+    *k0 = (int)r0; *k1 = (int)r1;
+}
+/* un pixel del borde (esquinas suavizadas, fuera de la tarjeta): con la mascara */
+static inline void wg_xf_px(uint16_t *row, int x, int U, int V2, const uint16_t *src, int stride, const uint8_t *m, int sw, int sh, int alpha)
+{
+    int iu = U >> 16, iv = V2 >> 16;
+    if (iu < -1 || iv < -1 || iu >= sw || iv >= sh) return;
+    unsigned fx = (U >> 11) & 31, fy = (V2 >> 11) & 31;
+    int u0 = iu < 0 ? 0 : iu, u1 = iu + 1 >= sw ? sw - 1 : iu + 1, v0 = iv < 0 ? 0 : iv, v1 = iv + 1 >= sh ? sh - 1 : iv + 1;
+    int ok_u0 = iu >= 0, ok_u1 = iu + 1 < sw, ok_v0 = iv >= 0, ok_v1 = iv + 1 < sh;
+    unsigned a00 = ok_u0 && ok_v0 ? m[v0 * sw + u0] : 0, a01 = ok_u1 && ok_v0 ? m[v0 * sw + u1] : 0;
+    unsigned a10 = ok_u0 && ok_v1 ? m[v1 * sw + u0] : 0, a11 = ok_u1 && ok_v1 ? m[v1 * sw + u1] : 0;
+    unsigned a = ((a00 * (32 - fx) + a01 * fx) * (32 - fy) + (a10 * (32 - fx) + a11 * fx) * fy) >> 10;
+    if (!a) return;
+    uint32_t t0 = ((wg_sp(src[v0 * stride + u0]) * (32 - fx) + wg_sp(src[v0 * stride + u1]) * fx) >> 5) & 0x07E0F81Fu;
+    uint32_t t1 = ((wg_sp(src[v1 * stride + u0]) * (32 - fx) + wg_sp(src[v1 * stride + u1]) * fx) >> 5) & 0x07E0F81Fu;
+    uint32_t v = ((t0 * (32 - fy) + t1 * fy) >> 5) & 0x07E0F81Fu;
+    uint16_t col = (uint16_t)(v | (v >> 16));
+    if (alpha < 255) a = (a * alpha) >> 8;
+    row[x] = a >= 254 ? col : wg_mix(col, row[x], a);
+}
 /* sprite girado "ang" y escalado "sc" con centro en (cx, cy): bilineal en coma fija (el
  * temblor del modo edicion y el encogerse al quitar). Colores con el truco 565 "separado"
  * (una multiplicacion por muestra) y alfa de la mascara */
@@ -434,36 +478,46 @@ static void wg_blit_xf(uint16_t *dst, int ylo, const uint16_t *src, int stride, 
     int xa = (int)floorf(cx - ex) - 1, xb = (int)ceilf(cx + ex) + 1, ya = (int)floorf(cy - ey) - 1, yb = (int)ceilf(cy + ey) + 1;
     if (xa < 0) xa = 0; if (xb > W) xb = W; if (ya < ylo) ya = ylo; if (yb > H) yb = H;
     float inv = 1.f / sc;
-    int du = (int)(c * inv * 65536), dv = (int)(-s * inv * 65536);
+    int du = (int)(c * inv * 65536), dv = (int)(-s * inv * 65536), opaque = alpha >= 255 && sh == WG_H;
+    unsigned aint = !opaque && sh == WG_H ? (unsigned)(alpha * 33) >> 8 : 0;
     for (int y = ya; y < yb; y++) {
         float dy = y + .5f - cy, dx = xa + .5f - cx;
         int U = (int)(((c * dx + s * dy) * inv + sw / 2.f - .5f) * 65536), V2 = (int)(((-s * dx + c * dy) * inv + sh / 2.f - .5f) * 65536);
         uint16_t *row = dst + y * W;
-        for (int x = xa; x < xb; x++, U += du, V2 += dv) {
-            int iu = U >> 16, iv = V2 >> 16;
-            if (iu < -1 || iv < -1 || iu >= sw || iv >= sh) continue;
-            unsigned fx = (U >> 11) & 31, fy = (V2 >> 11) & 31;
-            unsigned a00, a01, a10, a11; uint16_t c00, c01, c10, c11;
-            if (iu >= 0 && iv >= 0 && iu < sw - 1 && iv < sh - 1) {
-                const uint8_t *mm = m + iv * sw + iu; const uint16_t *pp = src + iv * stride + iu;
-                a00 = mm[0]; a01 = mm[1]; a10 = mm[sw]; a11 = mm[sw + 1];
-                c00 = pp[0]; c01 = pp[1]; c10 = pp[stride]; c11 = pp[stride + 1];
-            } else {   /* borde: color del vecino valido, alfa 0 fuera */
-                int u0 = iu < 0 ? 0 : iu, u1 = iu + 1 >= sw ? sw - 1 : iu + 1, v0 = iv < 0 ? 0 : iv, v1 = iv + 1 >= sh ? sh - 1 : iv + 1;
-                int ok_u0 = iu >= 0, ok_u1 = iu + 1 < sw, ok_v0 = iv >= 0, ok_v1 = iv + 1 < sh;
-                a00 = ok_u0 && ok_v0 ? m[v0 * sw + u0] : 0; a01 = ok_u1 && ok_v0 ? m[v0 * sw + u1] : 0;
-                a10 = ok_u0 && ok_v1 ? m[v1 * sw + u0] : 0; a11 = ok_u1 && ok_v1 ? m[v1 * sw + u1] : 0;
-                c00 = src[v0 * stride + u0]; c01 = src[v0 * stride + u1]; c10 = src[v1 * stride + u0]; c11 = src[v1 * stride + u1];
-            }
-            unsigned a = ((a00 * (32 - fx) + a01 * fx) * (32 - fy) + (a10 * (32 - fx) + a11 * fx) * fy) >> 10;
-            if (!a) continue;
-            uint32_t t0 = ((wg_sp(c00) * (32 - fx) + wg_sp(c01) * fx) >> 5) & 0x07E0F81Fu;
-            uint32_t t1 = ((wg_sp(c10) * (32 - fx) + wg_sp(c11) * fx) >> 5) & 0x07E0F81Fu;
-            uint32_t v = ((t0 * (32 - fy) + t1 * fy) >> 5) & 0x07E0F81Fu;
-            uint16_t col = (uint16_t)(v | (v >> 16));
-            if (alpha < 255) a = a * alpha / 255;
-            row[x] = a >= 254 ? col : mix565(col, row[x], a);
+        int n = xb - xa, k0 = 0, k1 = 0;
+        if (sh == WG_H && (opaque || aint)) {   /* tramo interior (mascara 255): se resuelve una vez por fila */
+            int a0, a1, b0, b1;
+            wg_range(U, du, 0, (long long)(sw - 1) << 16, n, &a0, &a1);
+            wg_range(V2, dv, (long long)WG_R << 16, (long long)(sh - (int)WG_R - 1) << 16, n, &b0, &b1);
+            k0 = a0 > b0 ? a0 : b0; k1 = a1 < b1 ? a1 : b1; if (k1 < k0) k1 = k0;
+            /* franjas de arriba y abajo: entre las esquinas la mascara tambien es 255 */
+            int c0, c1, d0, d1;
+            wg_range(U, du, (long long)WG_R << 16, (long long)(sw - (int)WG_R - 1) << 16, n, &c0, &c1);
+            wg_range(V2, dv, 0, (long long)(sh - 1) << 16, n, &d0, &d1);
+            int e0 = c0 > d0 ? c0 : d0, e1 = c1 < d1 ? c1 : d1;
+            if (e1 > e0) { if (k1 <= k0) { k0 = e0; k1 = e1; } else if (e0 <= k1 && e1 >= k0) { if (e0 < k0) k0 = e0; if (e1 > k1) k1 = e1; } }
         }
+        for (int k = 0; k < k0; k++) wg_xf_px(row, xa + k, U + du * k, V2 + dv * k, src, stride, m, sw, sh, alpha);
+        {
+            int Uk = U + du * k0, Vk = V2 + dv * k0; uint16_t *o = row + xa + k0, *oe = row + xa + k1;
+            if (opaque) for (; o < oe; o++, Uk += du, Vk += dv) {
+                unsigned fx = (Uk >> 11) & 31, fy = (Vk >> 11) & 31;
+                const uint16_t *pp = src + (Vk >> 16) * stride + (Uk >> 16);
+                uint32_t t0 = ((wg_sp(pp[0]) * (32 - fx) + wg_sp(pp[1]) * fx) >> 5) & 0x07E0F81Fu;
+                uint32_t t1 = ((wg_sp(pp[stride]) * (32 - fx) + wg_sp(pp[stride + 1]) * fx) >> 5) & 0x07E0F81Fu;
+                uint32_t v = ((t0 * (32 - fy) + t1 * fy) >> 5) & 0x07E0F81Fu;
+                *o = (uint16_t)(v | (v >> 16));
+            } else for (; o < oe; o++, Uk += du, Vk += dv) {
+                unsigned fx = (Uk >> 11) & 31, fy = (Vk >> 11) & 31;
+                const uint16_t *pp = src + (Vk >> 16) * stride + (Uk >> 16);
+                uint32_t t0 = ((wg_sp(pp[0]) * (32 - fx) + wg_sp(pp[1]) * fx) >> 5) & 0x07E0F81Fu;
+                uint32_t t1 = ((wg_sp(pp[stride]) * (32 - fx) + wg_sp(pp[stride + 1]) * fx) >> 5) & 0x07E0F81Fu;
+                uint32_t v = ((t0 * (32 - fy) + t1 * fy) >> 5) & 0x07E0F81Fu;
+                v = ((v * aint + wg_sp(*o) * (32 - aint)) >> 5) & 0x07E0F81Fu;
+                *o = (uint16_t)(v | (v >> 16));
+            }
+        }
+        for (int k = k1; k < n; k++) wg_xf_px(row, xa + k, U + du * k, V2 + dv * k, src, stride, m, sw, sh, alpha);
     }
 }
 
@@ -725,6 +779,7 @@ static int wg_snap_ok;
 static int wg_content_h(void) { short xs[WG_MAX], ys[WG_MAX]; return wg_layout_items(xs, ys) + 46; }
 static void wg_compose(void)
 {
+    if (!wg_loaded && !widgets_on && V.scroll >= 0) { if (!WD.t) wg_refresh(); return; }   /* precomposicion: esperar a los datos */
     if (!wg_cache) wg_cache = malloc(HM_FRAME_BYTES);
     if (!wg_cache) return;
     wg_masks_init();
@@ -782,7 +837,7 @@ static void widgets_draw(uint16_t *d, int ox)
         short xs[WG_MAX], ys[WG_MAX]; wg_layout_items(xs, ys);
         int s = wg_it[wg_press].size, w = wg_w(s), x = xs[wg_press], y = WG_TOP - (int)wg_scroll + ys[wg_press];
         if (wg_press_btn >= 0) { int x0b = x + 14 + 109 + 14, tw = w - (x0b - x) - 14; fill_circle(d, x0b + 18 + wg_press_btn * (tw - 36) / 2.f, y + 109, 20, 0xFFFF, 46); }
-        else for (int yy = 0; yy < WG_H; yy++) { int Y = y + yy; if (Y < 30 || Y >= H) continue; for (int xx = 0; xx < w; xx++) { int a = wg_mask[s][yy * w + xx]; if (a) d[Y * W + x + xx] = mix565(0, d[Y * W + x + xx], a * 70 / 255); } }
+        else for (int yy = 0; yy < WG_H; yy++) { int Y = y + yy; if (Y < 30 || Y >= H) continue; for (int xx = 0; xx < w; xx++) { int a = wg_mask[s][yy * w + xx]; if (a) d[Y * W + x + xx] = wg_mix(0, d[Y * W + x + xx], a * 70 >> 8); } }
         wg_part_y0 = wg_part_y1 = 0;
     }
 }
@@ -824,10 +879,13 @@ static void wg_plus(uint16_t *d, int cx, int cy, int a)
 {
     fill_rrect(d, cx - 7, cy - 1, 14, 3, 1.2f, 0xFFFF, a); fill_rrect(d, cx - 1, cy - 7, 3, 14, 1.2f, 0xFFFF, a);
 }
+static double wg_pf_bg, wg_pf_bl;
 static void wg_edit_frame(uint16_t *d, double t, float pa, int drag)
 {
+    double q0 = now_ms();
     compose_statusbar(d);
     memcpy(d + 30 * W, wall + 30 * W, (H - 30) * W * 2);
+    wg_pf_bg += now_ms() - q0;
     int top = WG_TOP + (int)wg_shift - (int)wg_scroll;
     for (int pass = 0; pass < 2; pass++) for (int i = 0; i < wg_n; i++) {
         if ((pass == 0) == (i == drag)) continue;
@@ -838,13 +896,15 @@ static void wg_edit_frame(uint16_t *d, double t, float pa, int drag)
             const uint8_t *sh = wg_shadow[it->size]; int sw = w + 2 * WG_SP, shh = WG_H + 2 * WG_SP;
             int sx0 = (int)(cx - sw / 2.f), sy0 = (int)(cy - shh / 2.f) + 8;
             if (sh) for (int y = 0; y < shh; y++) { int Y = sy0 + y; if (Y < 30 || Y >= H) continue;
-                for (int x = 0; x < sw; x++) { int X = sx0 + x; if (X < 0 || X >= W) continue; int a = sh[y * sw + x] * 100 >> 8; if (a) d[Y * W + X] = mix565(0, d[Y * W + X], a); } }
+                for (int x = 0; x < sw; x++) { int X = sx0 + x; if (X < 0 || X >= W) continue; int a = sh[y * sw + x] * 100 >> 8; if (a) d[Y * W + X] = wg_mix(0, d[Y * W + X], a); } }
             wg_blit_xf(d, 30, sp->px, w, wg_mask[it->size], w, WG_H, cx, cy, 0, 1.04f, 255);
             continue;
         }
         float amp = 1.3f / (w / 2.f);           /* +-1,3 px en el borde: igual para pequenos y medianos */
         float ang = pa > 0 ? amp * pa * sinf((float)((t - wg_t0) / 260.0 * 6.2831853) + i * 1.9f) : 0;
+        double q1 = now_ms();
         wg_blit_xf(d, 30, sp->px, w, wg_mask[it->size], w, WG_H, cx, cy, ang, it->sc, (int)(255 * it->al));
+        wg_pf_bl += now_ms() - q1;
         if (pa > 0.01f && !it->rm) {   /* "−" en la esquina, girando con el widget */
             float ox = (-w / 2.f + 9) * it->sc, oy = (-WG_H / 2.f + 9) * it->sc, c = cosf(ang), s = sinf(ang);
             float bx = cx + ox * c - oy * s, by = cy + ox * s + oy * c; int a = (int)(255 * pa * it->al);
@@ -990,13 +1050,10 @@ static void wg_edit(int press, int embedded)
         wg_edit_frame(fr0, t, pa, drag);
         prof_acc += now_ms() - tr0; prof_n++;
         present();
-        if (now_ms() - prof_t > 3000) { if (prof_n > 20) lg("perfil widgets (edicion): %d fot, dibujo %.1f ms", prof_n, prof_acc / prof_n); prof_t = now_ms(); prof_n = 0; prof_acc = 0; }
+        if (now_ms() - prof_t > 3000) { if (prof_n > 20) lg("perfil widgets (edicion): %d fot, dibujo %.1f ms (fondo %.1f, giro %.1f)", prof_n, prof_acc / prof_n, wg_pf_bg / prof_n, wg_pf_bl / prof_n);
+            wg_pf_bg = wg_pf_bl = 0; prof_t = now_ms(); prof_n = 0; prof_acc = 0; }
         if (exiting && t - exit_t >= 240) break;
-        /* en reposo: rehacer (uno por fotograma) los widgets cuyo cristal ya no es de su sitio */
-        if (tst == 0 && !exiting) for (int i = 0; i < wg_n; i++) {
-            struct witem *it = &wg_it[i]; if (it->rm || it->ax != tx[i] || it->ay != ty[i]) continue;
-            if (wg_spr[it->type][it->size].sig != wg_sig(it->type, it->size, tx[i], WG_TOP + ty[i])) { wg_build(it->type, it->size, tx[i], WG_TOP + ty[i]); break; }
-        }
+        /* (el cristal de los widgets movidos se rehace al salir: rehacerlo aqui costaria fotogramas) */
     }
     wg_edit_on = 0; wg_shift = 0;
     { float mx = wg_content_h() + WG_TOP - H; if (mx < 0) mx = 0; if (wg_scroll > mx) wg_scroll = mx; }
