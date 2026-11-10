@@ -105,12 +105,12 @@ def headphones():
     return im
 
 
-def pill(t, w=None, sz=7.6, maxw=None):
+def pill(t, w=None, sz=7.6, maxw=None, minsz=5.6):
     """capsula con texto en negrita (salida: LO, 4.4, OPT, BT, ADB; codecs Bluetooth). Con maxw,
     la letra se reduce hasta que quepa."""
     f = font(sz, bold=True)
     tw = f.getlength(t) / S
-    while maxw and tw + 7 > maxw and sz > 5.6:
+    while maxw and tw + 7 > maxw and sz > minsz:
         sz -= 0.2; f = font(sz, bold=True); tw = f.getlength(t) / S
     w = w or int(round(tw + 7))
     im, d = canvas(w)
@@ -228,7 +228,12 @@ done("lo", pill("LO", maxw=19)); done("balance", pill("4.4", maxw=19)); done("sp
 done("usb", usb()); done("a2dp", pill("BT", maxw=19)); done("adb", pill("ADB", sz=7.0, maxw=19))
 # codec del Bluetooth (los de serie median 32 px y pisaban al altavoz)
 for n, t in (("sbc", "SBC"), ("aptx", "aptX"), ("aptx_hd", "aptX HD"), ("ldac", "LDAC"), ("uat", "UAT"), ("aac", "AAC")):
-    done(n, pill(t, maxw=28))
+    done(n, pill(t, maxw=27, minsz=5.0))
+# El reproductor NO usa la x de topbar_iv_output: la pone justo detras de las cifras del volumen
+# (x de las cifras + ancho real + ~1 px; visto en el aparato). El hueco va dentro del icono.
+OUT_PAD = 4
+for o in ("po", "lo", "balance", "spdif", "usb", "a2dp", "adb"):
+    im = files[o]; pad = Image.new("RGBA", (im.width + OUT_PAD, im.height), (0, 0, 0, 0)); pad.alpha_composite(im, (OUT_PAD, 0)); files[o] = pad
 done("am", blank(1)); done("pm", blank(1))              # como iOS: sin AM/PM en la barra
 done("play", play()); done("pause", pause())
 for i in range(4): done(f"wifi_connect_{i}", wifi(i if i else 1))
@@ -253,9 +258,9 @@ X_HL = X_PLAY + wd("play") + 4                            # HiBy Link a la izqui
 CODECS = ("sbc", "aptx", "aptx_hd", "ldac", "uat", "aac")
 OUTS = ("po", "lo", "balance", "spdif", "usb", "a2dp", "adb")
 X_CODEC = X_HL + wd("hl_connect") + 4                     # codec del Bluetooth (si se muestra)
-X_VOLN = 147                                              # volumen: donde lo lee el OCR del shell (3 cifras)
+X_VOLN = 145                                              # volumen: donde lo lee el OCR del shell (3 cifras)
 X_SPK = X_VOLN - 3 - wd("speaker")
-X_OUT = X_VOLN + 3 * DW + 4                               # salida tras el volumen de 3 cifras
+X_OUT = X_VOLN + 3 * DW + 1                               # salida tras el volumen de 3 cifras
 POS = {
     "topbar_nv_clock": M, "topbar_iv_play_status": X_PLAY, "topbar_iv_hl": X_HL, "topbar_iv_bt_sink_type": X_CODEC,
     "topbar_iv_speaker": X_SPK, "topbar_nv_speaker": X_VOLN, "topbar_iv_output": X_OUT,
@@ -273,7 +278,7 @@ SLOTS = [
     ("codec BT", X_CODEC, max(wd(c) for c in CODECS)),
     ("altavoz", X_SPK, wd("speaker")),
     ("volumen", X_VOLN, 3 * DW),
-    ("salida", X_OUT, max(wd(o) for o in OUTS)),
+    ("salida", X_OUT + OUT_PAD, max(wd(o) for o in OUTS) - OUT_PAD),   # lo visible; el margen va en el PNG
     ("Bluetooth", X_BT, wd("bluetooth")),
     ("Wi-Fi", X_NET, max(wd(f"wifi_connect_{i}") for i in range(4))),
     ("bateria %", X_PCT, 3 * DW + wd("percent")),

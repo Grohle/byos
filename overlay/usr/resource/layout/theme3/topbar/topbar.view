@@ -4,7 +4,7 @@
 			"imageview":{
 				"name":"topbar_iv_speaker",
 				"img_path":"topbar\\speaker.png",
-				"x":128,
+				"x":126,
 				"y":5,
 				"imageview":true
 			},
@@ -12,7 +12,7 @@
 				"name":"topbar_nv_speaker",
 				"img_path":"topbar\\",
 				"align_type":"top",
-				"x":147,
+				"x":145,
 				"y":5,
 				"w":27,
 				"h":20,
@@ -35,7 +35,7 @@
 				"img_path_4":"topbar\\usb.png",
 				"img_path_5":"topbar\\a2dp.png",
 				"img_path_6":"topbar\\adb.png",
-				"x":178,
+				"x":173,
 				"y":5,
 				"imageview":true
 			},
