@@ -49,6 +49,7 @@ pueden ir entre comillas. Las claves desconocidas se ignoran (compatibilidad hac
 | `input` | sí | `touch`, `keys` o `both` |
 | `stop_player` | no | `1` si la app necesita la RAM y la música debe pararse; `0` por defecto |
 | `ram_kb` | recom. | estimación de memoria (KB) que usa la app |
+| `refresh` | no | `full`: mientras la app está abierta el panel no baja al refresco de reposo (30 Hz tras 1,5 s sin tocar). Para navegador, vídeo o animaciones sin tocar la pantalla |
 | `category`, `author`, `homepage` | no | informativos |
 
 Ejemplo (`apps/hola/manifest.ini`):
@@ -131,6 +132,12 @@ Proceso de `hpk_install()`:
 
 El shell debe cerrar la app (SIGTERM) antes de actualizarla o desinstalarla.
 
+**Apps en la tarjeta SD** (elegido al instalar desde la tienda): la app completa va a
+`SD/HiByOS/apps/<id>/` (mismo instalador atómico, raíz `SD/HiByOS`) y en `apps/<id>/` queda un
+*talón* con `manifest.ini`, `icon_*.ov` y `sd_location`. `HM_APP_DIR` apunta a la SD (exfat sin
+`noexec`: se ejecuta en su sitio). Los datos siguen en `appdata/<id>` del HiBy. Detalles, mover
+entre SD y HiBy y recuperación ante cortes: `docs/TIENDA.md` §4.
+
 `hpk_scan()` solo lee el manifest y localiza el icono (recorre cabeceras; no lee datos), por lo que
 es rápido pero no detecta un ELF incorrecto: eso lo hace `hpk_install()`.
 
@@ -174,9 +181,12 @@ Escribe el búfer oculto **completo** y **después** haz el pan; nunca escribas 
 muestra tras el pan (corrompe la transferencia y parpadea). Máximo útil: 44 fps.
 
 **Salida**: al deslizar hacia arriba desde la barra de inicio el shell envía `SIGTERM`; la app debe
-terminar en **menos de 1 s** (después llega `SIGKILL`). No dejes procesos hijos.
+terminar en **menos de 1 s** (después llega `SIGKILL`). No dejes procesos hijos. Si la app termina sola con el código
+**99**, el shell avisa «La app se cerró por falta de memoria» (lo usa el vigilante del Navegador).
 
-**Memoria**: si `stop_player=0` la app convive con el reproductor y debe quedarse en unos pocos MB
+**Memoria**: sin swap, agotar la RAM no dispara el OOM killer a tiempo: el kernel expulsa el código
+de todos los procesos y el aparato deja de responder (adb incluido). Una app grande debe vigilar
+`MemAvailable` y salir antes (ver `apps/navegador/navegador.c`). Si `stop_player=0` la app convive con el reproductor y debe quedarse en unos pocos MB
 (declara `ram_kb` con honestidad). Nunca escribas grandes ficheros temporales en `/tmp` (es RAM).
 
 ### SDK (`src/sdk/hm_app.h`, solo cabecera)

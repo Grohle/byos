@@ -14,11 +14,14 @@ ap = argparse.ArgumentParser()
 ap.add_argument("hpk", nargs="+")
 ap.add_argument("--tag", default="apps-1")
 ap.add_argument("--featured", default="org.hibymod.navegador")
+ap.add_argument("--testing", default="org.hibymod.navegador",
+                help="ids en pruebas: se listan con available=false y sin hpk/sha256 (no instalables)")
 ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "repo"))
 ap.add_argument("--dist", default=os.path.join(os.path.dirname(__file__), "..", "out", "repo_assets"))
 a = ap.parse_args()
 os.makedirs(os.path.join(a.out, "icons"), exist_ok=True); os.makedirs(a.dist, exist_ok=True)
 feat = set(filter(None, a.featured.split(",")))
+testing = set(filter(None, a.testing.split(",")))
 apps = []
 for p in a.hpk:
     data = open(p, "rb").read()
@@ -33,6 +36,8 @@ for p in a.hpk:
     except KeyError:
         icon = ""
     loc = lambda k: {l: mf.get(k + "." + l) or mf.get(k) for l in ("es", "en", "fr")}
+    if i in testing:
+        os.remove(os.path.join(a.dist, fname))
     apps.append({
         "id": i, "version": v, "min_hibymod": mf["min_hibymod"],
         "name": loc("name"), "desc": loc("description"),
@@ -43,9 +48,13 @@ for p in a.hpk:
         "icon": icon,
         "hpk": "https://github.com/%s/releases/download/%s/%s" % (REPO, a.tag, fname),
     })
+for x in apps:
+    if x["id"] in testing:
+        x["available"] = False
+        for k in ("hpk", "sha256"): x.pop(k)
 apps.sort(key=lambda x: (not x["featured"], x["name"]["es"].lower()))
 idx = {"format": 1, "name": {"es": "HiByOS", "en": "HiByOS", "fr": "HiByOS"},
        "homepage": "https://github.com/%s" % REPO, "apps": apps}
 open(os.path.join(a.out, "index.json"), "w", encoding="utf-8", newline="\n").write(json.dumps(idx, ensure_ascii=False, indent=1) + "\n")
 print("repo/index.json:", len(apps), "apps; assets en", os.path.abspath(a.dist))
-for x in apps: print(" ", x["id"], x["version"], x["size"], x["sha256"][:16])
+for x in apps: print(" ", x["id"], x["version"], x["size"], x.get("sha256", "EN PRUEBAS")[:16])
