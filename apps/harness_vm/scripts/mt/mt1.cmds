@@ -1,0 +1,34 @@
+# multitarea desde una app propia (Archivos): soltar rapido = inicio; mantener 1 s = multitarea; cerrar la tarjeta
+restart
+sleep 4000
+mark open_files
+tap 265 75
+sleep 1500
+shot 01_files
+mark home_swipe
+swipe 160 470 160 250 180
+sleep 1200
+shot 02_home
+mark open_files2
+tap 265 75
+sleep 1500
+mark hold_switcher
+drag 160 470 160 330 300
+sleep 600
+shot 03_peek
+sleep 900
+shot 04_armed
+up
+sleep 800
+shot 05_switcher
+mark swipe_to_player
+swipe 100 240 260 240 250
+sleep 700
+shot 06_player_card
+mark swipe_back_app
+swipe 260 240 80 240 250
+sleep 700
+mark close_card
+swipe 160 300 160 40 150
+sleep 1200
+shot 07_closed

@@ -18,7 +18,7 @@
 #define GRID_TOP 46
 #define DOTS_Y (DOCK_Y - 13)
 
-enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS };
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS, ACT_BOOKS };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -34,7 +34,7 @@ static struct lapp apps[40] = {
     { "music",      "Música",        ACT_MUSIC,  116, 425 },   /* app propia; (ax, ay) = la de fabrica */
     { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },   /* Ajustes propios (sustituyen a los de HiBy) */
     { "wireless",   "Inalámbrico",   ACT_WIRELESS, 46, 74 },   /* Wi-Fi y Bluetooth propios */
-    { "books",      "Libros",        ACT_TAP,    117,  74 },
+    { "books",      "Libros",        ACT_BOOKS,  117,  74 },   /* lector propio (TXT/EPUB) */
     { "dac",        "DAC USB",       ACT_USBDAC, 188,  74 },   /* pagina USB de los Ajustes propios */
     { "tidal",      "Tidal",         ACT_STREAM,   0,   0 },
     { "qobuz",      "Qobuz",         ACT_STREAM,   1,   0 },

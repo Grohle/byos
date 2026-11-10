@@ -1,0 +1,28 @@
+restart
+sleep 4000
+tap 265 75
+sleep 1500
+mark files_sd
+tap 160 147
+sleep 1500
+shot b01_sd
+mark back_right_edge
+swipe 314 240 150 240 250
+sleep 1200
+shot b02_after_right
+tap 160 147
+sleep 1500
+mark back_right_wide
+swipe 270 240 120 240 200
+sleep 1200
+shot b03_after_wide
+tap 160 147
+sleep 1500
+mark scroll_near_edge
+swipe 300 400 300 200 300
+sleep 1000
+shot b04_scroll_near_edge
+mark back_left_wide
+swipe 50 240 220 240 200
+sleep 1200
+shot b05_after_left_wide

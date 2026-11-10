@@ -286,14 +286,9 @@ static void app_switch_gesture(int sy, int sx)
     if (launcher_enabled) render_launcher(home, now_ms()); else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES); else memset(home, 0, HM_FRAME_BYTES);
     for (int i = 0; i < W * H; i++) { bg[i] = dim565(home[i], 22); bg2[i] = dim565(home[i], 11); }
     have_under = 0;
-    const uint16_t *ph = have_cache_plane ? img_cache_plane : 0;
-    /* sin imagen guardada del reproductor: tarjeta oscura con su icono grande en el centro */
-    static uint16_t *ph_card;
-    if (!ph) {
-        if (!ph_card) ph_card = malloc(W * H * 2);
-        if (ph_card) player_card(ph_card);
-        ph = ph_card;
-    }
+    /* tarjeta del reproductor (el propio): se prepara solo si se mantiene el gesto */
+    static uint16_t *ph_card; if (!ph_card) ph_card = malloc(W * H * 2);
+    const uint16_t *ph = 0;
     st->ov_on = 0; ov_cur = 0;
     cmd('C');
     double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
@@ -316,7 +311,8 @@ static void app_switch_gesture(int sy, int sx)
         else if (spd >= 0.15) still_t = 0;
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         double a = armed ? (t - arm_t) / 200.0 : 0; if (a > 1) a = 1;
-        int peek = armed || (still_t && t - still_t > 300);
+        if (!ph && ph_card && (armed || (still_t && t - still_t > 200))) { player_card(ph_card); ph = ph_card; }
+        int peek = ph && (armed || (still_t && t - still_t > 300));
         /* la tarjeta sigue al dedo (tambien de lado) */
         double off = (lx - sx) / (W * CARD_S + 18.0);
         switcher_frame(armed && a > 0.5 ? bg2 : bg, app, ph, off, s, (sy - cur_y) * 0.35, peek, armed && a >= 1);
@@ -550,7 +546,7 @@ static void home_switcher(int sy)
     int have_app = 0;
     if (last_app >= 0 && last_app == own_card_app && own_card) { memcpy(appc, own_card, HM_FRAME_BYTES); have_app = 1; }   /* app propia */
     else if (last_app >= 0 && app_cache(last_app, 0)) { memcpy(appc, img_app, HM_FRAME_BYTES); have_app = 1; }
-    const uint16_t *ph = have_cache_plane ? img_cache_plane : 0;
+    const uint16_t *ph = 0;   /* siempre el reproductor propio */
     static uint16_t *ph_card;
     if (!ph) {
         if (!ph_card) ph_card = malloc(W * H * 2);

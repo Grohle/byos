@@ -1106,8 +1106,8 @@ static int own_home_gesture(int sx, int sy, int self)
     render_launcher(home, now_ms());
     for (int i = 0; i < W * H; i++) { bg[i] = dim565(home[i], 22); bg2[i] = dim565(home[i], 11); }
     have_under = 0;
-    static uint16_t *ph; if (!ph) ph = malloc(HM_FRAME_BYTES);
-    if (ph) player_card(ph);
+    static uint16_t *phb; if (!phb) phb = malloc(HM_FRAME_BYTES);
+    const uint16_t *ph = 0;          /* la tarjeta del reproductor se prepara solo si se mantiene el gesto */
     sw_player_first = 0;
     struct pkt p; double vel = 0, lt = now_ms(), still_t = 0, arm_t = 0, prog = 0; int ly = sy, lx = sx, armed = 0;
     double ht[16]; int hy[16], hn = 0;
@@ -1125,6 +1125,7 @@ static int own_home_gesture(int sx, int sy, int self)
         else if (spd >= 0.15) still_t = 0;
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         double a = armed ? (t - arm_t) / 200.0 : 0; if (a > 1) a = 1;
+        if (!ph && phb && (armed || (still_t && t - still_t > 200))) { player_card(phb); ph = phb; }
         int peek = ph && (armed || (still_t && t - still_t > 300));
         switcher_frame(armed && a > 0.5 ? bg2 : bg, own_card, ph, (lx - sx) / (W * CARD_S + 18.0), s, (sy - cur_y) * 0.35, peek, armed && a >= 1);
         if (!cur_down) break;

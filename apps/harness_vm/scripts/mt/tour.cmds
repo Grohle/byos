@@ -1,0 +1,70 @@
+# recorrido: multitarea, atras desde los dos bordes, apps nuevas
+restart
+sleep 4000
+mark files_open
+tap 265 75
+sleep 1500
+mark files_sd
+tap 160 100
+sleep 1200
+shot t01_files_sd
+mark back_right
+swipe 312 240 150 240 250
+sleep 1200
+shot t02_back_right
+mark hold_switcher
+drag 160 470 160 330 300
+sleep 1600
+up
+sleep 800
+shot t03_switcher
+mark tap_outside_home
+tap 160 30
+sleep 1200
+mark settings_open
+tap 205 418
+sleep 1800
+shot t04_settings
+mark settings_row
+tap 160 200
+sleep 1200
+shot t05_settings_sub
+mark back_left
+swipe 6 240 170 240 250
+sleep 1200
+shot t06_back_left
+mark settings_home
+swipe 160 470 160 200 150
+sleep 1200
+mark wireless_open
+tap 52 75
+sleep 1800
+shot t07_wireless
+swipe 160 470 160 200 150
+sleep 1200
+mark books_open
+tap 124 75
+sleep 1800
+shot t08_books
+swipe 160 470 160 200 150
+sleep 1200
+mark np_open
+tap 52 165
+sleep 1800
+shot t09_nowplaying
+swipe 160 470 160 200 150
+sleep 1200
+mark usbdac_open
+tap 195 75
+sleep 1800
+shot t10_usbdac
+swipe 160 470 160 200 150
+sleep 1200
+mark home_switcher
+drag 160 470 160 250 300
+sleep 400
+up
+sleep 900
+shot t11_home_switcher
+tap 160 30
+sleep 1000
