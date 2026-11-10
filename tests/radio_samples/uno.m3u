@@ -1,0 +1,7 @@
+#EXTM3U
+#EXTINF:-1,Radio Uno
+http://a.example.com/uno
+
+# comment
+ftp://nope.example.com/
+https://b.example.com/uno.aac

@@ -19,7 +19,7 @@
 #define DOTS_Y (DOCK_Y - 13)
 
 enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_BOOKS, ACT_FREEMUSIC, ACT_BUDS,
-       ACT_WIRELESS, ACT_SOON };
+       ACT_WIRELESS, ACT_RADIO, ACT_SOON };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -38,7 +38,7 @@ static struct lapp apps[40] = {
      * "DAC USB" ya no existen ("dac" vale como alias de "settings": ver app_by_id). */
     { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },
     { "wireless",   "Inalámbrico",   ACT_WIRELESS, 46, 74 },   /* Wi-Fi y Bluetooth propios */
-    { "radio",      "Radio",         ACT_SOON,     0,   0 },
+    { "radio",      "Radio",         ACT_RADIO,    0,   0 },   /* emisoras por internet (Radio Browser + propias) */
     { "books",      "Libros",        ACT_BOOKS,  117,  74 },   /* lector propio (TXT/EPUB) */
     { "tidal",      "Tidal",         ACT_STREAM,   0,   0 },
     { "qobuz",      "Qobuz",         ACT_STREAM,   1,   0 },
