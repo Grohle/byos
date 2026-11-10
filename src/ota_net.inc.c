@@ -38,7 +38,7 @@
  * repo and rewrites the OTA_PUBKEY line. All zeros = online updates disabled in this build.
  * OTA_PUBKEY2 is for key rotation (a release signed with either key is accepted). */
 #ifndef OTA_PUBKEY_HEX
-#define OTA_PUBKEY_HEX "0000000000000000000000000000000000000000000000000000000000000000" /* OTA_PUBKEY */
+#define OTA_PUBKEY_HEX "6d87851ece77b81547cfbde491d9c46494dc99e70922c48115bfe5d9e854e06e" /* OTA_PUBKEY */
 #endif
 #ifndef OTA_PUBKEY2_HEX
 #define OTA_PUBKEY2_HEX "" /* OTA_PUBKEY2 */
@@ -487,7 +487,8 @@ static int ota_ver_ok(const char *v)   /* 1.2.3 or 1.2.3-beta.1 */
 }
 static int ota_vercmp(const char *a, const char *b)   /* <0, 0, >0 */
 {
-    if (!a) a = ""; if (!b) b = "";
+    if (!a) a = "";
+    if (!b) b = "";
     for (;;) {
         int ea = !*a || *a == '-', eb = !*b || *b == '-';
         if (ea && eb) break;
@@ -627,7 +628,7 @@ static int ota_rm_rf(const char *p)
 }
 static int ota_exists(const char *p) { struct stat s; return !stat(p, &s); }
 static long long ota_fsize(const char *p) { struct stat s; return stat(p, &s) ? -1 : (long long)s.st_size; }
-static long long ota_free(const char *p) { struct statvfs v; return statvfs(p, &v) ? -1 : (long long)v.f_bavail * v.f_frsize; }
+static long long ota_free(const char *p) { struct statvfs v; return statvfs(p, &v) ? -1LL : (long long)v.f_bavail * (long long)v.f_frsize; }
 static char *ota_read_file(const char *p, size_t max, size_t *len)
 {
     int fd = open(p, O_RDONLY); if (fd < 0) return 0;
@@ -750,6 +751,7 @@ static int ota_tar_extract(const char *tar, const char *dest, const char *prefix
         done += pad;
     }
     close(fd);
+    if (!rc && frac) *frac = 1;
     return rc;
 }
 
@@ -776,7 +778,7 @@ static int ota_manifest_load(const char *p, struct ota_mline **out)
         char md[40], path[220];
         if (sscanf(l, "%39s %219s", md, path) == 2 && strlen(md) == 32 && strlen(path) < 200) {
             if (n == cap) { struct ota_mline *nm = realloc(m, (cap *= 2) * sizeof *m); if (!nm) { free(m); m = 0; break; } m = nm; }
-            snprintf(m[n].md5, 33, "%s", md); snprintf(m[n].path, 200, "%s", path); n++;
+            memcpy(m[n].md5, md, 33); memcpy(m[n].path, path, strlen(path) + 1); n++;
         }
         l = e ? e + 1 : 0;
     }
@@ -924,8 +926,16 @@ static pid_t ota_spawn(char *const argv[], int *efd, const char *env_extra, cons
     posix_spawn_file_actions_t fa; posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-    if (efd) { posix_spawn_file_actions_adddup2(&fa, fd[1], 2); posix_spawn_file_actions_addclose(&fa, fd[0]); posix_spawn_file_actions_addclose(&fa, fd[1]); }
+    if (efd) posix_spawn_file_actions_adddup2(&fa, fd[1], 2);
     else posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    /* nothing else of the shell reaches the child: a long download must not keep the shim's
+     * input socket open if the shell dies meanwhile (the shim releases the touch on close) */
+    DIR *fdd = opendir("/proc/self/fd"); struct dirent *fe;
+    while (fdd && (fe = readdir(fdd))) {
+        int f = atoi(fe->d_name);
+        if (f > 2 && f != dirfd(fdd)) posix_spawn_file_actions_addclose(&fa, f);
+    }
+    if (fdd) closedir(fdd);
     int ne = 0; while (environ && environ[ne]) ne++;
     char **env = calloc((size_t)ne + 3, sizeof *env); pid_t pid = -1; int r = -1;
     if (env) {
@@ -1108,6 +1118,7 @@ static int ota_install_log_says_space(void)
 static void op_install(void)
 {
     char d[260], tar[300], part[310], stage[300], stage_pl[320], pl[300], prevdir[300], b[400];
+    if (!ota_sd_ok()) { ota_set(OS_ERROR, OE_NOSD); return; }
     if (!ota_st.have_info) { ota_set(OS_ERROR, OE_FORMAT); return; }
     struct ota_info in; pthread_mutex_lock(&ota_st.mu); in = ota_st.info; pthread_mutex_unlock(&ota_st.mu);
     ota_versions_refresh();
@@ -1172,8 +1183,10 @@ static void op_install(void)
     if (ir != 0) {
         int space = ota_install_log_says_space();
         lg("ota: install failed (rc=%d), restoring the previous payload", ir);
-        if (!ota_swap_back(pl, prevdir, stage)) ota_run_installer();
-        ota_rm_rf(prevdir); rename(keep, prevdir);                    /* the failed one is not kept */
+        if (!ota_swap_back(pl, prevdir, stage)) {
+            ota_run_installer();
+            ota_rm_rf(prevdir); rename(keep, prevdir);                /* the failed one is not kept */
+        }   /* else: SD untouched beyond this point; the next boot reinstalls SD/HiByOS/payload */
         sync();
         ota_versions_refresh();
         ota_set(OS_ERROR, space ? OE_SPACE_DATA : OE_INSTALL); return;
@@ -1187,7 +1200,7 @@ static void op_install(void)
 }
 static void op_rollback(void)
 {
-    char d[260], pl[300], prevdir[300], stage[300], a[320], b2[320];
+    char d[260], pl[300], prevdir[300], stage[300], a[400], b2[400];
     ota_versions_refresh();
     if (!ota_sd_ok()) { ota_set(OS_ERROR, OE_NOSD); return; }
     if (!ota_st.prev[0]) { ota_set(OS_ERROR, OE_NOPREV); return; }

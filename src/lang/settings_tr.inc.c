@@ -341,6 +341,8 @@ static const char *const TRS[][1 + LANG_N] = {
       "สแกนโค้ดด้วยกล้องโทรศัพท์เพื่อเปิดลิงก์",
       "用手機相機掃描 QR 碼即可開啟連結。",
       "Відскануйте код камерою телефона, щоб відкрити посилання." },
+    /* raiz de Ajustes: el grupo que antes era la app "Personalizar" */
+    { "PERSONALIZACIÓN", "PERSONALIZACIÓN", "PERSONALIZATION", "PERSONNALISATION", "PERSONALISIERUNG", "PERSONALIZZAZIONE", "カスタマイズ", "사용자화", "PERSONALIZACJA", "ПЕРСОНАЛИЗАЦИЯ", "个性化", "การปรับแต่ง", "個人化", "ПЕРСОНАЛІЗАЦІЯ" },
 };
 /* traduccion de s al idioma l o 0 si la clave no es de esta tabla */
 static const char *trs_lookup(const char *s, int l)

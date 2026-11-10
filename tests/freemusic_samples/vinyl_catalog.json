@@ -1,0 +1,71 @@
+{
+  "vinyl": 1,
+  "name": "Example Netlabel",
+  "description": "A small free-music repository in the Vinyl catalog format (docs/FREEMUSIC.md).",
+  "homepage": "https://netlabel.example.org/",
+  "license": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "albums": [
+    {
+      "id": "exn001",
+      "title": "Northern Lights",
+      "artist": "Aurora Fields",
+      "year": 2024,
+      "license": "https://creativecommons.org/licenses/by/4.0/",
+      "cover": "covers/exn001.jpg",
+      "genre": ["ambient", "electronic"],
+      "language": "en",
+      "description": "Two long ambient pieces recorded at <b>96 kHz</b> &amp; mastered for headphones.",
+      "url": "https://netlabel.example.org/releases/exn001",
+      "tracks": [
+        {
+          "title": "Polar Night",
+          "duration": 412.5,
+          "files": [
+            { "url": "audio/exn001/01.flac", "codec": "flac", "bits": 24, "rate": 96000, "channels": 2, "size": 98765432 },
+            { "url": "audio/exn001/01.mp3", "codec": "mp3", "bitrate": 320, "size": 16500000 },
+            { "url": "audio/exn001/01.ogg", "codec": "ogg", "size": 9000000 }
+          ]
+        },
+        {
+          "title": "Solar Wind",
+          "duration": "6:05",
+          "files": [
+            { "url": "audio/exn001/02.flac", "codec": "flac", "bits": 24, "rate": 96000, "channels": 2, "size": 87654321 },
+            { "url": "audio/exn001/02.mp3", "codec": "mp3", "bitrate": 320, "size": 14600000 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exn002",
+      "title": "Café Sessions",
+      "artist": "Los Ejemplos",
+      "year": "2019-05-01",
+      "cover": "https://cdn.example.org/exn002/front.png",
+      "genre": "jazz",
+      "language": "es",
+      "tracks": [
+        { "track": 2, "title": "Segundo", "duration": 200, "url": "../music/exn002/2.mp3", "codec": "mp3", "vbr": true },
+        { "track": 1, "title": "Primero", "duration": 180, "url": "/music/exn002/1.mp3", "bitrate": 192000, "size": 4320000 },
+        { "track": 3, "title": "Tercero (AAC only)", "duration": 100, "url": "/music/exn002/3.m4a", "codec": "aac" }
+      ]
+    },
+    {
+      "id": "exn003",
+      "title": "Field Recordings 16/44",
+      "artist": "Aurora Fields",
+      "year": 2021,
+      "genre": ["experimental"],
+      "tracks": [
+        { "title": "Rain", "duration": 95, "files": [ { "url": "https://files.example.org/rain.flac", "bits": 16, "rate": 44.1, "size": 10000000 } ] },
+        { "title": "Wind", "duration": 120, "files": [ { "url": "https://files.example.org/wind.wav", "codec": "audio/x-wav", "bits": 16, "rate": 44100 } ] }
+      ]
+    },
+    {
+      "id": "exn004",
+      "title": "Only AAC (not offered)",
+      "artist": "Nobody",
+      "tracks": [ { "title": "x", "url": "x.m4a", "codec": "aac" } ]
+    }
+  ]
+}

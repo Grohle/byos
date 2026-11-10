@@ -745,12 +745,21 @@ static void page_root(struct spage *p)
     *p = (struct spage){ "Ajustes" };
     p->secs[0] = (struct ssec){ 0, 0, { ROWI("Wi-Fi", nav_wifi, v_wifi, IC_WIFI), ROWI("Bluetooth", nav_bt, v_bt, IC_BT),
                                         ROWI("Streaming", nav_stream, 0, IC_STREAM), ROWI("USB", nav_usb, v_usbmode, IC_USB) }, 4 };
-    p->secs[1] = (struct ssec){ 0, 0, { ROWI("General", nav_general, 0, IC_GENERAL), ROWI("Pantalla y brillo", nav_display, 0, IC_DISPLAY),
-                                        ROWI("Sonido", nav_sound, 0, IC_SOUND), ROWI("Batería y energía", nav_power, 0, IC_BATTERY) }, 4 };
-    p->secs[2] = (struct ssec){ 0, 0, { ROWI("Biblioteca de música", nav_library, 0, IC_LIBRARY), ROWI("Inicio", nav_home, 0, IC_HOME),
-                                        ROWI("Gestos", nav_gestures, 0, IC_GESTURE), ROWI("Centro de control", nav_cc, 0, IC_CC),
-                                        ROWI("Teclado", nav_kb, 0, IC_KB) }, 5 };
-    p->secs[3] = (struct ssec){ 0, 0, { ROWI("Desarrollador", nav_dev, 0, IC_DEV) }, 1 };
-    p->nsec = 4;
+    /* como iOS: conexiones / sistema / personalizacion (lo que era la app "Personalizar") / contenido */
+    p->secs[1] = (struct ssec){ 0, 0, { ROWI("General", nav_general, 0, IC_GENERAL), ROWI("Sonido", nav_sound, 0, IC_SOUND),
+                                        ROWI("Pantalla y brillo", nav_display, 0, IC_DISPLAY), ROWI("Batería y energía", nav_power, 0, IC_BATTERY) }, 4 };
+    p->secs[2] = (struct ssec){ "PERSONALIZACIÓN", 0, { ROWI("Inicio", nav_home, 0, IC_HOME), ROWI("Centro de control", nav_cc, 0, IC_CC),
+                                        ROWI("Gestos", nav_gestures, 0, IC_GESTURE), ROWI("Teclado", nav_kb, 0, IC_KB) }, 4 };
+    p->secs[3] = (struct ssec){ 0, 0, { ROWI("Biblioteca de música", nav_library, 0, IC_LIBRARY) }, 1 };
+    p->secs[4] = (struct ssec){ 0, 0, { ROWI("Desarrollador", nav_dev, 0, IC_DEV) }, 1 };
+    p->nsec = 5;
+}
+/* icono "Personalizar" del inicio: solo el grupo de personalizacion de Ajustes */
+static void page_pers(struct spage *p)
+{
+    *p = (struct spage){ "Personalizar" };
+    p->secs[0] = (struct ssec){ 0, 0, { ROWI("Inicio", nav_home, 0, IC_HOME), ROWI("Centro de control", nav_cc, 0, IC_CC),
+                                        ROWI("Gestos", nav_gestures, 0, IC_GESTURE), ROWI("Teclado", nav_kb, 0, IC_KB) }, 4 };
+    p->nsec = 1;
 }
 static void nav_root_from_usb(void) { open_page(page_root, "DAC USB"); }

@@ -1060,6 +1060,7 @@ int main(int argc, char **argv)
         if (st->held) cmd('R');
     }
     lconf_load();
+    if (lconf_order_migrated) { lconf_order_migrated = 0; lconf_save(); }   /* orden oficial: una vez */
     pw_load();
     npx_start();
     audio_boot();

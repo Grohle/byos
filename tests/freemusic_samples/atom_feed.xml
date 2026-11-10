@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">Atom Sounds</title>
+  <author><name>Atom Artist</name></author>
+  <link rel="self" href="https://atom.example.com/feed.atom"/>
+  <link rel="alternate" href="https://atom.example.com/"/>
+  <logo>/logo.jpg</logo>
+  <entry>
+    <title>First Light</title>
+    <published>2023-03-04T10:00:00Z</published>
+    <link rel="alternate" href="https://atom.example.com/first"/>
+    <link rel="enclosure" href="https://atom.example.com/first.flac" type="audio/flac" length="30000000"/>
+  </entry>
+</feed>

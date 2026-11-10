@@ -3,8 +3,9 @@ static void files_app(int ix, int iy);
 static void settings_app(int ix, int iy);
 static void usbdac_app_at(int ix, int iy);
 static void wireless_app_at(int ix, int iy);
+static void personalize_app(int ix, int iy);
 static void books_app_at(int ix, int iy);
-static int bk_start_store;
+static int bk_gut;
 static void freemusic_app_at(int ix, int iy);
 static void buds_app_at(int ix, int iy);
 static void store_app(int ix, int iy);
@@ -189,14 +190,15 @@ static void launch_app(int a, int ix, int iy)
     }
     if (ap->act == ACT_MUSIC) { V.pressed_app = -1; last_app = a; music_app(ix, iy); return; }
     if (ap->act == ACT_FILES) { V.pressed_app = -1; last_app = a; files_app(ix, iy); return; }
-    if (ap->act == ACT_SETTINGS) { V.pressed_app = -1; last_app = a; settings_app(ix, iy); return; }
-    if (ap->act == ACT_USBDAC) { V.pressed_app = -1; last_app = a; usbdac_app_at(ix, iy); return; }
+    if (ap->act == ACT_SETTINGS) {       /* una sola app: el Centro de control puede pedir una pagina */
+        int st = settings_start; settings_start = SET_ROOT;
+        V.pressed_app = -1; last_app = a;
+        if (!st && ap->ax == 1) st = SET_PERS;               /* icono "Personalizar" */
+        if (st == SET_USB) usbdac_app_at(ix, iy); else if (st == SET_WIRELESS) wireless_app_at(ix, iy);
+        else if (st == SET_PERS) personalize_app(ix, iy); else settings_app(ix, iy);
+        return;
+    }
     if (ap->act == ACT_WIRELESS) { V.pressed_app = -1; last_app = a; wireless_app_at(ix, iy); return; }
-    if (ap->act == ACT_BOOKS) { V.pressed_app = -1; last_app = a; bk_start_store = ap->ax == 1; books_app_at(ix, iy); return; }
-    if (ap->act == ACT_FREEMUSIC) { V.pressed_app = -1; last_app = a; freemusic_app_at(ix, iy); return; }
-    if (ap->act == ACT_BUDS) { V.pressed_app = -1; last_app = a; buds_app_at(ix, iy); return; }
-    if (ap->act == ACT_STORE) { V.pressed_app = -1; last_app = a; store_app(ix, iy); return; }
-    if (ap->act == ACT_EXT) { V.pressed_app = -1; run_ext_app(a, ix, iy); return; }
     if (ap->act == ACT_SOON) {
         toast(tr("Radio llega en la próxima versión"));
         V.pressed_app = -1;
@@ -204,6 +206,11 @@ static void launch_app(int a, int ix, int iy)
         launcher_present();
         return;
     }
+    if (ap->act == ACT_BOOKS) { V.pressed_app = -1; last_app = a; bk_gut = ap->ax == 1; books_app_at(ix, iy); return; }
+    if (ap->act == ACT_FREEMUSIC) { V.pressed_app = -1; last_app = a; freemusic_app_at(ix, iy); return; }
+    if (ap->act == ACT_BUDS) { V.pressed_app = -1; last_app = a; buds_app_at(ix, iy); return; }
+    if (ap->act == ACT_STORE) { V.pressed_app = -1; last_app = a; store_app(ix, iy); return; }
+    if (ap->act == ACT_EXT) { V.pressed_app = -1; run_ext_app(a, ix, iy); return; }
     lg("abrir %s", ap->id);
     V.pressed_app = -1;
     render_launcher(img_base, now_ms());

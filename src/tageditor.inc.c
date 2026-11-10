@@ -79,12 +79,13 @@ static void sg_fetch(const char *prefix)
 }
 static void sg_redraw(uint16_t *dst, int pressed)
 {
-    le_redraw(dst, pressed);
-    int y = 148;
+    le_page(dst);
+    int y = le_fy + 52;
     for (int i = 0; i < nsg && y + 38 <= KB_Y - 4; i++, y += 40) {
         fill_rrect(dst, 12, y, W - 24, 36, 9, rgb(36, 36, 40), 255);
         draw_text(dst, 26, y + 24, sg[i], 15, 0xFFFF, W - 52, 0, H);
     }
+    kb_draw(dst, pressed);
 }
 static int line_edit_suggest(const char *title, const char *hint, char *buf, int cap, const char *field)
 {
@@ -92,21 +93,22 @@ static int line_edit_suggest(const char *title, const char *hint, char *buf, int
     le_title = title; le_hint = hint; le_buf = &e; sg_field = field; nsg = 0;
     kb_layer = 0; kb_shift = 0; kb_layout(tr("Aceptar"));
     char last[128] = "\x01"; double typed = 0;
-    kb_begin(&e, fr0, sg_redraw);
+    kb_begin_ex(&e, fr0, sg_redraw, le_fy, le_fy + 44);
     struct pkt p;
     for (;;) {
         /* sugerencias tras una pausa al escribir (no en cada tecla) */
         if (field && strcmp(last, buf) && now_ms() - typed > 140) { snprintf(last, sizeof last, "%s", buf); sg_fetch(buf); sg_redraw(fr0, -1); present(); }
         if (!read_pkt(&p, 60) || !p.down) continue;
+        kb_map(&p);
         if (p.y >= KB_Y) { int r = kb_touch(&p, &e, fr0, sg_redraw, 0); typed = now_ms(); if (r == K_ENTER) { kb_end(); return 1; } continue; }
         int x = p.x, y = p.y;
         while (cur_down && read_pkt(&p, 3000)) {}
         if (y < 90 && x < 100) { kb_end(); return 0; }
-        if (y >= 148 && nsg) {
-            int i = (y - 148) / 40;
+        if (y >= le_fy + 52 && nsg) {
+            int i = (y - le_fy - 52) / 40;
             if (i >= 0 && i < nsg) { snprintf(buf, cap, "%s", sg[i]); kb_end(); return 1; }
         }
-        if (y >= 96 && y < 140) { e.cur = e.len; if (kb_off) kb_reveal(fr0, sg_redraw); else { sg_redraw(fr0, -1); present(); } }
+        if (y >= le_fy && y < le_fy + 44) { e.cur = e.len; if (kb_off) kb_reveal(fr0, sg_redraw); else { sg_redraw(fr0, -1); present(); } }
     }
 }
 
@@ -518,10 +520,25 @@ static void tt_redraw(uint16_t *d, int pressed)
         if (tt.cur >= a && (tt.cur < b || l == tt_nl - 1)) {
             int cx = 14 + tw_n(tt.b + a, 15, tt.cur - a);
             for (int y = base - 15; y < base + 4; y++) if (y >= TE_TOP && y < bottom) for (int x = cx; x < cx + 2 && x < W; x++) d[y * W + x] = C_BLUE;
+            kb_caret(cx, base - 15, base + 4);
         }
     }
     te_nav(d, tr("Cancelar"), tt_title, tr("Aceptar"), 1, 1);
     kb_draw(d, pressed);
+}
+/* trackpad del teclado: linea visual arriba/abajo con la misma x */
+static int tt_vmove(int cur, int dir)
+{
+    int l = tt_line_of(cur), nl = l + dir;
+    if (nl < 0 || nl >= tt_nl) return cur;
+    int x = tw_n(tt.b + tt_ln[l], 15, cur - tt_ln[l]);
+    int a = tt_ln[nl], b = nl + 1 < tt_nl ? tt_ln[nl + 1] : tt.len, best = a, bd = 1 << 30;
+    for (int i = a; i <= b; i++) {
+        if (i < tt.len && ((unsigned char)tt.b[i] & 0xC0) == 0x80) continue;
+        int dd = abs(tw_n(tt.b + a, 15, i - a) - x); if (dd < bd) { bd = dd; best = i; }
+    }
+    if (best > a && best == b && b < tt.len && tt.b[b - 1] == '\n') best = b - 1;
+    return best;
 }
 /* 1 si se acepto (texto en buf) */
 static int te_text_edit(const char *title, char *buf, int cap)
@@ -532,10 +549,12 @@ static int te_text_edit(const char *title, char *buf, int cap)
     char *orig = strdup(buf);
     tt = (struct ebuf){ buf, o, cap, o }; tt_title = title; tt_top = 0; tt_sc = 0;
     kb_layer = 0; kb_shift = 0; kb_layout(tr("intro"));
+    kb_scroll_area(TE_TOP); kb_set_vmove(tt_vmove);   /* el texto sigue al cursor (se desplaza solo) */
     kb_begin(&tt, fr0, tt_redraw);
     struct pkt p; int r = 0;
     for (;;) {
         if (!read_pkt(&p, 400) || !p.down) continue;
+        kb_map(&p);
         if (p.y >= KB_Y) { kb_touch(&p, &tt, fr0, tt_redraw, 1); continue; }
         int sx = p.x, sy = p.y, top0 = tt_top, moved = 0;
         while (cur_down && read_pkt(&p, 30)) {

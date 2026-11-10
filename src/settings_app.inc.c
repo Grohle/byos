@@ -517,9 +517,12 @@ static void open_page(void (*build)(struct spage *), const char *back);
 static void nav_general(void) { open_page(page_general, "Ajustes"); }
 static void page_lang(struct spage *p);
 static void nav_lang(void) { open_page(page_lang, "General"); }   /* desde General */
-static void nav_home(void) { home_prev_ok = 0; open_page(page_home, "Ajustes"); }
-static void nav_gestures(void) { open_page(page_gestures, "Ajustes"); }
-static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; set_kb_layout = kb_cfg_layout; open_page(page_kb, "Ajustes"); }
+/* titulo de la pagina raiz (el "atras" de sus hijas): "Ajustes" o, abierta desde el icono
+ * Personalizar, "Personalizar" */
+static const char *sp_root_name = "Ajustes";
+static void nav_home(void) { home_prev_ok = 0; open_page(page_home, sp_root_name); }
+static void nav_gestures(void) { open_page(page_gestures, sp_root_name); }
+static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; set_kb_layout = kb_cfg_layout; open_page(page_kb, sp_root_name); }
 static void nav_dev(void) { open_page(page_dev, "Ajustes"); }
 static void nav_about(void);   /* sysset.inc.c (General > Informacion) */
 static void nav_audio(void);
@@ -706,9 +709,9 @@ static void page_cc(struct spage *p)
     *p = (struct spage){ "Centro de control" };
     p->secs[0] = (struct ssec){ "CONTROLES", "CC_HELP", {
         ROW("Solo USB", R_TOGGLE, &cc_on[0], 0, 0, apply_cc, 0, 0), ROW("Modo de energía", R_TOGGLE, &cc_on[1], 0, 0, apply_cc, 0, 0),
-        ROW("DAC USB", R_TOGGLE, &cc_on[2], 0, 0, apply_cc, 0, 0), ROW("Panel de HiBy", R_TOGGLE, &cc_on[3], 0, 0, apply_cc, 0, 0),
-        ROW("Inalámbrico", R_TOGGLE, &cc_on[4], 0, 0, apply_cc, 0, 0), ROW("Filtro digital", R_TOGGLE, &cc_on[5], 0, 0, apply_cc, 0, 0),
-        ROW("Archivos", R_TOGGLE, &cc_on[6], 0, 0, apply_cc, 0, 0), ROW("Personalizar", R_TOGGLE, &cc_on[7], 0, 0, apply_cc, 0, 0) }, 8 };
+        ROW("DAC USB", R_TOGGLE, &cc_on[2], 0, 0, apply_cc, 0, 0), ROW("Bluetooth", R_TOGGLE, &cc_on[3], 0, 0, apply_cc, 0, 0),
+        ROW("Wi-Fi", R_TOGGLE, &cc_on[4], 0, 0, apply_cc, 0, 0), ROW("Filtro digital", R_TOGGLE, &cc_on[5], 0, 0, apply_cc, 0, 0),
+        ROW("Archivos", R_TOGGLE, &cc_on[6], 0, 0, apply_cc, 0, 0), ROW("Ajustes", R_TOGGLE, &cc_on[7], 0, 0, apply_cc, 0, 0) }, 8 };
     p->nsec = 1;
 }
 static const char *const O_HZ[] = { "45 Hz (de serie)", "60 Hz" };
@@ -722,7 +725,7 @@ static void page_power(struct spage *p)
     p->nsec = 2;
     (void)set_hz_i; (void)O_HZ; (void)apply_hz;
 }
-static void nav_cc(void) { cc_sync(); open_page(page_cc, "Ajustes"); }
+static void nav_cc(void) { cc_sync(); open_page(page_cc, sp_root_name); }
 static void nav_power(void) { set_nocharge = pw_nocharge; set_hz_i = lcd_hz == 60; open_page(page_power, "Ajustes"); }
 
 static const char *v_apps(void) { int n = 0; DIR *d = opendir("/usr/data/hibymod/apps"); struct dirent *e; while (d && (e = readdir(d))) if (e->d_name[0] != '.') n++; if (d) closedir(d); snprintf(sv_buf[3], 64, "%d", n); return sv_buf[3]; }
@@ -911,15 +914,17 @@ static void store_app(int ix, int iy) { (void)store_page; store_app_ui(ix, iy); 
 /* ------------------------------------------------------------------ paginas del sistema */
 #include "sysset.inc.c"
 
-/* abre la app con zoom desde (ix, iy) en la pagina raiz o, con usb, directamente en USB
- * (la app "DAC USB" del inicio: una pagina raiz propia, sin "atras") */
-static void settings_run(int ix, int iy, int usb)
+/* abre la app con zoom desde (ix, iy). mode 0: la raiz de Ajustes; 1: directamente en USB (el
+ * boton "DAC USB" del Centro de control: una raiz propia, sin "atras"); 2: la pagina de
+ * personalizacion (el icono "Personalizar" del inicio) */
+static void settings_run(int ix, int iy, int mode)
 {
     sync_from_state(); ss_open();
     /* la tarjeta de multitarea es la del icono que nos abrio (launch_app pone last_app) */
-    int a = last_app >= 0 && last_app < NAPPS ? last_app : app_by_id(usb ? "dac" : "personalize");
+    int a = last_app >= 0 && last_app < NAPPS ? last_app : app_by_id("settings");
     sp_self = a; sp_gone = 0;
-    void (*root_fn)(struct spage *) = usb ? page_usb_root : page_root;
+    void (*root_fn)(struct spage *) = mode == 1 ? page_usb_root : mode == 2 ? page_pers : page_root;
+    sp_root_name = mode == 2 ? "Personalizar" : "Ajustes";
     struct spage root; root_fn(&root);
     sp_scroll = 0;
     sp_render(img_app, &root, -1, 0);
@@ -943,12 +948,13 @@ static void settings_run(int ix, int iy, int usb)
             present(); if (t >= 1) break;
         }
     }
-    sp_gone = 0; sp_self = -1;
+    sp_gone = 0; sp_self = -1; sp_root_name = "Ajustes";
     drain_until_up();
     launcher_present();
 }
-/* Ajustes (iconos "Ajustes" y "Personalizar" del inicio) */
+/* Ajustes: lo tiene todo. "Personalizar" es un acceso directo a su grupo de personalizacion */
 static void settings_app(int ix, int iy) { settings_run(ix, iy, 0); }
+static void personalize_app(int ix, int iy) { settings_run(ix, iy, 2); }
 /* DAC USB: abre directamente la pagina USB (sustituye a la app DAC USB de HiBy) */
 static void usbdac_app_at(int ix, int iy) { settings_run(ix, iy, 1); }
 static void usbdac_app(void) { usbdac_app_at((W - L.icon) / 2, (H - L.icon) / 2); }

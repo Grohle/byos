@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:creativeCommons="http://backend.userland.com/creativeCommonsRssModule">
+<channel>
+  <title>Free Sounds Weekly &amp; Friends</title>
+  <link>https://podcast.example.org/</link>
+  <description><![CDATA[<p>A weekly show of <b>Creative Commons</b> music.</p>]]></description>
+  <itunes:author>Radio Libre</itunes:author>
+  <itunes:image href="https://podcast.example.org/art.jpg"/>
+  <image><url>https://podcast.example.org/small.jpg</url><title>Image title (not the show)</title><link>https://podcast.example.org/</link></image>
+  <creativeCommons:license>http://creativecommons.org/licenses/by-nc/3.0/</creativeCommons:license>
+  <!-- <item><title>commented out</title></item> -->
+  <item>
+    <title>Episode 3: Ambient &#8220;special&#8221;</title>
+    <pubDate>Tue, 03 Jun 2025 10:00:00 GMT</pubDate>
+    <itunes:duration>1:02:03</itunes:duration>
+    <enclosure url="https://cdn.example.org/ep3.mp3?src=rss&amp;id=3" type="audio/mpeg" length="59600000"/>
+  </item>
+  <item>
+    <title><![CDATA[Episode 2: Jazz <live>]]></title>
+    <pubDate>Tue, 27 May 2025 10:00:00 GMT</pubDate>
+    <itunes:duration>2730</itunes:duration>
+    <enclosure url="/media/ep2.mp3" type="audio/mpeg" length="0"/>
+  </item>
+  <item>
+    <title>Episode 1 (video only)</title>
+    <enclosure url="https://cdn.example.org/ep1.mp4" type="video/mp4" length="99999"/>
+  </item>
+  <item>
+    <title>Bonus: AAC</title>
+    <enclosure url="https://cdn.example.org/bonus.m4a" type="audio/x-m4a" length="100"/>
+  </item>
+</channel>
+</rss>

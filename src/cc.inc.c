@@ -4,15 +4,15 @@
  * la pantalla de debajo se desenfoca y oscurece y los controles aparecen con ella.
  *   - Reproduciendo (2x2): abre el reproductor.
  *   - Brillo (1x2): deslizador vertical (sysfs del backlight).
- *   - Botones configurables (Personalizar > Centro de control): Solo USB, modo de energia,
- *     DAC USB, panel de HiBy, Inalambrico, filtro del DAC, Archivos, Personalizar.
+ *   - Botones configurables (Ajustes > Centro de control): Solo USB, modo de energia,
+ *     DAC USB (Ajustes > USB), Bluetooth, Wi-Fi, filtro del DAC, Archivos, Ajustes.
  * Se cierra deslizando hacia arriba, tocando fuera o con la barra de inicio.
  * Rendimiento: el panel completo (fondo desenfocado + controles) se compone UNA vez en
  * img_base y cada fotograma es solo una mezcla lineal con la pantalla de debajo. */
 
 enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_BT, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_N };
 static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "bt", "wireless", "filter", "files", "settings" };
-static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Inalámbrico", "Filtro digital", "Archivos", "Personalizar" };
+static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Wi-Fi", "Filtro digital", "Archivos", "Ajustes" };
 static int cc_tiles[CT_N] = { CT_NOCHARGE, CT_POWER, CT_BT, CT_DAC, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS };
 static int cc_ntiles = CT_N;
 
@@ -265,12 +265,18 @@ static void launch_app(int a, int ix, int iy);
 /* abre una app del inicio por su id (desde el launcher, con la animacion del icono) */
 static void cc_open_app(const char *id)
 {
-    int a = app_by_id(id); if (a < 0) return;
-    if (!launcher_on) { nav_start(NAV_HOME); nav_wait(3000); if (!launcher_resume()) { cmd('R'); return; } }
+    int a = app_by_id(id); if (a < 0) { settings_start = SET_ROOT; return; }
+    if (!launcher_on) { nav_start(NAV_HOME); nav_wait(3000); if (!launcher_resume()) { settings_start = SET_ROOT; cmd('R'); return; } }
     int ix = W / 2 - L.icon / 2, iy = H / 2 - L.icon / 2;
     for (int i = 0; i < L.dn; i++) if (L.dock[i] == a) dock_xy(i, L.dn, &ix, &iy);
     for (int i = 0; i < L.pn[cur_page]; i++) if (L.page[cur_page][i] == a) cell_xy(i, &ix, &iy);
     launch_app(a, ix, iy);
+}
+/* Ajustes abierto directamente en una de sus paginas (SET_USB, SET_WIRELESS) */
+static void cc_open_settings(int start)
+{
+    if (start == SET_WIRELESS && app_find("wireless") >= 0) { cc_open_app("wireless"); return; }   /* su propio icono */
+    settings_start = start; cc_open_app("settings");
 }
 
 /* ---- paginas: Centro de control <-> Reproductor (horizontal) e inicio (hacia arriba) ---- */
@@ -630,11 +636,11 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
             au_filt_i = (i + 1) % n; apply_filter();
             cc_set_caption(tr(n == 7 ? O_FILT8[au_filt_i] : O_FILT2[au_filt_i])); break; }
         case CT_BT:                                            /* el modulo: auriculares conectados o Inalambrico */
-            cc_animate(under, panel, 1, 0, 160); cc_open_app(cc_bt_connected() ? "headphones" : "wireless"); return;
-        case CT_DAC: cc_animate(under, panel, 1, 0, 160); cc_open_app("dac"); return;
-        case CT_WIRELESS: cc_animate(under, panel, 1, 0, 160); cc_open_app("wireless"); return;
+            cc_animate(under, panel, 1, 0, 160); if (cc_bt_connected()) cc_open_app("headphones"); else cc_open_settings(SET_WIRELESS); return;
+        case CT_DAC: cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_USB); return;
+        case CT_WIRELESS: cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_WIRELESS); return;
         case CT_FILES: cc_animate(under, panel, 1, 0, 160); cc_open_app("files"); return;
-        case CT_SETTINGS: cc_animate(under, panel, 1, 0, 160); cc_open_app("personalize"); return;
+        case CT_SETTINGS: cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_ROOT); return;
         }
         cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
     }

@@ -1,0 +1,55 @@
+# Widgets page in the QEMU harness (docs/VM_SHELL.md): fake headphones, page swipe in/out,
+# vertical scroll, idle refreshes, press feedback, edit mode, gallery (large size), add, done.
+sleep 2000
+sh echo "1 F0:5C:77:A1:02:14 connect 0 0 0" > /tmp/hibybuds.cmd
+sleep 3000
+shot 00_home
+mark swipe_to_widgets
+rec 45 swipe_in
+swipe 20 260 300 260 260
+sleep 2500
+shot 01_widgets
+mark scroll_down
+swipe 160 420 160 140 300
+sleep 1800
+shot 02_scrolled
+mark scroll_up
+swipe 160 140 160 440 300
+sleep 1800
+mark idle_12s
+sleep 12000
+shot 03_idle
+mark press_hold
+down 84 112
+sleep 250
+shot 04_pressed
+sleep 600
+shot 05_edit
+up 84 112
+sleep 1500
+mark open_gallery
+tap 36 49
+sleep 2500
+shot 06_gallery
+mark open_detail
+tap 160 221
+sleep 1800
+shot 07_detail
+mark choose_large
+tap 250 402
+sleep 1500
+shot 08_large_preview
+mark add
+tap 160 452
+sleep 2500
+shot 09_added
+mark done
+tap 280 49
+sleep 2000
+shot 10_after_edit
+mark swipe_to_home
+rec 45 swipe_out
+swipe 300 260 20 260 260
+sleep 2500
+shot 11_home
+sh grep -E "perfil|widgets" /tmp/hibymod/shell.log | tail -30

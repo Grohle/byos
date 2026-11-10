@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel>
+  <title>Example Netlabel releases</title>
+  <link>https://label.example.net</link>
+  <dc:creator>Example Netlabel</dc:creator>
+  <copyright>CC BY-SA 4.0</copyright>
+  <media:thumbnail url="https://label.example.net/logo.png"/>
+  <item>
+    <title>EXN-07 - Deep Water</title>
+    <pubDate>Sat, 01 Feb 2020 00:00:00 +0000</pubDate>
+    <media:content url="https://label.example.net/exn07/deep.flac" type="audio/flac" fileSize="45000000" duration="300"/>
+    <media:content url="https://label.example.net/exn07/deep.mp3" type="audio/mpeg" fileSize="12000000" bitrate="320" duration="300"/>
+    <enclosure url="https://label.example.net/exn07/deep.mp3" type="audio/mpeg" length="12000000"/>
+  </item>
+  <item>
+    <title>EXN-06 - Shallow</title>
+    <media:content url="https://label.example.net/exn06/shallow.ogg" type="audio/ogg" fileSize="5000000" duration="240"/>
+  </item>
+</channel>
+</rss>

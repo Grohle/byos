@@ -500,10 +500,25 @@ static void tx_redraw(uint16_t *d, int pressed)
         if (tx_edit && tx.cur >= a && (tx.cur < b || (l == tx_nl - 1)) ) {
             int cx = 12 + tw_n(tx.b + a, 14, tx.cur - a);
             for (int y = base - 14; y < base + 4; y++) if (y >= 88 && y < bottom) for (int x = cx; x < cx + 2 && x < W; x++) d[y * W + x] = rgb(10, 132, 255);
+            kb_caret(cx, base - 14, base + 4);
         }
     }
     if (tx_edit) kb_draw(d, pressed);
     draw_toast(d);
+}
+/* trackpad del teclado: linea visual arriba/abajo con la misma x */
+static int tx_vmove(int cur, int dir)
+{
+    int l = tx_line_of(cur), nl = l + dir;
+    if (nl < 0 || nl >= tx_nl) return cur;
+    int x = tw_n(tx.b + tx_lines[l], 14, cur - tx_lines[l]);
+    int a = tx_lines[nl], b = nl + 1 < tx_nl ? tx_lines[nl + 1] : tx.len, best = a, bd = 1 << 30;
+    for (int i = a; i <= b; i++) {
+        if (i < tx.len && ((unsigned char)tx.b[i] & 0xC0) == 0x80) continue;
+        int dd = abs(tw_n(tx.b + a, 14, i - a) - x); if (dd < bd) { bd = dd; best = i; }
+    }
+    if (best > a && best == b && b < tx.len && tx.b[b - 1] == '\n') best = b - 1;
+    return best;
 }
 static int fs_gone;          /* salio con el gesto de inicio: el inicio ya esta en pantalla */
 static void text_editor(const char *path, const char *name)
@@ -523,7 +538,8 @@ static void text_editor(const char *path, const char *name)
     struct pkt p;
     for (;;) {
         if (!read_pkt(&p, 300) || !p.down) continue;
-        int hx = p.x, hy = p.y, home = 0;
+        kb_map(&p);
+        int hx = p.x, hy = p.y - kb_pg, home = 0;
         if (tx_edit && p.y >= KB_Y) {
             int ol = tx.len, r = kb_touch(&p, &tx, fr0, tx_redraw, 1); if (tx.len != ol) dirty = 1;
             if (r != K_HOME) continue;
@@ -546,15 +562,17 @@ static void text_editor(const char *path, const char *name)
         if (moved) continue;
         if (sy < 86 && sx < 90) {   /* atras */
             if (dirty && !confirm(tr("Hay cambios sin guardar"), tr("Descartar cambios"))) { tx_redraw(fr0, -1); present(); continue; }
+            if (tx_edit) kb_end();
             return;
         }
         if (sy < 86 && sx > W - 110 && !tx_ro) {
-            if (!tx_edit) { tx_edit = 1; tx.cur = tx.len; kb_begin(&tx, fr0, tx_redraw); }
+            if (!tx_edit) { tx_edit = 1; tx.cur = tx.len; kb_scroll_area(88); kb_set_vmove(tx_vmove); kb_begin(&tx, fr0, tx_redraw); }
             else {   /* guardar: fichero temporal y renombrado (nunca se queda a medias) */
                 char tmp[820]; snprintf(tmp, sizeof tmp, "%s.hibymod_tmp", path);
                 int o = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 if (o >= 0 && write(o, tx.b, tx.len) == tx.len && !fsync(o) && !close(o) && !rename(tmp, path)) { dirty = 0; toast(tr("Guardado")); }
                 else { if (o >= 0) close(o); unlink(tmp); toast(tr("No se pudo guardar")); }
+                kb_ctx(&tx, fr0, tx_redraw); kb_hide(); kb_end();   /* el teclado se va deslizandose */
                 tx_edit = 0;
             }
             tx_redraw(fr0, -1); present(); continue;

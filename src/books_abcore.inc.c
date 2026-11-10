@@ -11,7 +11,7 @@
  *    Portada: archive.org/services/img/<id> (__ia_thumb.jpg). Descarga:
  *    archive.org/download/<id>/<fichero> (302 a dnNNN.us.archive.org; hibynet sigue la redireccion
  *    y reanuda con Range).
- *  - Gutenberg: gutendex.com/books/?search=..&languages=es (JSON; formats["application/epub+zip"]).
+ *  - Gutenberg: gutenberg.org/ebooks/search.opds/?query=.. l.es (catalogo OPDS, Atom).
  *
  * JSON: lector en flujo (abj_parse) que recorre un FILE* caracter a caracter y avisa de cada valor
  * con su ruta (claves e indices); nunca carga el documento entero. Cadenas recortadas a ABJ_VAL.
@@ -383,7 +383,7 @@ static uint64_t ab_hash(const char *s)
 }
 
 /* ================================================================== idiomas */
-struct ab_lang { const char *code, *q, *gut, *name; };   /* code: clave guardada; q: archive.org; gut: gutendex */
+struct ab_lang { const char *code, *q, *gut, *name; };   /* code: clave guardada; q: archive.org; gut: gutenberg.org (l.xx) */
 static const struct ab_lang ab_langs[] = {
     { "spa", "spa", "es", "Español" }, { "eng", "eng", "en", "English" }, { "fra", "fre OR fra", "fr", "Français" },
     { "deu", "deu OR ger", "de", "Deutsch" }, { "ita", "ita", "it", "Italiano" }, { "por", "por", "pt", "Português" },
@@ -460,55 +460,115 @@ static void ab_search_url(char *o, int cap, int lang, const char *query, int sor
 static void ab_cover_url(const char *id, char *o, int cap) { char e[200]; ab_urlenc(id, e, sizeof e, 0); snprintf(o, cap, "https://archive.org/services/img/%s", e); }
 static void ab_meta_url(const char *id, char *o, int cap) { char e[200]; ab_urlenc(id, e, sizeof e, 0); snprintf(o, cap, "https://archive.org/metadata/%s", e); }
 
-/* ---------------------------------------------- Gutenberg (gutendex) */
-static void ab_gut_url(char *o, int cap, int lang, const char *query, int page)
+/* ---------------------------------------------- Gutenberg (catalogo OPDS de gutenberg.org) */
+/* El catalogo oficial responde en menos de un segundo (el espejo Gutendex tardaba minutos o daba
+ * 503). search.opds: 25 libros por pagina; "l.xx" en la consulta filtra por idioma; sort_order
+ * downloads | release_date. sort: 0 populares, 1 novedades. */
+static char *ab_read_small(const char *path, int max);
+static void ab_gut_url(char *o, int cap, int lang, const char *query, int sort, int page)
 {
-    char eq[400] = ""; if (query && *query) ab_urlenc(query, eq, sizeof eq, 0);
-    int n = snprintf(o, cap, "https://gutendex.com/books/?mime_type=application%%2Fepub");
-    if (lang >= 0 && lang < AB_NLANG && ab_langs[lang].gut[0]) n += snprintf(o + n, cap - n, "&languages=%s", ab_langs[lang].gut);
-    if (eq[0]) n += snprintf(o + n, cap - n, "&search=%s", eq);
-    if (page > 1) snprintf(o + n, cap - n, "&page=%d", page);
+    char q[300]; int k = 0;
+    for (const unsigned char *p = (const unsigned char *)(query ? query : ""); *p && k < 200; p++) {   /* sin operadores del buscador */
+        char ch = (*p < 0x80 && !isalnum(*p) && *p != '\'') ? ' ' : (char)*p;
+        if (ch != ' ' || (k && q[k - 1] != ' ')) q[k++] = ch;
+    }
+    q[k] = 0; ab_trim(q); k = (int)strlen(q);
+    if (lang >= 0 && lang < AB_NLANG && ab_langs[lang].gut[0]) snprintf(q + k, sizeof q - k, "%sl.%s", k ? " " : "", ab_langs[lang].gut);
+    char eq[1000]; ab_urlenc(q, eq, sizeof eq, 0);
+    int n = snprintf(o, cap, "https://www.gutenberg.org/ebooks/search.opds/?sort_order=%s", sort == 1 ? "release_date" : "downloads");
+    if (eq[0] && n < cap) n += snprintf(o + n, cap - n, "&query=%s", eq);
+    if (page > 1 && n < cap) snprintf(o + n, cap - n, "&start_index=%d", (page - 1) * 25 + 1);
 }
-static void ab_gut_cb(void *c, const struct abj_path *p, int type, const char *v)
+/* texto de <tag>...</tag> dentro de [s, fin de cadena): sin marcas, entidades resueltas y en una linea */
+static int ab_xml_field(const char *s, const char *tag, char *out, int cap)
 {
-    struct ab_hits *r = c;
-    if (type == ABJ_NUM && ABJ_IS(p, "count")) { r->found = atol(v); return; }
-    if (p->depth < 2 || strcmp(p->key[0], "results") || p->idx[1] < 0) return;
-    int i = p->idx[1]; if (i >= AB_MAXHIT) return;
-    if (i >= r->n) { memset(&r->h[i], 0, sizeof r->h[i]); r->n = i + 1; }
-    struct ab_hit *h = &r->h[i];
-    if (type == ABJ_END) { if (p->depth == 2) ab_author_norm(h->author); return; }
-    if (p->depth == 3 && !strcmp(p->key[2], "id")) ab_cpy(h->id, sizeof h->id, v);
-    else if (p->depth == 3 && !strcmp(p->key[2], "title")) { ab_cpy(h->title, sizeof h->title, v); for (char *x = h->title; *x; x++) if (*x == '\n' || *x == '\r') *x = ' '; }
-    else if (p->depth == 5 && !strcmp(p->key[2], "authors") && p->idx[3] == 0 && !strcmp(p->key[4], "name")) ab_cpy(h->author, sizeof h->author, v);
-    else if (p->depth == 4 && !strcmp(p->key[2], "languages") && p->idx[3] == 0) ab_cpy(h->lang, sizeof h->lang, v);
-    else if (p->depth == 4 && !strcmp(p->key[2], "formats") && !strcmp(p->key[3], "image/jpeg")) ab_cpy(h->cover, sizeof h->cover, v);
-    else if (p->depth == 4 && !strcmp(p->key[2], "formats") && !strcmp(p->key[3], "application/epub+zip")) ab_cpy(h->runtime, sizeof h->runtime, "epub");
-    else if (p->depth == 4 && !strcmp(p->key[2], "summaries") && p->idx[3] == 0) {
-        ab_cpy(h->desc, sizeof h->desc, v);
-        char *x = strstr(h->desc, " (This is an automatically generated summary.)"); if (x) *x = 0;
+    out[0] = 0;
+    char open[24], close[24]; snprintf(open, sizeof open, "<%s", tag); snprintf(close, sizeof close, "</%s>", tag);
+    int ol = (int)strlen(open);
+    const char *a = s;
+    while ((a = strstr(a, open)) && a[ol] != '>' && a[ol] != ' ') a += ol;
+    if (!a) return -1;
+    a = strchr(a, '>'); if (!a) return -1;
+    a++;
+    const char *e = strstr(a, close); if (!e) return -1;
+    int n = (int)(e - a); if (n > 2000) n = 2000;
+    char *t = malloc(n + 1); if (!t) return -1;
+    memcpy(t, a, n); t[n] = 0;
+    ab_html_text(t, out, cap); free(t);
+    int k = 0;
+    for (int i = 0; out[i]; i++) { char ch = (unsigned char)out[i] < ' ' ? ' ' : out[i]; if (ch != ' ' || (k && out[k - 1] != ' ')) out[k++] = ch; }
+    out[k] = 0; ab_trim(out);
+    return 0;
+}
+/* el catalogo anade el idioma al titulo de los libros que no estan en ingles: "Don Quijote (Spanish)" */
+static void ab_gut_title_fix(char *t)
+{
+    static const char *const ln[] = { "Spanish", "French", "German", "Italian", "Portuguese", "Dutch", "Finnish", "Chinese", "Japanese", "Latin",
+        "Greek", "Tagalog", "Esperanto", "Swedish", "Hungarian", "Polish", "Russian", "Catalan", "Danish", "Norwegian", "Czech", "English",
+        "Korean", "Ukrainian", "Thai", "Welsh", "Icelandic", "Bulgarian", "Hebrew", "Serbian", "Romanian", "Afrikaans", "Frisian", "Irish",
+        "Arabic", "Slovenian", "Lithuanian", "Turkish", "Galician", "Breton", "Occitan", "Scots", "Friulian", "Middle English", "Old English",
+        "Interlingua", "Telugu", "Sanskrit", "Nahuatl", "Estonian", "Latvian", "Slovak", "Croatian", "Basque", "Yiddish", "Persian", "Hindi",
+        "Bengali", "Vietnamese", "Indonesian", "Malay", "Cebuano", "Iloko", "Maori", "Scottish Gaelic", "Low German", "Neapolitan" };
+    for (;;) {
+        int n = (int)strlen(t), hit = 0;
+        if (n < 4 || t[n - 1] != ')') return;
+        for (unsigned i = 0; i < sizeof ln / sizeof ln[0] && !hit; i++) {
+            int l = (int)strlen(ln[i]);
+            if (n > l + 3 && t[n - l - 2] == '(' && t[n - l - 3] == ' ' && !strncmp(t + n - l - 1, ln[i], l)) { t[n - l - 3] = 0; hit = 1; }
+        }
+        if (!hit) return;
     }
 }
 static int ab_gut_parse(const char *path, struct ab_hits *r)
 {
     memset(r, 0, sizeof *r);
-    int e = abj_file(path, ab_gut_cb, r);
-    int k = 0;
-    for (int i = 0; i < r->n; i++) { if (!r->h[i].id[0] || !r->h[i].runtime[0]) continue; if (k != i) r->h[k] = r->h[i]; k++; }
-    r->n = k;
-    return e;
+    char *b = ab_read_small(path, 320 * 1024); if (!b) return -1;
+    if (!strstr(b, "<feed")) { free(b); return -1; }
+    for (char *e = strstr(b, "<entry>"); e && r->n < AB_MAXHIT; ) {
+        char *end = strstr(e, "</entry>"); if (!end) break;
+        *end = 0;
+        /* solo los libros (<id>.../ebooks/N.opds</id>); el resto son enlaces de navegacion */
+        const char *id = strstr(e, "<id>"), *x = id ? strstr(id, "/ebooks/") : 0;
+        int k = 0;
+        if (x) { x += 8; while (isdigit((unsigned char)x[k])) k++; }
+        if (x && k > 0 && k < 12 && !strncmp(x + k, ".opds<", 6)) {
+            struct ab_hit *h = &r->h[r->n]; memset(h, 0, sizeof *h);
+            snprintf(h->id, sizeof h->id, "%.*s", k, x);
+            ab_xml_field(e, "title", h->title, sizeof h->title); ab_gut_title_fix(h->title);
+            ab_xml_field(e, "content", h->author, sizeof h->author);
+            { const char *q = h->author; while (isdigit((unsigned char)*q)) q++; if (q != h->author && !strcmp(q, " downloads")) h->author[0] = 0; }   /* sin autor: "157 downloads" */
+            snprintf(h->cover, sizeof h->cover, "https://www.gutenberg.org/cache/epub/%s/pg%s.cover.medium.jpg", h->id, h->id);
+            ab_cpy(h->runtime, sizeof h->runtime, "epub");
+            if (h->title[0]) r->n++;
+        }
+        e = strstr(end + 1, "<entry>");
+    }
+    free(b);
+    return 0;
 }
 /* EPUB de Gutenberg: la version con imagenes (epub3), como la de formats */
 static void ab_gut_epub_url(const char *id, char *o, int cap) { snprintf(o, cap, "https://www.gutenberg.org/ebooks/%s.epub3.images", id); }
-/* resumen (summaries[0]) de un libro: segunda consulta ligera /books/<id> */
-struct ab_gsum { char *out; int cap; };
-static void ab_gsum_cb(void *c, const struct abj_path *p, int type, const char *v)
+/* ficha OPDS de un libro (/ebooks/N.opds): de ella sale el resumen ("Summary: ...") */
+static void ab_gut_detail_url(const char *id, char *o, int cap) { snprintf(o, cap, "https://www.gutenberg.org/ebooks/%s.opds", id); }
+static int ab_gut_detail_parse(const char *path, char *desc, int cap)
 {
-    struct ab_gsum *s = c;
-    if (type == ABJ_STR && p->depth == 2 && !strcmp(p->key[0], "summaries") && p->idx[1] == 0) {
-        ab_cpy(s->out, s->cap, v);
-        char *x = strstr(s->out, " (This is an automatically generated summary.)"); if (x) *x = 0;
+    desc[0] = 0;
+    char *b = ab_read_small(path, 96 * 1024); if (!b) return -1;
+    int ok = strstr(b, "<entry") != 0;
+    char *s = strstr(b, "Summary:");
+    if (s) {
+        s += 8; char *e = strstr(s, "</p>");
+        if (e) {
+            *e = 0; ab_html_text(s, desc, cap);
+            int k = 0;
+            for (int i = 0; desc[i]; i++) { char ch = (unsigned char)desc[i] < ' ' ? ' ' : desc[i]; if (ch != ' ' || (k && desc[k - 1] != ' ')) desc[k++] = ch; }
+            desc[k] = 0;
+            char *x = strstr(desc, "(This is an automatically generated summary.)"); if (x) *x = 0;
+            ab_trim(desc);
+        }
     }
+    free(b);
+    return ok ? 0 : -1;
 }
 
 /* ================================================================== ficha de un audiolibro */

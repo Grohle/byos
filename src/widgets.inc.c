@@ -1,59 +1,70 @@
-/* widgets.inc.c - pagina de widgets a la izquierda del inicio (como "Hoy" en iOS).
+/* widgets.inc.c - pagina de widgets a la izquierda del inicio (como "Hoy" en iOS 17).
  *
  * Desde la primera pagina del inicio, deslizar hacia la derecha. Fondo = el del inicio;
- * widgets de iOS en dos tamanos: PEQUENO (cuadrado, dos por fila) y MEDIANO (ancho completo),
- * tarjetas de cristal oscuro (fondo desenfocado y tenido: se leen sobre cualquier fondo) con
- * graficas circulares: Baterias (HiBy + Bluetooth via BlueZ), Reproduciendo (con controles),
- * Fecha (calendario), Almacenamiento, Energia, Biblioteca, Recien anadido y Escuchas.
+ * widgets de iOS en tres tamanos: PEQUENO (137 x 137, dos por fila), MEDIANO (288 x 137) y
+ * GRANDE (288 x 288, dos filas). Tarjetas de cristal (el fondo desenfocado de esa zona, con luz
+ * de arriba y un filo claro) y, en Reproduciendo, tenidas con el color de la caratula.
+ * Datos reales solamente:
+ *   Baterias (HiBy + auriculares de la app Auriculares: izquierdo / derecho / estuche, o BlueZ),
+ *   Reproduciendo (caratula, titulo, artista, progreso; anterior / play-pausa / siguiente con
+ *   playctl), Fecha (calendario), Reloj (analogico; la hora y la fecha), Almacenamiento,
+ *   Energia, Biblioteca (hibymix stats), Recien anadido (caratulas de la cache de Musica,
+ *   lib.tsv), Escuchas (minutos de hoy y de la semana: los cuenta este fichero, ver "escuchas";
+ *   artista mas escuchado de HISTORY_TABLE) y Mezclas (acceso a Musica).
  *
  * Modelo: lista ordenada de {tipo, tamano} (como mucho uno por tipo+tamano), linea de
- * launcher.conf "widgets page=1 battery:s date:s nowplaying:m ..." (se sigue leyendo la antigua
- * "widgets battery date ..." con tamanos por defecto). Colocacion en flujo: los pequenos se
- * emparejan, los medianos ocupan la fila.
+ * launcher.conf "widgets page=1 battery:s date:s nowplaying:m recent:l ..." (s/m/l; se sigue
+ * leyendo la antigua "widgets battery date ..."). Colocacion en flujo: los pequenos se emparejan,
+ * los medianos ocupan una fila y los grandes dos.
  *
- * Sin parpadeos: cada widget se dibuja UNA vez en su propio bufer (sprite) a partir de una
- * copia de los datos tomada con cerrojo (el hilo de datos nunca escribe lo que se esta
- * dibujando); la pagina se compone entera en wg_cache y solo entonces se presenta; si solo
- * cambio una tarjeta se presentan solo sus filas (wg_part_y0/1, ver launcher_present).
+ * Rendimiento y sin parpadeos: cada widget se dibuja UNA vez en su propio bufer (sprite) a partir
+ * de una copia de los datos tomada con cerrojo, con una firma (wg_sig) de lo que muestra: solo se
+ * rehace si cambia. La pagina se compone en wg_cache y solo entonces se presenta; si solo cambio
+ * una tarjeta se presentan solo sus filas (wg_part_y0/1, ver launcher_present). Durante el
+ * deslizamiento de pagina no se rehace ningun sprite (se usa el anterior). Un hilo ligero
+ * (wg_tick, 1 s) cuenta las escuchas y avisa (wg_fresh) cuando la barra de progreso avanza un
+ * pixel o cambian los minutos, solo con la pagina en pantalla.
  *
  * Edicion como las apps (pulsacion larga): los widgets tiemblan (giro bilineal en coma fija de
  * cada sprite), "−" quita (encoge y se funde), "+" abre la galeria (hoja de iOS con vistas
- * previas reales y tamano P/M), arrastrar reordena (los demas se apartan con animacion) y
- * "Listo" sale. Los datos se leen al entrar y cada 10 s mientras la pagina esta visible. */
+ * previas reales de cada tamano), arrastrar reordena (los demas se apartan con animacion) y
+ * "Listo" sale. Los datos se leen al entrar y cada 10 s mientras la pagina esta visible.
+ * Textos: wgt() (lang/widgets_tr.inc.c, y si no esta, tr()).
+ * Prueba en PC: tests/widgets_render.sh (todos los widgets y tamanos en los 13 idiomas, con
+ * deteccion de textos cortados). Define WG_RENDER_ONLY para incluir solo el dibujo. */
 
-enum { WG_BATT, WG_NOW, WG_DATE, WG_STORAGE, WG_POWER, WG_LIB, WG_NEW, WG_LISTEN, WG_N };
-static const char *const wg_id[WG_N] = { "battery", "nowplaying", "date", "storage", "power", "library", "recent", "listening" };
-static const char *const wg_name[WG_N] = { "Baterías", "Reproduciendo", "Fecha", "Almacenamiento", "Energía", "Biblioteca", "Recién añadido", "Escuchas" };
+enum { WG_BATT, WG_NOW, WG_DATE, WG_STORAGE, WG_POWER, WG_LIB, WG_NEW, WG_LISTEN, WG_CLOCK, WG_MIX, WG_N };
+static const char *const wg_id[WG_N] = { "battery", "nowplaying", "date", "storage", "power", "library", "recent", "listening", "clock", "mixes" };
+static const char *const wg_name[WG_N] = { "Baterías", "Reproduciendo", "Fecha", "Almacenamiento", "Energía", "Biblioteca", "Recién añadido", "Escuchas", "Reloj", "Mezclas" };
 static const char *const wg_desc[WG_N] = {
-    "Nivel de batería del HiBy y de tus auriculares Bluetooth.",       /* headphones of the Headphones app: L / R / case */
-    "Lo que suena ahora, con controles de reproducción.",
-    "El día de hoy y el calendario del mes.",
-    "Espacio libre en la tarjeta SD y en el HiBy.",
-    "Modo de energía, frecuencia de la pantalla y carga.",
-    "Canciones, álbumes, artistas y favoritas.",
-    "El último álbum que has añadido a la biblioteca.",
-    "Lo último que has escuchado y tu artista favorito." };
-static const unsigned char wg_defsz[WG_N] = { 0, 1, 0, 0, 0, 0, 0, 1 };   /* 0 pequeno, 1 mediano */
+    "WG_DESC_BATT", "WG_DESC_NOW", "El día de hoy y el calendario del mes.", "Espacio libre en la tarjeta SD y en el HiBy.",
+    "Modo de energía, frecuencia de la pantalla y carga.", "Canciones, álbumes, artistas y favoritas.", "WG_DESC_RECENT", "WG_DESC_LISTEN",
+    "WG_DESC_CLOCK", "WG_DESC_MIX" };
+static const unsigned char wg_defsz[WG_N] = { 0, 1, 0, 0, 0, 0, 1, 1, 0, 0 };   /* 0 pequeno, 1 mediano, 2 grande */
+static const unsigned char wg_sizes[WG_N] = { 7, 7, 3, 3, 3, 3, 7, 3, 3, 3 };   /* tamanos posibles (bit 0 P, 1 M, 2 G) */
+static const char wg_szc[3] = { 's', 'm', 'l' };
 
 #define WG_MAX 16
 struct witem { unsigned char type, size; float ax, ay, sc, al; int rm; double rm_t; };
-static struct witem wg_it[WG_MAX] = { { WG_BATT, 0 }, { WG_DATE, 0 }, { WG_NOW, 1 }, { WG_LISTEN, 1 },
-                                      { WG_NEW, 0 }, { WG_LIB, 0 }, { WG_STORAGE, 0 }, { WG_POWER, 0 } };
-static int wg_n = 8;
+static struct witem wg_it[WG_MAX] = { { WG_BATT, 0 }, { WG_DATE, 0 }, { WG_NOW, 1 }, { WG_NEW, 1 }, { WG_LISTEN, 1 },
+                                      { WG_CLOCK, 0 }, { WG_MIX, 0 }, { WG_LIB, 0 }, { WG_STORAGE, 0 } };
+static int wg_n = 9;
 static int wg_page_on = 1;                   /* la pagina de widgets existe (Ajustes > Inicio) */
 static int widgets_on;                       /* la pagina de widgets esta en pantalla */
 
 static int wg_has(int type, int size) { for (int i = 0; i < wg_n; i++) if (wg_it[i].type == type && wg_it[i].size == size) return 1; return 0; }
 static int wg_has_type(int type) { for (int i = 0; i < wg_n; i++) if (wg_it[i].type == type) return 1; return 0; }
+static int wg_size_ok(int type, int sz) { return sz >= 0 && sz < 3 && (wg_sizes[type] >> sz & 1); }
 static void wg_conf_line(char *rest)
 {
     wg_n = 0; char *t;
     while ((t = strtok(rest, " \t\r\n"))) { rest = 0;
         if (!strncmp(t, "page=", 5)) { wg_page_on = atoi(t + 5) != 0; continue; }
         char *c = strchr(t, ':'); int sz = -1;
-        if (c) { *c = 0; sz = c[1] == 'm'; }
+        if (c) { *c = 0; sz = c[1] == 'l' ? 2 : c[1] == 'm'; }
         for (int i = 0; i < WG_N; i++) if (!strcmp(t, wg_id[i])) {
             if (sz < 0) sz = wg_defsz[i];
+            while (sz > 0 && !wg_size_ok(i, sz)) sz--;
             if (!wg_has(i, sz) && wg_n < WG_MAX) { memset(&wg_it[wg_n], 0, sizeof wg_it[0]); wg_it[wg_n].type = i; wg_it[wg_n++].size = sz; }
         }
     }
@@ -61,21 +72,70 @@ static void wg_conf_line(char *rest)
 static void wg_conf_save(FILE *f)
 {
     fprintf(f, "widgets page=%d", wg_page_on);
-    for (int i = 0; i < wg_n; i++) fprintf(f, " %s:%c", wg_id[wg_it[i].type], wg_it[i].size ? 'm' : 's');
+    for (int i = 0; i < wg_n; i++) fprintf(f, " %s:%c", wg_id[wg_it[i].type], wg_szc[wg_it[i].size]);
     fprintf(f, "\n");
+}
+
+/* ------------------------------------------------------------------ textos */
+#include "lang/widgets_tr.inc.c"
+static const char *wgt(const char *s)
+{
+    const char *r = wgtr_lookup(s, ui_lang);
+    if (r && *r) return r;
+    if ((r = wgtr_lookup(s, LANG_EN))) return r;
+    return tr(s);
 }
 
 /* ------------------------------------------------------------------ datos */
 struct wg_bt { char name[40]; int pct; };
 /* headphones of the Headphones app (buds.inc.c, daemon hibybudsd): battery items. hp = L / R / case
- * of the first device (medium widget), hps = one merged item per device (small widget) */
+ * of the first device (medium and large widgets), hps = one merged item per device (small widget) */
 struct wg_hp { int pct, chg, fam, part; };
 static int buds_wg_items(int *pct, int *chg, int *fam, int *part, int max, int split);
 static void buds_glyph(uint16_t *d, float cx, float cy, float s, int family, int part, int clip0, int clip1);
+#define WG_NREC 6                            /* Recien anadido: albumes */
+#define WG_RCS 80                            /* lado de sus caratulas en memoria */
 struct wdata { int batt, charging, usb; struct wg_bt bt[3]; int nbt; struct wg_hp hp[3], hps[2]; int nhp, nhps; long long sd_free, sd_tot, in_free, in_tot; double t;
-               int songs, albums, artists, favs; long long lib_bytes; char new_artist[64], new_album[96], top_artist[64], last_title[96], last_artist[64]; int top_n; };
+               int songs, albums, artists, favs; long long lib_bytes; char new_artist[64], new_album[96], top_artist[64], last_title[96], last_artist[64]; int top_n;
+               int nrec; char rec_alb[WG_NREC][64], rec_art[WG_NREC][48]; unsigned char rec_cov[WG_NREC]; unsigned rc_gen;
+               int lis_day[7]; };          /* segundos escuchados cada dia ([6] = hoy) */
 static struct wdata WD, WDs;                 /* WD: la publica el hilo (con cerrojo); WDs: copia con la que se dibuja */
 static pthread_mutex_t wg_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint16_t wg_rcov[WG_NREC][WG_RCS * WG_RCS];   /* caratulas de Recien anadido (se escriben con wg_mu) */
+static volatile int wg_busy, wg_fresh;     /* hilo de datos en marcha / datos nuevos sin dibujar */
+static int wg_cache_ok;
+static volatile int wg_loaded;              /* el hilo ya publico datos al menos una vez */
+/* reproduccion: copia propia (con caratula) y estado "optimista" tras pulsar play/pausa */
+static struct np_info wg_ni; static uint16_t wg_cov[128 * 128]; static int wg_cok, wg_np_force, wg_tint = -1; static double wg_np_until;
+static volatile int wg_np_drawn;            /* clave del progreso con la que se dibujo (ver wg_prog_key) */
+static int wg_playing(void) { return now_ms() < wg_np_until ? wg_np_force : wg_ni.playing; }
+/* clave del progreso que se ve: segundos si hay un Reproduciendo grande (muestra los tiempos), si
+ * no el pixel de la barra mas ancha. Cuando cambia hay que redibujar */
+static int wg_prog_key(int pos, int dur)
+{
+    int have = 0;
+    for (int i = 0; i < wg_n; i++) if (wg_it[i].type == WG_NOW) have |= 1 << wg_it[i].size;
+    if (!have || dur <= 0 || pos < 0) return 0;
+    if (have & 4) return pos / 1000 + 1;
+    return (int)((long long)(pos > dur ? dur : pos) * (have & 2 ? 137 : 109) / dur) + 1;
+}
+/* color de la caratula para tenir la tarjeta: media algo mas saturada, a luminancia ~64 */
+static int wg_cover_tint(const uint16_t *c)
+{
+    int r = 0, g = 0, b = 0, n = 0;
+    for (int y = 4; y < 128; y += 8) for (int x = 4; x < 128; x += 8) { uint16_t q = c[y * 128 + x]; r += (q >> 11) * 255 / 31; g += ((q >> 5) & 63) * 255 / 63; b += (q & 31) * 255 / 31; n++; }
+    r /= n; g /= n; b /= n;
+    int l = (77 * r + 151 * g + 28 * b) >> 8;
+    r = l + (r - l) * 3 / 2; g = l + (g - l) * 3 / 2; b = l + (b - l) * 3 / 2;
+    if (r < 0) r = 0; if (g < 0) g = 0; if (b < 0) b = 0; if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+    l = (77 * r + 151 * g + 28 * b) >> 8; if (l < 10) l = 10;
+    float k = 64.f / l; if (k > 2.4f) k = 2.4f;
+    r = (int)(r * k); g = (int)(g * k); b = (int)(b * k);
+    if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+    return r << 16 | g << 8 | b;
+}
+
+#ifndef WG_RENDER_ONLY
 static void wg_bt_scan(struct wdata *n)
 {
     n->nbt = 0;
@@ -100,11 +160,129 @@ static void wg_bt_scan(struct wdata *n)
     }
     if (indev && conn && n->nbt < 3) { snprintf(n->bt[n->nbt].name, 40, "%s", alias[0] ? alias : "Bluetooth"); n->bt[n->nbt++].pct = pct; }
 }
-static volatile int wg_busy, wg_fresh;     /* hilo de datos en marcha / datos nuevos sin dibujar */
-static int wg_cache_ok;
+
+/* ---- escuchas: segundos de reproduccion por dia, contados aqui (la base de HiBy no guarda
+ * cuando se escucho). WLS_FILE: lineas "dia segundos" (dia = dias locales desde 1970), 14 dias;
+ * se escribe cada 5 min de escucha y al cambiar de dia (un fichero de ~200 bytes) */
+#define WLS_FILE "/usr/data/hibymod/listen.dat"
+#define WLS_N 14
+static int wls_dn[WLS_N], wls_s[WLS_N];
+static pthread_mutex_t wls_mu = PTHREAD_MUTEX_INITIALIZER;
+static int wls_day(time_t t) { struct tm tm; localtime_r(&t, &tm); return (int)((t + tm.tm_gmtoff) / 86400); }
+static int *wls_slot(int day, int make)
+{
+    int old = 0;
+    for (int i = 0; i < WLS_N; i++) { if (wls_dn[i] == day) return &wls_s[i]; if (wls_dn[i] < wls_dn[old]) old = i; }
+    if (!make) return 0;
+    wls_dn[old] = day; wls_s[old] = 0; return &wls_s[old];
+}
+static void wls_load(void)
+{
+    FILE *f = fopen(WLS_FILE, "r"); if (!f) return;
+    int d, s; while (fscanf(f, "%d %d", &d, &s) == 2) { int *p = wls_slot(d, 1); if (p) *p = s; }
+    fclose(f);
+}
+static void wls_save(const int *dn, const int *sv)
+{
+    FILE *f = fopen(WLS_FILE ".tmp", "w"); if (!f) return;
+    for (int i = 0; i < WLS_N; i++) if (dn[i] && sv[i]) fprintf(f, "%d %d\n", dn[i], sv[i]);
+    if (fclose(f) == 0) rename(WLS_FILE ".tmp", WLS_FILE); else unlink(WLS_FILE ".tmp");
+}
+static void wls_week(int *o)
+{
+    int today = wls_day(time(0));
+    pthread_mutex_lock(&wls_mu);
+    for (int k = 0; k < 7; k++) { int *p = wls_slot(today - 6 + k, 0); o[k] = p ? *p : 0; }
+    pthread_mutex_unlock(&wls_mu);
+}
+/* hilo de 1 s: cuenta las escuchas y, con la pagina en pantalla, avisa cuando el progreso o los
+ * minutos de hoy cambian lo que se ve (no dibuja nada) */
+static void *wg_tick(void *a)
+{
+    (void)a; thread_nice(10);
+    pthread_mutex_lock(&wls_mu); wls_load(); pthread_mutex_unlock(&wls_mu);
+    double last = now_ms(), acc = 0; int unsaved = 0, day = wls_day(time(0)), lmin = -1;
+    for (;;) {
+        msleep(1000);
+        double t = now_ms(), dt = t - last; last = t; if (dt < 0 || dt > 3000) dt = 0;
+        pthread_mutex_lock(&npx_mu);
+        int pl = npx.source && npx.playing && !npx.stopped, pos = npx.position_ms, dur = npx.duration_ms;
+        pthread_mutex_unlock(&npx_mu);
+        int d = wls_day(time(0)), dn[WLS_N], sv[WLS_N], save = 0;
+        pthread_mutex_lock(&wls_mu);
+        if (pl) { acc += dt; int s = (int)(acc / 1000); if (s > 0) { acc -= s * 1000.0; int *p = wls_slot(d, 1); if (p) *p += s; unsaved += s; } }
+        int *pt = wls_slot(d, 0), mins = pt ? *pt / 60 : 0;
+        if (unsaved && (unsaved >= 300 || d != day)) { memcpy(dn, wls_dn, sizeof dn); memcpy(sv, wls_s, sizeof sv); save = 1; unsaved = 0; }
+        pthread_mutex_unlock(&wls_mu);
+        if (save) wls_save(dn, sv);
+        day = d;
+        if (widgets_on) {
+            if (wg_prog_key(pos, dur) != wg_np_drawn) wg_fresh = 1;
+            if (mins != lmin && wg_has_type(WG_LISTEN)) wg_fresh = 1;
+        }
+        lmin = mins;
+    }
+    return 0;
+}
+
+/* ---- Recien anadido: los WG_NREC albumes mas nuevos de la cache de Musica (lib.tsv, se lee
+ * por lineas: no se carga entera) y sus caratulas ya generadas por Musica (_m.raw, 140 px) */
+static int wg_tabs(char *l, char **f, int max)
+{
+    int n = 0; f[n++] = l;
+    for (char *p = l; *p && n < max; p++) if (*p == '\t') { *p = 0; f[n++] = p + 1; }
+    for (int i = 0; i < n; i++) f[i][strcspn(f[i], "\r\n")] = 0;
+    return n;
+}
+static void wg_recent_scan(struct wdata *n)
+{
+    static long lt_m = -1, lt_sz = -1; static char rpath[WG_NREC][400];
+    struct stat s;
+    if (stat(MU_CACHE "/lib.tsv", &s)) { n->nrec = 0; lt_m = -1; return; }
+    if ((long)s.st_mtime != lt_m || (long)s.st_size != lt_sz) {
+        FILE *f = fopen(MU_CACHE "/lib.tsv", "r"); if (!f) return;
+        static char l[2048]; int idx[WG_NREC], nr = 0, ai = 0; long ct[WG_NREC];
+        while (fgets(l, sizeof l, f)) {            /* 1a pasada: albumes (A titulo artista ano ? ctime genero) */
+            if (l[0] != 'A') continue;
+            char *fl[8]; int k = wg_tabs(l, fl, 8), me = ai++;
+            if (k < 7) continue;
+            long c = atol(fl[5]); int pos = nr;
+            while (pos > 0 && ct[pos - 1] < c) pos--;
+            if (pos >= WG_NREC) continue;
+            if (nr < WG_NREC) nr++;
+            for (int j = nr - 1; j > pos; j--) { ct[j] = ct[j - 1]; idx[j] = idx[j - 1]; memcpy(n->rec_alb[j], n->rec_alb[j - 1], 64); memcpy(n->rec_art[j], n->rec_art[j - 1], 48); }
+            ct[pos] = c; idx[pos] = me;
+            snprintf(n->rec_alb[pos], 64, "%s", fl[1]); snprintf(n->rec_art[pos], 48, "%s", fl[2]);
+        }
+        for (int j = 0; j < nr; j++) rpath[j][0] = 0;
+        rewind(f); int left = nr;
+        while (left && fgets(l, sizeof l, f)) {    /* 2a pasada: primera pista de cada uno (T album ... ruta) */
+            if (l[0] != 'T') continue;
+            char *fl[9]; int k = wg_tabs(l, fl, 9); if (k < 8) continue;
+            int a = atoi(fl[1]);
+            for (int j = 0; j < nr; j++) if (idx[j] == a && !rpath[j][0]) { snprintf(rpath[j], sizeof rpath[j], "%s", fl[7]); left--; }
+        }
+        fclose(f);
+        n->nrec = nr; memset(n->rec_cov, 0, sizeof n->rec_cov); n->rc_gen++;
+        lt_m = (long)s.st_mtime; lt_sz = (long)s.st_size;
+    }
+    static uint16_t big[140 * 140], sm[WG_RCS * WG_RCS];
+    for (int j = 0; j < n->nrec; j++) {
+        if (n->rec_cov[j] || !rpath[j][0]) continue;
+        char sys[440], dir[440], fn[160]; mu_syspath(rpath[j], sys, sizeof sys);
+        uint32_t k = mu_cover_key(sys, dir, sizeof dir);
+        snprintf(fn, sizeof fn, MU_CACHE "/%08x_m.raw", k);
+        if (mu_read_raw(fn, big, 140)) continue;            /* aun sin caratula (Musica la genera): se reintenta */
+        mu_scale(big, 140, sm, WG_RCS);
+        pthread_mutex_lock(&wg_mu); memcpy(wg_rcov[j], sm, sizeof sm); pthread_mutex_unlock(&wg_mu);
+        n->rec_cov[j] = 1; n->rc_gen++;
+    }
+}
+
 static void wg_refresh_now(void)
 {
     static struct wdata n;                 /* se rellena aparte y se publica de golpe */
+    static long db_m = -1, db_sz = -1; static double db_t;
     pthread_mutex_lock(&wg_mu); n = WD; pthread_mutex_unlock(&wg_mu);
     n.batt = sysfs_get("/sys/class/power_supply/battery/capacity", -1);
     char st[24] = ""; int f = open("/sys/class/power_supply/battery/status", O_RDONLY);
@@ -113,11 +291,16 @@ static void wg_refresh_now(void)
     struct statvfs v;
     if (!statvfs("/usr/data/mnt/sd_0", &v) && v.f_blocks) { n.sd_free = (long long)v.f_bavail * v.f_frsize; n.sd_tot = (long long)v.f_blocks * v.f_frsize; } else n.sd_tot = n.sd_free = 0;
     if (!statvfs("/usr/data", &v)) { n.in_free = (long long)v.f_bavail * v.f_frsize; n.in_tot = (long long)v.f_blocks * v.f_frsize; }
-    wg_bt_scan(&n);
-    {   /* biblioteca de HiBy (hibymix stats: solo lectura) */
+    {   /* Bluetooth de BlueZ solo si la app Auriculares no ve ninguno (dbus-send cuesta) */
+        int p[3], c[3], fa[3], k[3];
+        if (buds_wg_items(p, c, fa, k, 1, 0) > 0) n.nbt = 0; else wg_bt_scan(&n);
+    }
+    {   /* biblioteca de HiBy (hibymix stats: solo lectura), solo si la base cambio (o cada 5 min) */
+        struct stat s; long m = 0, sz = 0; if (!stat(MU_DB, &s)) { m = (long)s.st_mtime; sz = (long)s.st_size; }
         char *argv[] = { "/usr/data/hibymod/shell/hibymix", "stats", 0 };
         static char out[2048];
-        if (!access(argv[0], X_OK) && run_capture(argv, out, sizeof out) > 0)
+        if ((m != db_m || sz != db_sz || now_ms() - db_t > 300000) && !access(argv[0], X_OK) && run_capture(argv, out, sizeof out) > 0) {
+            db_m = m; db_sz = sz; db_t = now_ms();
             for (char *sv = 0, *l = strtok_r(out, "\n", &sv); l; l = strtok_r(0, "\n", &sv)) {
                 char *fl[6]; int k = split_tabs(l, fl, 6);
                 if (!strcmp(fl[0], "count") && k >= 6) { n.songs = atoi(fl[1]); n.albums = atoi(fl[2]); n.artists = atoi(fl[3]); n.favs = atoi(fl[4]); n.lib_bytes = atoll(fl[5]); }
@@ -125,20 +308,26 @@ static void wg_refresh_now(void)
                 else if (!strcmp(fl[0], "top") && k >= 3) { snprintf(n.top_artist, sizeof n.top_artist, "%s", fl[1]); n.top_n = atoi(fl[2]); }
                 else if (!strcmp(fl[0], "last") && k >= 3) { snprintf(n.last_title, sizeof n.last_title, "%s", fl[1]); snprintf(n.last_artist, sizeof n.last_artist, "%s", fl[2]); }
             }
+        }
     }
+    if (wg_has_type(WG_NEW)) wg_recent_scan(&n);
     pthread_mutex_lock(&wg_mu); n.t = WD.t; WD = n; pthread_mutex_unlock(&wg_mu);
 }
-static volatile int wg_loaded;              /* el hilo ya publico datos al menos una vez */
-static void *wg_thread(void *a) { (void)a; wg_refresh_now(); wg_loaded = 1; wg_fresh = 1; wg_busy = 0; return 0; }
+static void *wg_thread(void *a)
+{
+    (void)a; thread_nice(8);
+    double t0 = now_ms(); wg_refresh_now();
+    if (!wg_loaded) lg("widgets: primeros datos en %.0f ms", now_ms() - t0);
+    wg_loaded = 1; wg_fresh = 1; wg_busy = 0; return 0;
+}
 static void wg_refresh(void)            /* asincrono */
 {
+    static int tick_on;
+    if (!tick_on) { tick_on = 1; pthread_t th; if (!pthread_create(&th, 0, wg_tick, 0)) pthread_detach(th); }
     if (wg_busy) return;
     wg_busy = 1; WD.t = now_ms();
     pthread_t th; if (pthread_create(&th, 0, wg_thread, 0)) { wg_busy = 0; return; } pthread_detach(th);
 }
-/* reproduccion: copia propia (con caratula) y estado "optimista" tras pulsar play/pausa */
-static struct np_info wg_ni; static uint16_t wg_cov[128 * 128]; static int wg_cok, wg_np_force; static double wg_np_until;
-static int wg_playing(void) { return now_ms() < wg_np_until ? wg_np_force : wg_ni.playing; }
 static void wg_snap(void)
 {
     pthread_mutex_lock(&wg_mu); double t = WDs.t; WDs = WD; WDs.t = t; pthread_mutex_unlock(&wg_mu);
@@ -148,7 +337,10 @@ static void wg_snap(void)
         if (f >= 0) { int k = read(f, st, sizeof st - 1); if (k > 0) st[k] = 0; close(f); }
         WDs.charging = !strncmp(st, "Charging", 8);
     }
+    uint32_t tid = wg_ni.track_id; int cok = wg_cok;
     npx_snapshot(&wg_ni, wg_cov, &wg_cok);
+    if (wg_ni.track_id != tid || wg_cok != cok || wg_tint == -1) wg_tint = wg_cok ? wg_cover_tint(wg_cov) : -2;
+    wg_np_drawn = wg_prog_key(wg_ni.position_ms, wg_ni.duration_ms);
     {   /* headphones: copied from the Headphones app's snapshot (no I/O; it changes wg_fresh) */
         int p[3], c[3], f[3], k[3];
         WDs.nhp = buds_wg_items(p, c, f, k, 3, 1);
@@ -156,34 +348,37 @@ static void wg_snap(void)
         WDs.nhps = buds_wg_items(p, c, f, k, 1, 0);
         for (int i = 0; i < WDs.nhps; i++) { WDs.hps[i].pct = p[i]; WDs.hps[i].chg = c[i]; WDs.hps[i].fam = f[i]; WDs.hps[i].part = k[i]; }
     }
+    wls_week(WDs.lis_day);
 }
+#endif /* WG_RENDER_ONLY */
 
 /* ------------------------------------------------------------------ geometria */
 #define WG_M 16                              /* margen lateral */
 #define WG_G 14                              /* separacion */
 #define WG_S ((W - 2 * WG_M - WG_G) / 2)     /* pequeno: 137 x 137 */
 #define WG_MW (W - 2 * WG_M)                 /* mediano: 288 x 137 */
-#define WG_H WG_S
-#define WG_R 20.f
+#define WG_LH (2 * WG_S + WG_G)              /* grande: 288 x 288 */
+#define WG_R 20.f                            /* radio (iOS: 22 pt en 158) */
 #define WG_TOP 44
 #define WG_ESH 30                            /* desplazamiento del contenido en edicion (pildoras) */
-#define WG_SH 140                            /* filas del bufer de dibujo */
+#define WG_SH WG_LH                          /* filas del bufer de dibujo */
 #define WG_TH 60                             /* miniatura de la galeria */
 static int wg_w(int size) { return size ? WG_MW : WG_S; }
-/* flujo: los pequenos se emparejan, los medianos ocupan la fila; devuelve el alto total */
+static int wg_h(int size) { return size == 2 ? WG_LH : WG_S; }
+/* flujo: los pequenos se emparejan, los medianos ocupan la fila, los grandes dos; devuelve el alto */
 static int wg_layout(const unsigned char *sz, int n, short *xs, short *ys)
 {
     int col = 0, y = 0;
     for (int i = 0; i < n; i++) {
         if (!sz[i]) {
             xs[i] = col ? WG_M + WG_S + WG_G : WG_M; ys[i] = y;
-            if (col) { col = 0; y += WG_H + WG_G; } else col = 1;
+            if (col) { col = 0; y += WG_S + WG_G; } else col = 1;
         } else {
-            if (col) { col = 0; y += WG_H + WG_G; }
-            xs[i] = WG_M; ys[i] = y; y += WG_H + WG_G;
+            if (col) { col = 0; y += WG_S + WG_G; }
+            xs[i] = WG_M; ys[i] = y; y += wg_h(sz[i]) + WG_G;
         }
     }
-    if (col) y += WG_H + WG_G;
+    if (col) y += WG_S + WG_G;
     return y;
 }
 static int wg_layout_items(short *xs, short *ys)
@@ -193,7 +388,7 @@ static int wg_layout_items(short *xs, short *ys)
 }
 
 /* ------------------------------------------------------------------ mascaras y cristal */
-static uint8_t *wg_mask[3], *wg_rim[2], *wg_shadow[2];     /* [0] pequeno, [1] mediano, [2] miniatura */
+static uint8_t *wg_mask[4], *wg_rim[3], *wg_shadow[3];     /* [0] pequeno, [1] mediano, [2] grande, [3] miniatura */
 static uint8_t *wg_rrmask(int w, int h, float r, float inset)
 {
     uint8_t *m = malloc(w * h); if (!m) return 0;
@@ -210,27 +405,33 @@ static uint8_t *wg_rrmask(int w, int h, float r, float inset)
 static void wg_masks_init(void)
 {
     if (wg_mask[0]) return;
-    for (int s = 0; s < 2; s++) {
-        int w = wg_w(s);
-        wg_mask[s] = wg_rrmask(w, WG_H, WG_R, 0);
-        uint8_t *in = wg_rrmask(w, WG_H, WG_R, 1);
-        wg_rim[s] = malloc(w * WG_H);
-        if (wg_rim[s] && in && wg_mask[s]) for (int i = 0; i < w * WG_H; i++) { int k = wg_mask[s][i] - in[i]; wg_rim[s][i] = k < 0 ? 0 : k; }
+    for (int s = 0; s < 3; s++) {
+        int w = wg_w(s), h = wg_h(s);
+        wg_mask[s] = wg_rrmask(w, h, WG_R, 0);
+        uint8_t *in = wg_rrmask(w, h, WG_R, 1);
+        wg_rim[s] = malloc(w * h);
+        if (wg_rim[s] && in && wg_mask[s]) for (int i = 0; i < w * h; i++) { int k = wg_mask[s][i] - in[i]; wg_rim[s][i] = k < 0 ? 0 : k; }
         free(in);
-        /* sombra suave: mascara desenfocada (dos cajas de 9) en un lienzo con margen */
-        int sw = w + 2 * WG_SP, sh = WG_H + 2 * WG_SP;
-        uint8_t *a = calloc(sw * sh, 1), *b = calloc(sw * sh, 1);
-        if (a && b && wg_mask[s]) {
-            for (int y = 0; y < WG_H; y++) memcpy(a + (y + WG_SP) * sw + WG_SP, wg_mask[s] + y * w, w);
-            for (int pass = 0; pass < 2; pass++) {
-                for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) { int t = 0; for (int k = -4; k <= 4; k++) { int xx = x + k; if (xx >= 0 && xx < sw) t += a[y * sw + xx]; } b[y * sw + x] = t / 9; }
-                for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) { int t = 0; for (int k = -4; k <= 4; k++) { int yy = y + k; if (yy >= 0 && yy < sh) t += b[yy * sw + x]; } a[y * sw + x] = t / 9; }
-            }
-            wg_shadow[s] = a; a = 0;
-        }
-        free(a); free(b);
     }
-    wg_mask[2] = wg_rrmask(WG_TH, WG_TH, 13, 0);
+    wg_mask[3] = wg_rrmask(WG_TH, WG_TH, 13, 0);
+}
+/* sombra suave del widget levantado: mascara desenfocada (dos cajas de 9) en un lienzo con
+ * margen; se hace la primera vez que se levanta uno de ese tamano */
+static const uint8_t *wg_shadow_get(int s)
+{
+    if (wg_shadow[s] || !wg_mask[s]) return wg_shadow[s];
+    int w = wg_w(s), h = wg_h(s), sw = w + 2 * WG_SP, sh = h + 2 * WG_SP;
+    uint8_t *a = calloc(sw * sh, 1), *b = calloc(sw * sh, 1);
+    if (a && b) {
+        for (int y = 0; y < h; y++) memcpy(a + (y + WG_SP) * sw + WG_SP, wg_mask[s] + y * w, w);
+        for (int pass = 0; pass < 2; pass++) {
+            for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) { int t = 0; for (int k = -4; k <= 4; k++) { int xx = x + k; if (xx >= 0 && xx < sw) t += a[y * sw + xx]; } b[y * sw + x] = t / 9; }
+            for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) { int t = 0; for (int k = -4; k <= 4; k++) { int yy = y + k; if (yy >= 0 && yy < sh) t += b[yy * sw + x]; } a[y * sw + x] = t / 9; }
+        }
+        wg_shadow[s] = a; a = 0;
+    }
+    free(a); free(b);
+    return wg_shadow[s];
 }
 /* fondo desenfocado 40x60 (bloques de 8x8) del fondo actual */
 static uint8_t wg_bl[61][41][3]; static int wg_bl_gen = -1;
@@ -247,26 +448,33 @@ static void wg_blur_build(void)
     memcpy(wg_bl[60], wg_bl[59], sizeof wg_bl[0]);
     wg_bl_gen = wall_gen;
 }
-/* cristal oscuro: fondo desenfocado de esa zona de la pantalla, oscurecido (blanco -> gris 93,
- * negro -> gris 22: el texto blanco se lee siempre) y un filo claro de 1 px */
-static void wg_card_bg(uint16_t *d, int w, int h, int sx, int sy, int szi)
+/* cristal: fondo desenfocado de esa zona de la pantalla, oscurecido (el texto blanco se lee
+ * siempre) con luz de arriba (un poco mas claro arriba que abajo) y un filo claro de 1 px, mas
+ * marcado arriba. tint >= 0 (0xRRGGBB): se tine con ese color (caratula, mezcla) */
+static void wg_card_bg(uint16_t *d, int w, int h, int sx, int sy, int szi, int tint)
 {
     if (wg_bl_gen != wall_gen) wg_blur_build();
-    const uint8_t *rim = wg_rim[szi];
+    const uint8_t *rim = szi >= 0 ? wg_rim[szi] : 0;
+    int tc[3] = { (tint >> 16) & 255, (tint >> 8) & 255, tint & 255 }, ta = tint >= 0 ? 176 : 0;
     for (int y = 0; y < h; y++) {
         int Y = sy + y; if (Y < 0) Y = 0; if (Y >= H) Y = H - 1;
         int f = (Y * 2 + 1) * 16 - 128; if (f < 0) f = 0; int y0 = f >> 8, wy = f & 255;
+        int fy = y * 256 / (h > 1 ? h - 1 : 1), k = 84 - (22 * fy >> 8), base = 27 - (9 * fy >> 8);
+        int tk = 290 - (96 * fy >> 8);                          /* tinte: 1,13 arriba -> 0,76 abajo */
+        int rimk = y < h / 3 ? 62 : y > 2 * h / 3 ? 26 : 40;
+        int trow[3]; for (int c = 0; c < 3; c++) { int v = tc[c] * tk >> 8; trow[c] = v > 255 ? 255 : v; }
         uint16_t *row = d + y * W;
         for (int x = 0; x < w; x++) {
             int X = sx + x; if (X < 0) X = 0; if (X >= W) X = W - 1;
             int fx = (X * 2 + 1) * 16 - 128; if (fx < 0) fx = 0; int x0 = fx >> 8, wx = fx & 255, c[3];
-            for (int k = 0; k < 3; k++) {
-                int top = wg_bl[y0][x0][k] * (256 - wx) + wg_bl[y0][x0 + 1][k] * wx, bot = wg_bl[y0 + 1][x0][k] * (256 - wx) + wg_bl[y0 + 1][x0 + 1][k] * wx;
+            for (int q = 0; q < 3; q++) {
+                int top = wg_bl[y0][x0][q] * (256 - wx) + wg_bl[y0][x0 + 1][q] * wx, bot = wg_bl[y0 + 1][x0][q] * (256 - wx) + wg_bl[y0 + 1][x0 + 1][q] * wx;
                 int v = (top * (256 - wy) + bot * wy) >> 16;
-                c[k] = (v * 72 >> 8) + 22;
+                c[q] = (v * k >> 8) + base;
+                if (ta) c[q] = (c[q] * (256 - ta) + trow[q] * ta) >> 8;
             }
             int e = rim ? rim[y * w + x] : 0;
-            if (e) { e = e * 40 / 255; for (int k = 0; k < 3; k++) c[k] += (255 - c[k]) * e / 255; }
+            if (e) { e = e * rimk / 255; for (int q = 0; q < 3; q++) c[q] += (255 - c[q]) * e / 255; }
             row[x] = rgb(c[0], c[1], c[2]);
         }
     }
@@ -283,6 +491,7 @@ static inline uint16_t wg_mix(uint16_t c, uint16_t d, unsigned a)
     uint32_t v = ((cs * k + ds * (32 - k)) >> 5) & 0x07E0F81Fu;
     return (uint16_t)(v | (v >> 16));
 }
+static inline uint32_t wg_sp(uint16_t p) { return (p | ((uint32_t)p << 16)) & 0x07E0F81Fu; }
 static inline void wg_px(uint16_t *d, int x, int y, uint16_t c, int a)
 {
     if (x < 0 || x >= W || y < wg_cy0 || y >= wg_cy1 || a <= 0) return;
@@ -317,7 +526,20 @@ static void wg_arc(uint16_t *d, float cx, float cy, float r, float th, float sta
 static void wg_ring(uint16_t *d, float cx, float cy, float r, float th, float frac, uint16_t col)
 {
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
-    wg_arc(d, cx, cy, r, th, 0, frac * 6.2831853f, col, 66);
+    wg_arc(d, cx, cy, r, th, 0, frac * 6.2831853f, col, 64);
+}
+/* segmento con extremos redondeados (agujas, marcas, flechas) */
+static void wg_line(uint16_t *d, float x0, float y0, float x1, float y1, float th, uint16_t col, int alpha)
+{
+    float r = th / 2, vx = x1 - x0, vy = y1 - y0, l2 = vx * vx + vy * vy;
+    int xa = (int)floorf(fminf(x0, x1) - r - 1), xb = (int)ceilf(fmaxf(x0, x1) + r + 1), ya = (int)floorf(fminf(y0, y1) - r - 1), yb = (int)ceilf(fmaxf(y0, y1) + r + 1);
+    for (int y = ya; y <= yb; y++) for (int x = xa; x <= xb; x++) {
+        float px = x + .5f - x0, py = y + .5f - y0, t = l2 > 0 ? (px * vx + py * vy) / l2 : 0;
+        if (t < 0) t = 0; if (t > 1) t = 1;
+        float dx = px - t * vx, dy = py - t * vy, cov = r + .5f - sqrtf(dx * dx + dy * dy);
+        if (cov <= 0) continue; if (cov > 1) cov = 1;
+        wg_px(d, x, y, col, (int)(alpha * cov));
+    }
 }
 /* poligono relleno con 4x4 submuestras (rayo, glifos pequenos); pts en unidades de "s" */
 static void wg_poly(uint16_t *d, float x0, float y0, float s, const float *pts, int n, uint16_t col)
@@ -335,6 +557,44 @@ static void wg_poly(uint16_t *d, float x0, float y0, float s, const float *pts, 
         if (hit) wg_px(d, x, y, col, hit * 255 / 16);
     }
 }
+/* rectangulo redondeado con degradado vertical (azulejos de las mezclas, huecos de caratula) */
+static void wg_rrect_grad(uint16_t *d, int x0, int y0, int w, int h, float r, uint16_t top, uint16_t bot)
+{
+    for (int y = 0; y < h; y++) {
+        int Y = y0 + y; if (Y < wg_cy0 || Y >= wg_cy1 || Y < 0 || Y >= H) continue;
+        uint16_t c = wg_mix(bot, top, (unsigned)(y * 255 / (h > 1 ? h - 1 : 1)));
+        float py = y + .5f, qy = fabsf(py - h / 2.f) - (h / 2.f - r), oy = qy > 0 ? qy : 0;
+        for (int x = 0; x < w; x++) {
+            int X = x0 + x; if (X < 0 || X >= W) continue;
+            float qx = fabsf(x + .5f - w / 2.f) - (w / 2.f - r);
+            if (qx <= -.5f || qy <= -.5f) { d[Y * W + X] = c; continue; }     /* (x, y) dentro de la caja: solo las esquinas recortan */
+            float ox = qx > 0 ? qx : 0, dd = sqrtf(ox * ox + oy * oy) - r, cv = .5f - dd;
+            if (cv <= 0) continue; d[Y * W + X] = cv >= 1 ? c : mix565(c, d[Y * W + X], (unsigned)(cv * 255));
+        }
+    }
+}
+/* imagen cuadrada ss x ss escalada (bilineal) a s x s en (x, y), esquinas suavizadas de radio r */
+static void wg_cover_blit(uint16_t *d, const uint16_t *src, int ss, int x, int y, int s, float r)
+{
+    for (int yy = 0; yy < s; yy++) {
+        int Y = y + yy; if (Y < wg_cy0 || Y >= wg_cy1 || Y < 0 || Y >= H) continue;
+        int fy = (int)(((yy + .5f) * ss / s - .5f) * 256); if (fy < 0) fy = 0; int v0 = fy >> 8, wv = (fy & 255) >> 3; if (v0 >= ss - 1) { v0 = ss - 2; wv = 31; }
+        float py = yy + .5f, qy = fabsf(py - s / 2.f) - (s / 2.f - r), oy = qy > 0 ? qy : 0;
+        for (int xx = 0; xx < s; xx++) {
+            int X = x + xx; if (X < 0 || X >= W) continue;
+            int fx = (int)(((xx + .5f) * ss / s - .5f) * 256); if (fx < 0) fx = 0; int u0 = fx >> 8, wu = (fx & 255) >> 3; if (u0 >= ss - 1) { u0 = ss - 2; wu = 31; }
+            const uint16_t *p = src + v0 * ss + u0;
+            uint32_t a = ((wg_sp(p[0]) * (32 - wu) + wg_sp(p[1]) * wu) >> 5) & 0x07E0F81Fu, b = ((wg_sp(p[ss]) * (32 - wu) + wg_sp(p[ss + 1]) * wu) >> 5) & 0x07E0F81Fu;
+            uint32_t v = ((a * (32 - wv) + b * wv) >> 5) & 0x07E0F81Fu; uint16_t c = (uint16_t)(v | (v >> 16));
+            float qx = fabsf(xx + .5f - s / 2.f) - (s / 2.f - r);
+            if (qx <= -.5f || qy <= -.5f) { d[Y * W + X] = c; continue; }
+            float ox = qx > 0 ? qx : 0, dd = sqrtf(ox * ox + oy * oy) - r, cv = .5f - dd;
+            if (cv <= 0) continue; d[Y * W + X] = cv >= 1 ? c : mix565(c, d[Y * W + X], (unsigned)(cv * 255));
+        }
+    }
+}
+
+/* ---- glifos (todos vectoriales, mismo trazo) ---- */
 static void wg_bolt(uint16_t *d, float x, float y, float h, uint16_t col)
 {
     static const float b[] = { .62f, 0, .06f, .58f, .44f, .58f, .34f, 1, .94f, .40f, .56f, .40f, .70f, 0 };
@@ -352,61 +612,147 @@ static void wg_glyph_phones(uint16_t *d, float cx, float cy, float s, uint16_t c
     for (int k = -1; k <= 1; k += 2)
         fill_rrect(d, (int)(cx + k * s * .34f - s * .12f), (int)(cy + s * .02f), (int)(s * .24f), (int)(s * .36f), s * .08f, col, 255);
 }
+static void wg_note(uint16_t *d, float cx, float cy, float s, uint16_t col)   /* corchea doble (music.note) */
+{
+    fill_circle(d, cx - s * .26f, cy + s * .26f, s * .15f, col, 255);
+    fill_circle(d, cx + s * .2f, cy + s * .16f, s * .15f, col, 255);
+    wg_line(d, cx - s * .14f, cy + s * .26f, cx - s * .14f, cy - s * .32f, s * .075f, col, 255);
+    wg_line(d, cx + s * .32f, cy + s * .16f, cx + s * .32f, cy - s * .42f, s * .075f, col, 255);
+    wg_line(d, cx - s * .14f, cy - s * .32f, cx + s * .32f, cy - s * .42f, s * .13f, col, 255);
+}
+static void wg_play_glyph(uint16_t *d, float cx, float cy, float s, uint16_t col)
+{
+    static const float t[] = { .1f, .02f, .96f, .5f, .1f, .98f };
+    wg_poly(d, cx - s * .46f, cy - s * .5f, s, t, 3, col);
+}
+static void wg_pause_glyph(uint16_t *d, float cx, float cy, float s, uint16_t col)
+{
+    float bw = s * .3f, g = s * .2f;
+    fill_rrect(d, (int)roundf(cx - g / 2 - bw), (int)roundf(cy - s / 2), (int)roundf(bw), (int)roundf(s), bw * .3f, col, 255);
+    fill_rrect(d, (int)roundf(cx + g / 2), (int)roundf(cy - s / 2), (int)roundf(bw), (int)roundf(s), bw * .3f, col, 255);
+}
+static void wg_skip_glyph(uint16_t *d, float cx, float cy, float s, uint16_t col, int dir)   /* forward.fill / backward.fill */
+{
+    static const float f[] = { 0, .19f, .5f, .5f, 0, .81f }, b[] = { .5f, .19f, 0, .5f, .5f, .81f };
+    float x0 = cx - s * .48f, y0 = cy - s * .5f;
+    wg_poly(d, x0, y0, s, dir > 0 ? f : b, 3, col);
+    wg_poly(d, x0 + s * .47f, y0, s, dir > 0 ? f : b, 3, col);
+}
+static void wg_leaf(uint16_t *d, float cx, float cy, float s, uint16_t col)
+{
+    static const float l[] = { .14f, .86f, .12f, .5f, .3f, .24f, .6f, .12f, .9f, .1f, .88f, .42f, .72f, .72f, .44f, .86f };
+    wg_poly(d, cx - s / 2, cy - s / 2, s, l, 8, col);
+}
+static void wg_gauge(uint16_t *d, float cx, float cy, float s, uint16_t col)
+{
+    wg_arc(d, cx, cy + s * .08f, s * .4f, s * .12f, -2.2f, 4.4f, col, 0);
+    wg_line(d, cx, cy + s * .08f, cx + s * .22f, cy - s * .14f, s * .12f, col, 255);
+    fill_circle(d, cx, cy + s * .08f, s * .1f, col, 255);
+}
+static void wg_sdcard(uint16_t *d, float cx, float cy, float s, uint16_t col)
+{
+    static const float c[] = { .2f, .04f, .62f, .04f, .82f, .24f, .82f, .96f, .2f, .96f };
+    wg_poly(d, cx - s / 2, cy - s / 2, s, c, 5, col);
+}
 
-/* ---- texto ---- */
-static int wg_fit(const char *t, int size, int maxw) { int sz = size; while (sz > 11 && tw_n(t, sz, -1) > maxw) sz--; return sz; }
-static void wt(uint16_t *d, int x, int base, const char *t, int size, uint16_t col, int maxw)
+/* ---- texto: un tipo de letra; el grosor (como SF: regular / medio / seminegrita / negrita)
+ * se simula fundiendo cada glifo con su copia 1 px a la derecha con mas o menos peso ---- */
+enum { W_REG, W_MED, W_SEMI, W_BOLD };
+enum { WA_L, WA_C, WA_R };
+static int wg_trunc;                         /* etiquetas de la interfaz que no cupieron (pruebas) */
+static void (*wg_trunc_hook)(const char *t, int size, int maxw);
+static int wg_tw(const char *s, int size, int wt) { return tw_n(s, size, -1) + (wt ? 1 : 0); }
+static int wg_text(uint16_t *d, int x, int base, const char *s, int size, uint16_t col, int maxw, int wt)
 {
-    if (!t || !*t) return;
-    draw_text(d, x, base, t, wg_fit(t, size, maxw), col, maxw, wg_cy0, wg_cy1);
+    if (!font_ok || !s || !*s) return 0;
+    static const unsigned char K[4] = { 0, 96, 160, 230 };
+    unsigned k = K[wt & 3];
+    int full = wg_tw(s, size, wt), ell = 0, ellw = 0;
+    if (maxw > 0 && full > maxw) { ell = 1; struct glyph *g = glyph_get(0x2026, size); ellw = (g ? g->adv >> 6 : 8) + (k ? 1 : 0); }
+    int pen = x << 6, c;
+    while ((c = utf8_next(&s))) {
+        struct glyph *g = glyph_get(c, size); if (!g) continue;
+        if (ell && ((pen + g->adv) >> 6) - x > maxw - ellw) { c = 0x2026; g = glyph_get(c, size); if (!g) break; s = ""; }
+        int gx = (pen >> 6) + g->xo, gy = base + g->yo, gw = g->w + (k ? 1 : 0);
+        for (int yy = 0; yy < g->h && g->bmp; yy++) {
+            int dy = gy + yy; if (dy < wg_cy0 || dy >= wg_cy1 || dy < 0 || dy >= H) continue;
+            uint16_t *row = d + dy * W; const uint8_t *m = g->bmp + yy * g->w;
+            for (int xx = 0; xx < gw; xx++) {
+                int dx = gx + xx; if (dx < 0 || dx >= W) continue;
+                unsigned a = xx < g->w ? m[xx] : 0;
+                if (k && xx > 0) { unsigned b = m[xx - 1] * k >> 8; a = a + (b * (255 - a) >> 8); }
+                if (!a) continue;
+                row[dx] = a >= 255 ? col : mix565(col, row[dx], a);
+            }
+        }
+        pen += g->adv;
+        if (c == 0x2026 && !*s) break;
+    }
+    return (pen >> 6) - x + (k ? 1 : 0);
 }
-static void wtc(uint16_t *d, int cx, int base, const char *t, int size, uint16_t col, int maxw)   /* centrado */
+static int wg_fitsz(const char *t, int size, int minsz, int maxw, int wt) { int sz = size; while (sz > minsz && wg_tw(t, sz, wt) > maxw) sz--; return sz; }
+static int wg_alx(int x, int maxw, int w, int al) { return al == WA_C ? x + (maxw - w) / 2 : al == WA_R ? x + maxw - w : x; }
+/* texto de la interfaz (traducido): se reduce hasta el 75 % antes de cortar (un corte = fallo de
+ * las pruebas). x = borde izquierdo de la caja de ancho maxw; devuelve el ancho */
+static int wlb(uint16_t *d, int x, int base, const char *t, int size, uint16_t col, int maxw, int wt, int al)
 {
-    if (!t || !*t) return;
-    int sz = wg_fit(t, size, maxw), w = tw_n(t, sz, -1); if (w > maxw) w = maxw;
-    draw_text(d, cx - w / 2, base, t, sz, col, maxw, wg_cy0, wg_cy1);
+    if (!t || !*t) return 0;
+    int mn = size * 3 / 4; if (mn < 9) mn = 9;
+    int sz = wg_fitsz(t, size, mn, maxw, wt), w = wg_tw(t, sz, wt);
+    if (w > maxw) { wg_trunc++; if (wg_trunc_hook) wg_trunc_hook(t, size, maxw); w = maxw; }
+    return wg_text(d, wg_alx(x, maxw, w, al), base, t, sz, col, maxw, wt);
 }
-static void wtr(uint16_t *d, int rx, int base, const char *t, int size, uint16_t col, int maxw)   /* alineado a la derecha */
+/* dato (titulos, artistas): hasta 2 px menos y despues "…" */
+static int wtx(uint16_t *d, int x, int base, const char *t, int size, uint16_t col, int maxw, int wt, int al)
 {
-    if (!t || !*t) return;
-    int sz = wg_fit(t, size, maxw), w = tw_n(t, sz, -1); if (w > maxw) w = maxw;
-    draw_text(d, rx - w, base, t, sz, col, maxw, wg_cy0, wg_cy1);
+    if (!t || !*t) return 0;
+    int sz = wg_fitsz(t, size, size - 2 < 9 ? 9 : size - 2, maxw, wt), w = wg_tw(t, sz, wt); if (w > maxw) w = maxw;
+    return wg_text(d, wg_alx(x, maxw, w, al), base, t, sz, col, maxw, wt);
 }
 /* corte de linea: bytes de la 1a linea (*l1) y comienzo de la 2a; en un espacio si se puede,
- * si no entre caracteres (chino, japones, palabras largas) */
-static int wg_break(const char *t, int sz, int maxw, int *l1)
+ * si no entre caracteres (chino, japones, tailandes, palabras largas), nunca antes de una marca
+ * combinante ni de un signo que no empieza linea */
+static int wg_break(const char *t, int sz, int maxw, int wt, int *l1)
 {
     const char *p = t, *sp = 0, *fit = t;
     while (*p) {
         const char *q = p; int c = utf8_next(&q);
-        if (tw_n(t, sz, (int)(q - t)) > maxw) break;
+        if (tw_n(t, sz, (int)(q - t)) + (wt ? 1 : 0) > maxw) break;
         if (c == ' ') sp = p;
+        else if (wrap_cjk(c) && p > t) sp = 0;              /* entre ideogramas: corte por caracter */
         fit = q; p = q;
     }
     if (!*p) { *l1 = (int)(p - t); return *l1; }
     if (sp && sp > t) { *l1 = (int)(sp - t); return *l1 + 1; }
+    for (;;) {                                               /* no dejar una marca al principio de la 2a */
+        const char *q = fit; int c = utf8_next(&q);
+        if (fit == t || !(text_is_mark(c) || wrap_nostart(c))) break;
+        do fit--; while (fit > t && (*fit & 0xC0) == 0x80);
+    }
     if (fit == t) { const char *q = t; utf8_next(&q); fit = q; }
     *l1 = (int)(fit - t); return *l1;
 }
-/* hasta dos lineas; reduce el tamano hasta 2 puntos antes de poner "…"; devuelve las lineas */
-static int wt2(uint16_t *d, int x, int base, const char *t, int size, uint16_t col, int maxw, int lh, int center)
+/* hasta dos lineas; reduce el tamano hasta 2 puntos (4 si es de la interfaz) antes de poner "…";
+ * devuelve las lineas. ui: un corte cuenta como fallo de las pruebas */
+static int wt2(uint16_t *d, int x, int base, const char *t, int size, uint16_t col, int maxw, int lh, int al, int wt, int ui)
 {
     if (!t || !*t) return 0;
-    if (tw_n(t, size, -1) <= maxw) { if (center) wtc(d, x + maxw / 2, base, t, size, col, maxw); else draw_text(d, x, base, t, size, col, 0, wg_cy0, wg_cy1); return 1; }
-    int sz = size, l1 = 0, s2 = 0;
-    for (; sz >= size - 2 && sz >= 11; sz--) { s2 = wg_break(t, sz, maxw, &l1); if (tw_n(t + s2, sz, -1) <= maxw) break; }
-    if (sz < size - 2 || sz < 11) { sz++; s2 = wg_break(t, sz, maxw, &l1); }
+    if (wg_tw(t, size, wt) <= maxw) { wg_text(d, wg_alx(x, maxw, wg_tw(t, size, wt), al), base, t, size, col, 0, wt); return 1; }
+    int sz = size, l1 = 0, s2 = 0, mn = size - (ui ? 4 : 2); if (mn < 9) mn = 9;
+    for (; sz >= mn; sz--) { s2 = wg_break(t, sz, maxw, wt, &l1); const char *b = t + s2; while (*b == ' ') b++; if (wg_tw(b, sz, wt) <= maxw) break; }
+    if (sz < mn) { sz = mn; s2 = wg_break(t, sz, maxw, wt, &l1); if (ui) { wg_trunc++; if (wg_trunc_hook) wg_trunc_hook(t, size, maxw); } }
     char a[256]; int n = l1 < 255 ? l1 : 255; memcpy(a, t, n); a[n] = 0;
+    while (n > 0 && a[n - 1] == ' ') a[--n] = 0;
     const char *b = t + s2; while (*b == ' ') b++;
-    if (center) {
-        int w1 = tw_n(a, sz, -1), w2 = tw_n(b, sz, -1); if (w2 > maxw) w2 = maxw;
-        draw_text(d, x + (maxw - w1) / 2, base, a, sz, col, maxw, wg_cy0, wg_cy1);
-        if (*b) draw_text(d, x + (maxw - w2) / 2, base + lh, b, sz, col, maxw, wg_cy0, wg_cy1);
-    } else {
-        draw_text(d, x, base, a, sz, col, maxw, wg_cy0, wg_cy1);
-        if (*b) draw_text(d, x, base + lh, b, sz, col, maxw, wg_cy0, wg_cy1);
-    }
+    int w1 = wg_tw(a, sz, wt), w2 = wg_tw(b, sz, wt); if (w2 > maxw) w2 = maxw;
+    wg_text(d, wg_alx(x, maxw, w1, al), base, a, sz, col, maxw, wt);
+    if (*b) wg_text(d, wg_alx(x, maxw, w2, al), base + lh, b, sz, col, maxw, wt);
     return *b ? 2 : 1;
+}
+static int wt2_lines(const char *t, int size, int maxw, int wt)   /* lineas que usara wt2 */
+{
+    if (!t || !*t) return 0;
+    return wg_tw(t, size, wt) <= maxw ? 1 : 2;
 }
 static int wg_put8(char *o, int c)
 {
@@ -433,18 +779,17 @@ static const char *wg_upper(const char *s, char *o, int n, int first)
 }
 
 /* ---- copias de sprites ---- */
-/* copia con mascara (sin giro): las filas lejos de las esquinas van con memcpy */
-static void wg_blit_m(uint16_t *dst, const uint16_t *src, int stride, const uint8_t *m, int w, int h, int x0, int y0, int ylo)
+/* copia con mascara (sin giro): las filas lejos de las esquinas (radio R) van con memcpy */
+static void wg_blit_m(uint16_t *dst, const uint16_t *src, int stride, const uint8_t *m, int w, int h, int x0, int y0, int ylo, int R)
 {
     int xa = x0 < 0 ? 0 : x0, xb = x0 + w > W ? W : x0 + w; if (xb <= xa || !m) return;
     for (int y = 0; y < h; y++) {
         int yy = y0 + y; if (yy < ylo || yy >= H) continue;
         uint16_t *row = dst + yy * W; const uint16_t *s = src + y * stride - x0; const uint8_t *mr = m + y * w - x0;
-        if (y >= WG_R && y < h - WG_R && h == WG_H) { memcpy(row + xa, s + xa, (xb - xa) * 2); continue; }
+        if (y >= R && y < h - R) { memcpy(row + xa, s + xa, (xb - xa) * 2); continue; }
         for (int x = xa; x < xb; x++) { unsigned a = mr[x]; if (a == 255) row[x] = s[x]; else if (a) row[x] = wg_mix(s[x], row[x], a); }
     }
 }
-static inline uint32_t wg_sp(uint16_t p) { return (p | ((uint32_t)p << 16)) & 0x07E0F81Fu; }
 /* k en [0, n) con lo <= a0 + d*k < hi (aritmetica entera exacta, como el bucle) */
 static void wg_range(long long a0, long long d, long long lo, long long hi, int n, int *k0, int *k1)
 {
@@ -475,36 +820,38 @@ static inline void wg_xf_px(uint16_t *row, int x, int U, int V2, const uint16_t 
     row[x] = a >= 254 ? col : wg_mix(col, row[x], a);
 }
 /* sprite girado "ang" y escalado "sc" con centro en (cx, cy): bilineal en coma fija (el
- * temblor del modo edicion y el encogerse al quitar). Colores con el truco 565 "separado"
- * (una multiplicacion por muestra) y alfa de la mascara */
+ * temblor del modo edicion, el encogerse al quitar o al pulsar, la vista previa grande). Colores
+ * con el truco 565 "separado" (una multiplicacion por muestra) y alfa de la mascara; R = radio
+ * de la mascara (su interior es opaco: se resuelve una vez por fila) */
 static void wg_blit_xf(uint16_t *dst, int ylo, const uint16_t *src, int stride, const uint8_t *m, int sw, int sh,
-                       float cx, float cy, float ang, float sc, int alpha)
+                       float cx, float cy, float ang, float sc, int alpha, int R)
 {
     if (sc < 0.03f || alpha <= 0 || !m) return;
     if (ang == 0 && sc == 1 && alpha >= 255) {
         float fx = cx - sw / 2.f, fy = cy - sh / 2.f;
-        if (fx == floorf(fx) && fy == floorf(fy)) { wg_blit_m(dst, src, stride, m, sw, sh, (int)fx, (int)fy, ylo); return; }
+        if (fx == floorf(fx) && fy == floorf(fy)) { wg_blit_m(dst, src, stride, m, sw, sh, (int)fx, (int)fy, ylo, R); return; }
     }
     float c = cosf(ang), s = sinf(ang), hw = sw * sc / 2, hh = sh * sc / 2;
     float ex = fabsf(c) * hw + fabsf(s) * hh, ey = fabsf(s) * hw + fabsf(c) * hh;
     int xa = (int)floorf(cx - ex) - 1, xb = (int)ceilf(cx + ex) + 1, ya = (int)floorf(cy - ey) - 1, yb = (int)ceilf(cy + ey) + 1;
     if (xa < 0) xa = 0; if (xb > W) xb = W; if (ya < ylo) ya = ylo; if (yb > H) yb = H;
+    if (xb <= xa) return;
     float inv = 1.f / sc;
-    int du = (int)(c * inv * 65536), dv = (int)(-s * inv * 65536), opaque = alpha >= 255 && sh == WG_H;
-    unsigned aint = !opaque && sh == WG_H ? (unsigned)(alpha * 33) >> 8 : 0;
+    int du = (int)(c * inv * 65536), dv = (int)(-s * inv * 65536), card = R > 0 && sw > 2 * R + 2 && sh > 2 * R + 2, opaque = alpha >= 255 && card;
+    unsigned aint = !opaque && card ? (unsigned)(alpha * 33) >> 8 : 0;
     for (int y = ya; y < yb; y++) {
         float dy = y + .5f - cy, dx = xa + .5f - cx;
         int U = (int)(((c * dx + s * dy) * inv + sw / 2.f - .5f) * 65536), V2 = (int)(((-s * dx + c * dy) * inv + sh / 2.f - .5f) * 65536);
         uint16_t *row = dst + y * W;
         int n = xb - xa, k0 = 0, k1 = 0;
-        if (sh == WG_H && (opaque || aint)) {   /* tramo interior (mascara 255): se resuelve una vez por fila */
+        if (card && (opaque || aint)) {   /* tramo interior (mascara 255): se resuelve una vez por fila */
             int a0, a1, b0, b1;
             wg_range(U, du, 0, (long long)(sw - 1) << 16, n, &a0, &a1);
-            wg_range(V2, dv, (long long)WG_R << 16, (long long)(sh - (int)WG_R - 1) << 16, n, &b0, &b1);
+            wg_range(V2, dv, (long long)R << 16, (long long)(sh - R - 1) << 16, n, &b0, &b1);
             k0 = a0 > b0 ? a0 : b0; k1 = a1 < b1 ? a1 : b1; if (k1 < k0) k1 = k0;
             /* franjas de arriba y abajo: entre las esquinas la mascara tambien es 255 */
             int c0, c1, d0, d1;
-            wg_range(U, du, (long long)WG_R << 16, (long long)(sw - (int)WG_R - 1) << 16, n, &c0, &c1);
+            wg_range(U, du, (long long)R << 16, (long long)(sw - R - 1) << 16, n, &c0, &c1);
             wg_range(V2, dv, 0, (long long)(sh - 1) << 16, n, &d0, &d1);
             int e0 = c0 > d0 ? c0 : d0, e1 = c1 < d1 ? c1 : d1;
             if (e1 > e0) { if (k1 <= k0) { k0 = e0; k1 = e1; } else if (e0 <= k1 && e1 >= k0) { if (e0 < k0) k0 = e0; if (e1 > k1) k1 = e1; } }
@@ -534,17 +881,31 @@ static void wg_blit_xf(uint16_t *dst, int ylo, const uint16_t *src, int stride, 
 }
 
 /* ------------------------------------------------------------------ dibujo de cada widget */
-#define C_SEC rgb(160, 160, 168)
+#define C_SEC rgb(168, 168, 176)             /* etiqueta secundaria (60 % de blanco sobre el cristal) */
+#define C_TER rgb(118, 118, 126)
 #define C_RED rgb(255, 69, 58)
 #define C_GREEN rgb(48, 209, 88)
 #define C_YELLOW rgb(255, 214, 10)
+#define C_ORANGE rgb(255, 159, 10)
 #define C_BLUE rgb(10, 132, 255)
 #define C_PURPLE rgb(191, 90, 242)
 #define C_PINK rgb(255, 55, 95)
+#define C_TRACK rgb(255, 255, 255)
+static const uint16_t wg_mixc[3] = { 0xF8A9, 0x6A1F, 0xFB20 };   /* los de Musica: Mezcla del dia, Descubre, Tus favoritos */
+static const char *const wg_mixn[3] = { "Mezcla del día", "Descubre", "Tus favoritos" };
+struct wbtn { short x, y, r, k; };           /* boton dentro de un widget (k: 0 anterior, 1 play/pausa, 2 siguiente) */
+static struct wbtn wg_bcur[3]; static int wg_nbcur;
+static void wg_addbtn(int x, int y, int r, int k) { if (wg_nbcur < 3) wg_bcur[wg_nbcur++] = (struct wbtn){ (short)x, (short)y, (short)r, (short)k }; }
 static const char *wg_gb(long long b, char *o, int n)
 {
     double g = b / 1073741824.0;
     if (g >= 1024) snprintf(o, n, "%.1f TB", g / 1024); else if (g >= 10) snprintf(o, n, "%.0f GB", g); else if (g >= 1) snprintf(o, n, "%.1f GB", g); else snprintf(o, n, "%.0f MB", b / 1048576.0);
+    return o;
+}
+static const char *wg_mins(int sec, char *o, int n)       /* "45 min" / "3 h 20 min" */
+{
+    int m = sec / 60;
+    if (m < 60) snprintf(o, n, wgt("%d min"), m); else snprintf(o, n, wgt("%d h %d min"), m / 60, m % 60);
     return o;
 }
 static uint16_t wg_batt_col(int pct, int chg, int self)
@@ -554,240 +915,438 @@ static uint16_t wg_batt_col(int pct, int chg, int self)
     if (self && pw_mode == PW_SAVE && !chg) return C_YELLOW;
     return C_GREEN;
 }
-static void wg_icon(uint16_t *d, const char *name, int cx, int cy)
+/* porcentaje con el rayo de carga a la derecha, centrado en cx */
+static void wg_pct(uint16_t *d, float cx, int base, int pct, int chg, int size, uint16_t col)
 {
-    if (!cc_ic_ok) { for (int i = 0; cc_ic_name[i]; i++) { char n[32]; snprintf(n, sizeof n, "cc_%s", cc_ic_name[i]); load_sprite(n, &cc_ic[i]); } cc_ic_ok = 1; }
-    const struct sprite *s = cc_icon(name); if (s && s->w) blit(d, s, cx - s->w / 2, cy - s->h / 2, 32, 255);
-}
-static void wg_ctrl(uint16_t *d, int c, int cy, int kind, int playing)   /* 0 anterior, 1 play/pausa, 2 siguiente */
-{
-    if (kind == 0) { fill_rrect(d, c - 11, cy - 7, 3, 14, 1, 0xFFFF, 255); cc_tri(d, c, cy, 8, 7, -1); cc_tri(d, c + 8, cy, 8, 7, -1); }
-    else if (kind == 2) { cc_tri(d, c - 8, cy, 8, 7, 1); cc_tri(d, c, cy, 8, 7, 1); fill_rrect(d, c + 8, cy - 7, 3, 14, 1, 0xFFFF, 255); }
-    else if (playing) { fill_rrect(d, c - 7, cy - 9, 5, 18, 1.5f, 0xFFFF, 255); fill_rrect(d, c + 2, cy - 9, 5, 18, 1.5f, 0xFFFF, 255); }
-    else cc_tri(d, c - 6, cy, 15, 9, 1);
+    char b[12]; if (pct >= 0) snprintf(b, sizeof b, "%d %%", pct); else snprintf(b, sizeof b, "—");
+    int tw = wg_tw(b, size, W_SEMI), bw = chg ? (int)(size * .78f) + 3 : 0, x = (int)roundf(cx - (tw + bw) / 2.f);
+    wg_text(d, x, base, b, size, col, 0, W_SEMI);
+    if (chg) wg_bolt(d, x + tw + 2, base - size * .8f, size * .82f, C_GREEN);
 }
 static const char *const wg_dn[7] = { "domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado" };
 static const char *const wg_mn[12] = { "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre" };
+static int wg_sunday_first(void) { return ui_lang == LANG_EN || ui_lang == LANG_JA || ui_lang == LANG_KO || ui_lang == LANG_ZHS || ui_lang == LANG_ZHT || ui_lang == LANG_TH; }
+/* inicial del dia de la semana (0 = domingo): la primera letra; en chino la ultima; en tailandes la de iOS */
+static const char *wg_initial(int wd, char *o)
+{
+    static const char *const th[7] = { "อา", "จ", "อ", "พ", "พฤ", "ศ", "ส" };
+    if (ui_lang == LANG_TH) return th[wd];
+    const char *nm = tr(wg_dn[wd]), *q = nm; int ch = utf8_next(&q), last = ch;
+    if (ch == 0x661F || ch == 0x5468 || ch == 0x9031 || ch == 0x79AE) { const char *r = nm; int k; while ((k = utf8_next(&r))) last = k; ch = last; }
+    int n = wg_put8(o, wg_upc(ch)); o[n] = 0; return o;
+}
+/* caratula de lo que suena (o el hueco con la nota) */
+static void wg_art_ph(uint16_t *d, int x, int y, int s, float r)
+{
+    wg_rrect_grad(d, x, y, s, s, r, rgb(84, 84, 92), rgb(56, 56, 62));
+    wg_note(d, x + s / 2.f, y + s / 2.f, s * .42f, rgb(176, 176, 184));
+}
+static void wg_np_art(uint16_t *d, int x, int y, int s, float r)
+{
+    if (wg_ni.source && wg_cok) wg_cover_blit(d, wg_cov, 128, x, y, s, r); else wg_art_ph(d, x, y, s, r);
+}
+static void wg_mix_tile(uint16_t *d, int x, int y, int s, float r, int k)
+{
+    uint16_t c = wg_mixc[k];
+    wg_rrect_grad(d, x, y, s, s, r, wg_mix(0xFFFF, c, 40), dim565(c, 18));
+    wg_note(d, x + s * .5f, y + s * .48f, s * .44f, 0xFFFF);
+}
+/* esfera de reloj analogico (modo oscuro de iOS): numeros si r >= 40, aguja de horas y minutos */
+static void wg_clock(uint16_t *d, float cx, float cy, float r, int hh, int mm)
+{
+    const float TAU = 6.2831853f;
+    fill_circle(d, cx, cy, r, rgb(16, 16, 18), 255);
+    wg_arc(d, cx, cy, r - .6f, 1.2f, 0, TAU, rgb(72, 72, 78), 0);
+    int nums = r >= 40;
+    for (int i = 0; i < 60; i++) {
+        if (nums && i % 5 == 0) continue;
+        float a = i * TAU / 60, ro = r * .93f, ri = ro - (i % 5 ? r * .045f : r * .09f);
+        wg_line(d, cx + ri * sinf(a), cy - ri * cosf(a), cx + ro * sinf(a), cy - ro * cosf(a), i % 5 ? 1.f : 1.8f, i % 5 ? rgb(110, 110, 116) : 0xFFFF, 255);
+    }
+    if (nums) for (int h = 1; h <= 12; h++) {
+        char b[4]; snprintf(b, sizeof b, "%d", h); float a = h * TAU / 12, rr = r * .76f; int sz = (int)(r * .22f);
+        int tw = wg_tw(b, sz, W_SEMI); wg_text(d, (int)roundf(cx + rr * sinf(a) - tw / 2.f), (int)roundf(cy - rr * cosf(a) + sz * .36f), b, sz, 0xFFFF, 0, W_SEMI);
+    }
+    float ah = ((hh % 12) + mm / 60.f) * TAU / 12, am = mm * TAU / 60;
+    wg_line(d, cx, cy, cx + r * .5f * sinf(ah), cy - r * .5f * cosf(ah), r * .085f, 0xFFFF, 255);
+    wg_line(d, cx, cy, cx + r * .8f * sinf(am), cy - r * .8f * cosf(am), r * .06f, 0xFFFF, 255);
+    fill_circle(d, cx, cy, r * .075f, C_ORANGE, 255);
+    fill_circle(d, cx, cy, r * .03f, rgb(16, 16, 18), 255);
+}
+/* barra de progreso de iOS: pista tenue y avance claro, extremos redondos */
+static void wg_bar(uint16_t *d, int x, int y, int w, int th, float f, uint16_t col)
+{
+    if (f < 0) f = 0; if (f > 1) f = 1;
+    fill_rrect(d, x, y, w, th, th / 2.f, col, 64);
+    int fw = (int)roundf(w * f); if (f > 0 && fw < th) fw = th;
+    if (fw > 0) fill_rrect(d, x, y, fw, th, th / 2.f, col, 255);
+}
+/* barras de la semana (los ultimos 7 dias, hoy a la derecha en rosa) y sus iniciales */
+static void wg_week(uint16_t *d, int x, int y, int w, int h, const int *sec, int labels)
+{
+    int mx = 30 * 60; for (int k = 0; k < 7; k++) if (sec[k] > mx) mx = sec[k];
+    float gap = w / 7.f * .38f, bw = (w - 6 * gap) / 7.f;
+    int wd = 0; { time_t t = time(0); struct tm tm; localtime_r(&t, &tm); wd = tm.tm_wday; }
+    int bh = labels ? h - 16 : h;
+    for (int k = 0; k < 7; k++) {
+        float bx = x + k * (bw + gap); int v = (int)roundf(bh * (float)sec[k] / mx), today = k == 6;
+        fill_rrect(d, (int)roundf(bx), y, (int)roundf(bw), bh, bw / 2, C_TRACK, 22);
+        if (v > 0) { if (v < (int)bw) v = (int)bw; fill_rrect(d, (int)roundf(bx), y + bh - v, (int)roundf(bw), v, bw / 2, today ? C_PINK : rgb(150, 150, 158), 255); }
+        if (labels) { char l[8]; const char *in = wg_initial((wd + 1 + k) % 7, l); int ww = today ? W_SEMI : W_REG;
+            wg_text(d, (int)roundf(bx + bw / 2 - wg_tw(in, 10, ww) / 2.f), y + h, in, 10, today ? 0xFFFF : C_SEC, 0, ww); }
+    }
+}
+
 static void wg_render(int type, int sz, uint16_t *d, int w, int h)
 {
     char b[200], u[200], s1[24], s2[24]; const struct wdata *D = &WDs;
-    const int p = 14, cw = w - 2 * p;
-    (void)h;
+    const int p = sz == 2 ? 16 : 14, cw = w - 2 * p;
+    wg_nbcur = 0;
     switch (type) {
     case WG_BATT: {
-        struct { int pct, kind, chg, fam, part; } dv[4]; int nd = 0;    /* kind 0 HiBy, 1 BlueZ battery, 2 headphones app */
-        dv[nd].pct = D->batt; dv[nd].kind = 0; dv[nd++].chg = D->charging;
-        if (sz ? D->nhp : D->nhps) {     /* connected headphones: small = HiBy + one item, medium = HiBy + L / R / case */
-            const struct wg_hp *hp = sz ? D->hp : D->hps; int nh = sz ? D->nhp : D->nhps;
-            for (int i = 0; i < nh && nd < (sz ? 4 : 2); i++) { dv[nd].pct = hp[i].pct; dv[nd].kind = 2; dv[nd].chg = hp[i].chg; dv[nd].fam = hp[i].fam; dv[nd++].part = hp[i].part; }
-        } else
-        for (int i = 0; i < D->nbt && nd < 4; i++) { dv[nd].pct = D->bt[i].pct; dv[nd].kind = 1; dv[nd++].chg = 0; }
-        if (!sz && nd == 1) {
-            uint16_t col = wg_batt_col(dv[0].pct, dv[0].chg, 1);
-            wg_ring(d, w / 2.f, 60, 38, 8, dv[0].pct / 100.f, col);
-            wg_glyph_player(d, w / 2.f, 60, 30, 0xFFFF);
-            snprintf(b, sizeof b, "%d %%", dv[0].pct < 0 ? 0 : dv[0].pct);
-            int tw = tw_n(b, 22, -1), bw = dv[0].chg ? 12 : 0, x = (w - tw - bw) / 2;
-            draw_text(d, x, 124, b, 22, 0xFFFF, 0, wg_cy0, wg_cy1);
-            if (bw) wg_bolt(d, x + tw + 3, 108, 16, C_GREEN);
-        } else {
-            int slots = sz ? 4 : (nd == 2 ? 2 : 4);
-            for (int i = 0; i < slots; i++) {
-                float cx, cy, r, th; int pct_txt;
-                if (sz) { float sw = cw / 4.f; cx = p + sw * i + sw / 2; cy = 58; r = 25; th = 7; pct_txt = 1; }
-                else if (slots == 2) { cx = i ? w * .75f - 3 : w * .25f + 3; cy = 56; r = 25; th = 7; pct_txt = 1; }
-                else { cx = (i & 1) ? w * .75f - 4 : w * .25f + 4; cy = (i & 2) ? 99 : 38; r = 22; th = 6; pct_txt = 0; }
-                if (i >= nd) { wg_arc(d, cx, cy, r, th, 0, 0, rgb(120, 120, 128), 70); continue; }   /* hueco libre: pista tenue */
-                uint16_t col = wg_batt_col(dv[i].pct, dv[i].chg, !dv[i].kind);
-                wg_ring(d, cx, cy, r, th, dv[i].pct / 100.f, col);
-                if (dv[i].kind == 2) buds_glyph(d, cx, cy - r * .08f, r / 44.f, dv[i].fam, dv[i].part, wg_cy0, wg_cy1);
-                else if (dv[i].kind) wg_glyph_phones(d, cx, cy, r * .8f, 0xFFFF); else wg_glyph_player(d, cx, cy, r * .8f, 0xFFFF);
-                if (pct_txt) {
-                    if (dv[i].pct >= 0) snprintf(b, sizeof b, "%d %%", dv[i].pct); else snprintf(b, sizeof b, "—");
-                    int tw = tw_n(b, 15, -1), bw = dv[i].chg ? 9 : 0, x = (int)cx - (tw + bw) / 2;
-                    draw_text(d, x, (int)cy + (int)r + 26, b, 15, 0xFFFF, 0, wg_cy0, wg_cy1);
-                    if (bw) wg_bolt(d, x + tw + 2, cy + r + 14, 12, C_GREEN);
-                }
+        struct wbi { int pct, kind, chg, fam, part; const char *name; } dv[5]; int nd = 0;    /* kind 0 HiBy, 1 BlueZ, 2 app Auriculares */
+        dv[nd++] = (struct wbi){ D->batt, 0, D->charging, 0, 0, "HiBy R3 II" };
+        const struct wg_hp *hp = sz ? D->hp : D->hps; int nh = sz ? D->nhp : D->nhps;
+        if (nh) for (int i = 0; i < nh && nd < (sz ? 4 : 2); i++)
+            dv[nd++] = (struct wbi){ hp[i].pct, 2, hp[i].chg, hp[i].fam, hp[i].part, tr(hp[i].part == 1 ? "Izquierdo" : hp[i].part == 2 ? "Derecho" : hp[i].part == 3 ? "Estuche" : "Auriculares") };
+        else for (int i = 0; i < D->nbt && nd < 4; i++) dv[nd++] = (struct wbi){ D->bt[i].pct, 1, 0, 0, 0, D->bt[i].name };
+        #define WG_ITEM(e, cx, cy, r, th) do { uint16_t col_ = wg_batt_col((e)->pct, (e)->chg, !(e)->kind); wg_ring(d, cx, cy, r, th, (e)->pct / 100.f, col_); \
+            if ((e)->kind == 2) buds_glyph(d, cx, (cy) - (r) * .04f, ((r) - (th)) / 34.f, (e)->fam, (e)->part, wg_cy0, wg_cy1); \
+            else if ((e)->kind) wg_glyph_phones(d, cx, cy, (r) * .78f, 0xFFFF); else wg_glyph_player(d, cx, cy, (r) * .8f, 0xFFFF); } while (0)
+        if (sz == 0 && nd == 1) {
+            WG_ITEM(&dv[0], w / 2.f, 58, 40, 9);
+            wg_pct(d, w / 2.f, 124, dv[0].pct, dv[0].chg, 20, 0xFFFF);
+        } else if (sz == 0 && nd == 2) {
+            for (int i = 0; i < 2; i++) { float cx = i ? w * .73f : w * .27f; WG_ITEM(&dv[i], cx, 54, 25, 7); wg_pct(d, cx, 113, dv[i].pct, dv[i].chg, 15, 0xFFFF); }
+        } else if (sz == 0) {
+            for (int i = 0; i < 4; i++) {
+                float cx = (i & 1) ? w * .73f : w * .27f, cy = (i & 2) ? 99 : 38;
+                if (i >= nd) { wg_arc(d, cx, cy, 22, 6, 0, 0, C_TRACK, 40); continue; }
+                WG_ITEM(&dv[i], cx, cy, 22, 6);
+            }
+        } else if (sz == 1) {
+            for (int i = 0; i < 4; i++) {
+                float sw = cw / 4.f, cx = p + sw * i + sw / 2, cy = 54;
+                if (i >= nd) { wg_arc(d, cx, cy, 26, 7, 0, 0, C_TRACK, 40); continue; }
+                WG_ITEM(&dv[i], cx, cy, 26, 7);
+                wg_pct(d, cx, 116, dv[i].pct, dv[i].chg, 15, 0xFFFF);
+            }
+        } else if (nd == 1) {
+            WG_ITEM(&dv[0], w / 2.f, 118, 76, 15);
+            wg_pct(d, w / 2.f, 236, dv[0].pct, dv[0].chg, 30, 0xFFFF);
+            const char *stt = D->charging ? tr("Cargando") : D->usb ? tr("Conectado por USB") : tr("Con batería");
+            wlb(d, p, 262, stt, 14, C_SEC, cw, W_REG, WA_C);
+        } else {   /* filas: anillo con el glifo, nombre, estado y porcentaje */
+            int rh = (h - 2 * p) / 4;
+            for (int i = 0; i < nd; i++) {
+                int cy = p + i * rh + rh / 2, tx = p + 62;
+                WG_ITEM(&dv[i], p + 26.f, (float)cy, 24, 6);
+                const char *sub = dv[i].chg ? tr("Cargando") : (!dv[i].kind && D->usb) ? tr("Conectado por USB") : "";
+                char pc[12]; if (dv[i].pct >= 0) snprintf(pc, sizeof pc, "%d %%", dv[i].pct); else snprintf(pc, sizeof pc, "—");
+                int pw = wg_tw(pc, 22, W_SEMI);
+                wg_text(d, w - p - pw, cy + 8, pc, 22, 0xFFFF, 0, W_SEMI);
+                int nw = w - p - pw - 10 - tx;
+                if (dv[i].kind == 1) wtx(d, tx, sub[0] ? cy - 1 : cy + 6, dv[i].name, 16, 0xFFFF, nw, W_SEMI, WA_L);
+                else wlb(d, tx, sub[0] ? cy - 1 : cy + 6, dv[i].name, 16, 0xFFFF, nw, W_SEMI, WA_L);
+                if (sub[0]) wlb(d, tx, cy + 16, sub, 12, C_SEC, nw, W_REG, WA_L);
+                if (i < nd - 1) for (int x = tx; x < w - p; x++) wg_px(d, x, p + (i + 1) * rh, 0xFFFF, 34);
             }
         }
+        #undef WG_ITEM
         break; }
     case WG_NOW: {
-        int have = wg_ni.source != 0, cs = sz ? 109 : 64, a = app_by_id("nowplaying");
-        if (have && wg_cok) npx_blit_cover(d, wg_cov, p, p, cs, sz ? 12 : 10);
-        else {
-            fill_rrect(d, p, p, cs, cs, sz ? 12 : 10, rgb(58, 58, 64), 255);
-            if (a >= 0) blit_scaled(d, &apps[a].icon[1], p + (cs - 40) / 2, p + (cs - 40) / 2, 40, 40, 255);
+        int have = wg_ni.source != 0, pl = wg_playing();
+        const char *ti = have && wg_ni.title[0] ? wg_ni.title : tr("Reproduciendo"), *ar = have ? wg_ni.artist : "";
+        float fr = have && wg_ni.duration_ms > 0 && wg_ni.position_ms >= 0 ? (float)wg_ni.position_ms / wg_ni.duration_ms : 0; if (fr > 1) fr = 1;
+        int bar = have && wg_ni.duration_ms > 0;
+        const char *stt = tr(!have ? "Sin reproducción" : pl ? "Sonando" : "En pausa");
+        if (!have && D->last_title[0]) {   /* nada abierto: lo ultimo que sono (HISTORY_TABLE); tocar abre Reproduciendo */
+            const char *lt = tr("Lo último");
+            if (sz == 0) { wg_np_art(d, p, p, 62, 10); wlb(d, p, 92, lt, 11, C_SEC, cw, W_SEMI, WA_L); wtx(d, p, 108, D->last_title, 14, 0xFFFF, cw, W_SEMI, WA_L); wtx(d, p, 124, D->last_artist, 12, C_SEC, cw, W_REG, WA_L); }
+            else { int cs = sz == 2 ? 116 : 109, x0 = p + cs + 14, tw = w - x0 - p; wg_np_art(d, p, p, cs, 12);
+                wlb(d, x0, 28 + (sz == 2) * 4, lt, sz == 2 ? 12 : 11, C_SEC, tw, W_SEMI, WA_L);
+                int ln = wt2(d, x0, sz == 2 ? 54 : 47, D->last_title, sz == 2 ? 17 : 15, 0xFFFF, tw, sz == 2 ? 20 : 18, WA_L, W_SEMI, 0);
+                wtx(d, x0, (sz == 2 ? 54 : 47) + ln * (sz == 2 ? 20 : 18), D->last_artist, sz == 2 ? 14 : 12, C_SEC, tw, W_REG, WA_L); }
+            break;
         }
-        const char *ti = have && wg_ni.title[0] ? wg_ni.title : tr("Reproduciendo");
-        const char *ar = have ? wg_ni.artist : "";
-        int pl = wg_playing();
-        if (!sz) {
-            if (have && pl) for (int i = 0; i < 3; i++) { int hh = 6 + (i == 1 ? 6 : i * 2); fill_rrect(d, w - p - 16 + i * 6, p + 16 - hh, 3, hh, 1.5f, C_PINK, 255); }
-            wt(d, p, 103, ti, 14, 0xFFFF, cw);
-            wt(d, p, 121, ar[0] ? ar : tr(have ? "En pausa" : "Sin reproducción"), 12, C_SEC, cw);
-        } else {
+        if (!have && sz == 2) {             /* grande sin nada: el hueco en el centro */
+            wg_art_ph(d, (w - 150) / 2, 48, 150, 16);
+            wt2(d, p, 230, stt, 17, 0xFFFF, cw, 21, WA_C, W_SEMI, 1);
+            break;
+        }
+        if (sz == 0) {
+            wg_np_art(d, p, p, 62, 10);
+            if (have) {
+                int bx = w - p - 19, by = p + 19;
+                fill_circle(d, bx, by, 19, 0xFFFF, 50);
+                if (pl) wg_pause_glyph(d, bx, by, 14, 0xFFFF); else wg_play_glyph(d, bx + 1, by, 15, 0xFFFF);
+                wg_addbtn(bx, by, 26, 1);
+                wtx(d, p, 96, ti, 14, 0xFFFF, cw, W_SEMI, WA_L);
+                if (ar[0]) wtx(d, p, 112, ar, 12, C_SEC, cw, W_REG, WA_L); else wlb(d, p, 112, stt, 12, C_SEC, cw, W_REG, WA_L);
+                if (bar) wg_bar(d, p, 120, cw, 3, fr, 0xFFFF);
+            } else wt2(d, p, 101, stt, 14, 0xFFFF, cw, 17, WA_L, W_SEMI, 1);
+        } else if (sz == 1) {
+            int cs = 109; wg_np_art(d, p, p, cs, 12);
             int x0 = p + cs + 14, tw = w - x0 - p;
-            wt(d, x0, 29, tr(!have ? "Sin reproducción" : pl ? "Sonando" : "En pausa"), 11, pl ? C_PINK : C_SEC, tw);
-            int ln = wt2(d, x0, 49, ti, 15, 0xFFFF, tw, 18, 0);
-            wt(d, x0, 49 + ln * 18 + 1, ar, 12, C_SEC, tw);
-            for (int k = 0; k < 3; k++) wg_ctrl(d, x0 + 18 + k * (tw - 36) / 2, 109, k, pl);
+            if (!have) { wt2(d, x0, 66, stt, 15, 0xFFFF, tw, 19, WA_L, W_SEMI, 1); break; }
+            wlb(d, x0, 28, stt, 11, pl ? C_PINK : C_SEC, tw, W_SEMI, WA_L);
+            int ln = wt2(d, x0, 47, ti, 15, 0xFFFF, tw, 18, WA_L, W_SEMI, 0);
+            wtx(d, x0, 47 + ln * 18 - 1, ar, 12, C_SEC, tw, W_REG, WA_L);
+            if (bar) wg_bar(d, x0, 92, tw, 3, fr, 0xFFFF);
+            for (int k = 0; k < 3; k++) {
+                int cx = x0 + tw * (1 + 2 * k) / 6, cy = 115;
+                if (k == 1) { if (pl) wg_pause_glyph(d, cx, cy, 17, 0xFFFF); else wg_play_glyph(d, cx + 1, cy, 19, 0xFFFF); }
+                else wg_skip_glyph(d, cx, cy, 17, 0xFFFF, k ? 1 : -1);
+                wg_addbtn(cx, cy, 22, k);
+            }
+        } else {
+            int cs = 116; wg_np_art(d, p, p, cs, 12);
+            int x0 = p + cs + 14, tw = w - x0 - p;
+            if (!have) { wt2(d, x0, 70, stt, 17, 0xFFFF, tw, 21, WA_L, W_SEMI, 1); break; }
+            wlb(d, x0, 32, stt, 12, pl ? C_PINK : C_SEC, tw, W_SEMI, WA_L);
+            int ln = wt2(d, x0, 54, ti, 17, 0xFFFF, tw, 20, WA_L, W_SEMI, 0), y = 54 + ln * 20;
+            wtx(d, x0, y, ar, 14, 0xFFFF, tw, W_REG, WA_L);
+            if (wg_ni.album[0]) wtx(d, x0, y + 17, wg_ni.album, 12, C_SEC, tw, W_REG, WA_L);
+            if (bar) {
+                wg_bar(d, p, 152, cw, 4, fr, 0xFFFF);
+                int ps = wg_ni.position_ms / 1000, ds = wg_ni.duration_ms / 1000, rs = ds - ps; if (rs < 0) rs = 0;
+                snprintf(s1, sizeof s1, "%d:%02d", ps / 60, ps % 60); snprintf(s2, sizeof s2, "-%d:%02d", rs / 60, rs % 60);
+                wg_text(d, p, 172, s1, 11, C_SEC, 0, W_MED); wg_text(d, w - p - wg_tw(s2, 11, W_MED), 172, s2, 11, C_SEC, 0, W_MED);
+            }
+            int cy = 214;
+            wg_skip_glyph(d, w / 2.f - 80, cy, 22, 0xFFFF, -1); wg_addbtn(w / 2 - 80, cy, 26, 0);
+            fill_circle(d, w / 2.f, cy, 29, 0xFFFF, 255);
+            if (pl) wg_pause_glyph(d, w / 2.f, cy, 20, rgb(24, 24, 28)); else wg_play_glyph(d, w / 2.f + 2, cy, 22, rgb(24, 24, 28));
+            wg_addbtn(w / 2, cy, 32, 1);
+            wg_skip_glyph(d, w / 2.f + 80, cy, 22, 0xFFFF, 1); wg_addbtn(w / 2 + 80, cy, 26, 2);
+            {   /* formato real del fichero: extension, bits y frecuencia del PCM */
+                const char *e = strrchr(wg_ni.path, '.'); char fm[12] = ""; int k = 0;
+                if (e && strlen(e) < 8) for (const char *q = e + 1; *q && k < 10; q++) fm[k++] = (char)toupper((unsigned char)*q);
+                fm[k] = 0; b[0] = 0;
+                if (fm[0]) snprintf(b, sizeof b, "%s", fm);
+                if (wg_ni.bits > 0) snprintf(b + strlen(b), sizeof b - strlen(b), "%s%d bit", b[0] ? " · " : "", wg_ni.bits);
+                if (wg_ni.rate > 0) { if (wg_ni.rate % 1000) snprintf(b + strlen(b), sizeof b - strlen(b), "%s%.1f kHz", b[0] ? " · " : "", wg_ni.rate / 1000.0); else snprintf(b + strlen(b), sizeof b - strlen(b), "%s%d kHz", b[0] ? " · " : "", wg_ni.rate / 1000); }
+                if (b[0]) wtx(d, p, 268, b, 12, C_SEC, cw, W_MED, WA_C);
+            }
         }
         break; }
     case WG_DATE: {
         time_t now = time(0); struct tm tm; localtime_r(&now, &tm);
-        int lw = sz ? 112 : cw;
-        wt(d, p, 30, wg_upper(tr(wg_dn[tm.tm_wday]), u, sizeof u, 0), 13, C_RED, lw);
-        snprintf(b, sizeof b, "%d", tm.tm_mday); draw_text(d, p - 2, 88, b, 52, 0xFFFF, 0, wg_cy0, wg_cy1);
+        int lw = sz ? 110 : cw;
+        wlb(d, p, 28, wg_upper(tr(wg_dn[tm.tm_wday]), u, sizeof u, 0), 12, C_RED, lw, W_SEMI, WA_L);
+        snprintf(b, sizeof b, "%d", tm.tm_mday); wg_text(d, p - 2, 86, b, 52, 0xFFFF, 0, W_REG);
         snprintf(b, sizeof b, "%s %d", wg_upper(tr(wg_mn[tm.tm_mon]), u, sizeof u, 1), 1900 + tm.tm_year);
-        wt(d, p, 116, b, 15, 0xFFFF, lw);
+        wt2(d, p, 112, b, 14, 0xFFFF, lw, 16, WA_L, W_SEMI, 1);
         if (sz) {   /* calendario del mes, hoy en un circulo rojo */
-            int gx = 132, gw = w - gx - 10; float colw = gw / 7.f;
-            int sun = ui_lang == LANG_EN || ui_lang == LANG_JA || ui_lang == LANG_KO || ui_lang == LANG_ZHS || ui_lang == LANG_ZHT || ui_lang == LANG_TH;
+            int gx = 134, gw = w - gx - 10; float colw = gw / 7.f;
+            int sun = wg_sunday_first();
             int first = (tm.tm_wday - (tm.tm_mday - 1) % 7 + 7) % 7;             /* dia de la semana del 1 */
             int off = sun ? first : (first + 6) % 7;
             static const int mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
             int y = 1900 + tm.tm_year, nd = mdays[tm.tm_mon] + (tm.tm_mon == 1 && ((y % 4 == 0 && y % 100) || y % 400 == 0));
             int rows = (off + nd + 6) / 7, rh = rows > 5 ? 15 : 17, y0 = 34 + rh;
-            for (int c = 0; c < 7; c++) {   /* iniciales: primera letra del dia (en chino, la ultima) */
-                const char *nm = tr(wg_dn[sun ? c : (c + 1) % 7]); const char *q = nm; int ch = utf8_next(&q), last = ch;
-                if (ch >= 0x0E00 && ch <= 0x0E7F) break;                         /* tailandes: sin iniciales */
-                if (ch == 0x661F || ch == 0x5468 || ch == 0x9031 || ch == 0x79AE) { const char *r = nm; int k; while ((k = utf8_next(&r))) last = k; ch = last; }
-                char l[8]; int n = wg_put8(l, wg_upc(ch)); l[n] = 0;
-                wtc(d, gx + (int)(colw * c + colw / 2), 28, l, 10, C_SEC, (int)colw);
-            }
+            for (int c = 0; c < 7; c++) { char l[8]; wlb(d, gx + (int)(colw * c), 28, wg_initial(sun ? c : (c + 1) % 7, l), 10, C_SEC, (int)colw, W_SEMI, WA_C); }
             for (int dd = 1; dd <= nd; dd++) {
                 int k = off + dd - 1, c = k % 7, r = k / 7; float cx = gx + colw * c + colw / 2; int base = y0 + r * rh;
                 snprintf(b, sizeof b, "%d", dd);
                 if (dd == tm.tm_mday) fill_circle(d, cx, base - 4.5f, 8.5f, C_RED, 255);
-                wtc(d, (int)cx, base, b, 11, dd == tm.tm_mday ? 0xFFFF : rgb(225, 225, 230), (int)colw + 2);
+                wtx(d, (int)(cx - colw / 2 - 1), base, b, 11, dd == tm.tm_mday ? 0xFFFF : rgb(225, 225, 230), (int)colw + 2, dd == tm.tm_mday ? W_SEMI : W_REG, WA_C);
             }
         }
+        break; }
+    case WG_CLOCK: {
+        time_t now = time(0); struct tm tm; localtime_r(&now, &tm);
+        if (!sz) { wg_clock(d, w / 2.f, h / 2.f, 58, tm.tm_hour, tm.tm_min); break; }
+        wg_clock(d, w - p - 54.f, h / 2.f, 54, tm.tm_hour, tm.tm_min);
+        int lw = w - p - 108 - 12 - p;
+        if (ui_lang == LANG_EN) { int hh = tm.tm_hour % 12; snprintf(b, sizeof b, "%d:%02d", hh ? hh : 12, tm.tm_min); }
+        else snprintf(b, sizeof b, "%d:%02d", tm.tm_hour, tm.tm_min);
+        int tw = wtx(d, p - 1, 84, b, 50, 0xFFFF, lw, W_MED, WA_L);
+        if (ui_lang == LANG_EN) wg_text(d, p + tw + 3, 84, tm.tm_hour < 12 ? "AM" : "PM", 14, C_SEC, 0, W_SEMI);
+        wlb(d, p, 32, wg_upper(tr(wg_dn[tm.tm_wday]), u, sizeof u, 1), 14, C_RED, lw, W_SEMI, WA_L);
+        lang_date(now, b, sizeof b); wtx(d, p, 112, b, 14, C_SEC, lw, W_REG, WA_L);
         break; }
     case WG_STORAGE: {
         if (!sz) {
             int sd = D->sd_tot > 0; long long fr = sd ? D->sd_free : D->in_free, tot = sd ? D->sd_tot : D->in_tot;
-            wt(d, p, 30, tr(sd ? "Tarjeta SD" : "En el HiBy"), 13, 0xFFFF, cw);
-            uint16_t col = sd ? C_BLUE : C_PURPLE; float cx = w / 2.f, cy = 84;
-            wg_ring(d, cx, cy, 36, 8, tot ? 1 - (float)fr / tot : 0, col);
-            wtc(d, (int)cx, (int)cy + 3, wg_gb(fr, s1, sizeof s1), 16, 0xFFFF, 56);
-            wtc(d, (int)cx, (int)cy + 17, tr("libres"), 10, C_SEC, 56);
+            uint16_t col = sd ? C_BLUE : C_PURPLE;
+            wlb(d, p, 28, tr(sd ? "Tarjeta SD" : "En el HiBy"), 12, col, cw, W_SEMI, WA_L);
+            float cx = w / 2.f, cy = 82;
+            wg_ring(d, cx, cy, 38, 9, tot ? 1 - (float)fr / tot : 0, col);
+            wtx(d, (int)cx - 28, (int)cy + 3, wg_gb(fr, s1, sizeof s1), 16, 0xFFFF, 56, W_SEMI, WA_C);
+            wlb(d, (int)cx - 26, (int)cy + 17, tr("libres"), 10, C_SEC, 52, W_REG, WA_C);
         } else {
-            wt(d, p, 30, tr("Almacenamiento"), 13, 0xFFFF, cw);
+            wlb(d, p, 28, tr("Almacenamiento"), 12, C_BLUE, cw, W_SEMI, WA_L);
             for (int k = 0; k < 2; k++) {
-                int ry = 42 + k * 46; long long fr = k ? D->in_free : D->sd_free, tot = k ? D->in_tot : D->sd_tot;
-                uint16_t col = k ? C_PURPLE : C_BLUE;
-                wg_ring(d, p + 17, ry + 20, 15, 5, tot ? 1 - (float)fr / tot : 0, col);
-                if (!k && !tot) { wt(d, p + 44, ry + 26, tr("Sin tarjeta SD"), 15, C_SEC, cw - 44); continue; }
+                int ry = 40 + k * 46; long long fr = k ? D->in_free : D->sd_free, tot = k ? D->in_tot : D->sd_tot;
+                uint16_t col = k ? C_PURPLE : C_BLUE; float rcx = p + 18.f, rcy = ry + 20.f;
+                wg_ring(d, rcx, rcy, 16, 5, tot ? 1 - (float)fr / tot : 0, col);
+                if (k) wg_glyph_player(d, rcx, rcy, 15, 0xFFFF); else wg_sdcard(d, rcx, rcy, 13, 0xFFFF);
+                if (!k && !tot) { wlb(d, p + 46, ry + 26, tr("Sin tarjeta SD"), 15, C_SEC, cw - 46, W_MED, WA_L); continue; }
                 int pc = tot ? (int)(100 - 100 * fr / tot + .5) : 0; snprintf(b, sizeof b, "%d %%", pc);
-                int pw = tw_n(b, 15, -1);
-                draw_text(d, w - p - pw, ry + 26, b, 15, 0xFFFF, 0, wg_cy0, wg_cy1);
-                wt(d, p + 44, ry + 17, tr(k ? "En el HiBy" : "Tarjeta SD"), 15, 0xFFFF, cw - 44 - pw - 8);
+                int pw = wg_tw(b, 17, W_SEMI);
+                wg_text(d, w - p - pw, ry + 26, b, 17, 0xFFFF, 0, W_SEMI);
+                wlb(d, p + 46, ry + 17, tr(k ? "En el HiBy" : "Tarjeta SD"), 15, 0xFFFF, cw - 46 - pw - 8, W_SEMI, WA_L);
                 snprintf(u, sizeof u, tr("%s libres de %s"), wg_gb(fr, s1, sizeof s1), wg_gb(tot, s2, sizeof s2));
-                wt(d, p + 44, ry + 34, u, 12, C_SEC, cw - 44 - pw - 8);
+                wlb(d, p + 46, ry + 34, u, 12, C_SEC, cw - 46 - pw - 8, W_REG, WA_L);
             }
         }
         break; }
     case WG_POWER: {
         uint16_t col = pw_mode == PW_SAVE ? rgb(255, 204, 0) : pw_mode == PW_PERF ? C_RED : C_BLUE;
-        fill_circle(d, p + 19, p + 19, 19, col, 255);
-        wg_icon(d, pw_mode == PW_SAVE ? "leaf" : pw_mode == PW_PERF ? "bolt" : "gauge", p + 19, p + 19);
-        int lw = sz ? 128 : cw;
-        wt(d, p, 90, tr(pw_name(pw_mode)), 22, 0xFFFF, lw);
-        snprintf(b, sizeof b, "%s · %d Hz", tr("Pantalla"), lcd_hz); wt(d, p, 109, b, 12, C_SEC, lw);
+        fill_circle(d, p + 18, p + 18, 18, col, 255);
+        if (pw_mode == PW_SAVE) wg_leaf(d, p + 18.f, p + 18.f, 20, 0xFFFF);
+        else if (pw_mode == PW_PERF) wg_bolt(d, p + 12.f, p + 8.f, 20, 0xFFFF);
+        else wg_gauge(d, p + 18.f, p + 18.f, 22, 0xFFFF);
+        int lw = sz ? 140 : cw;
+        wlb(d, p, 88, tr(pw_name(pw_mode)), 22, 0xFFFF, lw, W_SEMI, WA_L);
+        snprintf(b, sizeof b, "%s · %d Hz", tr("Pantalla"), lcd_hz); wlb(d, p, 107, b, 12, C_SEC, lw, W_REG, WA_L);
         const char *stt = pw_nocharge && D->usb ? tr("Solo USB") : D->charging ? tr("Cargando") : D->usb ? tr("Conectado por USB") : tr("Con batería");
-        wt(d, p, 126, stt, 12, C_SEC, lw);
-        if (!sz) { snprintf(b, sizeof b, "%d %%", D->batt < 0 ? 0 : D->batt); wtr(d, w - p, 31, b, 13, C_SEC, 60); }
+        wlb(d, p, 124, stt, 12, C_SEC, lw, W_REG, WA_L);
+        if (!sz) { snprintf(b, sizeof b, "%d %%", D->batt < 0 ? 0 : D->batt); wtx(d, w - p - 60, 30, b, 13, C_SEC, 60, W_SEMI, WA_R); }
         else {
-            float cx = w - p - 48, cy = 68;
+            float cx = w - p - 46, cy = 68;
             wg_ring(d, cx, cy, 42, 9, D->batt / 100.f, wg_batt_col(D->batt, D->charging, 1));
-            snprintf(b, sizeof b, "%d %%", D->batt < 0 ? 0 : D->batt); wtc(d, (int)cx, (int)cy + 4, b, 20, 0xFFFF, 64);
-            wtc(d, (int)cx, (int)cy + 19, tr("Batería"), 10, C_SEC, 60);
+            snprintf(b, sizeof b, "%d %%", D->batt < 0 ? 0 : D->batt); wtx(d, (int)cx - 32, (int)cy + 4, b, 20, 0xFFFF, 64, W_SEMI, WA_C);
+            wlb(d, (int)cx - 30, (int)cy + 19, tr("Batería"), 10, C_SEC, 60, W_REG, WA_C);
         }
         break; }
     case WG_LIB: {
-        wt(d, p, 30, tr("Biblioteca"), 13, C_PINK, cw);
+        wg_note(d, p + 7.f, 23, 14, C_PINK);
+        wlb(d, p + 18, 28, tr("Biblioteca"), 12, C_PINK, cw - 18, W_SEMI, WA_L);
         float fav = D->songs ? (float)D->favs / D->songs : 0;
         if (!sz) {
-            snprintf(b, sizeof b, "%d", D->songs); wt(d, p, 74, b, 34, 0xFFFF, cw);
-            wt(d, p, 93, tr("canciones"), 13, C_SEC, cw);
+            snprintf(b, sizeof b, "%d", D->songs); wtx(d, p, 76, b, 34, 0xFFFF, cw, W_SEMI, WA_L);
+            wlb(d, p, 94, tr("canciones"), 13, C_SEC, cw, W_REG, WA_L);
         } else {
             int v[3] = { D->songs, D->albums, D->artists }; const char *l[3] = { "canciones", "álbumes", "artistas" };
-            for (int k = 0; k < 3; k++) { int cx = p + k * cw / 3; snprintf(b, sizeof b, "%d", v[k]); wt(d, cx, 74, b, 26, 0xFFFF, cw / 3 - 6); wt(d, cx, 92, tr(l[k]), 12, C_SEC, cw / 3 - 6); }
+            for (int k = 0; k < 3; k++) { int cx = p + k * cw / 3; snprintf(b, sizeof b, "%d", v[k]); wtx(d, cx, 76, b, 28, 0xFFFF, cw / 3 - 6, W_SEMI, WA_L); wlb(d, cx, 94, tr(l[k]), 12, C_SEC, cw / 3 - 6, W_REG, WA_L); }
         }
-        wg_ring(d, p + 8, 115, 7, 3.5f, fav, C_PINK);
+        wg_ring(d, p + 8, 117, 7, 3.5f, fav, C_PINK);
         if (sz) snprintf(b, sizeof b, "%d %s · %s", D->favs, tr("favoritas"), wg_gb(D->lib_bytes, s1, sizeof s1));
         else snprintf(b, sizeof b, "%d %s", D->favs, tr("favoritas"));
-        wt(d, p + 22, 120, b, 12, C_SEC, cw - 22);
+        wlb(d, p + 22, 122, b, 12, C_SEC, cw - 22, W_REG, WA_L);
         break; }
     case WG_NEW: {
-        wt(d, p, 30, tr("Recién añadido"), 13, C_PINK, cw);
-        int ln = wt2(d, p, 57, D->new_album[0] ? D->new_album : "—", sz ? 18 : 16, 0xFFFF, cw, sz ? 21 : 19, 0);
-        wt(d, p, 57 + ln * (sz ? 21 : 19) + 2, D->new_artist, 13, C_SEC, cw);
+        wlb(d, p, sz == 2 ? 30 : 28, tr("Recién añadido"), sz == 2 ? 13 : 12, C_PINK, cw, W_SEMI, WA_L);
+        int n = D->nrec; const char *al[WG_NREC], *at[WG_NREC]; int hc[WG_NREC];
+        for (int i = 0; i < n; i++) { al[i] = D->rec_alb[i]; at[i] = D->rec_art[i]; hc[i] = D->rec_cov[i]; }
+        if (!n && D->new_album[0]) { al[0] = D->new_album; at[0] = D->new_artist; hc[0] = 0; n = 1; }
+        if (!n) { wt2(d, p, h / 2 + 6, wgt("Sin álbumes"), 15, C_SEC, cw, 18, WA_L, W_MED, 1); break; }
+        pthread_mutex_lock(&wg_mu);
+        if (sz == 0) {
+            int cs = (cw - 8) / 2;
+            for (int i = 0; i < 2; i++) { int x = p + i * (cs + 8); if (i < n && hc[i]) wg_cover_blit(d, wg_rcov[i], WG_RCS, x, 38, cs, 8); else if (i < n) wg_art_ph(d, x, 38, cs, 8); }
+            wtx(d, p, 106, al[0], 13, 0xFFFF, cw, W_SEMI, WA_L);
+            wtx(d, p, 122, at[0], 12, C_SEC, cw, W_REG, WA_L);
+        } else {
+            int cols = sz == 1 ? 4 : 3, gap = sz == 1 ? 10 : 14, cs = (cw - (cols - 1) * gap) / cols, rows = sz == 1 ? 1 : 2;
+            for (int i = 0; i < cols * rows && i < n; i++) {
+                int x = p + (i % cols) * (cs + gap), y = (sz == 1 ? 38 : 42) + (i / cols) * (cs + 44);
+                if (hc[i]) wg_cover_blit(d, wg_rcov[i], WG_RCS, x, y, cs, 8); else wg_art_ph(d, x, y, cs, 8);
+                wtx(d, x, y + cs + 15, al[i], sz == 1 ? 11 : 12, 0xFFFF, cs, W_SEMI, WA_L);
+                wtx(d, x, y + cs + 29, at[i], sz == 1 ? 10 : 11, C_SEC, cs, W_REG, WA_L);
+            }
+        }
+        pthread_mutex_unlock(&wg_mu);
         break; }
     case WG_LISTEN: {
-        wt(d, p, 30, tr("Escuchas"), 13, C_PINK, cw);
-        int colw = sz ? (cw - 14) / 2 : cw, x1 = sz ? p + colw + 14 : p;
-        if (sz) {
-            wt(d, p, 50, tr("Lo último"), 11, C_SEC, colw);
-            int ln = wt2(d, p, 70, D->last_title[0] ? D->last_title : "—", 15, 0xFFFF, colw, 18, 0);
-            wt(d, p, 70 + ln * 18 + 1, D->last_artist, 12, C_SEC, colw);
-            for (int y = 42; y < 126; y++) wg_px(d, p + colw + 7, y, 0xFFFF, 40);
+        int tot = 0; for (int k = 0; k < 7; k++) tot += D->lis_day[k];
+        int colw = sz ? 118 : cw;
+        wlb(d, p, 28, tr("Escuchas"), 12, C_PINK, colw, W_SEMI, WA_L);
+        snprintf(b, sizeof b, "%d", D->lis_day[6] / 60);
+        wtx(d, p - 1, sz ? 72 : 66, b, sz ? 36 : 34, 0xFFFF, colw, W_SEMI, WA_L);
+        wlb(d, p, sz ? 89 : 83, wgt("min hoy"), 12, C_SEC, colw, W_REG, WA_L);
+        if (!sz) { wg_week(d, p, 94, cw, 29, D->lis_day, 0); break; }
+        for (int y = 16; y < h - 16; y++) wg_px(d, p + colw + 9, y, 0xFFFF, 30);
+        wlb(d, p, 108, tr("Artista más escuchado"), 11, C_SEC, colw, W_REG, WA_L);
+        wtx(d, p, 124, D->top_artist[0] ? D->top_artist : "—", 14, 0xFFFF, colw, W_SEMI, WA_L);
+        int x1 = p + colw + 20, rw = w - p - x1;
+        wlb(d, x1, 26, wgt("Esta semana"), 11, C_SEC, rw, W_SEMI, WA_L);
+        wtx(d, x1, 42, wg_mins(tot, s1, sizeof s1), 14, 0xFFFF, rw, W_SEMI, WA_L);
+        wg_week(d, x1, 52, rw, 72, D->lis_day, 1);
+        break; }
+    case WG_MIX: {
+        if (!sz) {
+            fill_circle(d, p + 15, p + 15, 15, 0xFFFF, 52); wg_note(d, p + 15.f, p + 15.f, 16, 0xFFFF);
+            const char *nm = tr(wg_mixn[0]), *ds = tr("Lo de siempre y algo nuevo, cada día");
+            int l2 = wt2_lines(ds, 11, cw, W_REG), l1 = wt2_lines(nm, 16, cw, W_SEMI), yb = h - p - 1 - (l2 - 1) * 14;
+            wt2(d, p, yb, ds, 11, rgb(238, 226, 232), cw, 14, WA_L, W_REG, 1);
+            wt2(d, p, yb - 18 - (l1 - 1) * 19, nm, 16, 0xFFFF, cw, 19, WA_L, W_SEMI, 1);
+        } else {
+            wlb(d, p, 28, tr("Mezclas"), 12, C_PINK, cw, W_SEMI, WA_L);
+            int cs = 66;
+            for (int k = 0; k < 3; k++) {
+                int x = p + k * (cw - cs) / 2; wg_mix_tile(d, x, 36, cs, 12, k);
+                wt2(d, x - 6, 36 + cs + 14, tr(wg_mixn[k]), 11, 0xFFFF, cs + 12, 12, WA_C, W_SEMI, 1);
+            }
         }
-        wt(d, x1, 50, tr("Artista más escuchado"), 11, C_SEC, colw);
-        wt2(d, x1, 70, D->top_artist[0] ? D->top_artist : "—", sz ? 15 : 16, 0xFFFF, colw, 18, 0);
-        if (D->top_n) { snprintf(b, sizeof b, "%d %s", D->top_n, tr("escuchas")); wt(d, x1, 122, b, sz ? 12 : 13, C_SEC, colw); }
         break; }
     }
 }
 
 /* ------------------------------------------------------------------ sprites */
-struct wspr { uint16_t *px; uint32_t sig; };
-static struct wspr wg_spr[WG_N][2];
+struct wspr { uint16_t *px; uint32_t sig; int nb; struct wbtn b[3]; };
+static struct wspr wg_spr[WG_N][3];
 static uint32_t wg_hs(uint32_t h, const char *s) { while (*s) h = (h ^ (unsigned char)*s++) * 16777619u; return h; }
+static int wg_prog_px(int sz)
+{
+    if (!wg_ni.source || wg_ni.duration_ms <= 0 || wg_ni.position_ms < 0) return -1;
+    if (sz == 2) return wg_ni.position_ms / 1000;
+    int pos = wg_ni.position_ms > wg_ni.duration_ms ? wg_ni.duration_ms : wg_ni.position_ms;
+    return (int)((long long)pos * (sz ? 137 : 109) / wg_ni.duration_ms);
+}
+static int wg_card_tint(int type, int sz) { return type == WG_NOW ? (wg_ni.source && wg_tint >= 0 ? wg_tint : -1) : type == WG_MIX && !sz ? 0xD8355E : -1; }
 static uint32_t wg_sig(int type, int sz, int sx, int sy)
 {
     uint32_t h = 2166136261u; const struct wdata *D = &WDs;
 #define HM(v) h = (h ^ (uint32_t)(v)) * 16777619u
     HM(type); HM(sz); HM(sx); HM(sy); HM(ui_lang); HM(wall_gen);
     switch (type) {
-    case WG_BATT: HM(D->batt); HM(D->charging); HM(D->nbt); HM(pw_mode); for (int i = 0; i < D->nbt; i++) HM(D->bt[i].pct);
+    case WG_BATT: HM(D->batt); HM(D->charging); HM(D->usb); HM(D->nbt); HM(pw_mode); for (int i = 0; i < D->nbt; i++) { HM(D->bt[i].pct); h = wg_hs(h, D->bt[i].name); }
         HM(D->nhp); HM(D->nhps); for (int i = 0; i < D->nhp; i++) { HM(D->hp[i].pct); HM(D->hp[i].chg); HM(D->hp[i].fam); HM(D->hp[i].part); }
         for (int i = 0; i < D->nhps; i++) { HM(D->hps[i].pct); HM(D->hps[i].chg); HM(D->hps[i].fam); } break;
-    case WG_NOW: HM(wg_ni.source); HM(wg_ni.track_id); HM(wg_playing()); HM(wg_cok); h = wg_hs(h, wg_ni.title); h = wg_hs(h, wg_ni.artist); break;
+    case WG_NOW: HM(wg_ni.source); HM(wg_ni.track_id); HM(wg_playing()); HM(wg_cok); HM(wg_tint); HM(wg_prog_px(sz)); h = wg_hs(h, wg_ni.title); h = wg_hs(h, wg_ni.artist);
+        if (sz == 2) { h = wg_hs(h, wg_ni.album); HM(wg_ni.rate); HM(wg_ni.bits); HM(wg_ni.duration_ms / 1000); } break;
     case WG_DATE: { time_t now = time(0); struct tm tm; localtime_r(&now, &tm); HM(tm.tm_yday); HM(tm.tm_year); break; }
+    case WG_CLOCK: { time_t now = time(0); struct tm tm; localtime_r(&now, &tm); HM(tm.tm_yday); HM(tm.tm_hour); HM(tm.tm_min); break; }
     case WG_STORAGE: HM(D->sd_free >> 24); HM(D->sd_tot >> 24); HM(D->in_free >> 24); HM(D->in_tot >> 24); break;
     case WG_POWER: HM(pw_mode); HM(lcd_hz); HM(pw_nocharge); HM(D->charging); HM(D->usb); HM(D->batt); break;
     case WG_LIB: HM(D->songs); HM(D->albums); HM(D->artists); HM(D->favs); HM(D->lib_bytes >> 20); break;
-    case WG_NEW: h = wg_hs(h, D->new_album); h = wg_hs(h, D->new_artist); break;
-    case WG_LISTEN: h = wg_hs(h, D->last_title); h = wg_hs(h, D->last_artist); h = wg_hs(h, D->top_artist); HM(D->top_n); break;
+    case WG_NEW: HM(D->nrec); HM(D->rc_gen); for (int i = 0; i < D->nrec; i++) h = wg_hs(h, D->rec_alb[i]); h = wg_hs(h, D->new_album); h = wg_hs(h, D->new_artist); break;
+    case WG_LISTEN: { time_t now = time(0); struct tm tm; localtime_r(&now, &tm); HM(tm.tm_wday);
+        for (int k = 0; k < 7; k++) HM(D->lis_day[k] / 60); h = wg_hs(h, D->top_artist); HM(D->top_n); break; }
+    case WG_MIX: break;
     }
 #undef HM
     return h ? h : 1;
 }
-/* dibuja el widget en wg_scr (filas 0..WG_H) con el cristal de la posicion (sx, sy) */
+/* dibuja el widget en wg_scr (filas 0..alto) con el cristal de la posicion (sx, sy) */
 static void wg_draw_scr(int type, int sz, int sx, int sy)
 {
     wg_masks_init();
-    int w = wg_w(sz), c0 = wg_cy0, c1 = wg_cy1; wg_cy0 = 0; wg_cy1 = WG_SH;
-    wg_card_bg(wg_scr, w, WG_H, sx, sy, sz);
-    wg_render(type, sz, wg_scr, w, WG_H);
+    int w = wg_w(sz), h = wg_h(sz), c0 = wg_cy0, c1 = wg_cy1; wg_cy0 = 0; wg_cy1 = WG_SH;
+    wg_card_bg(wg_scr, w, h, sx, sy, sz, wg_card_tint(type, sz));
+    wg_render(type, sz, wg_scr, w, h);
     wg_cy0 = c0; wg_cy1 = c1;
 }
 static int wg_build(int type, int sz, int sx, int sy)
 {
-    struct wspr *s = &wg_spr[type][sz]; int w = wg_w(sz);
-    if (!s->px) s->px = malloc(w * WG_H * 2);
+    struct wspr *s = &wg_spr[type][sz]; int w = wg_w(sz), h = wg_h(sz);
+    if (!s->px) s->px = malloc(w * h * 2);
     if (!s->px) return 0;
     wg_draw_scr(type, sz, sx, sy);
-    for (int y = 0; y < WG_H; y++) memcpy(s->px + y * w, wg_scr + y * W, w * 2);
+    for (int y = 0; y < h; y++) memcpy(s->px + y * w, wg_scr + y * W, w * 2);
     s->sig = wg_sig(type, sz, sx, sy);
+    s->nb = wg_nbcur; memcpy(s->b, wg_bcur, sizeof s->b);
     return 1;
 }
 static void wg_free_unused(void)
 {
-    for (int t = 0; t < WG_N; t++) for (int s = 0; s < 2; s++) if (wg_spr[t][s].px && !wg_has(t, s)) { free(wg_spr[t][s].px); wg_spr[t][s].px = 0; }
+    for (int t = 0; t < WG_N; t++) for (int s = 0; s < 3; s++) if (wg_spr[t][s].px && !wg_has(t, s)) { free(wg_spr[t][s].px); wg_spr[t][s].px = 0; }
 }
 
+#ifndef WG_RENDER_ONLY
 /* ------------------------------------------------------------------ pagina (estatica) */
 static float wg_scroll, wg_cache_scroll; static int wg_cache_min;
 static uint16_t *wg_cache;
@@ -795,37 +1354,49 @@ static int wg_budget = 99;                   /* sprites que se pueden rehacer en
 static int wg_part_y0, wg_part_y1;           /* filas cambiadas (presentacion parcial) */
 static int wg_press = -1, wg_press_btn = -1, wg_scrolling;
 static int wg_snap_ok;
+static double wg_pf_build; static int wg_pf_nb;   /* perfil: sprites rehechos y su tiempo */
 static int wg_content_h(void) { short xs[WG_MAX], ys[WG_MAX]; return wg_layout_items(xs, ys) + 46; }
+/* compone la pagina en dst (con el fondo si copy_wall; si no, dst ya lo tiene) */
+static void wg_compose_to(uint16_t *dst, int copy_wall)
+{
+    wg_masks_init();
+    if (wg_fresh || !wg_snap_ok) { wg_fresh = 0; wg_snap(); wg_snap_ok = 1; }
+    if (copy_wall) memcpy(dst + 30 * W, wall + 30 * W, (H - 30) * W * 2);
+    short xs[WG_MAX], ys[WG_MAX]; int tot = wg_layout_items(xs, ys);
+    int top = WG_TOP - (int)wg_scroll, pending = 0, y0 = H, y1 = 0, c0 = wg_cy0, c1 = wg_cy1;
+    for (int i = 0; i < wg_n; i++) {
+        int t = wg_it[i].type, s = wg_it[i].size, x = xs[i], y = top + ys[i], hh = wg_h(s);
+        if (y >= H || y + hh <= 30) continue;
+        struct wspr *sp = &wg_spr[t][s];
+        uint32_t sig = wg_sig(t, s, x, WG_TOP + ys[i]);
+        if (!sp->px || sp->sig != sig) {
+            if (!sp->px || wg_budget > 0) {
+                double tb = now_ms();
+                wg_build(t, s, x, WG_TOP + ys[i]); wg_budget--;
+                wg_pf_build += now_ms() - tb; wg_pf_nb++;
+                if (y < y0) y0 = y; if (y + hh > y1) y1 = y + hh;
+            } else pending = 1;
+        }
+        if (sp->px) wg_blit_m(dst, sp->px, wg_w(s), wg_mask[s], wg_w(s), hh, x, y, 30, (int)WG_R);
+    }
+    /* "Editar" al final (como iOS) */
+    int ey = top + tot + 4;
+    wg_cy0 = 30; wg_cy1 = H;
+    if (!wg_n) wlb(dst, 20, top + 150, tr("Sin widgets"), 15, rgb(235, 235, 240), W - 40, W_MED, WA_C), ey = top + 170;
+    int bw = wg_tw(tr("Editar"), 14, W_SEMI) + 32; if (bw > W - 40) bw = W - 40;
+    if (ey < H && ey + 30 > 30) { fill_rrect(dst, (W - bw) / 2, ey, bw, 30, 15, rgb(20, 20, 24), 120); wlb(dst, (W - bw) / 2 + 16, ey + 20, tr("Editar"), 14, 0xFFFF, bw - 32, W_SEMI, WA_C); }
+    wg_cy0 = c0; wg_cy1 = c1;
+    if (pending) wg_fresh = 1;
+    if (y1 > y0) { wg_part_y0 = y0 < 30 ? 30 : y0; wg_part_y1 = y1 > H ? H : y1; } else { wg_part_y0 = 30; wg_part_y1 = 31; }
+}
 static void wg_compose(void)
 {
     if (!wg_loaded && !widgets_on && V.scroll >= 0) { if (!WD.t) wg_refresh(); return; }   /* precomposicion: esperar a los datos */
     if (!wg_cache) wg_cache = malloc(HM_FRAME_BYTES);
     if (!wg_cache) return;
-    wg_masks_init();
-    if (wg_fresh || !wg_snap_ok) { wg_fresh = 0; wg_snap(); wg_snap_ok = 1; }
-    memcpy(wg_cache + 30 * W, wall + 30 * W, (H - 30) * W * 2);
-    short xs[WG_MAX], ys[WG_MAX]; int tot = wg_layout_items(xs, ys);
-    int top = WG_TOP - (int)wg_scroll, pending = 0, y0 = H, y1 = 0, c0 = wg_cy0, c1 = wg_cy1;
-    for (int i = 0; i < wg_n; i++) {
-        int t = wg_it[i].type, s = wg_it[i].size, x = xs[i], y = top + ys[i];
-        if (y >= H || y + WG_H <= 30) continue;
-        struct wspr *sp = &wg_spr[t][s];
-        uint32_t sig = wg_sig(t, s, x, WG_TOP + ys[i]);
-        if (!sp->px || sp->sig != sig) {
-            if (!sp->px || wg_budget > 0) { wg_build(t, s, x, WG_TOP + ys[i]); wg_budget--; if (y < y0) y0 = y; if (y + WG_H > y1) y1 = y + WG_H; }
-            else pending = 1;
-        }
-        if (sp->px) wg_blit_m(wg_cache, sp->px, wg_w(s), wg_mask[s], wg_w(s), WG_H, x, y, 30);
-    }
-    /* "Editar" al final (como iOS) */
-    int ey = top + tot + 4;
-    wg_cy0 = 30; wg_cy1 = H;
-    if (!wg_n) wtc(wg_cache, W / 2, top + 150, tr("Sin widgets"), 15, rgb(235, 235, 240), W - 40), ey = top + 170;
-    int bw = tw_n(tr("Editar"), 14, -1) + 32;
-    if (ey < H && ey + 30 > 30) { fill_rrect(wg_cache, (W - bw) / 2, ey, bw, 30, 15, rgb(20, 20, 24), 120); draw_text(wg_cache, (W - bw) / 2 + 16, ey + 20, tr("Editar"), 14, 0xFFFF, 0, 30, H); }
-    wg_cy0 = c0; wg_cy1 = c1;
-    if (pending) wg_fresh = 1;
-    if (y1 > y0) { wg_part_y0 = y0 < 30 ? 30 : y0; wg_part_y1 = y1 > H ? H : y1; } else { wg_part_y0 = 30; wg_part_y1 = 31; }
+    int pre = !widgets_on && !wg_cache_ok; double t0 = now_ms(); int nb0 = wg_pf_nb;
+    wg_compose_to(wg_cache, 1);
+    if (pre) lg("widgets: pagina precompuesta (%d sprites, %.0f ms)", wg_pf_nb - nb0, now_ms() - t0);
     wg_cache_min = (int)(time(0) / 60); wg_cache_scroll = wg_scroll; wg_cache_ok = 1;
 }
 static void wg_np_poll(void)        /* la pista o el estado cambiaron (sin copiar la caratula) */
@@ -839,39 +1410,58 @@ static void wg_np_poll(void)        /* la pista o el estado cambiaron (sin copia
 static void widgets_draw(uint16_t *d, int ox)
 {
     if (ox <= -W || ox >= W) return;
+    static double pf_t, pf_acc, pf_cmp; static int pf_n, pf_nc;
+    double pf0 = now_ms(), pf1 = pf0;
     if (!WD.t || now_ms() - WD.t > 10000) wg_refresh();
     if (npx_changed && widgets_on) npx_changed = 0;
     wg_np_poll();
     int settled = ox == 0 && !wg_scrolling, sch = wg_cache_scroll != wg_scroll;
+    if (ox == 0 && wg_scrolling) {
+        /* desplazamiento vertical: los sprites van directos sobre el fondo que ya puso
+         * render_launcher (sin la copia a wg_cache y de vuelta: 2 x 290 KB menos por fotograma) */
+        wg_budget = 0; wg_compose_to(d, 0); wg_budget = 99; pf_cmp += now_ms() - pf0; pf_nc++;
+        wg_part_y0 = wg_part_y1 = 0; wg_cache_ok = 0; wg_cache_scroll = wg_scroll;
+        goto pressed;
+    }
     if (!wg_cache_ok || wg_fresh || sch || (int)(time(0) / 60) != wg_cache_min) {
         int data_only = wg_cache_ok && !sch && settled;
         wg_budget = settled ? 99 : 0;
-        wg_compose(); wg_budget = 99;
+        wg_compose(); wg_budget = 99; pf1 = now_ms(); pf_cmp += pf1 - pf0; pf_nc++;
         if (!data_only) wg_part_y0 = wg_part_y1 = 0;
     } else wg_part_y0 = wg_part_y1 = 0;
     if (!wg_cache) return;
     int x0 = ox < 0 ? 0 : ox, x1 = ox + W > W ? W : ox + W;
     if (x1 > x0) for (int y = 30; y < H; y++) memcpy(d + y * W + x0, wg_cache + y * W + (x0 - ox), (x1 - x0) * 2);
-    if (wg_press >= 0 && wg_press < wg_n && ox == 0) {   /* pulsado: se oscurece (o el boton de control) */
+pressed:
+    if (wg_press >= 0 && wg_press < wg_n && ox == 0) {   /* pulsado: el widget se hunde un poco (o se ilumina el boton) */
         short xs[WG_MAX], ys[WG_MAX]; wg_layout_items(xs, ys);
-        int s = wg_it[wg_press].size, w = wg_w(s), x = xs[wg_press], y = WG_TOP - (int)wg_scroll + ys[wg_press];
-        if (wg_press_btn >= 0) { int x0b = x + 14 + 109 + 14, tw = w - (x0b - x) - 14; fill_circle(d, x0b + 18 + wg_press_btn * (tw - 36) / 2.f, y + 109, 20, 0xFFFF, 46); }
-        else for (int yy = 0; yy < WG_H; yy++) { int Y = y + yy; if (Y < 30 || Y >= H) continue; for (int xx = 0; xx < w; xx++) { int a = wg_mask[s][yy * w + xx]; if (a) d[Y * W + x + xx] = wg_mix(0, d[Y * W + x + xx], a * 70 >> 8); } }
+        int t = wg_it[wg_press].type, s = wg_it[wg_press].size, w = wg_w(s), h = wg_h(s), x = xs[wg_press], y = WG_TOP - (int)wg_scroll + ys[wg_press];
+        struct wspr *sp = &wg_spr[t][s];
+        if (wg_press_btn >= 0 && wg_press_btn < sp->nb) { const struct wbtn *b = &sp->b[wg_press_btn]; int c0 = wg_cy0; wg_cy0 = 30; fill_circle(d, x + b->x, y + b->y, b->r - 3, 0xFFFF, 56); wg_cy0 = c0; }
+        else if (sp->px) {
+            for (int yy = y < 30 ? 30 : y; yy < y + h && yy < H; yy++) memcpy(d + yy * W + x, wall + yy * W + x, w * 2);
+            wg_blit_xf(d, 30, sp->px, w, wg_mask[s], w, h, x + w / 2.f, y + h / 2.f, 0, 0.955f, 255, (int)WG_R);
+        }
         wg_part_y0 = wg_part_y1 = 0;
     }
+    /* perfil (shell.log): cada ~3 s con actividad, tiempo medio por fotograma, composiciones y sprites rehechos */
+    pf_acc += now_ms() - pf0; pf_n++;
+    if (now_ms() - pf_t > 3000) {
+        if (pf_n > 20 || wg_pf_nb) lg("perfil widgets: %d fot, %.2f ms/fot; %d composiciones (%.1f ms); %d sprites rehechos (%.1f ms c/u)", pf_n, pf_acc / pf_n, pf_nc, pf_nc ? pf_cmp / pf_nc : 0,
+                                      wg_pf_nb, wg_pf_nb ? wg_pf_build / wg_pf_nb : 0);
+        pf_t = now_ms(); pf_acc = pf_cmp = 0; pf_n = pf_nc = 0; wg_pf_build = 0; wg_pf_nb = 0;
+    }
 }
-/* widget en (px, py) en la pagina normal: indice, -2 = Editar, -1 nada; *btn = control */
+/* widget en (px, py) en la pagina normal: indice, -2 = Editar, -1 nada; *btn = boton del sprite */
 static int wg_hit(int px, int py, int *btn)
 {
     short xs[WG_MAX], ys[WG_MAX]; int tot = wg_layout_items(xs, ys), top = WG_TOP - (int)wg_scroll;
     *btn = -1;
     for (int i = 0; i < wg_n; i++) {
-        int w = wg_w(wg_it[i].size), x = xs[i], y = top + ys[i];
-        if (px >= x && px < x + w && py >= y && py < y + WG_H) {
-            if (wg_it[i].type == WG_NOW && wg_it[i].size && wg_ni.source && py >= y + 84) {
-                int x0b = x + 137, tw = w - 137 - 14;
-                for (int k = 0; k < 3; k++) if (abs(px - (x0b + 18 + k * (tw - 36) / 2)) < 24) *btn = k;
-            }
+        int s = wg_it[i].size, w = wg_w(s), h = wg_h(s), x = xs[i], y = top + ys[i];
+        if (px >= x && px < x + w && py >= y && py < y + h) {
+            const struct wspr *sp = &wg_spr[wg_it[i].type][s];
+            for (int k = 0; k < sp->nb; k++) { int dx = px - (x + sp->b[k].x), dy = py - (y + sp->b[k].y); if (dx * dx + dy * dy <= sp->b[k].r * sp->b[k].r) *btn = k; }
             return i;
         }
     }
@@ -909,23 +1499,23 @@ static void wg_edit_frame(uint16_t *d, double t, float pa, int drag)
     for (int pass = 0; pass < 2; pass++) for (int i = 0; i < wg_n; i++) {
         if ((pass == 0) == (i == drag)) continue;
         struct witem *it = &wg_it[i]; struct wspr *sp = &wg_spr[it->type][it->size];
-        int w = wg_w(it->size); float cx = it->ax + w / 2.f, cy = top + it->ay + WG_H / 2.f;
-        if (!sp->px || cy - WG_H > H || cy + WG_H < 30) continue;
+        int w = wg_w(it->size), h = wg_h(it->size); float cx = it->ax + w / 2.f, cy = top + it->ay + h / 2.f;
+        if (!sp->px || cy - h > H || cy + h < 30) continue;
         if (i == drag) {   /* levantado: sombra suave y un poco mas grande, sin temblor */
-            const uint8_t *sh = wg_shadow[it->size]; int sw = w + 2 * WG_SP, shh = WG_H + 2 * WG_SP;
+            const uint8_t *sh = wg_shadow_get(it->size); int sw = w + 2 * WG_SP, shh = h + 2 * WG_SP;
             int sx0 = (int)(cx - sw / 2.f), sy0 = (int)(cy - shh / 2.f) + 8;
             if (sh) for (int y = 0; y < shh; y++) { int Y = sy0 + y; if (Y < 30 || Y >= H) continue;
                 for (int x = 0; x < sw; x++) { int X = sx0 + x; if (X < 0 || X >= W) continue; int a = sh[y * sw + x] * 100 >> 8; if (a) d[Y * W + X] = wg_mix(0, d[Y * W + X], a); } }
-            wg_blit_xf(d, 30, sp->px, w, wg_mask[it->size], w, WG_H, cx, cy, 0, 1.04f, 255);
+            wg_blit_xf(d, 30, sp->px, w, wg_mask[it->size], w, h, cx, cy, 0, 1.04f, 255, (int)WG_R);
             continue;
         }
-        float amp = 1.3f / (w / 2.f);           /* +-1,3 px en el borde: igual para pequenos y medianos */
+        float amp = 1.3f / (w / 2.f);           /* +-1,3 px en el borde: igual para todos los tamanos */
         float ang = pa > 0 ? amp * pa * sinf((float)((t - wg_t0) / 260.0 * 6.2831853) + i * 1.9f) : 0;
         double q1 = now_ms();
-        wg_blit_xf(d, 30, sp->px, w, wg_mask[it->size], w, WG_H, cx, cy, ang, it->sc, (int)(255 * it->al));
+        wg_blit_xf(d, 30, sp->px, w, wg_mask[it->size], w, h, cx, cy, ang, it->sc, (int)(255 * it->al), (int)WG_R);
         wg_pf_bl += now_ms() - q1;
         if (pa > 0.01f && !it->rm) {   /* "−" en la esquina, girando con el widget */
-            float ox = (-w / 2.f + 9) * it->sc, oy = (-WG_H / 2.f + 9) * it->sc, c = cosf(ang), s = sinf(ang);
+            float ox = (-w / 2.f + 9) * it->sc, oy = (-h / 2.f + 9) * it->sc, c = cosf(ang), s = sinf(ang);
             float bx = cx + ox * c - oy * s, by = cy + ox * s + oy * c; int a = (int)(255 * pa * it->al);
             if (by > 40) { fill_circle(d, bx, by, 12 * it->sc, rgb(232, 232, 237), a); fill_rrect(d, (int)(bx - 6), (int)(by - 1), 12, 3, 1.2f, rgb(28, 28, 30), a); }
         }
@@ -950,8 +1540,8 @@ static int wg_edit_hit(int x, int y, int drag)
     }
     for (int i = 0; i < wg_n; i++) {
         if (wg_it[i].rm) continue;
-        int w = wg_w(wg_it[i].size), wx = (int)wg_it[i].ax, wy = top + (int)wg_it[i].ay;
-        if (x >= wx && x < wx + w && y >= wy && y < wy + WG_H) return i;
+        int w = wg_w(wg_it[i].size), h = wg_h(wg_it[i].size), wx = (int)wg_it[i].ax, wy = top + (int)wg_it[i].ay;
+        if (x >= wx && x < wx + w && y >= wy && y < wy + h) return i;
     }
     return -1;
 }
@@ -1088,12 +1678,16 @@ static void wg_edit(int press, int embedded)
 
 /* ------------------------------------------------------------------ galeria de widgets */
 #define GS_Y 40                              /* la hoja deja ver arriba la pagina oscurecida */
+#define GD_PREV 238                          /* detalle: centro de la vista previa (desde arriba de la hoja) */
+#define GD_SEG 346                           /* detalle: control de tamano */
+#define GD_ADD 390                           /* detalle: boton Anadir */
+#define GD_LSC 0.68f                         /* detalle: escala de la vista previa grande */
 static uint16_t wg_th[WG_N][WG_TH * WG_TH]; static int wg_th_ok[WG_N];
 static void wg_thumb(int type)
 {
     wg_draw_scr(type, 0, WG_M, WG_TOP);
     for (int y = 0; y < WG_TH; y++) for (int x = 0; x < WG_TH; x++) {
-        int xa = x * WG_S / WG_TH, xb = (x + 1) * WG_S / WG_TH, ya = y * WG_H / WG_TH, yb = (y + 1) * WG_H / WG_TH, r = 0, g = 0, b = 0, n = 0;
+        int xa = x * WG_S / WG_TH, xb = (x + 1) * WG_S / WG_TH, ya = y * WG_S / WG_TH, yb = (y + 1) * WG_S / WG_TH, r = 0, g = 0, b = 0, n = 0;
         for (int yy = ya; yy < yb; yy++) for (int xx = xa; xx < xb; xx++) { uint16_t q = wg_scr[yy * W + xx]; r += q >> 11; g += (q >> 5) & 63; b += q & 31; n++; }
         wg_th[type][y * WG_TH + x] = (uint16_t)((r / n) << 11 | (g / n) << 5 | (b / n));
     }
@@ -1103,15 +1697,13 @@ static uint8_t wg_corner[14 * 14];
 static void wg_x(uint16_t *d, int cx, int cy, int a)     /* boton de cerrar: circulo gris con aspa */
 {
     fill_circle(d, cx, cy, 15, rgb(58, 58, 62), a);
-    for (int i = -5; i <= 5; i++) { fill_circle(d, cx + i, cy + i, 1.3f, rgb(200, 200, 206), a); fill_circle(d, cx + i, cy - i, 1.3f, rgb(200, 200, 206), a); }
+    wg_line(d, cx - 5, cy - 5, cx + 5, cy + 5, 2.4f, rgb(200, 200, 206), a); wg_line(d, cx - 5, cy + 5, cx + 5, cy - 5, 2.4f, rgb(200, 200, 206), a);
 }
-static void wg_chev(uint16_t *d, int x, int cy, uint16_t col)
-{
-    for (int i = 0; i < 8; i++) { fill_rrect(d, x + i, cy - i, 3, 3, 1.2f, col, 255); fill_rrect(d, x + i, cy + i, 3, 3, 1.2f, col, 255); }
-}
+static void wg_chev(uint16_t *d, int x, int cy, uint16_t col) { wg_line(d, x + 8, cy - 8, x, cy, 3, col, 255); wg_line(d, x, cy, x + 8, cy + 8, 3, col, 255); }
 struct wg_gal { const uint16_t *bg; int top, view, sel, selsz, press, prev_ok; float ls, push; };
 #define GROW 78
 #define GLIST 64
+static int wg_gal_sizes(int t, int *o) { int n = 0; for (int s = 0; s < 3; s++) if (wg_size_ok(t, s)) o[n++] = s; return n; }
 static void wg_gal_list(uint16_t *d, const struct wg_gal *g, int ox)
 {
     int top = g->top;
@@ -1120,39 +1712,45 @@ static void wg_gal_list(uint16_t *d, const struct wg_gal *g, int ox)
         int ry = top + GLIST + i * GROW - (int)g->ls;
         if (ry + GROW < wg_cy0 || ry > H) continue;
         if (g->press == i) for (int y = ry; y < ry + GROW; y++) { if (y < wg_cy0 || y >= H) continue; for (int x = 0; x < W; x++) { int X = x + ox; if (X >= 0 && X < W) d[y * W + X] = rgb(44, 44, 47); } }
-        if (wg_th_ok[i]) wg_blit_m(d, wg_th[i], WG_TH, wg_mask[2], WG_TH, WG_TH, 16 + ox, ry + 9, wg_cy0);
-        else { for (int y = 0; y < WG_TH; y++) { int Y = ry + 9 + y; if (Y < wg_cy0 || Y >= H) continue; for (int x = 0; x < WG_TH; x++) { int a = wg_mask[2][y * WG_TH + x], X = 16 + ox + x; if (a && X >= 0 && X < W) d[Y * W + X] = mix565(rgb(58, 58, 62), d[Y * W + X], a); } } }
-        wt(d, 90 + ox, ry + 31, tr(wg_name[i]), 16, 0xFFFF, W - 90 - 36);
-        wt2(d, 90 + ox, ry + 50, tr(wg_desc[i]), 12, C_SEC, W - 90 - 36, 15, 0);
+        if (wg_th_ok[i]) wg_blit_m(d, wg_th[i], WG_TH, wg_mask[3], WG_TH, WG_TH, 16 + ox, ry + 9, wg_cy0, 13);
+        else { for (int y = 0; y < WG_TH; y++) { int Y = ry + 9 + y; if (Y < wg_cy0 || Y >= H) continue; for (int x = 0; x < WG_TH; x++) { int a = wg_mask[3][y * WG_TH + x], X = 16 + ox + x; if (a && X >= 0 && X < W) d[Y * W + X] = mix565(rgb(58, 58, 62), d[Y * W + X], a); } } }
+        int tw = W - 90 - 36;
+        wlb(d, 90 + ox, ry + 31, wgt(wg_name[i]), 16, 0xFFFF, tw, W_SEMI, WA_L);
+        wt2(d, 90 + ox, ry + 50, wgt(wg_desc[i]), 12, C_SEC, tw, 15, WA_L, W_REG, 0);
         wg_cy0 = top + GLIST - 4;
-        if (ry + 39 >= wg_cy0) for (int k = 0; k < 6; k++) { int X = W - 24 + k - 2 + ox; for (int q = 0; q < 2; q++) { int y1 = ry + 33 + k, y2 = ry + 45 - k; if (X + q >= 0 && X + q < W) { if (y1 >= wg_cy0 && y1 < H) d[y1 * W + X + q] = rgb(90, 90, 96); if (y2 >= wg_cy0 && y2 < H) d[y2 * W + X + q] = rgb(90, 90, 96); } } }
+        if (ry + 39 >= wg_cy0) { wg_line(d, W - 26 + ox, ry + 33, W - 21 + ox, ry + 39, 2, rgb(90, 90, 96), 255); wg_line(d, W - 21 + ox, ry + 39, W - 26 + ox, ry + 45, 2, rgb(90, 90, 96), 255); }
         int sy = ry + GROW - 1; if (sy >= wg_cy0 && sy < H && i < WG_N - 1) for (int x = 90; x < W; x++) { int X = x + ox; if (X >= 0 && X < W) d[sy * W + X] = rgb(56, 56, 58); }
     }
     wg_cy0 = 0; wg_cy1 = H;
-    wt(d, 16 + ox, top + 44, tr("Widgets"), 26, 0xFFFF, W - 80);
+    wlb(d, 16 + ox, top + 44, tr("Widgets"), 26, 0xFFFF, W - 80, W_BOLD, WA_L);
     if (ox > -W + 40) wg_x(d, W - 30 + ox, top + 30, 255);
 }
 static void wg_gal_detail(uint16_t *d, const struct wg_gal *g, int ox)
 {
     int top = g->top, t = g->sel; if (t < 0) return;
     wg_cy0 = top; wg_cy1 = H;
-    wg_chev(d, 14 + ox, top + 30, C_BLUE); draw_text(d, 28 + ox, top + 36, tr("Widgets"), 16, C_BLUE, 120, wg_cy0, H);
+    wg_chev(d, 14 + ox, top + 30, C_BLUE); wlb(d, 28 + ox, top + 36, tr("Widgets"), 16, C_BLUE, 120, W_REG, WA_L);
     wg_x(d, W - 30 + ox, top + 30, 255);
-    wtc(d, W / 2 + ox, top + 80, tr(wg_name[t]), 22, 0xFFFF, W - 40);
-    wt2(d, 24 + ox, top + 104, tr(wg_desc[t]), 13, C_SEC, W - 48, 17, 1);
-    int w = wg_w(g->selsz), px = (W - w) / 2 + ox, py = top + 140;
-    if (g->prev_ok) wg_blit_m(d, wg_scr, W, wg_mask[g->selsz], w, WG_H, px, py, top);
-    /* tamano: control segmentado de iOS */
-    int sw = 220, sx = (W - sw) / 2 + ox, sy = top + 296;
+    wlb(d, 20 + ox, top + 76, wgt(wg_name[t]), 22, 0xFFFF, W - 40, W_BOLD, WA_C);
+    wrap_cw = W - 48; draw_wrapped(d, 24 + ox, top + 86, W - 48, wgt(wg_desc[t]), 13, C_SEC, 17, 1); wrap_cw = 0;
+    int sz = g->selsz, w = wg_w(sz), h = wg_h(sz), cy = top + GD_PREV;
+    if (g->prev_ok) {
+        if (sz == 2) wg_blit_xf(d, top, wg_scr, W, wg_mask[2], w, h, W / 2.f + ox, (float)cy, 0, GD_LSC, 255, (int)WG_R);
+        else wg_blit_m(d, wg_scr, W, wg_mask[sz], w, h, (W - w) / 2 + ox, cy - h / 2, top, (int)WG_R);
+    }
+    /* tamano: control segmentado de iOS (los tamanos que tiene este widget) */
+    int szs[3], ns = wg_gal_sizes(t, szs), sel = 0; for (int i = 0; i < ns; i++) if (szs[i] == sz) sel = i;
+    static const char *const nm[3] = { "Pequeño", "Mediano", "Grande" };
+    int sw = ns == 3 ? 264 : 220, sx = (W - sw) / 2 + ox, sy = top + GD_SEG, seg = sw / ns;
     fill_rrect(d, sx, sy, sw, 32, 9, rgb(52, 52, 56), 255);
-    fill_rrect(d, sx + 2 + g->selsz * (sw / 2), sy + 2, sw / 2 - 4, 28, 7, rgb(99, 99, 102), 255);
-    wtc(d, sx + sw / 4, sy + 21, tr("Pequeño"), 13, 0xFFFF, sw / 2 - 12); wtc(d, sx + 3 * sw / 4, sy + 21, tr("Mediano"), 13, 0xFFFF, sw / 2 - 12);
-    int have = wg_has(t, g->selsz), by = top + 344;
-    fill_rrect(d, 24 + ox, by, W - 48, 48, 24, have ? rgb(58, 58, 62) : C_BLUE, g->press == 100 ? 170 : 255);
-    if (have) wtc(d, W / 2 + ox, by + 30, tr("Ya añadido"), 16, C_SEC, W - 80);
+    fill_rrect(d, sx + 2 + sel * seg, sy + 2, seg - 4, 28, 7, rgb(99, 99, 102), 255);
+    for (int i = 0; i < ns; i++) wlb(d, sx + i * seg + 6, sy + 21, wgt(nm[szs[i]]), 13, 0xFFFF, seg - 12, i == sel ? W_SEMI : W_MED, WA_C);
+    int have = wg_has(t, sz), by = top + GD_ADD;
+    fill_rrect(d, 24 + ox, by, W - 48, 44, 22, have ? rgb(58, 58, 62) : C_BLUE, g->press == 100 ? 170 : 255);
+    if (have) wlb(d, 40 + ox, by + 28, tr("Ya añadido"), 16, C_SEC, W - 80, W_SEMI, WA_C);
     else {
-        const char *l = tr("Añadir widget"); int lw = tw_n(l, 16, -1); if (lw > W - 110) lw = W - 110; int x = (W - lw - 20) / 2 + ox;
-        wg_plus(d, x + 6, by + 24, 255); draw_text(d, x + 20, by + 30, l, 16, 0xFFFF, W - 110, wg_cy0, H);
+        const char *l = tr("Añadir widget"); int lw = wg_tw(l, 16, W_SEMI); if (lw > W - 110) lw = W - 110; int x = (W - lw - 20) / 2 + ox;
+        wg_plus(d, x + 6, by + 22, 255); wlb(d, x + 20, by + 28, l, 16, 0xFFFF, W - 110, W_SEMI, WA_L);
     }
     wg_cy0 = 0; wg_cy1 = H;
 }
@@ -1174,6 +1772,11 @@ static void wg_gal_frame(const struct wg_gal *g, float open)
     if (g->push < 1) wg_gal_list(fr0, g, ox);
     if (g->push > 0) wg_gal_detail(fr0, g, ox + W);
     present();
+}
+static void wg_gal_preview(struct wg_gal *g)      /* vista previa real (con datos) del tamano elegido */
+{
+    int w = wg_w(g->selsz), h = wg_h(g->selsz);
+    wg_draw_scr(g->sel, g->selsz, (W - w) / 2, GS_Y + GD_PREV - h / 2); g->prev_ok = 1;
 }
 /* galeria de widgets (hoja de iOS): lista con miniaturas reales -> detalle con vista previa,
  * tamano y "Añadir widget". Devuelve 1 con el elegido */
@@ -1204,7 +1807,7 @@ static int wg_gallery(int *otype, int *osize)
         redraw = 1;
         int sx = p.x, sy = p.y, moved = 0, drag_down = 0; float s0 = g.ls; double lt = now_ms(); int ly = sy;
         if (g.view == 0 && sy >= GS_Y + GLIST) g.press = (sy - GS_Y - GLIST + (int)g.ls) / GROW;
-        if (g.view == 1 && sy >= GS_Y + 344 && sy < GS_Y + 392 && abs(sx - W / 2) < W / 2 - 24 && !wg_has(g.sel, g.selsz)) g.press = 100;
+        if (g.view == 1 && sy >= GS_Y + GD_ADD && sy < GS_Y + GD_ADD + 44 && abs(sx - W / 2) < W / 2 - 24 && !wg_has(g.sel, g.selsz)) g.press = 100;
         if (g.press >= 0) wg_gal_frame(&g, 1);
         while (cur_down && read_pkt(&p, 40)) {
             int dx = cur_x - sx, dy = cur_y - sy;
@@ -1239,8 +1842,9 @@ static int wg_gallery(int *otype, int *osize)
                 float from = g.push, to = dx > 60 ? 0 : 1; double tb = now_ms();
                 for (;;) { double e = ease_out((now_ms() - tb) / 220.0 > 1 ? 1 : (now_ms() - tb) / 220.0); g.push = from + (to - from) * (float)e; wg_gal_frame(&g, 1); if (e >= 1) break; }
                 if (to == 0) g.view = 0;
-            } else if (abs(dx) > 40 && abs(dx) > abs(dy)) {   /* deslizar la vista previa: otro tamano */
-                int ns = dx < 0 ? 1 : 0; if (ns != g.selsz) { g.selsz = ns; wg_draw_scr(g.sel, ns, (W - wg_w(ns)) / 2, GS_Y + 140); }
+            } else if (abs(dx) > 40 && abs(dx) > abs(dy)) {   /* deslizar la vista previa: el tamano siguiente / anterior */
+                int szs[3], ns = wg_gal_sizes(g.sel, szs), cur = 0; for (int i = 0; i < ns; i++) if (szs[i] == g.selsz) cur = i;
+                int ni = cur + (dx < 0 ? 1 : -1); if (ni >= 0 && ni < ns) { g.selsz = szs[ni]; wg_gal_preview(&g); }
             }
             continue;
         }
@@ -1248,18 +1852,20 @@ static int wg_gallery(int *otype, int *osize)
         if (sy >= GS_Y + 12 && sy < GS_Y + 50 && sx > W - 52) { result = 0; break; }   /* cerrar */
         if (g.view == 0) {
             if (pr >= 0 && pr < WG_N) {
-                g.sel = pr; g.selsz = wg_has(pr, 0) && !wg_has(pr, 1) ? 1 : 0;
-                wg_draw_scr(g.sel, g.selsz, (W - wg_w(g.selsz)) / 2, GS_Y + 140); g.prev_ok = 1;
+                g.sel = pr; int szs[3], ns = wg_gal_sizes(pr, szs); g.selsz = szs[0];
+                for (int i = 0; i < ns; i++) if (!wg_has(pr, szs[i])) { g.selsz = szs[i]; break; }
+                wg_gal_preview(&g);
                 double tb = now_ms(); g.view = 1;
                 for (;;) { double e = ease_out((now_ms() - tb) / 300.0 > 1 ? 1 : (now_ms() - tb) / 300.0); g.push = (float)e; wg_gal_frame(&g, 1); if (e >= 1) break; }
             }
         } else {
+            int szs[3], ns = wg_gal_sizes(g.sel, szs), sw = ns == 3 ? 264 : 220, sx0 = (W - sw) / 2;
             if (sy < GS_Y + 56 && sx < 130) {
                 double tb = now_ms();
                 for (;;) { double e = ease_out((now_ms() - tb) / 280.0 > 1 ? 1 : (now_ms() - tb) / 280.0); g.push = 1 - (float)e; wg_gal_frame(&g, 1); if (e >= 1) break; }
                 g.view = 0;
-            } else if (sy >= GS_Y + 296 && sy < GS_Y + 328 && abs(sx - W / 2) < 110) {
-                int ns = sx >= W / 2; if (ns != g.selsz) { g.selsz = ns; wg_draw_scr(g.sel, ns, (W - wg_w(ns)) / 2, GS_Y + 140); }
+            } else if (sy >= GS_Y + GD_SEG && sy < GS_Y + GD_SEG + 32 && sx >= sx0 && sx < sx0 + sw) {
+                int ns2 = szs[(sx - sx0) / (sw / ns) < ns ? (sx - sx0) / (sw / ns) : ns - 1]; if (ns2 != g.selsz) { g.selsz = ns2; wg_gal_preview(&g); }
             } else if (pr == 100) { *otype = g.sel; *osize = g.selsz; result = 1; break; }
         }
     }
@@ -1281,15 +1887,20 @@ static void apply_widgets(void)
     }
     wg_free_unused(); wg_cache_ok = 0; home_prev_ok = 0; lconf_save();
 }
+/* (los textos nuevos van ya traducidos con wgt: la pagina de Ajustes los pasa por tr(), que
+ * devuelve tal cual lo que no conoce) */
 static void page_widgets(struct spage *p)
 {
     *p = (struct spage){ "Widgets" };
-    p->secs[0] = (struct ssec){ "WIDGETS", "Mantén pulsado un widget para moverlo o quitarlo, como las apps.", {
-        ROW("Baterías", R_TOGGLE, &wg_on[WG_BATT], 0, 0, apply_widgets, 0, 0), ROW("Reproduciendo", R_TOGGLE, &wg_on[WG_NOW], 0, 0, apply_widgets, 0, 0),
-        ROW("Fecha", R_TOGGLE, &wg_on[WG_DATE], 0, 0, apply_widgets, 0, 0), ROW("Almacenamiento", R_TOGGLE, &wg_on[WG_STORAGE], 0, 0, apply_widgets, 0, 0),
-        ROW("Energía", R_TOGGLE, &wg_on[WG_POWER], 0, 0, apply_widgets, 0, 0), ROW("Biblioteca", R_TOGGLE, &wg_on[WG_LIB], 0, 0, apply_widgets, 0, 0),
-        ROW("Recién añadido", R_TOGGLE, &wg_on[WG_NEW], 0, 0, apply_widgets, 0, 0), ROW("Escuchas", R_TOGGLE, &wg_on[WG_LISTEN], 0, 0, apply_widgets, 0, 0) }, 8 };
-    p->nsec = 1;
+    p->secs[0] = (struct ssec){ wgt("MÚSICA"), 0, {
+        ROW("Reproduciendo", R_TOGGLE, &wg_on[WG_NOW], 0, 0, apply_widgets, 0, 0), ROW("Recién añadido", R_TOGGLE, &wg_on[WG_NEW], 0, 0, apply_widgets, 0, 0),
+        ROW("Escuchas", R_TOGGLE, &wg_on[WG_LISTEN], 0, 0, apply_widgets, 0, 0), ROW("Biblioteca", R_TOGGLE, &wg_on[WG_LIB], 0, 0, apply_widgets, 0, 0),
+        ROW("Mezclas", R_TOGGLE, &wg_on[WG_MIX], 0, 0, apply_widgets, 0, 0) }, 5 };
+    p->secs[1] = (struct ssec){ wgt("SISTEMA"), "Mantén pulsado un widget para moverlo o quitarlo, como las apps.", {
+        ROW("Baterías", R_TOGGLE, &wg_on[WG_BATT], 0, 0, apply_widgets, 0, 0), ROW("Fecha", R_TOGGLE, &wg_on[WG_DATE], 0, 0, apply_widgets, 0, 0),
+        ROW(wgt("Reloj"), R_TOGGLE, &wg_on[WG_CLOCK], 0, 0, apply_widgets, 0, 0), ROW("Almacenamiento", R_TOGGLE, &wg_on[WG_STORAGE], 0, 0, apply_widgets, 0, 0),
+        ROW("Energía", R_TOGGLE, &wg_on[WG_POWER], 0, 0, apply_widgets, 0, 0) }, 5 };
+    p->nsec = 2;
 }
 static void nav_wg_list(void)
 {
@@ -1362,17 +1973,26 @@ static void widgets_touch(struct pkt *p)
     wg_press = -1;
     if (k == -2) { wg_edit(-1, 0); launcher_present(); return; }
     if (k < 0) { launcher_present(); return; }
-    int type = wg_it[k].type;
-    if (type == WG_NOW && btn >= 0) {
-        if (btn == 1) { wg_np_force = !wg_playing(); wg_np_until = now_ms() + 2500; }
-        pthread_t th; if (!pthread_create(&th, 0, wg_pc_th, (void *)(long)btn)) pthread_detach(th);
+    int type = wg_it[k].type; const struct wspr *sp = &wg_spr[type][wg_it[k].size];
+    if (btn >= 0 && btn < sp->nb) {          /* boton del widget (Reproduciendo) */
+        int act = sp->b[btn].k;
+        if (act == 1) { wg_np_force = !wg_playing(); wg_np_until = now_ms() + 2500; }
+        pthread_t th; if (!pthread_create(&th, 0, wg_pc_th, (void *)(long)act)) pthread_detach(th);
         wg_fresh = 1; launcher_present(); return;
     }
     short xs[WG_MAX], ys[WG_MAX]; wg_layout_items(xs, ys);
     int ix = xs[k] + 20, iy = WG_TOP - (int)wg_scroll + ys[k] + 20;
-    const char *id = type == WG_NOW ? "nowplaying" : type == WG_STORAGE ? "files" : type == WG_LIB || type == WG_NEW || type == WG_LISTEN ? "music" : 0;
+    const char *id = 0;
+    switch (type) {
+    case WG_NOW: id = "nowplaying"; break;
+    case WG_STORAGE: id = "files"; break;
+    case WG_LIB: case WG_NEW: case WG_LISTEN: case WG_MIX: id = "music"; break;
+    case WG_BATT: id = WDs.nhp || WDs.nhps ? "headphones" : "settings"; break;
+    case WG_POWER: id = "settings"; break;
+    }
     int a = id ? app_by_id(id) : -1;
     if (a < 0) { launcher_present(); return; }
     if (apps[a].act == ACT_FILES) { launch_app(a, ix, iy); return; }      /* apps propias: se vuelve a los widgets */
     widgets_on = 0; V.scroll = cur_page * W; launch_app(a, ix, iy);
 }
+#endif /* WG_RENDER_ONLY */

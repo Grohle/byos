@@ -1,8 +1,13 @@
-/* freemusic.inc.c - "Free Music": search, listen to and download free / Creative Commons music.
+/* freemusic.inc.c - "Vinyl" (internal id "freemusic"): search, listen to and download free /
+ * Creative Commons music.
  *
- * Sources: Internet Archive (archive.org: Live Music Archive, netlabels, community audio; no key)
- * and Jamendo (Creative Commons; needs a free client_id, entered in the app's settings or read
- * from SD/HiByOS/jamendo_client_id.txt). The quality is shown in the results themselves: badges
+ * Sources (fm_srcs, Settings > Sources; reorder, disable, add, remove): Internet Archive
+ * (archive.org: Live Music Archive, netlabels, community audio; no key), Jamendo (Creative
+ * Commons; needs a free client_id, entered in the app's settings or read from
+ * SD/HiByOS/jamendo_client_id.txt) and the ones the user adds by URL: archive.org collections,
+ * Vinyl catalogs (an open JSON format anyone can host), RSS/Atom/OPML feeds with audio
+ * enclosures and Subsonic-API servers (freemusic_src.inc.c). "All sources" merges the results
+ * of every enabled source, each row with its source badge. The quality is shown in the results themselves: badges
  * "FLAC 24/96", "FLAC 16/44.1", "MP3 320", "MP3 VBR", "OGG" + size. The format names come with
  * the search; sample rate / bits are read from the FLAC STREAMINFO of the first lossless track
  * (the first few KB of the file, lazily, only for rows on screen, cached on disk).
@@ -34,9 +39,24 @@
 #define FM_RH 76                 /* result row */
 #define FM_TRH 54                /* track row */
 #define FM_PAGE 40               /* results per request */
+#define FM_BRAND "Vinyl"         /* the app's name: the same in the 13 languages */
+
+/* ------------------------------------------------------------------ sources */
+#define FM_MAXSRC 16
+struct fm_source {
+    uint8_t type, on, named, auth, busy;     /* type FST_*; named: the user renamed it; auth: Subsonic mode (fm_sub_auth); busy: test running */
+    int err;                                 /* last test: 0 ok, < 0 error (fm_src_err) */
+    uint32_t sid;                            /* fm_hash of the URL ("builtin:ia" / "builtin:jm") */
+    char name[56], url[256], user[64], salt[16], pw[96];   /* pw: Subsonic only, kept in appdata/pw_<sid> (0600) */
+    int nitems; long long refreshed;
+};
+static struct fm_source fm_srcs[FM_MAXSRC]; static int fm_nsrc;
+static int fm_sel = -1;                      /* source shown: index in fm_srcs, -1 = all the enabled ones */
+static uint32_t fm_sel_sid;                  /* saved form of fm_sel (0 = all) */
+static int fm_need_login = -1;               /* a Subsonic source asks for its user and password */
 
 /* ------------------------------------------------------------------ settings */
-static int fm_src, fm_lossless, fm_coll, fm_genre = -1, fm_lang = -1, fm_sort = FSORT_REL, fm_cache_mb = 500;   /* fm_sort: searches only */
+static int fm_lossless, fm_coll, fm_genre = -1, fm_lang = -1, fm_sort = FSORT_REL, fm_cache_mb = 500;   /* fm_sort: searches only */
 static char fm_key[100];
 static void fm_mkdirs(void)
 {
@@ -51,7 +71,9 @@ static void fm_conf_load(void)
         while (fgets(l, sizeof l, f)) {
             int v; char k[32];
             if (sscanf(l, "%31[^=]=%d", k, &v) != 2) continue;
-            if (!strcmp(k, "src")) fm_src = v == FM_SRC_JM; else if (!strcmp(k, "lossless")) fm_lossless = !!v;
+            if (!strcmp(k, "src")) fm_sel_sid = v == FM_SRC_JM ? fm_hash("builtin:jm") : fm_hash("builtin:ia");   /* before Vinyl: 0 IA, 1 Jamendo */
+            else if (!strcmp(k, "sel")) fm_sel_sid = (uint32_t)strtoul(strchr(l, '=') + 1, 0, 10);
+            else if (!strcmp(k, "lossless")) fm_lossless = !!v;
             else if (!strcmp(k, "coll")) fm_coll = v >= 0 && v < FCOL_N ? v : 0; else if (!strcmp(k, "genre")) fm_genre = v >= -1 && v < FM_NGENRE ? v : -1;
             else if (!strcmp(k, "lang")) fm_lang = v >= -1 && v < FM_NLANG ? v : -1; else if (!strcmp(k, "sort")) fm_sort = v >= 0 && v <= FSORT_REL ? v : FSORT_REL;
             else if (!strcmp(k, "cache")) fm_cache_mb = v >= 100 && v <= 8000 ? v : 500;
@@ -73,8 +95,116 @@ static void fm_conf_load(void)
 static void fm_conf_save(void)
 {
     FILE *f = fopen(FM_DATA "/settings.tmp", "w"); if (!f) return;
-    fprintf(f, "src=%d\nlossless=%d\ncoll=%d\ngenre=%d\nlang=%d\nsort=%d\ncache=%d\n", fm_src, fm_lossless, fm_coll, fm_genre, fm_lang, fm_sort, fm_cache_mb);
+    fm_sel_sid = fm_sel >= 0 && fm_sel < fm_nsrc ? fm_srcs[fm_sel].sid : 0;
+    fprintf(f, "sel=%u\nlossless=%d\ncoll=%d\ngenre=%d\nlang=%d\nsort=%d\ncache=%d\n", (unsigned)fm_sel_sid, fm_lossless, fm_coll, fm_genre, fm_lang, fm_sort, fm_cache_mb);
     if (!fclose(f)) rename(FM_DATA "/settings.tmp", FM_DATA "/settings");
+}
+/* sources.tsv: type on named auth nitems refreshed err name url user salt (no passwords) */
+static void fm_srcs_save(void)
+{
+    FILE *f = fopen(FM_DATA "/sources.tmp", "w"); if (!f) return;
+    fprintf(f, "# Vinyl sources (docs/FREEMUSIC.md): type on named auth items refreshed err name url user salt\n");
+    for (int i = 0; i < fm_nsrc; i++) {
+        const struct fm_source *s = &fm_srcs[i];
+        fprintf(f, "%d\t%d\t%d\t%d\t%d\t%lld\t%d\t", s->type, s->on, s->named, s->auth, s->nitems, s->refreshed, s->err);
+        const char *fl[4] = { s->name, s->url, s->user, s->salt };
+        for (int k = 0; k < 4; k++) { for (const char *c = fl[k]; *c; c++) fputc(*c == '\t' || *c == '\n' || *c == '\r' ? ' ' : *c, f); fputc(k < 3 ? '\t' : '\n', f); }
+    }
+    if (!fclose(f)) rename(FM_DATA "/sources.tmp", FM_DATA "/sources.tsv");
+}
+static void fm_pw_path(const struct fm_source *s, char *o, int n) { snprintf(o, n, FM_DATA "/pw_%08x", (unsigned)s->sid); }
+/* the Subsonic password: only in appdata, readable by its owner only (0600) */
+static void fm_pw_save(const struct fm_source *s)
+{
+    char p[160]; fm_pw_path(s, p, sizeof p);
+    if (!s->pw[0]) { unlink(p); return; }
+    int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0600); if (fd < 0) return;
+    fchmod(fd, 0600);
+    ssize_t w = write(fd, s->pw, strlen(s->pw)); (void)w;
+    close(fd);
+}
+static void fm_salt(char *o, int n) { snprintf(o, n, "%08x", fm_hash("") ^ (unsigned)(now_ms() * 1000.0) ^ ((unsigned)getpid() << 16)); }
+static struct fm_source *fm_src_new(int type, const char *url)
+{
+    if (fm_nsrc >= FM_MAXSRC) return 0;
+    struct fm_source *s = &fm_srcs[fm_nsrc++]; memset(s, 0, sizeof *s);
+    s->type = (uint8_t)type; s->on = 1;
+    fm_cpy(s->url, sizeof s->url, url);
+    s->sid = type == FST_IA ? fm_hash("builtin:ia") : type == FST_JM ? fm_hash("builtin:jm") : fm_hash(url);
+    if (type == FST_IA) snprintf(s->name, sizeof s->name, "Internet Archive");
+    else if (type == FST_JM) snprintf(s->name, sizeof s->name, "Jamendo");
+    else if (type == FST_COLL) { const char *d = strstr(url, "/details/"); fm_cpy(s->name, sizeof s->name, d ? d + 9 : url); }
+    else fm_url_host(url, s->name, sizeof s->name);
+    if (type == FST_SUB) fm_salt(s->salt, sizeof s->salt);
+    return s;
+}
+/* a built-in source (missing from the file) at position pos */
+static void fm_src_put_at(int type, int pos)
+{
+    struct fm_source *s = fm_src_new(type, ""); if (!s) return;
+    struct fm_source t = *s; int from = fm_nsrc - 1; if (pos > from) pos = from;
+    memmove(fm_srcs + pos + 1, fm_srcs + pos, (from - pos) * sizeof *fm_srcs);
+    fm_srcs[pos] = t;
+}
+static int fm_src_ix(uint32_t sid) { for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].sid == sid) return i; return -1; }
+/* what list items of a source are (fm_item.src) */
+static int fm_src_kind(int type) { return type == FST_JM ? FM_SRC_JM : type == FST_CAT ? FM_SRC_CAT : type == FST_RSS || type == FST_OPML ? FM_SRC_RSS : type == FST_SUB ? FM_SRC_SUB : FM_SRC_IA; }
+static int fm_src_ready(const struct fm_source *s)
+{
+    if (!s->on) return 0;
+    if (s->type == FST_JM) return fm_key[0] != 0;
+    if (s->type == FST_URL) return 0;
+    if (s->type == FST_SUB) return s->user[0] && s->pw[0];
+    return 1;
+}
+static const char *fm_coll_id(const struct fm_source *s) { const char *d = strstr(s->url, "/details/"); return d ? d + 9 : s->url; }
+static void fm_src_base(const struct fm_source *s, char *o, int n) { if (s->type == FST_SUB) fm_sub_base(s->url, o, n); else fm_cpy(o, n, s->url); }
+static void fm_src_auth(const struct fm_source *s, char *o, int n) { if (s->type == FST_SUB) fm_sub_auth(s->user, s->pw, s->salt, s->auth, o, n); else *o = 0; }
+/* short name for the source badge of the rows */
+static const char *fm_src_short(uint32_t sid, char *o, int n)
+{
+    int i = fm_src_ix(sid); *o = 0; if (i < 0) return o;
+    const struct fm_source *s = &fm_srcs[i];
+    if (s->type == FST_IA) snprintf(o, n, "Archive");
+    else { int k = 0, c = 0; const char *p = s->name; while (p[k] && c < 14 && k < n - 8) { k++; while (((unsigned char)p[k] & 0xC0) == 0x80) k++; c++; } memcpy(o, p, k); o[k] = 0; if (p[k]) strcat(o, "…"); }
+    return o;
+}
+static void fm_srcs_load(void)
+{
+    fm_nsrc = 0;
+    FILE *f = fopen(FM_DATA "/sources.tsv", "r");
+    char *l = malloc(1024);
+    while (f && l && fgets(l, 1024, f) && fm_nsrc < FM_MAXSRC) {
+        if (l[0] == '#') continue;
+        l[strcspn(l, "\r\n")] = 0;
+        char *fld[11]; int n = 0; char *p = l;
+        while (n < 11) { fld[n++] = p; char *t = strchr(p, '\t'); if (!t) break; *t = 0; p = t + 1; }
+        if (n < 9) continue;
+        int type = atoi(fld[0]); if (type < 0 || type >= FST_N) continue;
+        int dup = 0; for (int i = 0; i < fm_nsrc; i++) if ((type == FST_IA || type == FST_JM) ? fm_srcs[i].type == type : !strcmp(fm_srcs[i].url, fld[8])) dup = 1;
+        if (dup) continue;
+        struct fm_source *s = fm_src_new(type, fld[8]); if (!s) break;
+        s->on = (uint8_t)!!atoi(fld[1]); s->named = (uint8_t)!!atoi(fld[2]); s->auth = (uint8_t)atoi(fld[3]);
+        s->nitems = atoi(fld[4]); s->refreshed = atoll(fld[5]); s->err = atoi(fld[6]);
+        if (fld[7][0]) fm_cpy(s->name, sizeof s->name, fld[7]);
+        if (n > 9) fm_cpy(s->user, sizeof s->user, fld[9]);
+        if (n > 10 && fld[10][0]) fm_cpy(s->salt, sizeof s->salt, fld[10]);
+        if (type == FST_SUB) {
+            char pp[160]; fm_pw_path(s, pp, sizeof pp);
+            int fd = open(pp, O_RDONLY);
+            if (fd >= 0) { ssize_t r = read(fd, s->pw, sizeof s->pw - 1); s->pw[r > 0 ? r : 0] = 0; close(fd); s->pw[strcspn(s->pw, "\r\n")] = 0; }
+        }
+    }
+    if (f) fclose(f);
+    free(l);
+    /* the built-in ones are always there (Internet Archive first, Jamendo second, if new) */
+    int ia = -1, jm = -1;
+    for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].type == FST_IA) ia = i;
+    if (ia < 0) fm_src_put_at(FST_IA, 0);
+    for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].type == FST_JM) jm = i;
+    if (jm < 0) fm_src_put_at(FST_JM, 1);
+    fm_sel = -1;
+    for (int i = 0; i < fm_nsrc; i++) if (fm_sel_sid && fm_srcs[i].sid == fm_sel_sid) fm_sel = i;
 }
 static void fm_key_save(void)
 {
@@ -144,6 +274,7 @@ static void fm_pathenc(const char *s, char *o, int cap)
 }
 static void fm_file_url(const struct fm_album *a, const struct fm_file *f, char *o, int n)
 {
+    if (f->uo) { fm_cpy(o, n, fm_pool(a, f->uo)); return; }                 /* user sources: the full URL */
     if (a->it.src == FM_SRC_JM) { fm_cpy(o, n, f->name); return; }
     char e[600]; fm_pathenc(f->name, e, sizeof e);
     snprintf(o, n, "https://archive.org/download/%s/%s", a->it.id, e);
@@ -196,61 +327,72 @@ static uint16_t *fm_load_raw(const char *path, int s)
 
 /* ------------------------------------------------------------------ STREAMINFO probe cache */
 /* per item: lossless quality (STREAMINFO) + what the files list says (tracks, duration, size) */
-struct fm_pc { char key[84]; short bits, ntr; int sr; uint8_t ch; float tlen; long long dsize; };
+struct fm_pc { char key[96]; short bits, ntr, mp3k; int sr; uint8_t ch; unsigned fq; float tlen; long long dsize; };
 static struct fm_pc *fm_probes; static int fm_nprobe, fm_probes_loaded;
 static pthread_mutex_t fm_pmu = PTHREAD_MUTEX_INITIALIZER;
 #define FM_NPROBE 2048
-static void fm_probe_key(int src, const char *id, char *o, int n) { snprintf(o, n, "%c:%s", src == FM_SRC_JM ? 'j' : 'a', id); }
+/* "a:<id>" archive.org, "j:<id>" Jamendo, "s<sid>:<id>" Subsonic; feeds (OPML) are not kept */
+static int fm_probe_key(int src, uint32_t sid, const char *id, char *o, int n)
+{
+    if (src == FM_SRC_SUB) { snprintf(o, n, "s%08x:%s", (unsigned)sid, id); return 1; }
+    if (src != FM_SRC_IA && src != FM_SRC_JM) { *o = 0; return 0; }
+    snprintf(o, n, "%c:%s", src == FM_SRC_JM ? 'j' : 'a', id);
+    return 1;
+}
 static void fm_probes_load(void)
 {
     if (fm_probes_loaded) return;
     fm_probes_loaded = 1;
     fm_probes = calloc(FM_NPROBE, sizeof *fm_probes); if (!fm_probes) return;
     FILE *f = fopen(FM_CACHE "/probes.txt", "r"); if (!f) return;
-    char l[200];
+    char l[240];
     while (fgets(l, sizeof l, f)) {
-        struct fm_pc p; memset(&p, 0, sizeof p); int b = 0, s = 0, c = 0, nt = 0; float tl = 0; long long ds = 0;
-        if (sscanf(l, "%83s %d %d %d %f %lld %d", p.key, &s, &b, &c, &tl, &ds, &nt) < 4) continue;
-        p.sr = s; p.bits = (short)b; p.ch = (uint8_t)c; p.tlen = tl; p.dsize = ds; p.ntr = (short)nt;
+        struct fm_pc p; memset(&p, 0, sizeof p); int b = 0, s = 0, c = 0, nt = 0, mk = 0; unsigned fq = 0; float tl = 0; long long ds = 0;
+        if (sscanf(l, "%95s %d %d %d %f %lld %d %u %d", p.key, &s, &b, &c, &tl, &ds, &nt, &fq, &mk) < 4) continue;
+        p.sr = s; p.bits = (short)b; p.ch = (uint8_t)c; p.tlen = tl; p.dsize = ds; p.ntr = (short)nt; p.fq = fq; p.mp3k = (short)mk;
         int k; for (k = 0; k < fm_nprobe; k++) if (!strcmp(fm_probes[k].key, p.key)) break;   /* the newest line wins */
         if (k < FM_NPROBE) { fm_probes[k] = p; if (k == fm_nprobe) fm_nprobe++; }
     }
     fclose(f);
 }
-static int fm_probe_get(int src, const char *id, struct fm_pc *o)
+static int fm_probe_get(int src, uint32_t sid, const char *id, struct fm_pc *o)
 {
-    char k[84]; fm_probe_key(src, id, k, sizeof k); int r = 0;
+    char k[96]; if (!fm_probe_key(src, sid, id, k, sizeof k)) return 0;
+    int r = 0;
     pthread_mutex_lock(&fm_pmu);
     for (int i = 0; i < fm_nprobe; i++) if (!strcmp(fm_probes[i].key, k)) { *o = fm_probes[i]; r = 1; break; }
     pthread_mutex_unlock(&fm_pmu);
     return r;
 }
-static int fm_probe_find(int src, const char *id, int *sr, int *bits)
+static int fm_probe_find(int src, uint32_t sid, const char *id, int *sr, int *bits)
 {
-    struct fm_pc p; if (!fm_probe_get(src, id, &p) || p.sr <= 0) return 0;
+    struct fm_pc p; if (!fm_probe_get(src, sid, id, &p) || p.sr <= 0) return 0;
     *sr = p.sr; *bits = p.bits; return 1;
 }
-static void fm_probe_store(int src, const char *id, int sr, int bits, int ch, float tlen, long long dsize, int ntr)
+static void fm_probe_store(int src, uint32_t sid, const char *id, int sr, int bits, int ch, float tlen, long long dsize, int ntr, unsigned fq, int mp3k)
 {
-    char k[84]; fm_probe_key(src, id, k, sizeof k);
+    char k[96]; if (!fm_probe_key(src, sid, id, k, sizeof k)) return;
     pthread_mutex_lock(&fm_pmu);
     int i; for (i = 0; i < fm_nprobe; i++) if (!strcmp(fm_probes[i].key, k)) break;
     if (fm_probes && i < FM_NPROBE) {
         struct fm_pc *p = &fm_probes[i]; if (i == fm_nprobe) fm_nprobe++;
-        fm_cpy(p->key, sizeof p->key, k); p->sr = sr; p->bits = (short)bits; p->ch = (uint8_t)ch; p->tlen = tlen; p->dsize = dsize; p->ntr = (short)ntr;
+        fm_cpy(p->key, sizeof p->key, k); p->sr = sr; p->bits = (short)bits; p->ch = (uint8_t)ch; p->tlen = tlen; p->dsize = dsize; p->ntr = (short)ntr; p->fq = fq; p->mp3k = (short)mp3k;
     }
-    FILE *f = fopen(FM_CACHE "/probes.txt", "a"); if (f) { fprintf(f, "%s %d %d %d %.0f %lld %d\n", k, sr, bits, ch, tlen, dsize, ntr); fclose(f); }
+    FILE *f = fopen(FM_CACHE "/probes.txt", "a"); if (f) { fprintf(f, "%s %d %d %d %.0f %lld %d %u %d\n", k, sr, bits, ch, tlen, dsize, ntr, fq, mp3k); fclose(f); }
     pthread_mutex_unlock(&fm_pmu);
 }
 
 /* ------------------------------------------------------------------ network jobs */
-enum { NJ_LIST = 1, NJ_ALBUM, NJ_PROBE, NJ_THUMB, NJ_COVER, NJ_JMTEST };
+enum { NJ_LIST = 1, NJ_ALBUM, NJ_PROBE, NJ_THUMB, NJ_COVER, NJ_JMTEST, NJ_SRCTEST };
 struct fm_job {
-    int kind, gen, slot, append; uint8_t src;
-    char id[80], url[1600];
+    int kind, gen, slot, append, page, rows, sidx, force, exact; uint8_t src, stype; uint32_t sid;
+    char id[80], url[1600], base[300], auth[260];
+    struct fm_filt f;
     int rc; struct fm_item *items; int n; long found;
     struct fm_album *alb;
-    int sr, bits, ch, ntr; float tlen; long long dsize; uint16_t *px;
+    int sr, bits, ch, ntr, mp3k, est; unsigned fq; float tlen; long long dsize; uint16_t *px;
+    char img[300], artist[100], year[12];                 /* feed probes (OPML entries) */
+    char name[56], user[64], pw[96], salt[16]; int nitems, type, authmode;   /* NJ_SRCTEST */
     struct fm_job *next;
 };
 static pthread_mutex_t fm_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -263,26 +405,69 @@ static void fm_job_free(struct fm_job *j)
 {
     if (!j) return;
     free(j->items); free(j->px);
-    if (j->alb) { free(j->alb->f); free(j->alb->t); free(j->alb); }
+    if (j->alb) { fm_album_parts_free(j->alb); free(j->alb); }
     free(j);
 }
 static struct fm_job *fm_pop(struct fm_job **q) { struct fm_job *j = *q; if (j) *q = j->next; return j; }
 static void fm_push_tail(struct fm_job **q, struct fm_job *j) { j->next = 0; while (*q) q = &(*q)->next; *q = j; }
-/* lists: archive.org or Jamendo JSON -> items */
+/* a feed (RSS/Atom) as one list item, if it passes the filters */
+static int fm_rss_list(const char *x, const char *url, const struct fm_filt *f, struct fm_item *o, int max, long *found)
+{
+    *found = 0;
+    struct fm_album *a = calloc(1, sizeof *a); if (!a) return -1;
+    snprintf(a->it.id, sizeof a->it.id, "%08x", fm_hash(url));
+    int n = fm_rss_parse_album(x, url, a);
+    if (n < 0) { fm_album_parts_free(a); free(a); return -1; }
+    char *hay = malloc(8192); int k = 0, ok = 0;
+    if (hay) {
+        k = snprintf(hay, 8192, "%s\n%s\n%s", a->it.title, a->it.artist, a->desc);
+        for (int t = 0; t < a->nt && k < 8000; t++) k += snprintf(hay + k, 8192 - k, "\n%s", a->t[t].title);
+        ok = n > 0 && fm_filt_ok(f, a->cq[0] | a->cq[1] | a->cq[2], "", "", hay) && max > 0;
+    }
+    if (ok) { fm_album_to_item(a, o); fm_cpy(o->probe, (int)sizeof o->probe, url); *found = 1; }
+    free(hay); fm_album_parts_free(a); free(a);
+    return ok;
+}
+/* body of a list request -> items; *found = how many the source has; *exact = found is a count */
+static int fm_parse_list(int stype, const char *body, const char *url, const char *base, const char *auth, const struct fm_filt *f, int offset, int rows, struct fm_item *o, int max, long *found, int *exact)
+{
+    int n = -1; *found = 0; *exact = 1;
+    switch (stype) {
+    case FST_IA: case FST_COLL: n = fm_ia_parse_search(body, o, max, found); break;
+    case FST_JM: n = fm_jm_parse_search(body, o, max, f->lossless); *found = n >= rows ? 100000 : n; *exact = 0; break;
+    case FST_CAT: n = fm_cat_parse_list(body, base, f, o, max < rows ? max : rows, offset, found); break;
+    case FST_OPML: n = fm_opml_parse(body, base, f, o, max < rows ? max : rows, offset, found); break;
+    case FST_RSS: n = offset > 0 ? 0 : fm_rss_list(body, url, f, o, max, found); break;
+    case FST_SUB: n = fm_sub_parse_list(body, base, auth, o, max); *found = n >= rows ? 100000 : n; *exact = 0; break;
+    }
+    return n;
+}
+static int fm_is_local(int stype) { return stype == FST_CAT || stype == FST_RSS || stype == FST_OPML; }
+/* lists: archive.org / Jamendo / Subsonic JSON, or the whole catalog / feed (searched here) */
 static void fm_run_list(struct fm_job *j)
 {
     char out[160]; fm_hpath(FM_CACHE, j->url, ".json", out, sizeof out);
-    j->rc = fm_get(j->url, out);
-    if (j->rc) { j->rc = j->rc == 1 ? -404 : -1; return; }
-    char *js = fm_slurp(out, 4 << 20, 0);
+    int local = fm_is_local(j->stype);
+    if (!local || j->force || !fm_fresh(out, 3600)) {
+        int rc = fm_get(j->url, out);
+        if (rc && !(local && !access(out, R_OK))) { j->rc = rc == 1 ? -404 : -1; return; }   /* offline: the cached copy of a catalog / feed */
+    }
+    char *js = fm_slurp(out, 8 << 20, 0);
     if (!js) { j->rc = -1; return; }
-    j->items = calloc(FM_PAGE + 8, sizeof *j->items);
+    j->items = calloc(j->rows + 8, sizeof *j->items);
     if (j->items) {
-        if (j->src == FM_SRC_JM) j->n = fm_jm_parse_search(js, j->items, FM_PAGE + 8, fm_lossless), j->found = j->n >= FM_PAGE ? 100000 : j->n;
-        else j->n = fm_ia_parse_search(js, j->items, FM_PAGE + 8, &j->found);
-        if (j->n < 0) { j->rc = j->n; j->n = 0; }
+        j->n = fm_parse_list(j->stype, js, j->url, j->base, j->auth, &j->f, (j->page - 1) * j->rows, j->rows, j->items, j->rows + 8, &j->found, &j->exact);
+        if (j->n < 0) { j->rc = j->n == -1 && local ? -3 : j->n; j->n = 0; }
+        for (int i = 0; i < j->n; i++) { j->items[i].sid = j->sid; j->items[i].page = (short)j->page; j->items[i].rank = (short)i; }
     }
     free(js);
+}
+/* the body of url (cached max_age seconds; the cached copy when offline). 0 = none */
+static char *fm_fetch_cached(const char *url, int max_age, int force)
+{
+    char out[160]; fm_hpath(FM_CACHE, url, ".json", out, sizeof out);
+    if (force || !fm_fresh(out, max_age)) { if (fm_get(url, out) && access(out, R_OK)) return 0; }
+    return fm_slurp(out, 8 << 20, 0);
 }
 static void fm_run_album(struct fm_job *j)
 {
@@ -294,6 +479,16 @@ static void fm_run_album(struct fm_job *j)
         int n = fm_jm_parse_album(js, a); free(js);
         j->rc = n < 0 ? n : 0;
         if (n < 0) unlink(out);
+        return;
+    }
+    if (j->src != FM_SRC_IA) {
+        /* catalog (the whole file, shared with the lists), feed, Subsonic getAlbum */
+        char *b = fm_fetch_cached(j->url, j->src == FM_SRC_SUB ? 86400 : 3600, 0);
+        if (!b) { j->rc = -1; return; }
+        int n = j->src == FM_SRC_CAT ? fm_cat_parse_album(b, j->base, j->id, a) : j->src == FM_SRC_RSS ? fm_rss_parse_album(b, j->url, a) : fm_sub_parse_album(b, j->base, j->auth, a);
+        free(b);
+        j->rc = n < 0 ? (n == -40 ? -40 : -2) : 0;
+        if (n < 0 && j->src == FM_SRC_SUB) { char out[160]; fm_hpath(FM_CACHE, j->url, ".json", out, sizeof out); unlink(out); }
         return;
     }
     char mu[300], fu[300], mo[160], fo[160];
@@ -336,6 +531,22 @@ static void fm_run_probe(struct fm_job *j)
 {
     j->rc = -1;
     char url[700] = "";
+    if (j->src == FM_SRC_SUB || j->src == FM_SRC_RSS) {
+        /* Subsonic: getAlbum (formats, bit depth, sample rate); OPML entry: the feed itself */
+        char *b = fm_fetch_cached(j->url, j->src == FM_SRC_SUB ? 86400 : 3600, 0); if (!b) return;
+        struct fm_album *a = calloc(1, sizeof *a);
+        int n = !a ? -1 : j->src == FM_SRC_SUB ? fm_sub_parse_album(b, j->base, j->auth, a) : fm_rss_parse_album(b, j->url, a);
+        free(b);
+        if (n > 0) {
+            struct fm_item it; fm_album_to_item(a, &it);
+            j->fq = it.fq; j->sr = a->it.sr; j->bits = a->it.bits; j->ntr = it.ntr; j->tlen = it.tlen; j->dsize = it.dsize; j->mp3k = it.mp3k; j->est = it.est;
+            fm_cpy(j->img, sizeof j->img, a->it.img); fm_cpy(j->artist, sizeof j->artist, a->it.artist); fm_cpy(j->year, sizeof j->year, a->it.year);
+            j->rc = 0;
+            if (j->src == FM_SRC_SUB) fm_probe_store(j->src, j->sid, j->id, j->sr, j->bits, 2, j->tlen, j->dsize, j->ntr, j->fq, j->mp3k);
+        }
+        if (a) { fm_album_parts_free(a); free(a); }
+        return;
+    }
     if (j->src == FM_SRC_JM) fm_cpy(url, sizeof url, j->url);
     else {
         /* archive.org: the files list (cached, the album page reuses it) gives tracks, duration
@@ -352,15 +563,15 @@ static void fm_run_probe(struct fm_job *j)
             j->ntr = nt; j->dsize = a->csize[c];
             for (int t = 0; t < a->nt; t++) j->tlen += a->t[t].len;
             int i = fm_album_first_lossless(a);
-            if (i >= 0) { fm_cpy(a->it.id, sizeof a->it.id, j->id); a->it.src = FM_SRC_IA; fm_file_url(a, &a->f[i], url, sizeof url); }
+            if (i >= 0) { fm_cpy(a->it.id, sizeof a->it.id, j->id); a->it.src = FM_SRC_IA; snprintf(url, sizeof url, "https://archive.org/download/%s/", j->id); fm_pathenc(a->f[i].name, url + strlen(url), (int)(sizeof url - strlen(url))); }
             j->rc = 0;
         }
-        if (a) { free(a->f); free(a->t); free(a); }
+        if (a) { fm_album_parts_free(a); free(a); }
         if (nt <= 0) return;
     }
     if (url[0] && !fm_probe_url(url, &j->sr, &j->bits, &j->ch)) j->rc = 0;
     else if (j->src == FM_SRC_JM) return;
-    fm_probe_store(j->src, j->id, j->sr, j->bits, j->ch, j->tlen, j->dsize, j->ntr);
+    fm_probe_store(j->src, j->sid, j->id, j->sr, j->bits, j->ch, j->tlen, j->dsize, j->ntr, 0, 0);
 }
 /* thumbnail (FM_TH) or cover (FM_BIG) through hibynet cover-get (+ hibywall for the big one) */
 static void fm_run_image(struct fm_job *j)
@@ -402,6 +613,74 @@ static void fm_run_test(struct fm_job *j)
     j->rc = js ? fm_jm_status(js, 0, 0) : -1000; if (j->rc >= 0) j->rc = 0;
     free(js); unlink(out);
 }
+/* Subsonic: ping (token auth, then the hex password for servers without it) and the number of
+ * songs (getScanStatus). rc 0 ok, -40 wrong user/password, -1000 not Subsonic, -1 no connection */
+static int fm_sub_test(struct fm_job *j, const char *base)
+{
+    char out[160], u[700], a[260]; snprintf(out, sizeof out, FM_CACHE "/subtest.json");
+    int rc = -1;
+    for (int mode = 0; mode < 2; mode++) {
+        fm_sub_auth(j->user, j->pw, j->salt, mode, a, sizeof a);
+        fm_sub_url(u, sizeof u, base, a, "ping", 0);
+        if (fm_get(u, out)) { rc = -1; break; }
+        char *b = fm_slurp(out, 1 << 20, 0); rc = b ? fm_sub_status(b, 0, 0) : -1; free(b);
+        if (!rc) { j->authmode = mode; break; }
+        if (rc != -40 && rc != -41) break;                 /* only a refused token is retried */
+    }
+    if (!rc) {
+        fm_sub_auth(j->user, j->pw, j->salt, j->authmode, a, sizeof a);
+        fm_sub_url(u, sizeof u, base, a, "getScanStatus", 0);
+        if (!fm_get(u, out)) { char *b = fm_slurp(out, 1 << 20, 0); if (b) { const char *s = fj_get(fj_get(b, "subsonic-response"), "scanStatus"); if (s) j->nitems = (int)fj_gl(s, "count"); } free(b); }
+    }
+    unlink(out);
+    return rc;
+}
+/* test / refresh of a user source: what it is (sniffed), its name and number of entries.
+ * rc 0 ok, -1 no connection, -2 not found, -3 not a music source, -4 not a collection,
+ * -40 Subsonic needs a (right) user and password */
+static void fm_run_srctest(struct fm_job *j)
+{
+    j->type = j->stype; j->nitems = 0; j->name[0] = 0; j->authmode = 0;
+    char out[160];
+    if (j->stype == FST_COLL) {
+        const char *id = strstr(j->url, "/details/"); id = id ? id + 9 : j->url;
+        char u[400]; snprintf(u, sizeof u, "https://archive.org/metadata/%s/metadata", id);
+        fm_hpath(FM_CACHE, u, ".json", out, sizeof out);
+        if (fm_get(u, out)) { j->rc = -1; return; }
+        char *b = fm_slurp(out, 4 << 20, 0);
+        int r = fm_ia_coll_info(b, j->name, sizeof j->name); free(b);
+        if (r == -2 || r == -1) { j->rc = -2; return; }
+        if (r == -3) { j->rc = -4; return; }
+        char cq[140], lu[1600]; snprintf(cq, sizeof cq, "collection:(%s)", id);
+        fm_ia_search_url2(lu, sizeof lu, "", cq, 0, -1, -1, FSORT_POP, 0, 1);
+        fm_hpath(FM_CACHE, lu, ".json", out, sizeof out);
+        if (!fm_get(lu, out)) { b = fm_slurp(out, 1 << 20, 0); long found = 0; struct fm_item it; if (b && fm_ia_parse_search(b, &it, 0, &found) >= 0) j->nitems = (int)found; free(b); }
+        j->rc = 0; return;
+    }
+    char base[300]; fm_sub_base(j->url, base, sizeof base);
+    if (j->stype == FST_SUB) { j->rc = fm_sub_test(j, base); if (j->rc == -1000) j->rc = -3; fm_url_host(base, j->name, sizeof j->name); return; }
+    /* catalog, feed, OPML or a URL still to sniff (the same cache file as the lists) */
+    fm_hpath(FM_CACHE, j->url, ".json", out, sizeof out);
+    int grc = fm_get(j->url, out);
+    char *b = grc ? 0 : fm_slurp(out, 8 << 20, 0);
+    int t = b ? fm_sniff(b) : -1;
+    if (t < 0 && j->stype == FST_URL) {
+        /* a web page or nothing: is it a Subsonic server? (ping answers even without a login) */
+        char u[700]; snprintf(u, sizeof u, "%s/rest/ping.view?v=1.16.1&c=Vinyl&f=json", base);
+        char o2[160]; snprintf(o2, sizeof o2, FM_CACHE "/subtest.json");
+        if (!fm_get(u, o2)) { char *s = fm_slurp(o2, 1 << 20, 0); if (s && fm_sub_status(s, 0, 0) != -1000) t = FST_SUB; free(s); }
+        unlink(o2);
+        if (t == FST_SUB) { free(b); j->type = FST_SUB; fm_url_host(base, j->name, sizeof j->name); j->rc = j->user[0] && j->pw[0] ? fm_sub_test(j, base) : -40; return; }
+    }
+    if (!b) { j->rc = grc == 1 ? -2 : -1; return; }
+    if (t == FST_SUB) { free(b); j->type = FST_SUB; fm_url_host(base, j->name, sizeof j->name); j->rc = j->user[0] && j->pw[0] ? fm_sub_test(j, base) : -40; return; }
+    if (t < 0) { free(b); unlink(out); j->rc = -3; return; }
+    j->type = t;
+    int n = t == FST_CAT ? fm_cat_info(b, j->name, sizeof j->name) : t == FST_OPML ? fm_opml_info(b, j->name, sizeof j->name) : fm_rss_info(b, j->name, sizeof j->name);
+    free(b);
+    if (n < 0) { j->rc = -3; return; }
+    j->nitems = n; j->rc = 0;
+}
 static void *fm_worker(void *arg)
 {
     int lo = (int)(intptr_t)arg;
@@ -420,6 +699,7 @@ static void *fm_worker(void *arg)
         case NJ_PROBE: fm_run_probe(j); break;
         case NJ_THUMB: case NJ_COVER: fm_run_image(j); break;
         case NJ_JMTEST: fm_run_test(j); break;
+        case NJ_SRCTEST: fm_run_srctest(j); break;
         }
         pthread_mutex_lock(&fm_mu); fm_push_tail(&fm_done, j); fm_done_flag = 1; pthread_mutex_unlock(&fm_mu);
     }
@@ -449,7 +729,7 @@ enum { DK_FILE, DK_COVER, DK_CACHE };
 enum { DS_QUEUED, DS_RUN, DS_DONE, DS_FAIL, DS_CANCEL };
 struct fm_dl {
     int uid; uint8_t kind, state, cancel, err;     /* err: 1 network, 2 no space, 3 SD */
-    char url[260], dest[260];
+    char url[600], dest[260];
     long long size, got, total;
     char title[100], artist[72], album[110], year[8], akey[80]; short track;
 };
@@ -557,7 +837,7 @@ static void fm_send_play_locked(void)
     for (int i = 0; i < fm_ls.n; i++) { pp[i] = malloc(420); if (pp[i]) fm_player_path(fm_ls.path[i], pp[i], 420); }
     unlink(PC_RES);
     fm_ls.sent_id = pc_list_send((const char *const *)pp, fm_ls.n, fm_ls.cur, fm_ls.title, PC_UNSCANNED | 0xff);
-    lg("musica libre: reproducir %d pistas desde %d -> %d", fm_ls.n, fm_ls.cur, fm_ls.sent_id);
+    lg("vinyl: reproducir %d pistas desde %d -> %d", fm_ls.n, fm_ls.cur, fm_ls.sent_id);
     for (int i = 0; i < fm_ls.n; i++) free(pp[i]);
     free(pp);
     fm_ls.started = 1; fm_ls.t0 = now_ms();
@@ -705,79 +985,164 @@ static void fm_dl_start(void)
 }
 static void fm_dl_kick(void) { pthread_mutex_lock(&fm_dmu); pthread_cond_broadcast(&fm_dcv); pthread_mutex_unlock(&fm_dmu); }
 
-/* ------------------------------------------------------------------ lists shown */
-enum { L_SEARCH, L_F1, L_F2, L_F3, L_N };
-struct fm_list { struct fm_item *it; int n, state, rc, page, gen; long found; char url[1600]; };
-static struct fm_list fm_l[L_N];
+/* ------------------------------------------------------------------ lists shown
+ * fm_l[0] is the search (results of every selected source, merged); fm_l[1..fm_nl) are the
+ * sections of the start page, built by fm_sections_build() from the selected source(s). */
+enum { LK_SEARCH, LK_IA_LIVE, LK_IA_NET, LK_IA_NEW, LK_JM_FEAT, LK_JM_POP, LK_ALL, LK_SHELF };
+#define L_SEARCH 0
+#define L_MAX 24
+struct fm_list {
+    struct fm_item *it; int n, state, rc, page, gen, pend, kind, fresh, exact, more;
+    long found;
+    uint32_t sid;                              /* sections: their source */
+    const char *hkey;                          /* header: tr() key (0: the source name) */
+    int nss; uint32_t ssid[FM_MAXSRC]; int spage[FM_MAXSRC], sraw[FM_MAXSRC]; long sfound[FM_MAXSRC]; uint8_t sexact[FM_MAXSRC];   /* per source (search, paging) */
+};
+static struct fm_list fm_l[L_MAX]; static int fm_nl = 1;
 static int fm_list_gen;
 static char fm_q_text[96], fm_q_sent[96];
 static double fm_q_typed;
 static void fm_list_clear(struct fm_list *l)
 {
     for (int i = 0; i < l->n; i++) free(l->it[i].thumb);
-    free(l->it); l->it = 0; l->n = 0; l->found = 0; l->state = 0; l->rc = 0; l->page = 0;
+    free(l->it); l->it = 0; l->n = 0; l->found = 0; l->state = 0; l->rc = 0; l->page = 0; l->pend = 0; l->more = 0;
 }
 static void fm_apply_probe_cache(struct fm_item *it)
 {
     struct fm_pc p;
-    if (!fm_probe_get(it->src, it->id, &p)) return;
+    if (!fm_probe_get(it->src, it->sid, it->id, &p)) return;
     if (p.sr > 0) { it->sr = p.sr; it->bits = p.bits; }
     if (p.ntr) { it->ntr = p.ntr; it->tlen = p.tlen; it->dsize = p.dsize; }
-    if (it->src == FM_SRC_JM || p.ntr) it->qstate = 2;          /* archive.org entries without the files info: probe again */
+    if (it->src == FM_SRC_SUB && p.fq) { it->fq = p.fq; it->mp3k = p.mp3k; it->qstate = 2; }
+    if (it->src == FM_SRC_JM || (it->src == FM_SRC_IA && p.ntr)) it->qstate = 2;          /* archive.org entries without the files info: probe again */
 }
 static int fm_jm_ready(void) { return fm_key[0] != 0; }
-static void fm_list_url(int slot, int page, char *o, int n)
+/* is source i shown (the selected one, or every enabled and ready one for "all") */
+static int fm_src_shown(int i) { return fm_sel < 0 ? fm_src_ready(&fm_srcs[i]) : i == fm_sel && fm_src_ready(&fm_srcs[i]); }
+static int fm_rows_of(int kind) { return kind == LK_SEARCH || kind == LK_ALL ? FM_PAGE : 12; }
+/* URL of a request: list kind of source s, page (1...) */
+static void fm_list_url(const struct fm_source *s, int kind, int page, char *o, int n)
 {
-    if (fm_src == FM_SRC_JM) {
-        if (slot == L_SEARCH) fm_jm_search_url(o, n, fm_key, fm_q_sent, fm_lossless, fm_genre, fm_lang, fm_sort, 0, FM_PAGE, (page - 1) * FM_PAGE);
-        else fm_jm_search_url(o, n, fm_key, "", fm_lossless, fm_genre, fm_lang, slot == L_F1 ? FSORT_POP : slot == L_F2 ? FSORT_POP : FSORT_NEW, slot == L_F1, 12, 0);
+    char base[300], auth[260]; fm_src_base(s, base, sizeof base); fm_src_auth(s, auth, sizeof auth);
+    int rows = fm_rows_of(kind);
+    switch (s->type) {
+    case FST_IA:
+        if (kind == LK_SEARCH) { fm_ia_search_url(o, n, fm_q_sent, fm_coll, fm_lossless, fm_genre, fm_lang, fm_sort, FM_PAGE, page); return; }
+        {   /* featured: popular live concerts (lossless), netlabel favourites, recently added lossless */
+            int coll = kind == LK_IA_LIVE ? FCOL_LIVE : kind == LK_IA_NET ? FCOL_NETLABEL : (fm_coll ? fm_coll : FCOL_ALL);
+            if (fm_coll && kind != LK_IA_NEW) coll = fm_coll;
+            fm_ia_search_url(o, n, "", coll, kind == LK_IA_NET ? fm_lossless : 1, fm_genre, fm_lang, kind == LK_IA_NEW ? FSORT_NEW : FSORT_POP, 12, 1);
+        }
         return;
+    case FST_COLL: {
+        char cq[140]; snprintf(cq, sizeof cq, "collection:(%s)", fm_coll_id(s));
+        if (kind == LK_SEARCH) fm_ia_search_url2(o, n, fm_q_sent, cq, fm_lossless, fm_genre, fm_lang, fm_sort, FM_PAGE, page);
+        else fm_ia_search_url2(o, n, "", cq, fm_lossless, fm_genre, fm_lang, fm_sort == FSORT_NEW ? FSORT_NEW : FSORT_POP, rows, page);
+        return; }
+    case FST_JM:
+        if (kind == LK_SEARCH) fm_jm_search_url(o, n, fm_key, fm_q_sent, fm_lossless, fm_genre, fm_lang, fm_sort, 0, FM_PAGE, (page - 1) * FM_PAGE);
+        else fm_jm_search_url(o, n, fm_key, "", fm_lossless, fm_genre, fm_lang, FSORT_POP, kind == LK_JM_FEAT, 12, 0);
+        return;
+    case FST_SUB: {
+        char p[300];
+        if (kind == LK_SEARCH) { char qe[200]; fm_urlenc(fm_q_sent, qe, sizeof qe); snprintf(p, sizeof p, "query=%s&albumCount=%d&albumOffset=%d&artistCount=0&songCount=0", qe, FM_PAGE, (page - 1) * FM_PAGE); fm_sub_url(o, n, base, auth, "search3", p); }
+        else { snprintf(p, sizeof p, "type=%s&size=%d&offset=%d", fm_sort == FSORT_NEW || kind == LK_SHELF ? "newest" : "alphabeticalByName", rows, (page - 1) * rows); fm_sub_url(o, n, base, auth, "getAlbumList2", p); }
+        return; }
+    default: fm_cpy(o, n, s->url); return;          /* catalog / feed / OPML: the whole file, searched locally */
     }
-    if (slot == L_SEARCH) { fm_ia_search_url(o, n, fm_q_sent, fm_coll, fm_lossless, fm_genre, fm_lang, fm_sort, FM_PAGE, page); return; }
-    /* featured: popular live concerts (lossless), netlabel favourites, recently added lossless */
-    int coll = slot == L_F1 ? FCOL_LIVE : slot == L_F2 ? FCOL_NETLABEL : (fm_coll ? fm_coll : FCOL_ALL);
-    if (fm_coll && slot != L_F3) coll = fm_coll;
-    fm_ia_search_url(o, n, "", coll, slot == L_F2 ? fm_lossless : 1, fm_genre, fm_lang, slot == L_F3 ? FSORT_NEW : FSORT_POP, 12, 1);
 }
-static void fm_list_fetch(int slot, int page)
+static void fm_list_fetch_src(int slot, int si, int k, int page, int force)
 {
-    struct fm_list *l = &fm_l[slot];
-    if (fm_src == FM_SRC_JM && !fm_jm_ready()) { fm_list_clear(l); return; }
+    struct fm_list *l = &fm_l[slot]; const struct fm_source *s = &fm_srcs[si];
     struct fm_job *j = fm_job_new(NJ_LIST); if (!j) return;
-    fm_list_url(slot, page, j->url, sizeof j->url);
-    j->src = (uint8_t)fm_src; j->slot = slot; j->append = page > 1;
-    if (page <= 1) l->gen = ++fm_list_gen;
-    j->gen = l->gen; j->id[0] = 0; snprintf(j->id, sizeof j->id, "%d", page);
-    l->state = 1; l->page = page;
+    int kind = slot == L_SEARCH ? LK_SEARCH : l->kind;
+    fm_list_url(s, kind, page, j->url, sizeof j->url);
+    j->stype = s->type; j->src = (uint8_t)fm_src_kind(s->type); j->sid = s->sid; j->slot = slot; j->sidx = k;
+    j->page = page; j->append = page > 1; j->gen = l->gen; j->rows = fm_rows_of(kind); j->force = force;
+    fm_src_base(s, j->base, sizeof j->base); fm_src_auth(s, j->auth, sizeof j->auth);
+    j->f.lossless = fm_lossless; j->f.genre = fm_genre; j->f.lang = fm_lang;
+    j->f.sort = kind == LK_SEARCH ? fm_sort : fm_sort == FSORT_NEW ? FSORT_NEW : FSORT_POP;
+    if (kind == LK_SEARCH) fm_cpy(j->f.q, sizeof j->f.q, fm_q_sent);
+    l->pend++; l->state = 1; l->page = page;
     fm_submit(j, 0);
 }
+/* page 1: a new request (every source of the list); page > 1: the next page of each source that has more */
+static void fm_list_fetch_f(int slot, int page, int force)
+{
+    struct fm_list *l = &fm_l[slot];
+    if (page <= 1) {
+        l->gen = ++fm_list_gen; l->pend = 0; l->fresh = 0; l->nss = 0; l->more = 0;
+        for (int i = 0; i < fm_nsrc && l->nss < FM_MAXSRC; i++) {
+            if (slot == L_SEARCH ? !fm_src_shown(i) : fm_srcs[i].sid != l->sid) continue;
+            if (!fm_src_ready(&fm_srcs[i])) continue;
+            int k = l->nss++; l->ssid[k] = fm_srcs[i].sid; l->spage[k] = 1; l->sraw[k] = 0; l->sfound[k] = 0; l->sexact[k] = 1;
+            fm_list_fetch_src(slot, i, k, 1, force);
+        }
+        if (!l->pend) { fm_list_clear(l); l->state = 2; }
+        return;
+    }
+    for (int k = 0; k < l->nss; k++) {
+        if (l->sraw[k] >= l->sfound[k] || l->spage[k] < 1) continue;
+        int i = fm_src_ix(l->ssid[k]); if (i < 0) continue;
+        l->spage[k]++;
+        fm_list_fetch_src(slot, i, k, l->spage[k], 0);
+    }
+}
+static void fm_list_fetch(int slot, int page) { fm_list_fetch_f(slot, page, 0); }
 /* lists from the disk cache (instant first screen); 1 = something shown */
 static int fm_list_preload(int slot)
 {
     struct fm_list *l = &fm_l[slot];
-    char url[1600], path[160]; fm_list_url(slot, 1, url, sizeof url);
+    int si = fm_src_ix(l->sid); if (si < 0 || !fm_src_ready(&fm_srcs[si])) return 0;
+    const struct fm_source *s = &fm_srcs[si];
+    char url[1600], path[160]; fm_list_url(s, l->kind, 1, url, sizeof url);
     fm_hpath(FM_CACHE, url, ".json", path, sizeof path);
-    char *js = fm_slurp(path, 4 << 20, 0); if (!js) return 0;
+    char *js = fm_slurp(path, 8 << 20, 0); if (!js) return 0;
     fm_list_clear(l);
-    l->it = calloc(FM_PAGE + 8, sizeof *l->it);
+    int rows = fm_rows_of(l->kind);
+    l->it = calloc(rows + 8, sizeof *l->it);
     if (l->it) {
-        int n = fm_src == FM_SRC_JM ? fm_jm_parse_search(js, l->it, FM_PAGE + 8, fm_lossless) : fm_ia_parse_search(js, l->it, FM_PAGE + 8, &l->found);
+        char base[300], auth[260]; fm_src_base(s, base, sizeof base); fm_src_auth(s, auth, sizeof auth);
+        struct fm_filt f; memset(&f, 0, sizeof f); f.lossless = fm_lossless; f.genre = fm_genre; f.lang = fm_lang; f.sort = fm_sort == FSORT_NEW ? FSORT_NEW : FSORT_POP;
+        int ex; int n = fm_parse_list(s->type, js, url, base, auth, &f, 0, rows, l->it, rows + 8, &l->found, &ex);
         l->n = n > 0 ? n : 0; l->state = l->n ? 2 : 0;
-        for (int i = 0; i < l->n; i++) fm_apply_probe_cache(&l->it[i]);
+        for (int i = 0; i < l->n; i++) { l->it[i].sid = s->sid; l->it[i].page = 1; l->it[i].rank = (short)i; fm_apply_probe_cache(&l->it[i]); }
     }
     free(js);
     return l->n > 0;
 }
-static void fm_refresh_all(void)
+/* the sections of the start page for the selected source(s) */
+static void fm_sections_build(void)
+{
+    for (int i = 1; i < fm_nl; i++) fm_list_clear(&fm_l[i]);
+    fm_nl = 1;
+    for (int i = 0; i < fm_nsrc; i++) {
+        if (!fm_src_shown(i)) continue;
+        const struct fm_source *s = &fm_srcs[i];
+        static const struct { int kind; const char *h; } IA[3] = { { LK_IA_LIVE, "Conciertos populares (sin pérdida)" }, { LK_IA_NET, "Favoritos de los netlabels" }, { LK_IA_NEW, "Añadidos recientemente" } },
+            JM[2] = { { LK_JM_FEAT, "Destacados de la semana" }, { LK_JM_POP, "Populares en Jamendo" } };
+        int nk = s->type == FST_IA ? 3 : s->type == FST_JM ? 2 : 1;
+        for (int k = 0; k < nk && fm_nl < L_MAX; k++) {
+            struct fm_list *l = &fm_l[fm_nl++]; fm_list_clear(l);
+            l->sid = s->sid; l->hkey = 0;
+            if (s->type == FST_IA) { l->kind = IA[k].kind; l->hkey = IA[k].h; }
+            else if (s->type == FST_JM) { l->kind = JM[k].kind; l->hkey = JM[k].h; }
+            else l->kind = fm_sel < 0 ? LK_SHELF : LK_ALL;
+        }
+    }
+}
+static void fm_refresh_all_f(int force)
 {
     fm_lo_flush();
-    for (int s = L_F1; s < L_N; s++) {
-        if (fm_src == FM_SRC_JM && s == L_F3) { fm_list_clear(&fm_l[s]); continue; }
+    fm_sections_build();
+    for (int s = 1; s < fm_nl; s++) {
         if (!fm_list_preload(s)) fm_list_clear(&fm_l[s]);
-        fm_list_fetch(s, 1);
+        fm_list_fetch_f(s, 1, force);
     }
-    if (fm_q_sent[0]) { fm_list_clear(&fm_l[L_SEARCH]); fm_list_fetch(L_SEARCH, 1); }
+    if (fm_q_sent[0]) { fm_list_clear(&fm_l[L_SEARCH]); fm_list_fetch_f(L_SEARCH, 1, force); }
 }
+static void fm_refresh_all(void) { fm_refresh_all_f(0); }
+static int fm_lists_busy(void) { for (int s = 0; s < fm_nl; s++) if (fm_l[s].state == 1) return 1; return 0; }
 
 /* ------------------------------------------------------------------ album page state */
 static struct fm_album *fm_alb; static int fm_alb_state, fm_alb_cls, fm_alb_rc;   /* state: 1 loading, 2 ok, 3 error */
@@ -787,7 +1152,7 @@ static int fm_tstate_gen = -1;
 static int fm_alb_from_list = -1, fm_alb_from_ix = -1;
 static void fm_alb_free(void)
 {
-    if (fm_alb) { free(fm_alb->f); free(fm_alb->t); free(fm_alb->it.thumb); free(fm_alb); fm_alb = 0; }
+    if (fm_alb) { fm_album_parts_free(fm_alb); free(fm_alb->it.thumb); free(fm_alb); fm_alb = 0; }
     free(fm_cover); fm_cover = 0; fm_cover_state = 0; free(fm_tstate); fm_tstate = 0; fm_tstate_gen = -1;
 }
 static const char *fm_alb_artist(const struct fm_album *a) { return a->it.artist[0] ? a->it.artist : tr("Varios artistas"); }
@@ -811,7 +1176,11 @@ static int fm_track_cls(const struct fm_album *a, int t, int cls)
     for (int c = 0; c < FC_N; c++) if (a->t[t].f[c] >= 0) return c;
     return -1;
 }
-static void fm_akey(const struct fm_album *a, int cls, char *o, int n) { snprintf(o, n, "%c:%s:%d", a->it.src == FM_SRC_JM ? 'j' : 'a', a->it.id, cls); }
+static void fm_akey(const struct fm_album *a, int cls, char *o, int n)
+{
+    if (a->it.src == FM_SRC_JM || a->it.src == FM_SRC_IA) snprintf(o, n, "%c:%s:%d", a->it.src == FM_SRC_JM ? 'j' : 'a', a->it.id, cls);
+    else snprintf(o, n, "u%08x:%.56s:%d", (unsigned)a->it.sid, a->it.id, cls);
+}
 static void fm_tstate_update(void)
 {
     if (!fm_alb || fm_alb_state != 2) return;
@@ -941,7 +1310,7 @@ static void fm_download_album(void)
     pthread_cond_broadcast(&fm_dcv);
     pthread_mutex_unlock(&fm_dmu);
     fm_dl_start();
-    lg("musica libre: descargar %d pistas (%lld bytes) de %s", n, need, a->it.id);
+    lg("vinyl: descargar %d pistas (%lld bytes) de %s", n, need, a->it.id);
 }
 static void fm_cancel_album(void)
 {
@@ -1049,11 +1418,11 @@ static void fm_thumb(uint16_t *d, const uint16_t *px, int s, int x, int y, int r
     if (px) mu_blit(d, px, s, x, y, r, 255);
     else { fill_rrect(d, x, y, s, s, (float)r, rgb(48, 48, 52), 255); for (int k = 0; k < 2; k++) fill_circle(d, x + s / 2.f, y + s / 2.f, s / (k ? 9.f : 4.f), k ? rgb(48, 48, 52) : rgb(72, 72, 78), 255); }
 }
-/* quality badge; returns its width */
+/* quality badge (kind 0 grey, 1 green lossless, 2 gold hi-res, 3 blue source); returns its width */
 static int fm_badge(uint16_t *d, int x, int y, const char *t, int kind)
 {
-    uint16_t bg = kind == 2 ? rgb(66, 52, 8) : kind == 1 ? rgb(16, 58, 32) : rgb(48, 48, 52);
-    uint16_t fg = kind == 2 ? rgb(255, 204, 0) : kind == 1 ? rgb(48, 209, 88) : rgb(190, 190, 196);
+    uint16_t bg = kind == 3 ? rgb(12, 42, 76) : kind == 2 ? rgb(66, 52, 8) : kind == 1 ? rgb(16, 58, 32) : rgb(48, 48, 52);
+    uint16_t fg = kind == 3 ? rgb(100, 172, 255) : kind == 2 ? rgb(255, 204, 0) : kind == 1 ? rgb(48, 209, 88) : rgb(190, 190, 196);
     int w = tw_n(t, 11, -1) + 10;
     fill_rrect(d, x, y, w, 17, 4, bg, 255);
     draw_text(d, x + 5, y + 13, t, 11, fg, 0, 0, H);
@@ -1068,13 +1437,14 @@ static int fm_item_badges(uint16_t *d, int x, int y, const struct fm_item *it, i
         fm_qlabel(lq, it->sr, it->bits, 0, q, sizeof q);
         x += fm_badge(d, x, y, q, fm_hires(lq, it->sr, it->bits) ? 2 : 1) + 5;
     }
-    if (it->fq & FQ_ANYMP3 && x < maxx - 50) { fm_qlabel(it->mp3k ? FQ_MP3 : FQ_MP3VBR, 0, 0, it->mp3k, q, sizeof q); x += fm_badge(d, x, y, q, 0) + 5; }
+    if (it->fq & FQ_ANYMP3 && x < maxx - 50) { fm_qlabel(it->mp3k || !(it->fq & FQ_MP3VBR) ? FQ_MP3 : FQ_MP3VBR, 0, 0, it->mp3k, q, sizeof q); x += fm_badge(d, x, y, q, 0) + 5; }
     else if ((it->fq & FQ_OGG) && !(it->fq & FQ_LOSSLESS) && x < maxx - 40) x += fm_badge(d, x, y, "OGG", 0) + 5;
     return x;
 }
 
 /* ------------------------------------------------------------------ hits */
-enum { FH_ROW = 1, FH_CHIP, FH_BAR, FH_CLEAR, FH_CANCEL, FH_DLS, FH_SET, FH_BACK, FH_SEG, FH_DLBTN, FH_TRACK, FH_DLITEM, FH_SETROW, FH_PICK, FH_KEYROW, FH_RETRY, FH_CLRDONE };
+enum { FH_ROW = 1, FH_CHIP, FH_BAR, FH_CLEAR, FH_CANCEL, FH_DLS, FH_SET, FH_BACK, FH_SEG, FH_DLBTN, FH_TRACK, FH_DLITEM, FH_SETROW, FH_PICK, FH_KEYROW, FH_RETRY, FH_CLRDONE,
+       FH_SRCROW, FH_SRCSW, FH_SRCADD, FH_SEEALL, FH_LOGIN, FH_SRCS };
 struct fm_hit { short x0, y0, x1, y1; int kind, idx; };
 static struct fm_hit fm_hits[160]; static int fm_nhit, fm_rec;
 static int fm_press_kind, fm_press_idx = -1;
@@ -1092,14 +1462,18 @@ static int fm_hit_at(int x, int y, int *idx)
 static int fm_pressed(int kind, int idx) { return fm_press_kind == kind && fm_press_idx == idx; }
 
 /* ------------------------------------------------------------------ pages */
-enum { FP_ROOT, FP_ALBUM, FP_DL, FP_SET, FP_PICK };
-static int fm_stack[6], fm_sp;                 /* fm_stack[fm_sp] = current page */
-static float fm_pos[5], fm_vel; static int fm_ch[5];
+enum { FP_ROOT, FP_ALBUM, FP_DL, FP_SET, FP_PICK, FP_SRCS, FP_N };
+static int fm_stack[8], fm_sp;                 /* fm_stack[fm_sp] = current page */
+static float fm_pos[FP_N], fm_vel; static int fm_ch[FP_N];
+static int fm_ptr_pg = -1;                     /* pull to refresh: page that keeps the gap with the indicator */
+static double fm_ptr_end;
+#define FM_PTR_ARM 64                          /* pulling more than this (visible px) starts the refresh */
+#define FM_PTR_GAP 52                          /* gap left under the header while it refreshes */
 static int fm_top_of(int pg);
 static int fm_editing; static float fm_edit_e;   /* search bar active (0..1 animation) */
 static float fm_chip_x; static int fm_chips_w;
 /* pick page */
-static const char *fm_pick_title; static const char *fm_pick_opt[24]; static int fm_pick_n, fm_pick_cur, fm_pick_what;
+static const char *fm_pick_title; static const char *fm_pick_opt[24]; static int fm_pick_n, fm_pick_cur, fm_pick_what, fm_pick_map[24];
 enum { PK_SRC, PK_COLL, PK_GENRE, PK_LANG, PK_SORT, PK_CACHE };
 static int fm_test_state;            /* key test: 0 -, 1 testing, 2 ok, 3 invalid, 4 no connection */
 static long long fm_cache_used; static int fm_cache_files;
@@ -1123,9 +1497,12 @@ static void fm_navbar(uint16_t *d, const char *back, const char *title, float sc
     }
     if (scrolled > 0.01f) fm_hline(d, 0, W, 73, FMC_SEP);
 }
-static const char *fm_src_name(int s) { return s == FM_SRC_JM ? "Jamendo" : "Internet Archive"; }
+static const char *fm_sel_name(void) { return fm_sel < 0 || fm_sel >= fm_nsrc ? tr("Todas las fuentes") : fm_srcs[fm_sel].name; }
 static const char *fm_coll_name(int c) { static const char *const n[FCOL_N] = { "Todas las colecciones", "Conciertos en directo", "Netlabels", "Comunidad" }; return tr(n[c]); }
 static const char *fm_sort_name(int s) { return tr(s == FSORT_NEW ? "Recientes" : s == FSORT_REL ? "Relevancia" : "Populares"); }
+/* the built-in Internet Archive is shown (its collection chip applies) */
+static int fm_ia_shown(void) { for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].type == FST_IA && fm_src_shown(i)) return 1; return 0; }
+static int fm_n_shown(void) { int n = 0; for (int i = 0; i < fm_nsrc; i++) if (fm_src_shown(i)) n++; return n; }
 
 /* ---- root: title, search bar, chips, results / featured */
 #define FM_BAR_Y0 82
@@ -1137,9 +1514,9 @@ struct fm_chip { char t[64]; int on, drop, what; };
 static int fm_chip_list(struct fm_chip *c)
 {
     int n = 0;
-    snprintf(c[n].t, sizeof c[n].t, "%s", fm_src_name(fm_src)); c[n].on = 0; c[n].drop = 1; c[n++].what = PK_SRC;
+    snprintf(c[n].t, sizeof c[n].t, "%s", fm_sel_name()); c[n].on = fm_sel >= 0; c[n].drop = 1; c[n++].what = PK_SRC;
     snprintf(c[n].t, sizeof c[n].t, "%s", tr("Sin pérdida")); c[n].on = fm_lossless; c[n].drop = 0; c[n++].what = -1;
-    if (fm_src == FM_SRC_IA) { snprintf(c[n].t, sizeof c[n].t, "%s", fm_coll ? fm_coll_name(fm_coll) : tr("Colección")); c[n].on = fm_coll != 0; c[n].drop = 1; c[n++].what = PK_COLL; }
+    if (fm_ia_shown()) { snprintf(c[n].t, sizeof c[n].t, "%s", fm_coll ? fm_coll_name(fm_coll) : tr("Colección")); c[n].on = fm_coll != 0; c[n].drop = 1; c[n++].what = PK_COLL; }
     snprintf(c[n].t, sizeof c[n].t, "%s", fm_genre >= 0 ? tr(FM_GENRES[fm_genre].key) : tr("Género")); c[n].on = fm_genre >= 0; c[n].drop = 1; c[n++].what = PK_GENRE;
     snprintf(c[n].t, sizeof c[n].t, "%s", fm_lang >= 0 ? FM_LANGS[fm_lang].name : tr("Idioma")); c[n].on = fm_lang >= 0; c[n].drop = 1; c[n++].what = PK_LANG;
     snprintf(c[n].t, sizeof c[n].t, "%s", fm_sort_name(fm_sort)); c[n].on = 0; c[n].drop = 1; c[n++].what = PK_SORT;
@@ -1162,7 +1539,8 @@ static void fm_draw_chips(uint16_t *d, int y)
     fm_chips_w = x + (int)fm_chip_x - 8 + 16;
 }
 static void fm_spinner_at(uint16_t *d, int cx, int cy) { spn_draw(d, cx, cy, spn_phase(now_ms()), 8, 0, H); }
-static void fm_row(uint16_t *d, int y, const struct fm_item *it, int last, int hit_idx)
+/* a result row; badge: show the source of the item (merged results) */
+static void fm_row(uint16_t *d, int y, const struct fm_item *it, int last, int hit_idx, int badge)
 {
     if (y > H || y + FM_RH < 0) return;
     if (fm_pressed(FH_ROW, hit_idx)) for (int yy = y; yy < y + FM_RH && yy < H; yy++) if (yy >= 0) fm_hline(d, 0, W, yy, rgb(38, 38, 42));
@@ -1173,85 +1551,147 @@ static void fm_row(uint16_t *d, int y, const struct fm_item *it, int last, int h
     snprintf(sub, sizeof sub, "%s%s%s%s%s", it->artist, it->artist[0] && it->year[0] ? " · " : "", it->year, dur[0] && (it->artist[0] || it->year[0]) ? " · " : "", dur);
     draw_text(d, 84, y + 44, sub, 13, FMC_GREY, W - 84 - 14, 0, H);
     int x = fm_item_badges(d, 84, y + 51, it, W - 14);
+    if (badge) { char b[48]; fm_src_short(it->sid, b, sizeof b); if (b[0] && x + tw_n(b, 11, -1) + 10 < W - 14) x += fm_badge(d, x, y + 51, b, 3) + 5; }
     if (it->dsize > 0 && x < W - 56) { char sz[24]; fmt_bytes(it->dsize, sz, sizeof sz); draw_text(d, x + 2, y + 64, sz, 12, rgb(110, 110, 116), W - 14 - x, 0, H); }
     if (!last) fm_hline(d, 84, W, y + FM_RH - 1, FMC_SEP);
     fm_hit(0, y, W, y + FM_RH, FH_ROW, hit_idx);
+}
+/* the request that reads an album (fm_open_album) or probes its quality (rows on screen) */
+static int fm_item_req(const struct fm_item *it, struct fm_job *j)
+{
+    j->src = it->src; j->sid = it->sid; fm_cpy(j->id, sizeof j->id, it->id);
+    if (it->src == FM_SRC_JM) { fm_jm_album_url(j->url, sizeof j->url, fm_key, it->id); return 0; }
+    if (it->src == FM_SRC_IA) return 0;
+    if (it->src == FM_SRC_RSS && it->probe[0]) { fm_cpy(j->url, sizeof j->url, it->probe); return 0; }
+    int si = fm_src_ix(it->sid); if (si < 0) return -1;            /* the source was removed */
+    const struct fm_source *s = &fm_srcs[si];
+    fm_src_base(s, j->base, sizeof j->base); fm_src_auth(s, j->auth, sizeof j->auth);
+    if (it->src == FM_SRC_SUB) { char ie[200], p[220]; fm_urlenc(it->id, ie, sizeof ie); snprintf(p, sizeof p, "id=%s", ie); fm_sub_url(j->url, sizeof j->url, j->base, j->auth, "getAlbum", p); }
+    else fm_cpy(j->url, sizeof j->url, s->url);
+    return 0;
 }
 /* thumbnails / probes for the rows on screen (queued once) */
 static void fm_want(struct fm_item *it)
 {
     if (!it->thumb_state && it->img[0]) {
         struct fm_job *j = fm_job_new(NJ_THUMB);
-        if (j) { it->thumb_state = 1; fm_cpy(j->url, sizeof j->url, it->img); fm_cpy(j->id, sizeof j->id, it->id); j->src = it->src; fm_submit(j, 1); }
+        if (j) { it->thumb_state = 1; fm_cpy(j->url, sizeof j->url, it->img); fm_cpy(j->id, sizeof j->id, it->id); j->src = it->src; j->sid = it->sid; fm_submit(j, 1); }
     }
-    if (!it->qstate && (it->src == FM_SRC_IA ? !it->ntr : ((it->fq & FQ_FLAC) && !it->sr && it->probe[0]))) {
+    int need = it->src == FM_SRC_IA ? !it->ntr : it->src == FM_SRC_JM ? ((it->fq & FQ_FLAC) && !it->sr && it->probe[0]) : it->src == FM_SRC_SUB || it->src == FM_SRC_RSS;
+    if (!it->qstate && need) {
         struct fm_job *j = fm_job_new(NJ_PROBE);
-        if (j) { it->qstate = 1; fm_cpy(j->id, sizeof j->id, it->id); fm_cpy(j->url, sizeof j->url, it->probe); j->src = it->src; fm_submit(j, 1); }
+        if (j) {
+            it->qstate = 1;
+            if (fm_item_req(it, j)) { free(j); it->qstate = 3; return; }
+            if (it->src == FM_SRC_JM) fm_cpy(j->url, sizeof j->url, it->probe);
+            fm_submit(j, 1);
+        }
     }
+}
+static const char *fm_err_text(int rc)
+{
+    return rc == -5 ? tr("La clave de Jamendo no es válida") : rc == -40 ? tr("Usuario o contraseña incorrectos") : rc == -3 ? tr("No es una fuente de música") : rc == -404 || rc == -2 ? tr("No encontrada") : tr("Sin conexión");
 }
 static int fm_status_line(uint16_t *d, int y, const struct fm_list *l)
 {
     const char *m = 0;
-    if (l->state == 3) m = l->rc == -5 ? tr("La clave de Jamendo no es válida") : tr("Sin conexión");
+    if (l->state == 3) m = fm_err_text(l->rc);
     else if (l->state == 2 && !l->n) m = tr("Sin resultados");
     if (l->state == 1 && !l->n) { fm_spinner_at(d, W / 2, y + 40); return 90; }
     if (!m) return 0;
-    int w = tw_n(m, 15, -1); draw_text(d, (W - w) / 2, y + 40, m, 15, FMC_GREY, W - 32, 0, H);
+    int w = tw_n(m, 15, -1); if (w > W - 32) w = W - 32;
+    draw_text(d, (W - w) / 2, y + 40, m, 15, FMC_GREY, W - 32, 0, H);
     if (l->state == 3) {
-        int key = l->rc == -5;                             /* bad Jamendo key: the button opens the settings */
+        int key = l->rc == -5 || l->rc == -40;            /* bad Jamendo key / Subsonic login: the button opens the settings */
         const char *r = key ? tr("Ajustes") : tr("Reintentar"); int rw = tw_n(r, 15, -1);
-        draw_text(d, (W - rw) / 2, y + 70, r, 15, fm_pressed(key ? FH_KEYROW : FH_RETRY, 0) ? rgb(5, 66, 128) : FMC_BLUE, 0, 0, H);
-        fm_hit((W - rw) / 2 - 20, y + 50, (W + rw) / 2 + 20, y + 82, key ? FH_KEYROW : FH_RETRY, 0);
+        draw_text(d, (W - rw) / 2, y + 70, r, 15, fm_pressed(key ? (l->rc == -5 ? FH_KEYROW : FH_SRCS) : FH_RETRY, 0) ? rgb(5, 66, 128) : FMC_BLUE, 0, 0, H);
+        fm_hit((W - rw) / 2 - 20, y + 50, (W + rw) / 2 + 20, y + 82, key ? (l->rc == -5 ? FH_KEYROW : FH_SRCS) : FH_RETRY, 0);
         return 96;
     }
     return 70;
+}
+/* a card with one line of text, a grey second line and a chevron (leads somewhere) */
+static int fm_card_row(uint16_t *d, int y, const char *t1, const char *t2, int kind)
+{
+    fill_rrect(d, 16, y, W - 32, 64, 12, fm_pressed(kind, 0) ? rgb(44, 44, 48) : FMC_CARD, 255);
+    draw_text(d, 32, y + 27, t1, 15, 0xFFFF, W - 80, 0, H);
+    draw_text(d, 32, y + 47, t2, 13, FMC_GREY, W - 80, 0, H);
+    fm_line(d, W - 38, y + 26, W - 32, y + 32, 2, FMC_GREY); fm_line(d, W - 32, y + 32, W - 38, y + 38, 2, FMC_GREY);
+    fm_hit(16, y, W - 16, y + 64, kind, 0);
+    return 90;
+}
+/* pull to refresh: the indicator in the gap above the content (spokes one by one; spins while it refreshes) */
+static void fm_draw_ptr(uint16_t *d, int pg, int top)
+{
+    float pos = fm_pos[pg];
+    if (pos >= -2) return;
+    int gap = (int)-pos, cy = top + (gap < FM_PTR_GAP ? gap : FM_PTR_GAP) / 2 + (gap > FM_PTR_GAP ? (gap - FM_PTR_GAP) / 3 : 0);
+    int spin = fm_ptr_pg == pg || now_ms() - fm_ptr_end < 400;
+    int n = (int)(gap * 8.0f / FM_PTR_ARM); if (n > 8) n = 8;
+    spn_fade = gap >= 34 ? 256 : gap * 256 / 34;
+    spn_draw(d, W / 2, cy, spin ? spn_phase(now_ms()) : -1, n, top, top + gap);
+    spn_fade = 256;
 }
 static void fm_render_root(uint16_t *d)
 {
     int top = fm_list_y(), y = top - (int)fm_pos[FP_ROOT], y0 = y;
     for (int i = 30 * W; i < W * H; i++) d[i] = 0;
     double t = now_ms();
-    if (fm_src == FM_SRC_JM && !fm_jm_ready()) {
+    fm_draw_ptr(d, FP_ROOT, top);
+    const struct fm_source *one = fm_sel >= 0 && fm_sel < fm_nsrc ? &fm_srcs[fm_sel] : 0;
+    if (one && one->type == FST_JM && !fm_jm_ready()) {
         /* no key: a single row that leads to the settings */
-        int cy = y + 8;
-        fill_rrect(d, 16, cy, W - 32, 64, 12, fm_pressed(FH_KEYROW, 0) ? rgb(44, 44, 48) : FMC_CARD, 255);
-        draw_text(d, 32, cy + 27, tr("Añade tu clave gratuita de Jamendo"), 15, 0xFFFF, W - 80, 0, H);
-        draw_text(d, 32, cy + 47, "devportal.jamendo.com", 13, FMC_GREY, W - 80, 0, H);
-        fm_line(d, W - 38, cy + 26, W - 32, cy + 32, 2, FMC_GREY); fm_line(d, W - 32, cy + 32, W - 38, cy + 38, 2, FMC_GREY);
-        fm_hit(16, cy, W - 16, cy + 64, FH_KEYROW, 0);
-        y += 90;
+        y += fm_card_row(d, y + 8, tr("Añade tu clave gratuita de Jamendo"), "devportal.jamendo.com", FH_KEYROW);
+    } else if (one && one->type == FST_SUB && !(one->user[0] && one->pw[0])) {
+        char t1[120]; snprintf(t1, sizeof t1, tr("Inicia sesión en %s"), one->name);
+        char host[100]; fm_url_host(one->url, host, sizeof host);
+        y += fm_card_row(d, y + 8, t1, host, FH_LOGIN);
+    } else if (one && !one->on) {
+        y += fm_card_row(d, y + 8, tr("Fuente desactivada"), one->name, FH_SRCS);
+    } else if (!fm_n_shown()) {
+        y += fm_card_row(d, y + 8, tr("No hay fuentes activadas"), tr("Fuentes"), FH_SRCS);
     } else if (fm_q_sent[0]) {
         struct fm_list *l = &fm_l[L_SEARCH];
+        int multi = l->nss > 1;
         if (l->n) {
-            char c[64]; long nf = l->found > 0 ? l->found : (long)l->n;
-            if (l->found > l->n || fm_src == FM_SRC_IA) { if (nf == 1) snprintf(c, sizeof c, "%s", tr("1 resultado")); else snprintf(c, sizeof c, tr("%ld resultados"), nf); } else c[0] = 0;
-            if (c[0]) draw_text(d, 16, y + 18, c, 12, FMC_GREY, 0, 0, H);
-            y += 28;
+            char c[64]; c[0] = 0;
+            if (l->exact && l->state == 2) { long nf = l->found > 0 ? l->found : (long)l->n; if (nf == 1) snprintf(c, sizeof c, "%s", tr("1 resultado")); else snprintf(c, sizeof c, tr("%ld resultados"), nf); }
+            if (c[0]) { draw_text(d, 16, y + 18, c, 12, FMC_GREY, 0, 0, H); y += 28; } else y += 6;
         }
         for (int i = 0; i < l->n; i++, y += FM_RH) {
             if (y + FM_RH > top - 40 && y < H + 40) fm_want(&l->it[i]);
-            fm_row(d, y, &l->it[i], i == l->n - 1, (L_SEARCH << 16) | i);
+            fm_row(d, y, &l->it[i], i == l->n - 1, (L_SEARCH << 16) | i, multi);
         }
         y += fm_status_line(d, y, l);
         if (l->state == 1 && l->n) { fm_spinner_at(d, W / 2, y + 22); y += 44; }
     } else {
-        static const char *const sec_ia[3] = { "Conciertos populares (sin pérdida)", "Favoritos de los netlabels", "Añadidos recientemente" };
-        static const char *const sec_jm[3] = { "Destacados de la semana", "Populares en Jamendo", "" };
-        for (int s = L_F1; s < L_N; s++) {
+        for (int s = 1; s < fm_nl; s++) {
             struct fm_list *l = &fm_l[s];
-            const char *h = fm_src == FM_SRC_JM ? sec_jm[s - L_F1] : sec_ia[s - L_F1];
-            if (!h[0]) continue;
-            if (s > L_F1 && fm_l[L_F1].state == 3 && fm_l[L_F1].rc == -5) continue;     /* bad key: said once */
-            y += fm_wrap(d, 16, y + 26, W - 32, tr(h), 20, 0xFFFF, 25, 2) + 13;
+            int si = fm_src_ix(l->sid);
+            const char *h = l->hkey ? tr(l->hkey) : si >= 0 ? fm_srcs[si].name : "";
+            /* a bad Jamendo key is said once */
+            int said = 0; for (int p = 1; p < s; p++) if (fm_l[p].sid == l->sid && fm_l[p].state == 3 && fm_l[p].rc == -5) said = 1;
+            if (said) continue;
+            if (l->kind == LK_SHELF) {
+                /* a shelf of a user source: its name and "See All" (shows only that source) */
+                const char *va = tr("Ver todo"); int vw = tw_n(va, 15, -1);
+                y += fm_wrap(d, 16, y + 26, W - 48 - vw, h, 20, 0xFFFF, 25, 1) + 13;
+                draw_text(d, W - 16 - vw, y - 13, va, 15, fm_pressed(FH_SEEALL, s) ? rgb(5, 66, 128) : FMC_BLUE, 0, 0, H);
+                fm_hit(W - 32 - vw, y - 38, W, y, FH_SEEALL, s);
+            } else y += fm_wrap(d, 16, y + 26, W - 32, h, 20, 0xFFFF, 25, 2) + 13;
             for (int i = 0; i < l->n; i++, y += FM_RH) {
                 if (y + FM_RH > top - 40 && y < H + 40) fm_want(&l->it[i]);
-                fm_row(d, y, &l->it[i], i == l->n - 1, (s << 16) | i);
+                fm_row(d, y, &l->it[i], i == l->n - 1, (s << 16) | i, 0);
             }
             y += fm_status_line(d, y, l) + 12;
+            if (l->state == 1 && l->n && l->page > 1) { fm_spinner_at(d, W / 2, y + 10); y += 36; }
         }
         y += 8;
-        const char *note = fm_src == FM_SRC_JM ? tr("FM_NOTE_JM") : tr("FM_NOTE_IA");
-        y += draw_wrapped(d, 16, y, W - 32, note, 12, rgb(110, 110, 116), 16, 1) + 24;
+        int ia = 0, jm = 0, us = 0;
+        for (int i = 0; i < fm_nsrc; i++) if (fm_src_shown(i)) { if (fm_srcs[i].type == FST_IA || fm_srcs[i].type == FST_COLL) ia = 1; else if (fm_srcs[i].type == FST_JM) jm = 1; else us = 1; }
+        const char *notes[3] = { ia ? tr("FM_NOTE_IA") : 0, jm ? tr("FM_NOTE_JM") : 0, us ? tr("FM_NOTE_SRC") : 0 };
+        for (int k = 0; k < 3; k++) if (notes[k]) y += draw_wrapped(d, 16, y, W - 32, notes[k], 12, rgb(110, 110, 116), 16, 1) + 12;
+        y += 12;
     }
     fm_ch[FP_ROOT] = y - y0 + 30;
     /* header (over the list) */
@@ -1261,14 +1701,13 @@ static void fm_render_root(uint16_t *d)
     if (e < 0.99f) {
         int ty = 72 - (int)(40 * e);
         uint16_t tc = mix565(0xFFFF, 0, (unsigned)(255 * (1 - e)));
-        draw_text(d, 16, ty, tr("Música libre"), 28, tc, W - 110, 30, H);
+        draw_text(d, 16, ty, FM_BRAND, 28, tc, W - 110, 30, H);
         /* downloads (with a ring while something downloads) and the settings */
-        int dn = 0, tot = 0; double fr = 0; (void)fr;
+        int tot = 0;
         pthread_mutex_lock(&fm_dmu);
         long long g = 0, tt = 0;
         for (int i = 0; i < fm_nq; i++) if (fm_q[i].kind != DK_CACHE && (fm_q[i].state == DS_QUEUED || fm_q[i].state == DS_RUN)) { tot++; g += fm_q[i].got; tt += fm_q[i].size > 0 ? fm_q[i].size : fm_q[i].total; }
         pthread_mutex_unlock(&fm_dmu);
-        (void)dn;
         uint16_t ic = fm_pressed(FH_DLS, 0) ? rgb(5, 66, 128) : FMC_BLUE;
         if (tot) { fm_ringd(d, W - 66, ty - 10, 13, 2.4f, tt > 0 ? (float)g / tt : 0, FMC_BLUE, rgb(58, 58, 62), -1); fm_line(d, W - 66, ty - 15, W - 66, ty - 5, 2, ic); fm_line(d, W - 70, ty - 9, W - 66, ty - 5, 2, ic); fm_line(d, W - 62, ty - 9, W - 66, ty - 5, 2, ic); }
         else fm_glyph_dl(d, W - 66, ty - 10, ic);
@@ -1305,7 +1744,7 @@ static void fm_render_album(uint16_t *d)
     struct fm_album *a = fm_alb;
     for (int i = 30 * W; i < W * H; i++) d[i] = 0;
     int top = 74, y = top + 10 - (int)fm_pos[FP_ALBUM], y0 = y;
-    if (!a) { fm_navbar(d, tr("Música libre"), "", 0); return; }
+    if (!a) { fm_navbar(d, FM_BRAND, "", 0); return; }
     /* cover + title */
     if (fm_cover) mu_blit(d, fm_cover, FM_BIG, 16, y, 10, 255);
     else if (a->it.thumb) { static uint16_t up[FM_BIG * FM_BIG]; static const uint16_t *upfor; if (upfor != a->it.thumb) { fm_upscale565(a->it.thumb, FM_TH, up, FM_BIG); upfor = a->it.thumb; } mu_blit(d, up, FM_BIG, 16, y, 10, 255); }
@@ -1316,7 +1755,9 @@ static void fm_render_album(uint16_t *d)
     ty += 2; draw_text(d, tx, ty + 2, fm_alb_artist(a), 14, FMC_BLUE, tw, 0, H); ty += 20;
     char yv[160]; snprintf(yv, sizeof yv, "%s%s%s", a->it.year, a->it.year[0] && a->venue[0] ? " · " : "", a->venue);
     if (yv[0]) { ty += fm_wrap(d, tx, ty, tw, yv, 12, FMC_GREY, 16, 2); }
-    char src[64]; snprintf(src, sizeof src, "%s", a->it.src == FM_SRC_JM ? "Jamendo" : a->it.etree ? "Live Music Archive" : "Internet Archive");
+    char src[64]; int asi = fm_src_ix(a->it.sid);
+    if (a->it.etree) snprintf(src, sizeof src, "Live Music Archive");
+    else snprintf(src, sizeof src, "%s", asi >= 0 ? fm_srcs[asi].name : a->it.src == FM_SRC_JM ? "Jamendo" : a->it.src == FM_SRC_IA ? "Internet Archive" : "");
     draw_text(d, tx, ty + 2, src, 12, rgb(110, 110, 116), tw, 0, H);
     y += FM_BIG + 18;
     if (fm_alb_state == 1) { fm_spinner_at(d, W / 2, y + 40); y += 90; }
@@ -1348,7 +1789,7 @@ static void fm_render_album(uint16_t *d)
             }
             y += 46;
             char info[120], sz[24]; fmt_bytes(a->csize[fm_alb_cls], sz, sizeof sz);
-            snprintf(info, sizeof info, tr("%d pistas · %s%s"), a->ccount[fm_alb_cls], a->it.est ? "≈" : "", sz);
+            snprintf(info, sizeof info, tr("%d pistas · %s%s"), a->ccount[fm_alb_cls], a->it.est || a->cest[fm_alb_cls] ? "≈" : "", sz);
             if (a->ccount[fm_alb_cls] < a->nt) { char m[60]; snprintf(m, sizeof m, tr(" (%d de %d)"), a->ccount[fm_alb_cls], a->nt); strncat(info, m, sizeof info - strlen(info) - 1); }
             draw_text(d, 16, y + 4, info, 13, FMC_GREY, W - 32, 0, H);
             y += 18;
@@ -1400,7 +1841,7 @@ static void fm_render_album(uint16_t *d)
                 if ((f->fq & FQ_MP3VBR) && f->kbps > 0) snprintf(q, sizeof q, "MP3 VBR %dk", f->kbps);
                 if (f->size > 0) { fmt_bytes(f->size, sz, sizeof sz); }
             }
-            snprintf(sub, sizeof sub, "%s%s%s%s%s%s", ln, ln[0] && q[0] ? " · " : "", q, sz[0] ? " · " : "", a->it.est && sz[0] ? "≈" : "", sz);
+            snprintf(sub, sizeof sub, "%s%s%s%s%s%s", ln, ln[0] && q[0] ? " · " : "", q, sz[0] ? " · " : "", (a->it.est || (c >= 0 && a->f[T->f[c]].est)) && sz[0] ? "≈" : "", sz);
             draw_text(d, 48, y + 42, sub, 12, FMC_GREY, W - 48 - 50, 0, H);
             /* state on the right */
             int cx = W - 28, cy = y + FM_TRH / 2;
@@ -1421,9 +1862,11 @@ static void fm_render_album(uint16_t *d)
         fill_rrect(d, 16, y, W - 32, 10, 0, 0, 0);
         const char *lic = lab[0] ? lab : a->it.etree ? tr("Live Music Archive: copia libre sin fines comerciales") : tr("Licencia no indicada: consulta la página del elemento");
         y += fm_wrap(d, 16, y + 18, W - 32, lic, 15, 0xFFFF, 20, 3) + 4;
-        if (a->it.lic[0]) y += fm_wrap(d, 16, y + 14, W - 32, a->it.lic, 12, FMC_GREY, 16, 2);
+        if (a->it.lic[0] && strcmp(lab, a->it.lic)) y += fm_wrap(d, 16, y + 14, W - 32, a->it.lic, 12, FMC_GREY, 16, 2);
         char page[200];
-        if (a->it.src == FM_SRC_JM) snprintf(page, sizeof page, "jamendo.com/album/%s", a->it.id); else snprintf(page, sizeof page, "archive.org/details/%s", a->it.id);
+        if (a->it.src == FM_SRC_JM) snprintf(page, sizeof page, "jamendo.com/album/%s", a->it.id);
+        else if (a->it.src == FM_SRC_IA) snprintf(page, sizeof page, "archive.org/details/%s", a->it.id);
+        else { const char *pp = a->page; if (!strncmp(pp, "https://", 8)) pp += 8; else if (!strncmp(pp, "http://", 7)) pp += 7; snprintf(page, sizeof page, "%s", pp); }
         y += fm_wrap(d, 16, y + 16, W - 32, page, 12, FMC_BLUE, 16, 2) + 8;
         if (a->desc[0]) { y += 14; y += fm_wrap(d, 16, y + 14, W - 32, a->desc, 13, rgb(174, 174, 178), 18, 14); }
         y += 40;
@@ -1431,7 +1874,7 @@ static void fm_render_album(uint16_t *d)
     fm_ch[FP_ALBUM] = y - y0 + 10;
     float sc = fm_pos[FP_ALBUM] / 60.f;
     fm_chrome_status(d);
-    fm_navbar(d, tr("Música libre"), a->it.title, sc);
+    fm_navbar(d, FM_BRAND, a->it.title, sc);
     draw_toast(d);
 }
 
@@ -1479,7 +1922,7 @@ static void fm_render_dl(uint16_t *d)
     y += draw_wrapped(d, 16, y, W - 32, tr("FM_LIBRARY_NOTE"), 12, rgb(110, 110, 116), 16, 1) + 30;
     fm_ch[FP_DL] = y - y0;
     fm_chrome_status(d);
-    fm_navbar(d, tr("Música libre"), tr("Descargas"), fm_pos[FP_DL] / 40.f);
+    fm_navbar(d, FM_BRAND, tr("Descargas"), fm_pos[FP_DL] / 40.f);
     draw_toast(d);
 }
 
@@ -1509,6 +1952,10 @@ static void fm_render_set(uint16_t *d)
     int y = 74 - (int)fm_pos[FP_SET], y0 = y;
     draw_text(d, 16, y + 34, tr("Ajustes"), 28, 0xFFFF, W - 32, 0, H); y += 48;
     struct fm_srow r[3]; memset(r, 0, sizeof r);
+    int non = 0; for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].on) non++;
+    r[0].label = tr("Fuentes"); r[0].kind = 1; snprintf(r[0].value, sizeof r[0].value, tr("%d activas"), non);
+    y = fm_set_section(d, y, tr("FUENTES"), r, 1, 30, 0);
+    memset(r, 0, sizeof r);
     r[0].label = tr("Clave (client_id)"); r[0].kind = 1;
     if (fm_key[0]) { int n = (int)strlen(fm_key); snprintf(r[0].value, sizeof r[0].value, "%.4s…%s", fm_key, n > 8 ? fm_key + n - 3 : ""); } else snprintf(r[0].value, sizeof r[0].value, "%s", tr("Sin configurar"));
     r[1].label = tr("Probar la clave"); r[1].kind = 3;
@@ -1516,8 +1963,9 @@ static void fm_render_set(uint16_t *d)
     if (fm_test_state) { snprintf(r[1].value, sizeof r[1].value, "%s", tr(ts[fm_test_state])); r[1].vcol = fm_test_state == 2 ? rgb(48, 209, 88) : fm_test_state == 3 ? rgb(255, 105, 97) : 0; }
     int nr = fm_key[0] ? 2 : 1;
     if (fm_key[0]) { r[2].label = tr("Borrar la clave"); r[2].kind = 2; nr = 3; }
+    int jy = y + 24 + 44 + 22;                                  /* centre of the "Test key" row */
     y = fm_set_section(d, y, "JAMENDO", r, nr, 0, tr("FM_JM_HELP"));
-    if (fm_test_state == 1) fm_spinner_at(d, W - 50, y0 + 48 + 24 + 44 + 22 - 0);
+    if (fm_test_state == 1) fm_spinner_at(d, W - 50, jy);
     memset(r, 0, sizeof r);
     r[0].label = tr("Límite de la caché"); r[0].kind = 1; snprintf(r[0].value, sizeof r[0].value, "%d MB", fm_cache_mb);
     r[1].label = tr("Vaciar la caché"); r[1].kind = 2; { char sz[24]; fmt_bytes(fm_cache_used, sz, sizeof sz); snprintf(r[1].value, sizeof r[1].value, "%s", sz); }
@@ -1528,7 +1976,100 @@ static void fm_render_set(uint16_t *d)
     y += draw_wrapped(d, 32, y, W - 64, tr("FM_ABOUT"), 12, rgb(110, 110, 116), 16, 1) + 30;
     fm_ch[FP_SET] = y - y0;
     fm_chrome_status(d);
-    fm_navbar(d, tr("Música libre"), tr("Ajustes"), fm_pos[FP_SET] / 40.f);
+    fm_navbar(d, FM_BRAND, tr("Ajustes"), fm_pos[FP_SET] / 40.f);
+    draw_toast(d);
+}
+/* ---- sources page (Settings > Sources): the list with switches, add, pull to refresh */
+static const char *fm_type_name(int t)
+{
+    switch (t) {
+    case FST_IA: case FST_JM: return tr("Integrada");
+    case FST_COLL: return tr("Colección de archive.org");
+    case FST_CAT: return tr("Catálogo Vinyl");
+    case FST_RSS: return tr("Podcast / RSS");
+    case FST_OPML: return tr("Lista OPML");
+    case FST_SUB: return "Subsonic";
+    default: return tr("Comprobando…");
+    }
+}
+/* "hace 5 min" */
+static void fm_ago(long long t, char *o, int n)
+{
+    long long d = (long long)time(0) - t; if (d < 0) d = 0;
+    if (d < 60) snprintf(o, n, "%s", tr("ahora"));
+    else if (d < 3600) snprintf(o, n, tr("hace %d min"), (int)(d / 60));
+    else if (d < 86400) snprintf(o, n, tr("hace %d h"), (int)(d / 3600));
+    else snprintf(o, n, tr("hace %d d"), (int)(d / 86400));
+}
+/* the second line of a source row: what it is, how many entries, last refresh (or the problem) */
+static void fm_src_status(const struct fm_source *s, char *o, int n, int *warn)
+{
+    *warn = 0;
+    if (s->busy) { snprintf(o, n, "%s", tr("Comprobando…")); return; }
+    if (s->type == FST_IA) { snprintf(o, n, "%s · archive.org", tr("Integrada")); return; }
+    if (s->type == FST_JM) { snprintf(o, n, "%s · %s", tr("Integrada"), fm_key[0] ? "devportal.jamendo.com" : tr("Sin clave")); *warn = !fm_key[0]; return; }
+    if (s->type == FST_SUB && !(s->user[0] && s->pw[0])) { snprintf(o, n, "Subsonic · %s", tr("Iniciar sesión…")); *warn = 1; return; }
+    if (s->err) { snprintf(o, n, "%s · %s", fm_type_name(s->type), fm_err_text(s->err == -4 ? -4 : s->err)); if (s->err == -4) snprintf(o, n, "%s", tr("No es una colección")); *warn = 1; return; }
+    if (!s->refreshed) { snprintf(o, n, "%s", fm_type_name(s->type)); return; }
+    int one = s->nitems == 1;
+    const char *unit = s->type == FST_COLL ? (one ? "1 elemento" : "%d elementos") : s->type == FST_RSS ? (one ? "1 episodio" : "%d episodios") : s->type == FST_OPML ? (one ? "1 canal" : "%d canales") : s->type == FST_SUB ? (one ? "1 canción" : "%d canciones") : (one ? "1 álbum" : "%d álbumes");
+    char cnt[48], ago[40]; if (one) snprintf(cnt, sizeof cnt, "%s", tr(unit)); else snprintf(cnt, sizeof cnt, tr(unit), s->nitems); fm_ago(s->refreshed, ago, sizeof ago);
+    snprintf(o, n, "%s · %s", cnt, ago);                      /* the kind is in the icon */
+}
+/* rounded square with the kind of the source */
+static void fm_src_icon(uint16_t *d, int x, int y, const struct fm_source *s)
+{
+    uint16_t bg; const char *t;
+    switch (s->type) {
+    case FST_IA: case FST_COLL: bg = rgb(72, 72, 78); t = "IA"; break;
+    case FST_JM: bg = rgb(232, 52, 110); t = "J"; break;
+    case FST_CAT: bg = rgb(124, 77, 255); t = "V"; break;
+    case FST_RSS: case FST_OPML: bg = rgb(255, 149, 0); t = 0; break;
+    case FST_SUB: bg = rgb(0, 150, 136); t = "S"; break;
+    default: bg = rgb(58, 58, 62); t = "?"; break;
+    }
+    fill_rrect(d, x, y, 32, 32, 8, bg, s->on ? 255 : 130);
+    if (t) { int w = tw_n(t, 15, -1); draw_text(d, x + (32 - w) / 2, y + 22, t, 15, 0xFFFF, 0, 0, H); }
+    else {   /* feed arcs */
+        fill_circle(d, x + 10.5f, y + 21.5f, 2.6f, 0xFFFF, 255);
+        for (int k = 1; k <= 2; k++) {
+            float R = 7.f * k;
+            for (int a = 0; a <= 24; a++) { float an = (float)M_PI * 1.5f + a * (float)M_PI / 48.f; fill_circle(d, x + 9 + cosf(an) * R + 1.5f, y + 23 + sinf(an) * R - 1.5f, 1.3f, 0xFFFF, 255); }
+        }
+    }
+}
+#define FM_SRH 60
+static void fm_render_srcs(uint16_t *d)
+{
+    for (int i = 30 * W; i < W * H; i++) d[i] = 0;
+    int top = 74, y = top - (int)fm_pos[FP_SRCS], y0 = y;
+    fm_draw_ptr(d, FP_SRCS, top);
+    draw_text(d, 16, y + 34, tr("Fuentes"), 28, 0xFFFF, W - 32, 0, H); y += 52;
+    fill_rrect(d, 16, y, W - 32, fm_nsrc * FM_SRH + 44, 10, FMC_CARD, 255);
+    for (int i = 0; i < fm_nsrc; i++) {
+        const struct fm_source *s = &fm_srcs[i];
+        int ry = y + i * FM_SRH;
+        if (ry > H || ry + FM_SRH < 30) continue;
+        if (fm_pressed(FH_SRCROW, i)) fill_rrect(d, 16, ry, W - 32, FM_SRH, i == 0 ? 10 : 0, rgb(50, 50, 54), 255);
+        fm_src_icon(d, 28, ry + 14, s);
+        draw_text(d, 72, ry + 26, s->name, 15, s->on ? 0xFFFF : rgb(150, 150, 156), W - 72 - 84, 0, H);
+        char st[160]; int warn; fm_src_status(s, st, sizeof st, &warn);
+        draw_text(d, 72, ry + 45, st, 12, warn ? rgb(255, 159, 10) : FMC_GREY, W - 72 - 84, 0, H);
+        if (s->busy) fm_spinner_at(d, W - 92, ry + 30);
+        sp_switch(d, W - 16 - 12 - 51, ry + 15, s->on ? 1.f : 0.f, 0);
+        fm_hline(d, 72, W - 16, ry + FM_SRH - 1, FMC_SEP);
+        fm_hit(16, ry, W - 16 - 72, ry + FM_SRH, FH_SRCROW, i);
+        fm_hit(W - 16 - 72, ry, W - 16, ry + FM_SRH, FH_SRCSW, i);
+    }
+    int ay = y + fm_nsrc * FM_SRH;
+    if (fm_pressed(FH_SRCADD, 0)) fill_rrect(d, 16, ay, W - 32, 44, 10, rgb(50, 50, 54), 255);
+    draw_text(d, 32, ay + 28, fm_nsrc < FM_MAXSRC ? tr("Añadir fuente…") : tr("No caben más fuentes"), 15, fm_nsrc < FM_MAXSRC ? FMC_BLUE : FMC_GREY, W - 64, 0, H);
+    if (fm_nsrc < FM_MAXSRC) fm_hit(16, ay, W - 16, ay + 44, FH_SRCADD, 0);
+    y = ay + 44;
+    y += 10 + draw_wrapped(d, 32, y + 4, W - 64, tr("FM_SRC_HELP"), 12, FMC_GREY, 16, 1) + 30;
+    fm_ch[FP_SRCS] = y - y0;
+    fm_chrome_status(d);
+    fm_navbar(d, tr("Ajustes"), tr("Fuentes"), fm_pos[FP_SRCS] / 40.f);
     draw_toast(d);
 }
 /* ---- pick page (iOS selection list with a check mark) */
@@ -1550,7 +2091,7 @@ static void fm_render_pick(uint16_t *d)
     y += fm_pick_n * 44 + 30;
     fm_ch[FP_PICK] = y - y0;
     fm_chrome_status(d);
-    fm_navbar(d, fm_stack[fm_sp - 1] == FP_SET ? tr("Ajustes") : tr("Música libre"), fm_pick_title, fm_pos[FP_PICK] / 40.f);
+    fm_navbar(d, fm_stack[fm_sp - 1] == FP_SET ? tr("Ajustes") : fm_stack[fm_sp - 1] == FP_SRCS ? tr("Fuentes") : FM_BRAND, fm_pick_title, fm_pos[FP_PICK] / 40.f);
     draw_toast(d);
 }
 static void fm_render_page(uint16_t *d, int pg, int rec)
@@ -1562,6 +2103,7 @@ static void fm_render_page(uint16_t *d, int pg, int rec)
     case FP_DL: fm_render_dl(d); break;
     case FP_SET: fm_render_set(d); break;
     case FP_PICK: fm_render_pick(d); break;
+    case FP_SRCS: fm_render_srcs(d); break;
     }
     fm_rec = keep;
 }
@@ -1573,7 +2115,7 @@ static void fm_render(void)
     fm_render_page(fr0, fm_stack[fm_sp], 1);
     if (fm_editing) kb_draw(fr0, -1);
     double dt = now_ms() - t0; fm_rt_sum += dt; fm_rt_n++; if (dt > fm_rt_max) fm_rt_max = dt;
-    if (t0 - fm_rt_t > 4000) { if (fm_rt_n >= 10) lg("perfil musica libre: %d fot, dibujo %.1f ms (max %.1f)", fm_rt_n, fm_rt_sum / fm_rt_n, fm_rt_max); fm_rt_sum = fm_rt_max = 0; fm_rt_n = 0; fm_rt_t = t0; }
+    if (t0 - fm_rt_t > 4000) { if (fm_rt_n >= 10) lg("perfil vinyl: %d fot, dibujo %.1f ms (max %.1f)", fm_rt_n, fm_rt_sum / fm_rt_n, fm_rt_max); fm_rt_sum = fm_rt_max = 0; fm_rt_n = 0; fm_rt_t = t0; }
 }
 
 /* ------------------------------------------------------------------ transitions */
@@ -1594,7 +2136,7 @@ static void fm_compose(const uint16_t *under, const uint16_t *top, int x)
 static uint16_t *fm_pa, *fm_pb;
 static void fm_push(int pg)
 {
-    if (fm_sp >= 5) return;
+    if (fm_sp >= 6) return;
     memcpy(fm_pa, fr0, HM_FRAME_BYTES);                 /* what is on screen (row still highlighted, as iOS) */
     fm_press_kind = 0; fm_press_idx = -1;
     fm_stack[++fm_sp] = pg; fm_pos[pg] = 0; fm_vel = 0;
@@ -1624,11 +2166,53 @@ static void fm_pop_from(int x0)
 }
 
 /* ------------------------------------------------------------------ results from the workers */
-static struct fm_item *fm_find_item(int src, const char *id, int which)
+static int fm_same_item(const struct fm_item *x, int src, uint32_t sid, const char *id)
 {
-    (void)which;
-    for (int s = 0; s < L_N; s++) for (int i = 0; i < fm_l[s].n; i++) if (fm_l[s].it[i].src == src && !strcmp(fm_l[s].it[i].id, id)) return &fm_l[s].it[i];
-    return 0;
+    if (x->src != src || strcmp(x->id, id)) return 0;
+    return src == FM_SRC_IA || src == FM_SRC_JM || x->sid == sid;   /* archive.org / Jamendo ids are global */
+}
+/* merged lists: page, then position in each source's answer, then source order (round robin) */
+static int fm_cmp_merge(const void *a, const void *b)
+{
+    const struct fm_item *x = a, *y = b;
+    if (x->page != y->page) return x->page - y->page;
+    if (x->rank != y->rank) return x->rank - y->rank;
+    return x->srank - y->srank;
+}
+static void fm_src_test(int i);
+static void fm_set_action(int r);
+static void fm_poll_list(struct fm_job *j)
+{
+    if (j->slot < 0 || j->slot >= fm_nl) return;
+    struct fm_list *l = &fm_l[j->slot];
+    if (j->gen != l->gen) return;                                      /* superseded */
+    if (l->pend > 0) l->pend--;
+    int k = j->sidx >= 0 && j->sidx < FM_MAXSRC ? j->sidx : 0;
+    if (j->rc) {
+        l->sfound[k] = 0;                                              /* no more pages from it */
+        if (!l->fresh && !l->pend && (j->rc == -5 || j->rc == -40 || !l->n)) { fm_list_clear(l); l->gen = j->gen; }
+        if (!l->n || l->state == 3) { if (!l->rc || j->rc == -5 || j->rc == -40) l->rc = j->rc; }
+        if (!l->pend) l->state = l->n ? 2 : 3;
+        return;
+    }
+    if (!l->fresh) { fm_list_clear(l); l->gen = j->gen; l->fresh = 1; }   /* the first answer replaces what the cache showed */
+    int room = FM_MAXIT - l->n, add = j->n < room ? j->n : room;
+    struct fm_item *nit = realloc(l->it, (l->n + add + 1) * sizeof *nit);
+    if (!nit) return;
+    l->it = nit;
+    for (int i = 0; i < add; i++) {
+        struct fm_item *it = &j->items[i];
+        int dup = 0; for (int q = 0; q < l->n; q++) if (fm_same_item(&l->it[q], it->src, it->sid, it->id)) { dup = 1; break; }
+        if (dup) continue;
+        it->srank = (uint8_t)k;
+        fm_apply_probe_cache(it);
+        l->it[l->n++] = *it;
+    }
+    l->sraw[k] += j->n; l->sfound[k] = j->found; l->sexact[k] = (uint8_t)j->exact; l->spage[k] = j->page;
+    if (l->nss > 1) qsort(l->it, l->n, sizeof *l->it, fm_cmp_merge);
+    l->found = 0; l->exact = 1; l->more = 0;
+    for (int q = 0; q < l->nss; q++) { l->found += l->sfound[q]; if (!l->sexact[q]) l->exact = 0; if (l->sraw[q] < l->sfound[q]) l->more = 1; }
+    l->state = l->pend ? 1 : 2; l->rc = 0;
 }
 static int fm_poll(void)
 {
@@ -1638,27 +2222,9 @@ static int fm_poll(void)
     while (list) {
         struct fm_job *j = list; list = j->next;
         switch (j->kind) {
-        case NJ_LIST: {
-            struct fm_list *l = &fm_l[j->slot];
-            if (j->gen != l->gen) break;                               /* superseded */
-            if (j->rc) { if (!j->append) { if (!l->n || j->rc == -5) { fm_list_clear(l); l->gen = j->gen; } } l->state = l->n && j->rc != -5 ? 2 : 3; l->rc = j->rc; dirty = 1; break; }
-            if (!j->append) { fm_list_clear(l); l->gen = j->gen; l->page = 1; }
-            int room = FM_MAXIT - l->n, add = j->n < room ? j->n : room;
-            struct fm_item *nit = realloc(l->it, (l->n + add + 1) * sizeof *nit);
-            if (!nit) break;
-            l->it = nit;
-            for (int i = 0; i < add; i++) {
-                struct fm_item *it = &j->items[i];
-                int dup = 0; for (int k = 0; k < l->n; k++) if (!strcmp(l->it[k].id, it->id)) { dup = 1; break; }
-                if (dup) continue;
-                fm_apply_probe_cache(it);
-                l->it[l->n++] = *it;
-            }
-            l->found = j->found; l->state = 2; l->page = atoi(j->id);
-            dirty = 1;
-            break; }
+        case NJ_LIST: fm_poll_list(j); dirty = 1; break;
         case NJ_ALBUM:
-            if (!fm_alb || strcmp(fm_alb->it.id, j->id) || fm_alb->it.src != j->src) break;
+            if (!fm_alb || strcmp(fm_alb->it.id, j->id) || fm_alb->it.src != j->src || (j->src >= FM_SRC_CAT && fm_alb->it.sid != j->sid)) break;
             if (j->rc) { fm_alb_state = 3; fm_alb_rc = j->rc; dirty = 1; break; }
             {
                 struct fm_album *a = j->alb; j->alb = 0;
@@ -1666,59 +2232,81 @@ static int fm_poll(void)
                 if (!a->it.img[0]) fm_cpy(a->it.img, sizeof a->it.img, fm_alb->it.img);
                 if (!a->it.artist[0]) fm_cpy(a->it.artist, sizeof a->it.artist, fm_alb->it.artist);
                 if (!a->it.lic[0]) fm_cpy(a->it.lic, sizeof a->it.lic, fm_alb->it.lic);
-                fm_alb->it.thumb = 0; free(fm_alb->f); free(fm_alb->t); free(fm_alb);
+                if (!a->it.probe[0]) fm_cpy(a->it.probe, sizeof a->it.probe, fm_alb->it.probe);
+                a->it.sid = fm_alb->it.sid; fm_cpy(a->it.id, sizeof a->it.id, fm_alb->it.id);
+                fm_alb->it.thumb = 0; fm_album_parts_free(fm_alb); free(fm_alb);
                 fm_alb = a; a->it.thumb = th;
                 if (!a->it.sr && sr) { a->it.sr = sr; a->it.bits = bits; }
-                if (!a->it.sr) fm_probe_find(a->it.src, a->it.id, &a->it.sr, &a->it.bits);
+                if (!a->it.sr) fm_probe_find(a->it.src, a->it.sid, a->it.id, &a->it.sr, &a->it.bits);
                 fm_alb_state = 2;
                 fm_alb_cls = a->ccount[FC_LOSSLESS] ? FC_LOSSLESS : a->ccount[FC_MP3] ? FC_MP3 : FC_OGG;
                 fm_tstate_gen = -1; fm_tstate_update();
                 /* the cover (real one) and, if unknown, the lossless quality */
                 struct fm_job *c = fm_job_new(NJ_COVER);
-                if (c) {
+                if (c && (a->it.img[0] || a->cover[0])) {
                     if (a->it.src == FM_SRC_IA && a->cover[0]) { char e[400]; fm_pathenc(a->cover, e, sizeof e); snprintf(c->url, sizeof c->url, "https://archive.org/download/%s/%s", a->it.id, e); }
                     else fm_cpy(c->url, sizeof c->url, a->it.img);
-                    fm_cpy(c->id, sizeof c->id, a->it.id); c->src = a->it.src; fm_cover_state = 1;
+                    fm_cpy(c->id, sizeof c->id, a->it.id); c->src = a->it.src; c->sid = a->it.sid; fm_cover_state = 1;
                     fm_submit(c, 0);
-                }
-                if (!a->it.sr && a->ccount[FC_LOSSLESS] && (a->cq[FC_LOSSLESS] & (FQ_FLAC | FQ_FLAC24))) {
+                } else free(c);
+                if (!a->it.sr && a->ccount[FC_LOSSLESS] && (a->cq[FC_LOSSLESS] & (FQ_FLAC | FQ_FLAC24)) && (a->it.src == FM_SRC_IA || a->it.src == FM_SRC_JM)) {
                     struct fm_job *p = fm_job_new(NJ_PROBE);
-                    if (p) { fm_cpy(p->id, sizeof p->id, a->it.id); p->src = a->it.src; fm_cpy(p->url, sizeof p->url, a->it.probe); fm_submit(p, 0); }
+                    if (p) { fm_cpy(p->id, sizeof p->id, a->it.id); p->src = a->it.src; p->sid = a->it.sid; fm_cpy(p->url, sizeof p->url, a->it.probe); fm_submit(p, 0); }
                 }
             }
             dirty = 1;
             break;
         case NJ_COVER:
-            if (fm_alb && !strcmp(fm_alb->it.id, j->id) && j->px) { free(fm_cover); fm_cover = j->px; j->px = 0; fm_cover_state = 2; dirty = 1; }
+            if (fm_alb && !strcmp(fm_alb->it.id, j->id) && fm_alb->it.sid == j->sid && j->px) { free(fm_cover); fm_cover = j->px; j->px = 0; fm_cover_state = 2; dirty = 1; }
             break;
-        case NJ_THUMB: {
-            struct fm_item *it = fm_find_item(j->src, j->id, 0);
-            for (int s = 0; s < L_N; s++) for (int i = 0; i < fm_l[s].n; i++) {
+        case NJ_THUMB:
+            for (int s = 0; s < fm_nl; s++) for (int i = 0; i < fm_l[s].n; i++) {
                 struct fm_item *x = &fm_l[s].it[i];
-                if (x->src != j->src || strcmp(x->id, j->id)) continue;
+                if (!fm_same_item(x, j->src, j->sid, j->id)) continue;
                 if (j->rc || !j->px) { x->thumb_state = j->rc == -3 ? 0 : 2; continue; }
                 if (!x->thumb) { x->thumb = malloc(FM_TH * FM_TH * 2); if (x->thumb) memcpy(x->thumb, j->px, FM_TH * FM_TH * 2); }
                 x->thumb_state = 2;
             }
-            if (fm_alb && !fm_alb->it.thumb && fm_alb->it.src == j->src && !strcmp(fm_alb->it.id, j->id) && j->px) { fm_alb->it.thumb = j->px; j->px = 0; }
-            (void)it;
+            if (fm_alb && !fm_alb->it.thumb && fm_same_item(&fm_alb->it, j->src, j->sid, j->id) && j->px) { fm_alb->it.thumb = j->px; j->px = 0; }
             dirty = 1;
-            break; }
+            break;
         case NJ_PROBE:
-            for (int s = 0; s < L_N; s++) for (int i = 0; i < fm_l[s].n; i++) {
+            for (int s = 0; s < fm_nl; s++) for (int i = 0; i < fm_l[s].n; i++) {
                 struct fm_item *x = &fm_l[s].it[i];
-                if (x->src != j->src || strcmp(x->id, j->id)) continue;
+                if (!fm_same_item(x, j->src, j->sid, j->id)) continue;
                 if (j->rc == -3) { x->qstate = 0; continue; }
                 x->qstate = j->rc ? 3 : 2;
-                if (!j->rc) { x->sr = j->sr; x->bits = j->bits; x->ch = j->ch; if (j->ntr) { x->ntr = (short)j->ntr; x->tlen = j->tlen; x->dsize = j->dsize; } }
+                if (j->rc) continue;
+                if (j->sr) { x->sr = j->sr; x->bits = j->bits; x->ch = (uint8_t)j->ch; }
+                if (j->ntr) { x->ntr = (short)j->ntr; x->tlen = j->tlen; x->dsize = j->dsize; }
+                if (j->fq) { x->fq = j->fq; x->mp3k = (short)j->mp3k; x->est = (uint8_t)j->est; }
+                if (j->src == FM_SRC_RSS) {           /* an OPML entry: what its feed says */
+                    if (!x->artist[0]) fm_cpy(x->artist, sizeof x->artist, j->artist);
+                    if (!x->year[0]) fm_cpy(x->year, sizeof x->year, j->year);
+                    if (!x->img[0] && j->img[0]) { fm_cpy(x->img, sizeof x->img, j->img); x->thumb_state = 0; }
+                }
             }
-            if (!j->rc && fm_alb && fm_alb->it.src == j->src && !strcmp(fm_alb->it.id, j->id)) { fm_alb->it.sr = j->sr; fm_alb->it.bits = j->bits; }
+            if (!j->rc && fm_alb && fm_same_item(&fm_alb->it, j->src, j->sid, j->id) && j->sr) { fm_alb->it.sr = j->sr; fm_alb->it.bits = j->bits; }
             dirty = 1;
             break;
         case NJ_JMTEST:
             fm_test_state = j->rc == 0 ? 2 : j->rc == -1000 ? 4 : 3;
             dirty = 1;
             break;
+        case NJ_SRCTEST: {
+            int i = fm_src_ix(j->sid); if (i < 0) break;
+            struct fm_source *s = &fm_srcs[i];
+            int was_ok = !s->err && s->type == j->type;
+            s->busy = 0; s->err = j->rc; s->type = (uint8_t)j->type;
+            if (!j->rc) { s->nitems = j->nitems; s->refreshed = (long long)time(0); s->auth = (uint8_t)j->authmode; }
+            if (!s->named && j->name[0]) { fm_cpy(s->name, sizeof s->name, j->name); fm_trim(s->name); }
+            if (s->type == FST_SUB && j->rc == -40 && !(s->user[0] && s->pw[0])) fm_need_login = i;
+            fm_srcs_save();
+            lg("vinyl: fuente %s -> tipo %d, rc %d, %d entradas", s->url, s->type, j->rc, j->nitems);
+            /* its lists again when it became usable, or when the user is not looking at them (no flicker) */
+            if (!j->rc && s->on && (fm_sel < 0 || fm_sel == i) && (!was_ok || fm_stack[fm_sp] != FP_ROOT)) fm_refresh_all();
+            dirty = 1;
+            break; }
         }
         fm_job_free(j);
     }
@@ -1794,6 +2382,15 @@ static int fm_search_edit(void)
 }
 
 /* ------------------------------------------------------------------ opening things */
+static void fm_album_submit(const struct fm_item *it)
+{
+    struct fm_job *j = fm_job_new(NJ_ALBUM);
+    if (!j) return;
+    if (fm_item_req(it, j)) { free(j); fm_alb_state = 3; fm_alb_rc = -2; return; }
+    j->alb = calloc(1, sizeof *j->alb);
+    if (j->alb) { j->alb->it = *it; j->alb->it.thumb = 0; }
+    fm_submit(j, 0);
+}
 static void fm_open_album(const struct fm_item *it)
 {
     fm_alb_free();
@@ -1801,36 +2398,29 @@ static void fm_open_album(const struct fm_item *it)
     fm_alb->it = *it; fm_alb->it.thumb = 0;
     if (it->thumb) { fm_alb->it.thumb = malloc(FM_TH * FM_TH * 2); if (fm_alb->it.thumb) memcpy(fm_alb->it.thumb, it->thumb, FM_TH * FM_TH * 2); }
     fm_alb_state = 1; fm_alb_cls = (it->fq & FQ_LOSSLESS) ? FC_LOSSLESS : FC_MP3;
-    struct fm_job *j = fm_job_new(NJ_ALBUM);
-    if (j) {
-        j->src = it->src; fm_cpy(j->id, sizeof j->id, it->id);
-        j->alb = calloc(1, sizeof *j->alb);
-        if (j->alb) { j->alb->it = *it; j->alb->it.thumb = 0; }
-        if (it->src == FM_SRC_JM) fm_jm_album_url(j->url, sizeof j->url, fm_key, it->id);
-        fm_submit(j, 0);
-    }
+    fm_album_submit(it);
     fm_push(FP_ALBUM);
 }
 static void fm_retry_album(void)
 {
     if (!fm_alb) return;
-    struct fm_item it = fm_alb->it; uint16_t *th = it.thumb;
+    struct fm_item it = fm_alb->it; it.thumb = 0;
     fm_alb_state = 1;
-    struct fm_job *j = fm_job_new(NJ_ALBUM);
-    if (j) {
-        j->src = it.src; fm_cpy(j->id, sizeof j->id, it.id);
-        j->alb = calloc(1, sizeof *j->alb); if (j->alb) { j->alb->it = it; j->alb->it.thumb = 0; }
-        if (it.src == FM_SRC_JM) fm_jm_album_url(j->url, sizeof j->url, fm_key, it.id);
-        fm_submit(j, 0);
-    }
-    (void)th;
+    fm_album_submit(&it);
 }
 static void fm_open_pick(int what)
 {
     static char lab[24][48];
     fm_pick_what = what; fm_pick_n = 0;
     switch (what) {
-    case PK_SRC: fm_pick_title = tr("Fuente"); fm_pick_opt[0] = "Internet Archive"; fm_pick_opt[1] = "Jamendo"; fm_pick_n = 2; fm_pick_cur = fm_src; break;
+    case PK_SRC:
+        fm_pick_title = tr("Fuente"); fm_pick_opt[0] = tr("Todas las fuentes"); fm_pick_map[0] = -1; fm_pick_n = 1; fm_pick_cur = 0;
+        for (int i = 0; i < fm_nsrc && fm_pick_n < 24; i++) {
+            if (!fm_srcs[i].on && i != fm_sel) continue;
+            if (i == fm_sel) fm_pick_cur = fm_pick_n;
+            fm_pick_map[fm_pick_n] = i; fm_pick_opt[fm_pick_n++] = fm_srcs[i].name;
+        }
+        break;
     case PK_COLL: fm_pick_title = tr("Colección"); for (int i = 0; i < FCOL_N; i++) fm_pick_opt[i] = fm_coll_name(i); fm_pick_n = FCOL_N; fm_pick_cur = fm_coll; break;
     case PK_GENRE: fm_pick_title = tr("Género"); fm_pick_opt[0] = tr("Todos los géneros"); for (int i = 0; i < FM_NGENRE; i++) fm_pick_opt[i + 1] = tr(FM_GENRES[i].key); fm_pick_n = FM_NGENRE + 1; fm_pick_cur = fm_genre + 1; break;
     case PK_LANG: fm_pick_title = tr("Idioma"); fm_pick_opt[0] = tr("Cualquier idioma"); for (int i = 0; i < FM_NLANG; i++) fm_pick_opt[i + 1] = FM_LANGS[i].name; fm_pick_n = FM_NLANG + 1; fm_pick_cur = fm_lang + 1; break;
@@ -1847,7 +2437,7 @@ static void fm_pick_apply(int i)
 {
     int changed = i != fm_pick_cur;
     switch (fm_pick_what) {
-    case PK_SRC: fm_src = i ? FM_SRC_JM : FM_SRC_IA; break;
+    case PK_SRC: fm_sel = i >= 0 && i < fm_pick_n ? fm_pick_map[i] : -1; break;
     case PK_COLL: fm_coll = i; break;
     case PK_GENRE: fm_genre = i - 1; break;
     case PK_LANG: fm_lang = i - 1; break;
@@ -1859,16 +2449,171 @@ static void fm_pick_apply(int i)
     if (changed) { fm_pos[FP_ROOT] = 0; fm_refresh_all(); }
 }
 static void fm_cache_measure(void) { fm_cache_used = fm_dir_size(FM_LCACHE, &fm_cache_files); }
+
+/* ------------------------------------------------------------------ sources: test, add, edit */
+/* URL, user name, password and key fields: no automatic capitals (iOS: autocapitalization off) */
+static int fm_edit_plain(const char *title, const char *hint, char *buf, int cap)
+{
+    int a = kb_cfg_autocap; kb_cfg_autocap = 0;
+    int r = line_edit(title, hint, buf, cap);
+    kb_cfg_autocap = a;
+    return r;
+}
+static void fm_src_test(int i)
+{
+    if (i < 0 || i >= fm_nsrc) return;
+    struct fm_source *s = &fm_srcs[i];
+    if (s->type == FST_IA || s->type == FST_JM || s->busy) return;
+    struct fm_job *j = fm_job_new(NJ_SRCTEST); if (!j) return;
+    j->stype = s->type; j->sid = s->sid; fm_cpy(j->url, sizeof j->url, s->url);
+    fm_cpy(j->user, sizeof j->user, s->user); fm_cpy(j->pw, sizeof j->pw, s->pw); fm_cpy(j->salt, sizeof j->salt, s->salt);
+    s->busy = 1;
+    fm_submit(j, 0);
+}
+static int fm_srcs_busy(void) { for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].busy) return 1; return 0; }
+/* Subsonic: user and password (the password goes to appdata/pw_<sid>, mode 0600) */
+static void fm_src_login(int i)
+{
+    if (i < 0 || i >= fm_nsrc) return;
+    struct fm_source *s = &fm_srcs[i];
+    char u[64]; fm_cpy(u, sizeof u, s->user);
+    if (!fm_edit_plain(tr("Usuario"), s->name, u, sizeof u)) return;
+    fm_trim(u); if (!u[0]) return;
+    char p[96] = "";
+    if (!fm_edit_plain(tr("Contraseña"), u, p, sizeof p)) return;
+    fm_cpy(s->user, sizeof s->user, u); fm_cpy(s->pw, sizeof s->pw, p);
+    if (!s->salt[0]) fm_salt(s->salt, sizeof s->salt);
+    if (s->type == FST_URL) s->type = FST_SUB;
+    fm_pw_save(s); fm_srcs_save();
+    s->err = 0; fm_src_test(i);
+}
+static void fm_src_add(void)
+{
+    if (fm_nsrc >= FM_MAXSRC) { toast(tr("No caben más fuentes")); return; }
+    char in[300] = "";
+    if (!fm_edit_plain(tr("Añadir fuente"), tr("URL o colección de archive.org"), in, sizeof in)) return;
+    char url[300]; int t = fm_src_detect(in, url, sizeof url);
+    if (t < 0) { toast(tr("URL no válida")); return; }
+    if (t == FST_JM) {
+        for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].type == FST_JM) fm_srcs[i].on = 1;
+        fm_srcs_save(); toast(tr("Jamendo ya está incluida"));
+        if (!fm_key[0]) fm_set_action(0);
+        return;
+    }
+    for (int i = 0; i < fm_nsrc; i++) if (!strcasecmp(fm_srcs[i].url, url)) { toast(tr("Esa fuente ya está")); return; }
+    struct fm_source *s = fm_src_new(t, url); if (!s) return;
+    int i = fm_nsrc - 1;
+    fm_srcs_save();
+    lg("vinyl: fuente nueva %s (tipo %d)", url, t);
+    toast(tr("Fuente añadida"));
+    if (t == FST_SUB) { fm_src_login(i); if (!fm_srcs[i].busy) fm_src_test(i); }
+    else fm_src_test(i);
+}
+static void fm_src_remove(int i)
+{
+    if (i < 0 || i >= fm_nsrc || fm_srcs[i].type == FST_IA || fm_srcs[i].type == FST_JM) return;
+    struct fm_source *s = &fm_srcs[i];
+    s->pw[0] = 0; fm_pw_save(s);
+    char path[160]; fm_hpath(FM_CACHE, s->url, ".json", path, sizeof path); unlink(path);
+    if (fm_sel == i) fm_sel = -1; else if (fm_sel > i) fm_sel--;
+    if (fm_need_login == i) fm_need_login = -1;
+    memmove(fm_srcs + i, fm_srcs + i + 1, (fm_nsrc - i - 1) * sizeof *fm_srcs);
+    fm_nsrc--;
+    fm_srcs_save(); fm_conf_save();
+    fm_refresh_all();
+}
+static void fm_src_move(int i, int dir)
+{
+    int k = i + dir; if (i < 0 || k < 0 || i >= fm_nsrc || k >= fm_nsrc) return;
+    struct fm_source t = fm_srcs[i]; fm_srcs[i] = fm_srcs[k]; fm_srcs[k] = t;
+    if (fm_sel == i) fm_sel = k; else if (fm_sel == k) fm_sel = i;
+    if (fm_need_login == i) fm_need_login = k; else if (fm_need_login == k) fm_need_login = i;
+    fm_srcs_save(); fm_conf_save();
+    fm_refresh_all();
+}
+/* the switch of a row: a short slide of the knob, then the change */
+static void fm_src_toggle(int i)
+{
+    if (i < 0 || i >= fm_nsrc) return;
+    struct fm_source *s = &fm_srcs[i];
+    double t0 = now_ms(); int to = !s->on;
+    int ry = 74 - (int)fm_pos[FP_SRCS] + 52 + i * FM_SRH;
+    for (;;) {
+        double t = (now_ms() - t0) / 180.0; if (t > 1) t = 1;
+        float e = (float)ease_out(t), k = to ? e : 1 - e;
+        fm_render_page(fr0, FP_SRCS, 1);
+        fill_rrect(fr0, W - 16 - 12 - 51 - 2, ry + 13, 55, 35, 17, FMC_CARD, 255);
+        sp_switch(fr0, W - 16 - 12 - 51, ry + 15, k, 0);
+        present(); if (t >= 1) break;
+    }
+    s->on = (uint8_t)to;
+    fm_srcs_save();
+    if (s->on && s->type == FST_SUB && !(s->user[0] && s->pw[0])) fm_src_login(i);
+    else if (s->on && s->type != FST_IA && s->type != FST_JM && (s->err || !s->refreshed)) fm_src_test(i);
+    if (s->on && s->type == FST_JM && !fm_key[0]) fm_set_action(0);
+    fm_refresh_all();
+}
+static void fm_src_menu(int i)
+{
+    if (i < 0 || i >= fm_nsrc) return;
+    struct fm_source *s = &fm_srcs[i];
+    enum { A_TEST, A_LOGIN, A_RENAME, A_URL, A_KEY, A_UP, A_DOWN, A_DEL };
+    const char *o[8]; int act[8], n = 0, del = -1;
+    int user = s->type != FST_IA && s->type != FST_JM;
+    if (user) { o[n] = tr("Probar conexión"); act[n++] = A_TEST; }
+    if (s->type == FST_SUB || (s->type == FST_URL && s->err == -40)) { o[n] = tr("Iniciar sesión…"); act[n++] = A_LOGIN; }
+    if (s->type == FST_JM) { o[n] = tr("Clave (client_id)"); act[n++] = A_KEY; }
+    if (user) { o[n] = tr("Renombrar"); act[n++] = A_RENAME; o[n] = tr("Editar URL"); act[n++] = A_URL; }
+    if (i > 0) { o[n] = tr("Subir"); act[n++] = A_UP; }
+    if (i < fm_nsrc - 1) { o[n] = tr("Bajar"); act[n++] = A_DOWN; }
+    if (user) { del = n; o[n] = tr("Eliminar fuente"); act[n++] = A_DEL; }
+    char title[300]; snprintf(title, sizeof title, "%s", user ? s->url : s->name);
+    int a = action_sheet(title, o, n, del);
+    if (a < 0 || a >= n) return;
+    switch (act[a]) {
+    case A_TEST: s->err = 0; fm_src_test(i); break;
+    case A_LOGIN: fm_src_login(i); break;
+    case A_KEY: fm_set_action(0); break;
+    case A_RENAME: {
+        char nm[56]; fm_cpy(nm, sizeof nm, s->name);
+        if (line_edit(tr("Renombrar"), tr("Nombre"), nm, sizeof nm)) { fm_trim(nm); if (nm[0]) { fm_cpy(s->name, sizeof s->name, nm); s->named = 1; fm_srcs_save(); } }
+        break; }
+    case A_URL: {
+        char in[300]; fm_cpy(in, sizeof in, s->url);
+        if (!fm_edit_plain(tr("Editar URL"), tr("URL o colección de archive.org"), in, sizeof in)) break;
+        char url[300]; int t = fm_src_detect(in, url, sizeof url);
+        if (t < 0 || t == FST_JM) { toast(tr("URL no válida")); break; }
+        if (!strcmp(url, s->url)) break;
+        for (int k = 0; k < fm_nsrc; k++) if (k != i && !strcasecmp(fm_srcs[k].url, url)) { toast(tr("Esa fuente ya está")); return; }
+        char path[160]; fm_hpath(FM_CACHE, s->url, ".json", path, sizeof path); unlink(path);
+        char pw[96]; fm_cpy(pw, sizeof pw, s->pw); s->pw[0] = 0; fm_pw_save(s);      /* the password file is named after the sid */
+        fm_cpy(s->url, sizeof s->url, url); s->sid = fm_hash(url); s->type = (uint8_t)t; s->err = 0; s->refreshed = 0; s->nitems = 0;
+        fm_cpy(s->pw, sizeof s->pw, pw); fm_pw_save(s);
+        fm_srcs_save(); fm_conf_save();
+        fm_src_test(i);
+        break; }
+    case A_UP: fm_src_move(i, -1); break;
+    case A_DOWN: fm_src_move(i, 1); break;
+    case A_DEL:
+        if (confirm(tr("¿Eliminar la fuente? Los álbumes descargados se conservan."), tr("Eliminar"))) fm_src_remove(i);
+        break;
+    }
+}
+/* pull to refresh on the sources page: every enabled user source is fetched again */
+static void fm_srcs_refresh(void)
+{
+    for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].on) fm_src_test(i);
+}
 static void fm_set_action(int r)
 {
     if (r == 0) {
         char k[100]; fm_cpy(k, sizeof k, fm_key);
-        if (line_edit(tr("Clave de Jamendo"), "client_id", k, sizeof k) || !k[0]) {
+        if (fm_edit_plain(tr("Clave de Jamendo"), "client_id", k, sizeof k) || !k[0]) {
             /* client ids are lower-case hex: the keyboard capitalises the first letter */
             int n = 0; char c[100]; for (char *s = k; *s && n < 99; s++) if (isalnum((unsigned char)*s) || *s == '_' || *s == '-') c[n++] = (char)tolower((unsigned char)*s); c[n] = 0;
             if (strcmp(c, fm_key)) {
                 fm_cpy(fm_key, sizeof fm_key, c); fm_key_save(); fm_test_state = 0;
-                if (fm_src == FM_SRC_JM) fm_refresh_all();
+                fm_refresh_all();
                 if (fm_key[0]) fm_set_action(1);
             }
         }
@@ -1877,7 +2622,7 @@ static void fm_set_action(int r)
         struct fm_job *j = fm_job_new(NJ_JMTEST); if (!j) return;
         fm_jm_test_url(j->url, sizeof j->url, fm_key); fm_test_state = 1; fm_submit(j, 0);
     } else if (r == 2) {
-        if (confirm(tr("¿Borrar la clave de Jamendo?"), tr("Borrar"))) { fm_key[0] = 0; fm_key_save(); fm_test_state = 0; if (fm_src == FM_SRC_JM) fm_refresh_all(); }
+        if (confirm(tr("¿Borrar la clave de Jamendo?"), tr("Borrar"))) { fm_key[0] = 0; fm_key_save(); fm_test_state = 0; fm_refresh_all(); }
     } else if (r == 10) fm_open_pick(PK_CACHE);
     else if (r == 11) {
         if (confirm(tr("¿Vaciar la caché de escucha?"), tr("Vaciar"))) {
@@ -1886,13 +2631,22 @@ static void fm_set_action(int r)
             if (d) closedir(d);
             fm_cache_measure(); fm_dl_gen++;
         }
-    }
+    } else if (r == 30) { fm_pos[FP_SRCS] = 0; fm_push(FP_SRCS); }
 }
 
 /* ------------------------------------------------------------------ the app */
 static float fm_rb(float x, float lo, float hi) { if (x < lo) { float o = lo - x; return lo - o * 120 / (o + 120); } if (x > hi) { float o = x - hi; return hi + o * 120 / (o + 120); } return x; }
 static float fm_unrb(float v, float lo, float hi) { if (v < lo) { float o = lo - v; if (o > 119) o = 119; return lo - o * 120 / (120 - o); } if (v > hi) { float o = v - hi; if (o > 119) o = 119; return hi + o * 120 / (120 - o); } return v; }
 static float fm_maxpos(int pg) { float m = (float)(fm_ch[pg] - (H - fm_top_of(pg))); return m < 0 ? 0 : m; }
+static float fm_minpos(int pg) { return pg == fm_ptr_pg ? -(float)FM_PTR_GAP : 0; }
+/* pages with pull to refresh: start it (once past the arm distance) */
+static void fm_ptr_start(int pg)
+{
+    fm_ptr_pg = pg;
+    if (pg == FP_ROOT) { fm_refresh_all_f(1); fm_srcs_refresh(); }
+    else fm_srcs_refresh();
+    lg("vinyl: tirar para actualizar (%s)", pg == FP_ROOT ? "inicio" : "fuentes");
+}
 static int fm_gone;
 static void fm_tap(int k, int idx, int x)
 {
@@ -1901,11 +2655,11 @@ static void fm_tap(int k, int idx, int x)
     case FH_BACK: if (fm_sp > 0) fm_pop_from(0); break;
     case FH_ROW: {
         int s = idx >> 16, i = idx & 0xFFFF;
-        if (s < L_N && i < fm_l[s].n) fm_open_album(&fm_l[s].it[i]);
+        if (s < fm_nl && i < fm_l[s].n) fm_open_album(&fm_l[s].it[i]);
         break; }
     case FH_BAR: {
         int r = fm_search_edit();
-        if (r >= 0) { int s = r >> 16, i = r & 0xFFFF; if (s < L_N && i < fm_l[s].n) fm_open_album(&fm_l[s].it[i]); }
+        if (r >= 0) { int s = r >> 16, i = r & 0xFFFF; if (s < fm_nl && i < fm_l[s].n) fm_open_album(&fm_l[s].it[i]); }
         break; }
     case FH_CLEAR: fm_q_text[0] = 0; fm_search_now(); break;
     case FH_CHIP: {
@@ -1913,8 +2667,13 @@ static void fm_tap(int k, int idx, int x)
         if (c[idx].what < 0) { fm_lossless = !fm_lossless; fm_conf_save(); fm_pos[FP_ROOT] = 0; fm_refresh_all(); }
         else fm_open_pick(c[idx].what);
         break; }
+    case FH_SEEALL:
+        if (idx > 0 && idx < fm_nl) { int si = fm_src_ix(fm_l[idx].sid); if (si >= 0) { fm_sel = si; fm_conf_save(); fm_pos[FP_ROOT] = 0; fm_refresh_all(); } }
+        break;
     case FH_DLS: fm_pos[FP_DL] = 0; fm_push(FP_DL); break;
     case FH_SET: fm_cache_measure(); fm_push(FP_SET); break;
+    case FH_SRCS: fm_cache_measure(); fm_pos[FP_SRCS] = 0; fm_push(FP_SRCS); break;
+    case FH_LOGIN: if (fm_sel >= 0) fm_src_login(fm_sel); break;
     case FH_KEYROW: fm_cache_measure(); fm_test_state = 0; fm_push(FP_SET); if (!fm_key[0]) fm_set_action(0); break;
     case FH_RETRY:
         if (pg == FP_ALBUM) fm_retry_album();
@@ -1943,30 +2702,37 @@ static void fm_tap(int k, int idx, int x)
         break;
     case FH_SETROW: fm_set_action(idx); break;
     case FH_PICK: fm_pick_apply(idx); fm_render_page(fm_pb, FP_PICK, 0); fm_pop_from(0); break;
+    case FH_SRCROW: fm_src_menu(idx); break;
+    case FH_SRCSW: fm_src_toggle(idx); break;
+    case FH_SRCADD: fm_src_add(); break;
     }
     (void)x;
 }
 static void freemusic_app_at(int ix, int iy)
 {
     double to = now_ms();
-    fm_mkdirs(); fm_conf_load(); fm_probes_load(); fm_q_load();
+    fm_mkdirs(); fm_conf_load(); fm_srcs_load(); fm_probes_load(); fm_q_load();
     fm_workers_start(); fm_dl_start();
     fm_pa = img_under; fm_pb = img_sheet; have_under = 0;
     fm_sp = 0; fm_stack[0] = FP_ROOT; fm_press_kind = 0; fm_press_idx = -1; fm_gone = 0; fm_editing = 0; fm_edit_e = 0; fm_vel = 0;
+    fm_ptr_pg = -1; fm_need_login = -1;
+    for (int i = 0; i < fm_nsrc; i++) fm_srcs[i].busy = 0;
     if (fm_pos[FP_ROOT] < 0) fm_pos[FP_ROOT] = 0;
     if (fm_dl_space) { fm_dl_space = 0; }
     /* first screen: what the cache has (instant), refreshed in the background */
-    if (!fm_l[L_F1].n && !fm_l[L_F2].n) fm_refresh_all();
-    else { fm_lo_flush(); for (int s = 0; s < L_N; s++) for (int i = 0; i < fm_l[s].n; i++) { if (fm_l[s].it[i].thumb_state == 1) fm_l[s].it[i].thumb_state = 0; if (fm_l[s].it[i].qstate == 1) fm_l[s].it[i].qstate = 0; } }
-    lg("musica libre: abrir en %.1f ms (%d+%d+%d en cache)", now_ms() - to, fm_l[L_F1].n, fm_l[L_F2].n, fm_l[L_F3].n);
+    int have = 0; for (int s = 1; s < fm_nl; s++) if (fm_l[s].n) have = 1;
+    if (!have) fm_refresh_all();
+    else { fm_lo_flush(); for (int s = 0; s < fm_nl; s++) for (int i = 0; i < fm_l[s].n; i++) { if (fm_l[s].it[i].thumb_state == 1) fm_l[s].it[i].thumb_state = 0; if (fm_l[s].it[i].qstate == 1) fm_l[s].it[i].qstate = 0; } }
+    /* user sources never checked (or not for a day): checked in the background */
+    for (int i = 0; i < fm_nsrc; i++) if (fm_srcs[i].on && fm_srcs[i].type != FST_IA && fm_srcs[i].type != FST_JM && (fm_srcs[i].type == FST_URL || (long long)time(0) - fm_srcs[i].refreshed > 86400) && !(fm_srcs[i].type == FST_SUB && !fm_srcs[i].pw[0])) fm_src_test(i);
+    lg("vinyl: abrir en %.1f ms (%d fuentes, %d secciones)", now_ms() - to, fm_nsrc, fm_nl - 1);
     render_launcher(img_base, now_ms());
     fm_render_page(fm_pb, FP_ROOT, 1);
     double t0 = now_ms();
     for (;;) {
         double t = (now_ms() - t0) / 300.0; if (t > 1) t = 1; double e = ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, fm_pb, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), fm_pb, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
     enum { FT_IDLE, FT_PRESS, FT_DRAG, FT_CHIPS, FT_BOTTOM };
@@ -1979,6 +2745,13 @@ static void freemusic_app_at(int ix, int iy)
         if (fm_dl_gen != last_dlgen) { last_dlgen = fm_dl_gen; fm_tstate_update(); dirty = 1; }
         if (fm_dl_space) { fm_dl_space = 0; toast(tr("No hay espacio suficiente en la tarjeta SD")); dirty = 1; }
         int pg = fm_stack[fm_sp];
+        /* a Subsonic source that turned out to need a login (found by the test): ask, when idle */
+        if (fm_need_login >= 0 && ts == FT_IDLE && !cur_down) { int i = fm_need_login; fm_need_login = -1; fm_src_login(i); dirty = 1; continue; }
+        /* pull to refresh finished: the gap closes (the bounce below animates it) */
+        if (fm_ptr_pg >= 0 && !(fm_ptr_pg == FP_ROOT ? fm_lists_busy() || fm_srcs_busy() : fm_srcs_busy())) {
+            fm_ptr_pg = -1; fm_ptr_end = now_ms(); dirty = 1;
+            if (pg == FP_SRCS || pg == FP_ROOT) { if (fm_pos[pg] < -.5f && ts != FT_DRAG) moving = 1; }
+        }
         if (pg == FP_ALBUM && fm_ls.on && now_ms() - fm_np_t > 1000) {
             struct np_info n; np_get(&n); fm_np_t = now_ms();
             if (strcmp(n.path, fm_np.path)) dirty = 1;
@@ -1993,13 +2766,13 @@ static void freemusic_app_at(int ix, int iy)
             }
             pthread_mutex_unlock(&fm_dmu);
         }
-        /* more results when the end of the list comes into view */
-        if (pg == FP_ROOT && fm_q_sent[0]) {
-            struct fm_list *l = &fm_l[L_SEARCH];
-            if (l->state == 2 && l->n < FM_MAXIT && l->n < l->found && fm_pos[FP_ROOT] > fm_maxpos(FP_ROOT) - 500) fm_list_fetch(L_SEARCH, l->page + 1), l->state = 1;
+        /* more results when the end of the list comes into view (the search, or the one section of a source) */
+        if (pg == FP_ROOT && fm_pos[FP_ROOT] > fm_maxpos(FP_ROOT) - 500) {
+            int s = fm_q_sent[0] ? L_SEARCH : fm_nl == 2 && fm_l[1].kind == LK_ALL ? 1 : -1;
+            if (s >= 0) { struct fm_list *l = &fm_l[s]; if (l->state == 2 && l->more && l->n < FM_MAXIT) { l->more = 0; fm_list_fetch(s, 2); } }
         }
         double tn = now_ms(), dt = tn - tlast; if (dt > 50) dt = 50; tlast = tn;
-        float *pos = &fm_pos[pg], lo = 0, hi = fm_maxpos(pg);
+        float *pos = &fm_pos[pg], lo = fm_minpos(pg), hi = fm_maxpos(pg);
         if (ts != FT_DRAG && ts != FT_PRESS && !moving && (*pos < lo - .5f || *pos > hi + .5f)) moving = 1;
         if (moving && ts != FT_DRAG) {
             if (*pos < lo || *pos > hi) {
@@ -2012,8 +2785,8 @@ static void freemusic_app_at(int ix, int iy)
         }
         /* things that animate by themselves: spinners, rings, now-playing bars, toast */
         int busy = 0;
-        for (int s = 0; s < L_N; s++) if (fm_l[s].state == 1) busy = 1;
-        if ((pg == FP_ALBUM && (fm_alb_state == 1 || fm_ls.on)) || (pg == FP_SET && fm_test_state == 1)) busy = 1;
+        for (int s = 0; s < fm_nl; s++) if (fm_l[s].state == 1) busy = 1;
+        if ((pg == FP_ALBUM && (fm_alb_state == 1 || fm_ls.on)) || (pg == FP_SET && fm_test_state == 1) || (pg == FP_SRCS && fm_srcs_busy()) || fm_ptr_pg >= 0 || now_ms() - fm_ptr_end < 420) busy = 1;
         pthread_mutex_lock(&fm_dmu); for (int i = 0; i < fm_nq; i++) if (fm_q[i].state == DS_RUN) busy = 1; pthread_mutex_unlock(&fm_dmu);
         int anim = moving || now_ms() < toast_until + 40;
         static double last_busy; if (busy && now_ms() - last_busy > 90) { last_busy = now_ms(); dirty = 1; }
@@ -2061,11 +2834,16 @@ static void freemusic_app_at(int ix, int iy)
                 }
                 if (ts == FT_PRESS && (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 12)) {
                     ts = FT_DRAG; fm_press_kind = 0; fm_press_idx = -1;
-                    raw0 = fm_unrb(*pos, 0, fm_maxpos(pg)) + (float)(cur_y - sy);
+                    raw0 = fm_unrb(*pos, fm_minpos(pg), fm_maxpos(pg)) + (float)(cur_y - sy);
                 }
                 if (ts == FT_DRAG) {
-                    *pos = fm_rb(raw0 - (float)(cur_y - sy), 0, fm_maxpos(pg));
+                    *pos = fm_rb(raw0 - (float)(cur_y - sy), fm_minpos(pg), fm_maxpos(pg));
                     double t = now_ms(); if (t > tmove) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; }
+                    /* pull to refresh: past the threshold it starts (without waiting for the release) */
+                    if ((pg == FP_ROOT || pg == FP_SRCS) && !fm_editing && *pos <= -FM_PTR_ARM && fm_ptr_pg != pg) {
+                        fm_ptr_start(pg);
+                        raw0 = fm_unrb(*pos, fm_minpos(pg), fm_maxpos(pg)) + (float)(cur_y - sy);
+                    }
                     dirty = 1;
                 }
             }
@@ -2085,8 +2863,9 @@ static void freemusic_app_at(int ix, int iy)
     drain_until_up();
     /* leaving: downloads and listening keep going (download worker); UI-only work stops */
     fm_lo_flush();
-    for (int s = 0; s < L_N; s++) for (int i = 0; i < fm_l[s].n; i++) { if (fm_l[s].it[i].thumb_state == 1) fm_l[s].it[i].thumb_state = 0; if (fm_l[s].it[i].qstate == 1) fm_l[s].it[i].qstate = 0; }
+    for (int s = 0; s < fm_nl; s++) for (int i = 0; i < fm_l[s].n; i++) { if (fm_l[s].it[i].thumb_state == 1) fm_l[s].it[i].thumb_state = 0; if (fm_l[s].it[i].qstate == 1) fm_l[s].it[i].qstate = 0; }
     while (fm_sp > 0) fm_pop_page_free(fm_stack[fm_sp--]);
+    fm_ptr_pg = -1; if (fm_pos[FP_ROOT] < 0) fm_pos[FP_ROOT] = 0;
     have_under = 0;
     if (fm_gone) { launcher_present(); return; }
     memcpy(fm_pb, fr0, HM_FRAME_BYTES);
@@ -2095,8 +2874,7 @@ static void freemusic_app_at(int ix, int iy)
     for (;;) {
         double t = (now_ms() - t0b) / 280.0; if (t > 1) t = 1; double e = 1 - ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, fm_pb, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), fm_pb, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
     launcher_present();

@@ -1099,10 +1099,10 @@ static void mu_draw_item(uint16_t *d, struct mpg *p, int idx, int y)
         fill_circle(d, fx + 17, y + 24, 6, MU_GRAY, 255); fill_circle(d, fx + 17, y + 24, 4.2f, rgb(28, 28, 30), 255); mu_line(d, fx + 21, y + 28, fx + 25, y + 32, 2.2f, MU_GRAY);
         if (mu_q[0]) {
             int w = draw_text(d, fx + 34, y + 32, mu_q, 16, 0xFFFF, fw - 44, 0, H);
-            if (mu_editing) for (int yy = y + 15; yy < y + 37; yy++) for (int xx = fx + 35 + w; xx < fx + 37 + w && xx < W; xx++) d[yy * W + xx] = MU_ACC;
+            if (mu_editing) { for (int yy = y + 15; yy < y + 37; yy++) for (int xx = fx + 35 + w; xx < fx + 37 + w && xx < W; xx++) d[yy * W + xx] = MU_ACC; kb_caret(fx + 35 + w, y + 15, y + 37); }
         } else {
             draw_text(d, fx + 34, y + 32, tr("Artistas, álbumes y canciones"), 16, rgb(110, 110, 116), fw - 44, 0, H);
-            if (mu_editing) for (int yy = y + 15; yy < y + 37; yy++) for (int xx = fx + 33; xx < fx + 35; xx++) d[yy * W + xx] = MU_ACC;
+            if (mu_editing) { for (int yy = y + 15; yy < y + 37; yy++) for (int xx = fx + 33; xx < fx + 35; xx++) d[yy * W + xx] = MU_ACC; kb_caret(fx + 33, y + 15, y + 37); }
         }
         if (mu_editing) draw_text(d, W - 16 - tw_n(tr("Cancelar"), 16, -1), y + 32, tr("Cancelar"), 16, MU_ACC, 0, 0, H);
         break; }
@@ -1512,14 +1512,19 @@ static int mu_search_edit(int *tap_x)
     struct ebuf e = { mu_q, (int)strlen(mu_q), sizeof mu_q, (int)strlen(mu_q) };
     kb_layer = 0; kb_shift = 0; kb_layout(tr("Buscar"));
     mu_editing = 1;
-    kb_begin(&e, fr0, mu_search_redraw);
+    {   /* el campo de busqueda (fila IT_SEARCH) en coordenadas de pagina: el teclado nunca lo tapa */
+        struct mpg *sp = mu_st[mu_sp]; int fy = -1;
+        for (int i = 0; sp && i < sp->n; i++) if (sp->it[i].type == IT_SEARCH) { fy = MU_NAV - (int)sp->scroll + sp->it[i].y + 8; break; }
+        kb_begin_ex(&e, fr0, mu_search_redraw, fy, fy >= 0 ? fy + 36 : -1);
+    }
     struct pkt p; int res = 0;
     for (;;) {
         if (!read_pkt(&p, 300)) { if (mu_cov_new) { mu_cov_new = 0; mu_search_redraw(fr0, -1); present(); } continue; }
         if (!p.down) continue;
         mu_last_input = now_ms();
+        kb_map(&p);
         if (p.y >= KB_Y) {
-            int kx = p.x, ky = p.y, r = kb_touch(&p, &e, fr0, mu_search_redraw, 0);
+            int kx = p.x, ky = p.y - kb_pg, r = kb_touch(&p, &e, fr0, mu_search_redraw, 0);
             if (r == K_ENTER) { res = 0; break; }
             if (r == K_HOME) {                            /* inicio con el teclado abierto (iOS) */
                 mu_search_redraw(fr0, -1);

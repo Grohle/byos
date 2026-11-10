@@ -1,4 +1,5 @@
 #!/bin/sh
+# HIBYOS_SYS_REV=1
 # HiByOS: instala/actualiza en /usr/data/hibymod el payload de la SD (HiByOS/payload).
 # El rootfs no tiene sitio: shell, binarios, libreria de pantalla y tema viven en la
 # particion de datos (UBIFS, sobrevive al flasheo). Ver docs/INSTALLER.md.
@@ -31,6 +32,7 @@ TMPD=${HIBYOS_TMP:-/tmp/hibymod}
 WAIT=${HIBYOS_WAIT:-15}
 FLAGS=${HIBYOS_FLAGS:-/data}
 SYSD=$HM/sys
+ROOTBIN=${HIBYOS_ROOTBIN:-/usr/bin}
 
 PL=$SDM/HiByOS/payload
 LOG=$SDM/HiByOS/install.log
@@ -45,7 +47,9 @@ sd_ok() { grep -qE "$SD_RE" $MOUNTS 2>/dev/null; }
 # (docs/OTA.md) el payload puede traer una version nueva en sys/<nombre>; el script del
 # rootfs la usa solo si: no es modo seguro, no hay $FLAGS/.hibymod_nosys, hay menos de 2
 # arranques fallidos seguidos, y su sha256 es el de sys/MANIFEST.sha256 (que viene en el mismo
-# payload verificado). Cualquier otra cosa (a medias, danado, ausente): el del rootfs.
+# payload verificado), y su revision (linea "# HIBYOS_SYS_REV=N") es mayor que la del rootfs:
+# un payload viejo nunca sustituye a un firmware mas nuevo. Si no: el del rootfs.
+sys_rev() { r=$(sed -n 's/^# HIBYOS_SYS_REV=\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1); echo ${r:-0}; }
 sys_ok()
 {
     [ -z "$HIBYOS_NO_OVERRIDE" ] || return 1
@@ -56,7 +60,8 @@ sys_ok()
     [ -f "$SYSD/$1" ] && [ -f $SYSD/MANIFEST.sha256 ] || return 1
     want=$(awk -v n="$1" '$2 == n { print $1; exit }' $SYSD/MANIFEST.sha256 2>/dev/null)
     [ ${#want} = 64 ] || return 1
-    [ "$(sha256sum < "$SYSD/$1" 2>/dev/null | cut -d' ' -f1)" = "$want" ]
+    [ "$(sha256sum < "$SYSD/$1" 2>/dev/null | cut -d' ' -f1)" = "$want" ] || return 1
+    [ "$(sys_rev "$SYSD/$1")" -gt "$(sys_rev "$ROOTBIN/$1")" ]
 }
 # este mismo script: si hay uno mas nuevo y valido instalado, se usa ese
 case "$1" in

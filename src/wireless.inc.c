@@ -1127,7 +1127,7 @@ static void wpw_redraw(uint16_t *dst, int pressed)
         int sw = draw_text(dst, 24, base, vis, 16, 0xFFFF, 0, fy + 4, fy + 40);
         if (!wpw_buf->len) draw_text(dst, 24, base, tr("Obligatoria"), 16, rgb(110, 110, 116), 0, 0, H);
         int cx = 24 + sw;
-        if (wpw_caret && cx < W - 52) for (int y = fy + 10; y < fy + 34; y++) for (int x = cx; x < cx + 2; x++) dst[y * W + x] = WC_BLUE;
+        if (wpw_caret && cx < W - 52) { for (int y = fy + 10; y < fy + 34; y++) for (int x = cx; x < cx + 2; x++) dst[y * W + x] = WC_BLUE; kb_caret(cx, fy + 10, fy + 34); }
         /* ojo: mostrar / ocultar */
         float ex = W - 36, ey = fy + 22;
         wl_arc(dst, ex, ey + 6, 9, 1.5f, -1.0f, 1.0f, WC_GRAY, 0); wl_arc(dst, ex, ey - 6, 9, 1.5f, 2.14f, 3.15f, WC_GRAY, 0);
@@ -1149,15 +1149,16 @@ static int wl_password(const char *ssid, const char *err, char *buf, int cap, in
     int ac = kb_cfg_autocap, pe = kb_cfg_period;
     kb_cfg_autocap = 0; kb_cfg_period = 0;            /* contrasenas: sin mayuscula ni ". " automaticos */
     kb_layer = 0; kb_shift = 0; kb_caps = 0; kb_layout(tr("Unirse"));
-    kb_begin(&e, fr0, wpw_redraw);
+    kb_begin_ex(&e, fr0, wpw_redraw, wpw_field_y(), wpw_field_y() + 44);   /* el campo nunca queda bajo el teclado */
     struct pkt p; double blink = now_ms(); int ok = 0;
     for (;;) {
         int wait = (int)(blink + 530 - now_ms()); if (wait < 1) wait = 1;
         if (!read_pkt(&p, wait)) {
-            if (now_ms() - blink >= 530) { wpw_caret = !wpw_caret; blink = now_ms(); wpw_redraw(fr0, -1); present_rows(wpw_field_y(), wpw_field_y() + 44); }
+            if (now_ms() - blink >= 530) { wpw_caret = !wpw_caret; blink = now_ms(); wpw_redraw(fr0, -1); kb_present_rows(wpw_field_y(), wpw_field_y() + 44); }
             continue;
         }
         if (!p.down) continue;
+        kb_map(&p);
         wpw_caret = 1;
         if (p.y >= KB_Y) {
             int r = kb_touch(&p, &e, fr0, wpw_redraw, 0);

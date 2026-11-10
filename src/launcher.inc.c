@@ -18,7 +18,8 @@
 #define GRID_TOP 46
 #define DOTS_Y (DOCK_Y - 13)
 
-enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS, ACT_BOOKS, ACT_FREEMUSIC, ACT_BUDS };
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_BOOKS, ACT_FREEMUSIC, ACT_BUDS,
+       ACT_WIRELESS, ACT_SOON };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -32,22 +33,24 @@ struct lapp {
 };
 static struct lapp apps[40] = {
     { "music",      "Música",        ACT_MUSIC,  116, 425 },   /* app propia; (ax, ay) = la de fabrica */
-    { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },   /* Ajustes propios (sustituyen a los de HiBy) */
+    /* Ajustes lo tiene TODO (Wi-Fi, Bluetooth, USB/DAC y la personalizacion son paginas suyas).
+     * "Personalizar" e "Inalambrico" son accesos directos a esas paginas; el antiguo icono
+     * "DAC USB" ya no existe (su id vale como alias de "settings": ver app_by_id). */
+    { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },
+    { "personalize", "Personalizar", ACT_SETTINGS, 1,   0 },   /* ax = 1: abre en la pagina de personalizacion */
     { "wireless",   "Inalámbrico",   ACT_WIRELESS, 46, 74 },   /* Wi-Fi y Bluetooth propios */
+    { "radio",      "Radio",         ACT_SOON,     0,   0 },
     { "books",      "Libros",        ACT_BOOKS,  117,  74 },   /* lector propio (TXT/EPUB) */
-    { "dac",        "DAC USB",       ACT_USBDAC, 188,  74 },   /* pagina USB de los Ajustes propios */
     { "tidal",      "Tidal",         ACT_STREAM,   0,   0 },
     { "qobuz",      "Qobuz",         ACT_STREAM,   1,   0 },
     { "nowplaying", "Reproduciendo", ACT_MUSIC,    0,   0 },   /* Reproduciendo propio (nowui) */
     { "files",      "Archivos",      ACT_FILES,    0,   0 },
-    { "radio",      "Radio",         ACT_SOON,     0,   0 },
-    { "personalize", "Personalizar", ACT_SETTINGS, 0,   0 },
     { "appstore",   "Apps",          ACT_STORE,    0,   0 },
     { "freemusic",  "Vinyl",         ACT_FREEMUSIC, 0,  0 },   /* Vinyl: musica libre (Internet Archive, Jamendo, repositorios) */
     { "headphones", "Auriculares",   ACT_BUDS,     0,   0 },   /* AirPods, Galaxy Buds, Nothing... */
     { "gutenberg",  "Gutenberg",     ACT_BOOKS,    1,   0 },   /* Libros abierto en su tienda (audiolibros + libros) */
 };
-static int napps = 15;              /* internas + instaladas (register_installed_apps) */
+static int napps = 14;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
 static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
@@ -59,12 +62,26 @@ static struct {
     int labels, dots, dockbg, dim;   /* nombres de las apps, puntos de pagina, fondo del dock, oscurecer el fondo */
 } L;
 
+/* version del orden oficial de las apps: un launcher.conf de una version anterior se reordena
+ * UNA vez al orden oficial (las apps instaladas desde Apps se quedan al final, en su orden) */
+#define LCONF_ORDER 2
 static int launcher_enabled = 1, cur_page;
 static uint16_t wall[W * H];
 static struct sprite dock_glass;
 static int sz_idx(void) { return L.icon <= 48 ? 0 : L.icon >= 64 ? 2 : 1; }
 
-static int app_by_id(const char *id) { for (int i = 0; i < NAPPS; i++) if (!strcmp(apps[i].id, id)) return i; return -1; }
+/* app_find: id exacto (lo que hay en launcher.conf). app_by_id: ademas el id de la app que
+ * ahora es una pagina de Ajustes, para el zoom, el gesto de inicio y la tarjeta de multitarea. */
+static int app_find(const char *id) { for (int i = 0; i < NAPPS; i++) if (!strcmp(apps[i].id, id)) return i; return -1; }
+static int app_by_id(const char *id)
+{
+    if (!strcmp(id, "dac")) id = "settings";
+    return app_find(id);
+}
+/* pagina en la que se abre Ajustes la proxima vez (la pone el Centro de control y se consume
+ * en launch_app): 0 raiz, 1 USB, 2 Wi-Fi y Bluetooth, 3 personalizacion (icono "Personalizar") */
+enum { SET_ROOT, SET_USB, SET_WIRELESS, SET_PERS };
+static int settings_start;
 
 static int per_page(void);
 /* como iOS: las apps llenan los huecos desde arriba a la izquierda, pagina a pagina,
@@ -85,10 +102,12 @@ static void lconf_default(void)
     memset(&L, 0, sizeof L);
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
-    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "freemusic", "gutenberg", "headphones", "tidal", "qobuz" };
-    for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_by_id(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
-    L.dock[L.dn++] = app_by_id("music");
-    L.dock[L.dn++] = app_by_id("settings");
+    /* ORDEN OFICIAL de una instalacion nueva (LCONF_ORDER lo aplica una vez a las ya instaladas) */
+    static const char *const p0[] = { "settings", "personalize", "wireless", "files", "radio", "books", "appstore",
+                                      "tidal", "qobuz", "gutenberg", "freemusic" };
+    static const char *const d0[] = { "headphones", "nowplaying", "music" };
+    for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_find(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
+    for (unsigned i = 0; i < sizeof d0 / sizeof *d0; i++) { int a = app_find(d0[i]); if (a >= 0) L.dock[L.dn++] = a; }
 }
 
 /* ------------------------------------------------------------------ espejo del inicio */
@@ -139,7 +158,7 @@ static void lconf_save(void)
     mirror_dirty = 1; edit_bg_ok = 0;
     FILE *f = fopen(LCONF ".tmp", "w");
     if (!f) return;
-    fprintf(f, "# launcher de hibymod\nlayout 2\nicon %d\ncols %d\nwall %s\ndock", L.icon, L.cols, L.wall[0] ? L.wall : "-");
+    fprintf(f, "# launcher de hibymod\nlayout 2\norder %d\nicon %d\ncols %d\nwall %s\ndock", LCONF_ORDER, L.icon, L.cols, L.wall[0] ? L.wall : "-");
     for (int i = 0; i < L.dn; i++) fprintf(f, " %s", apps[L.dock[i]].id);
     for (int p = 0; p < L.npages; p++) {
         if (!L.pn[p]) continue;
@@ -157,6 +176,7 @@ static void lconf_save(void)
 
 /* distribucion de teclado por defecto segun el idioma: 0 ES, 1 EN (QWERTY), 2 FR (AZERTY) */
 static int kb_layout_for(int l) { return l == LANG_ES ? 0 : l == LANG_FR ? 2 : 1; }
+static int lconf_order_migrated;     /* lconf_load reordeno al orden oficial: hay que guardarlo */
 static void relabel_apps(void);
 /* "Igual que el sistema": si el usuario cambio el idioma en los ajustes de HiBy, seguirlo */
 static void lang_sys_poll(void)
@@ -172,12 +192,13 @@ static void lconf_load(void)
     kb_cfg_layout = kb_layout_for(ui_lang);
     FILE *f = fopen(LCONF, "r");
     if (!f) return;
-    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0, layout2 = 0, got_kb = 0;
+    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0, layout2 = 0, got_kb = 0, order = 0;
     int npn[MAXPAGES] = {0}, np[MAXPAGES][MAXAPPS], nd = 0, dk[4];
     while (fgets(line, sizeof line, f)) {
         char *t = strtok(line, " \t\r\n");
         if (!t || t[0] == '#') continue;
         if (!strcmp(t, "layout")) { char *v = strtok(0, " \t\r\n"); layout2 = v && atoi(v) >= 2; }
+        else if (!strcmp(t, "order")) { char *v = strtok(0, " \t\r\n"); order = v ? atoi(v) : 0; }
         else if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
         else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
@@ -189,15 +210,37 @@ static void lconf_load(void)
         else if (!strcmp(t, "cc")) cc_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
         else if (!strcmp(t, "wall")) { char *v = strtok(0, "\r\n"); if (v && strcmp(v, "-")) snprintf(L.wall, sizeof L.wall, "%s", v); }
-        else if (!strcmp(t, "dock")) { got_dock = 1; while ((t = strtok(0, " \t\r\n"))) { int a = app_by_id(t); if (a >= 0 && !seen[a] && nd < 4) { dk[nd++] = a; seen[a] = 1; } } }
+        else if (!strcmp(t, "dock")) { got_dock = 1; while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a >= 0 && !seen[a] && nd < 4) { dk[nd++] = a; seen[a] = 1; } } }
         else if (!strcmp(t, "page") && pages < MAXPAGES) {
-            while ((t = strtok(0, " \t\r\n"))) { int a = app_by_id(t); if (a >= 0 && !seen[a] && npn[pages] < MAXAPPS) { np[pages][npn[pages]++] = a; seen[a] = 1; } }
+            while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a >= 0 && !seen[a] && npn[pages] < MAXAPPS) { np[pages][npn[pages]++] = a; seen[a] = 1; } }
             if (npn[pages]) pages++;
         }
     }
     fclose(f);
     if (!got_kb) kb_cfg_layout = kb_layout_for(ui_lang);
     if (!got_dock && !pages) return;
+    if (order < LCONF_ORDER) {
+        /* conf anterior al orden oficial: se queda el orden oficial (ya puesto por lconf_default)
+         * y detras, en el orden en que estaban, las apps que no son del sistema (instaladas) */
+        int in[40] = {0}, pp = per_page(); if (pp > MAXAPPS) pp = MAXAPPS; if (pp < 1) pp = 1;
+        for (int i = 0; i < L.dn; i++) in[L.dock[i]] = 1;
+        for (int i = 0; i < L.pn[0]; i++) in[L.page[0][i]] = 1;
+        for (int k = 0; k < nd + pages; k++) {
+            const int *v = k < nd ? &dk[k] : np[k - nd]; int n = k < nd ? 1 : npn[k - nd];
+            for (int i = 0; i < n; i++) if (!in[v[i]]) {
+                int p = L.npages - 1;
+                if (L.pn[p] >= pp) { if (L.npages >= MAXPAGES) break; p = L.npages++; L.pn[p] = 0; }
+                L.page[p][L.pn[p]++] = v[i]; in[v[i]] = 1;
+            }
+        }
+        for (int a = 0; a < NAPPS; a++) if (!in[a]) {
+            int p = L.npages - 1;
+            if (L.pn[p] >= pp) { if (L.npages >= MAXPAGES) break; p = L.npages++; L.pn[p] = 0; }
+            L.page[p][L.pn[p]++] = a;
+        }
+        lconf_order_migrated = 1;
+        return;
+    }
     L.dn = nd; memcpy(L.dock, dk, sizeof dk);
     L.npages = pages; memcpy(L.pn, npn, sizeof npn); memcpy(L.page, np, sizeof np);
     /* apps nuevas (no listadas) en el primer hueco libre al final */
@@ -228,9 +271,15 @@ static void cell_xy(int idx, int *x, int *y)
     *x = 18 + col * cw + (cw - L.icon) / 2;
     *y = GRID_TOP + row * (L.icon + 5 + 14 + 16);
 }
+/* Dock como el de iOS: el cristal ABRAZA a los iconos con el mismo margen por los cuatro lados
+ * (el vertical: (DOCK_H - icono) / 2) y su esquina es concentrica con la de los iconos. La
+ * separacion es la que deja 4 iconos de lado a lado, la misma de la rejilla. */
+static int dock_pad(void) { return (DOCK_H - L.icon) / 2; }
+static int dock_gap(void) { int g = (DOCK_W - 2 * dock_pad() - 4 * L.icon) / 3; return g < 6 ? 6 : g; }
+static int dock_width(int n) { int w = n > 0 ? n * L.icon + (n - 1) * dock_gap() + 2 * dock_pad() : 0; return w > DOCK_W ? DOCK_W : w; }
 static void dock_xy(int idx, int n, int *x, int *y)
 {
-    int gap = n >= 4 ? 18 : 34, tot = n * L.icon + (n - 1) * gap;
+    int gap = dock_gap(), tot = n * L.icon + (n - 1) * gap;
     *x = (W - tot) / 2 + idx * (L.icon + gap);
     *y = DOCK_Y + (DOCK_H - L.icon) / 2;
 }
@@ -318,12 +367,95 @@ static void fill_rrect(uint16_t *dst, int x0, int y0, int w, int h, float r, uin
     }
 }
 
-/* cristal del dock: fondo desenfocado + velo claro + borde, con esquinas redondeadas */
-static void build_dock_glass(void)
+/* ---- esquina continua de iOS (la curva de los iconos: theme/launcher_icons.js, squircle())
+ * Perfil para un radio r: g[k] = y de la curva en x = k / 4 px, medido desde el vertice de la
+ * esquina y solo en la rama "plana" (x >= y; la otra es su simetrica). SQ_OUT = fuera. */
+#define SQ_N 208
+#define SQ_OUT 1e6f
+static void sq_profile(float r, float *g)
 {
+    static const float C[3][6] = { { 1.08849323f, 0, .86840689f, .02196619f, .63149399f, .07491100f },
+                                   { .37282392f, .16905732f, .16905732f, .37282392f, .07491100f, .63149399f },
+                                   { .02196619f, .86840689f, 0, 1.08849323f, 0, 1.52866483f } };
+    for (int k = 0; k < SQ_N; k++) g[k] = SQ_OUT;
+    float x0 = 1.52866483f * r, px = x0, py = 0;
+    for (int k = 0; k < SQ_N; k++) if (k / 4.f >= x0) g[k] = 0;      /* tramo recto */
+    for (int c = 0; c < 3; c++) {
+        float ax = px, ay = py;
+        for (int i = 1; i <= 48; i++) {
+            float t = i / 48.f, m = 1 - t;
+            float x = m * m * m * ax + 3 * m * m * t * C[c][0] * r + 3 * m * t * t * C[c][2] * r + t * t * t * C[c][4] * r;
+            float y = m * m * m * ay + 3 * m * m * t * C[c][1] * r + 3 * m * t * t * C[c][3] * r + t * t * t * C[c][5] * r;
+            if (px >= py && px > x) {                          /* x baja: se rellena [x, px] */
+                for (int k = (int)ceilf(x * 4); k <= (int)floorf(px * 4); k++)
+                    if (k >= 0 && k < SQ_N) g[k] = py + (y - py) * (px - k / 4.f) / (px - x);
+            }
+            px = x; py = y;
+        }
+    }
+}
+/* (x, y) relativo a un rectangulo w x h de esquinas continuas con perfil g (extension ext) */
+static int sq_in(float x, float y, float w, float h, const float *g, float ext)
+{
+    if (x < 0 || y < 0 || x > w || y > h) return 0;
+    float cx = x < w - x ? x : w - x, cy = y < h - y ? y : h - y;
+    float u = cx > cy ? cx : cy, v = cx > cy ? cy : cx;
+    if (u >= ext) return 1;
+    float f = u * 4; int k = (int)f; f -= k;
+    if (k + 1 >= SQ_N) return 1;
+    if (g[k] >= SQ_OUT || g[k + 1] >= SQ_OUT) return 0;
+    return v >= g[k] + (g[k + 1] - g[k]) * f;
+}
+
+/* Cristal del dock = fondo desenfocado + velo claro (dock_base, una vez por fondo) recortado a
+ * la forma (dock_shape: una vez por numero de iconos y tamano de icono). La forma mide lo que
+ * ocupan los iconos mas el margen, centrada en el sprite de DOCK_W x DOCK_H; su radio es el del
+ * icono mas el margen (concentrico) y la curva, la misma esquina continua que los iconos, con
+ * un filo claro de ~1.3 px algo mas vivo arriba que abajo. */
+static uint16_t dock_base[DOCK_W * DOCK_H];
+static int dock_sh_n = -1, dock_sh_icon;
+static void dock_shape(int n)
+{
+    if (n == dock_sh_n && L.icon == dock_sh_icon && dock_glass.rgb) return;
     int w = DOCK_W, h = DOCK_H;
     if (!dock_glass.rgb) { dock_glass.rgb = malloc(w * h * 2); dock_glass.a = malloc(w * h); }
     dock_glass.w = w; dock_glass.h = h;
+    dock_sh_n = n; dock_sh_icon = L.icon;
+    memset(dock_glass.a, 0, w * h);
+    int sw = dock_width(n); if (sw <= 0) return;
+    float x0 = (w - sw) / 2.f, in = 1.3f;
+    float r = L.icon * 0.2237f + dock_pad();                  /* concentrico con el icono */
+    float rmax = (h / 2.f) / 1.52866483f; if (r > rmax) r = rmax;   /* la curva cabe en media altura */
+    static float g0[SQ_N], g1[SQ_N];
+    sq_profile(r, g0); sq_profile(r - in, g1);
+    float e0 = 1.52866483f * r, e1 = 1.52866483f * (r - in);
+    for (int y = 0; y < h; y++) {
+        int kk = 86 - 34 * y / (h - 1);                       /* filo: mas luz arriba */
+        for (int x = (int)x0; x < (int)(x0 + sw + .999f) && x < w; x++) {
+            int i = y * w + x; uint16_t p = dock_base[i];
+            float lx = x - x0, cx = lx < sw - 1 - lx ? lx : sw - 1 - lx; int cy = y < h - 1 - y ? y : h - 1 - y;
+            int no = 16, ni = 16;
+            if (cx < 3 || cy < 3 || (cx < e0 + 1 && cy < e0 + 1)) {      /* borde o esquina: 4x4 muestras */
+                no = ni = 0;
+                for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+                    float fx = lx + (sx + .5f) / 4, fy = y + (sy + .5f) / 4;
+                    if (!sq_in(fx, fy, sw, h, g0, e0)) continue;
+                    no++; ni += sq_in(fx - in, fy - in, sw - 2 * in, h - 2 * in, g1, e1);
+                }
+            }
+            if (!no) continue;
+            if (no > ni) {
+                int k = kk * (no - ni) / no;
+                int cr = (p >> 11) * 255 / 31, cg = ((p >> 5) & 63) * 255 / 63, cb = (p & 31) * 255 / 31;
+                p = rgb(cr + (255 - cr) * k / 255, cg + (255 - cg) * k / 255, cb + (255 - cb) * k / 255);
+            }
+            dock_glass.rgb[i] = p; dock_glass.a[i] = (uint8_t)(255 * no / 16);
+        }
+    }
+}
+static void build_dock_glass(void)
+{
+    int w = DOCK_W, h = DOCK_H;
     static int acc[3][DOCK_W * DOCK_H];
     for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
         uint16_t p = wall[(DOCK_Y + y) * W + DOCK_X + x];
@@ -345,19 +477,12 @@ static void build_dock_glass(void)
                 if (y >= 0) acc[c][y * w + x] = s / n;
             } }
     }
-    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
-        int i = y * w + x;
+    for (int i = 0; i < w * h; i++) {
         int r = acc[0][i] + (255 - acc[0][i]) * 22 / 100, g = acc[1][i] + (255 - acc[1][i]) * 22 / 100, b = acc[2][i] + (255 - acc[2][i]) * 22 / 100;
-        dock_glass.rgb[i] = rgb(r, g, b);
-        /* esquinas redondeadas r=32 y borde claro de 1 px */
-        float px = x + .5f, py = y + .5f, rr = 32;
-        float qx = fabsf(px - w / 2.f) - (w / 2.f - rr), qy = fabsf(py - h / 2.f) - (h / 2.f - rr);
-        float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
-        float d = sqrtf(ox * ox + oy * oy) + (qx > qy ? (qx < 0 ? qx : 0) : (qy < 0 ? qy : 0)) - rr;
-        float cov = .5f - d; if (cov < 0) cov = 0; if (cov > 1) cov = 1;
-        if (d > -1.3f && cov > 0) { int k = 70; dock_glass.rgb[i] = rgb(r + (255 - r) * k / 255, g + (255 - g) * k / 255, b + (255 - b) * k / 255); }
-        dock_glass.a[i] = (uint8_t)(255 * cov);
+        dock_base[i] = rgb(r, g, b);
     }
+    int n = dock_sh_n < 0 ? L.dn : dock_sh_n;
+    dock_sh_n = -1; dock_shape(n);                            /* fondo nuevo: se recorta otra vez */
 }
 
 static int wall_gen;                 /* cambia con cada fondo cargado (widgets: cristal precalculado) */
@@ -550,10 +675,10 @@ static void render_launcher(uint16_t *dst, double t)
     }
     /* dock */
     int dkx = V.scroll < 0 ? (int)-V.scroll : 0;     /* el dock se va con la primera pagina */
-    if (rl_mode != 2 && dkx < W && L.dockbg) blit(dst, &dock_glass, DOCK_X + dkx, DOCK_Y, 32, 255);
     if (dkx < W) {
         int n = L.dn, slot = 0, total = n + (V.drag_app >= 0 && V.drag_dock >= 0 ? 1 : 0);
         for (int i = 0; i < n; i++) if (L.dock[i] == V.drag_app) total--;
+        if (rl_mode != 2 && L.dockbg) { dock_shape(total); blit(dst, &dock_glass, DOCK_X + dkx, DOCK_Y, 32, 255); }
         for (int i = 0; i <= n; i++) {
             if (V.drag_app >= 0 && V.drag_dock >= 0 && slot == V.drag_dock) slot++;
             if (i == n) break;

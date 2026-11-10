@@ -1,0 +1,6 @@
+{"subsonic-response":{"status":"ok","version":"1.16.1","openSubsonic":true,"album":{"id":"al-1","name":"Hi-Res Dreams","artist":"Studio Band","coverArt":"al-1_0","songCount":3,"duration":815,"year":2023,
+ "song":[
+  {"id":"s-2","parent":"al-1","title":"Second","album":"Hi-Res Dreams","artist":"Studio Band","track":2,"discNumber":1,"year":2023,"size":120000000,"contentType":"audio/flac","suffix":"flac","duration":315,"bitRate":3000,"bitDepth":24,"samplingRate":96000,"channelCount":2},
+  {"id":"s-1","parent":"al-1","title":"First","artist":"Guest","track":1,"discNumber":1,"size":100000000,"contentType":"audio/flac","suffix":"flac","duration":300,"bitRate":2800,"bitDepth":24,"samplingRate":96000},
+  {"id":"s-3","title":"Bonus AAC","track":3,"discNumber":1,"size":3000000,"contentType":"audio/mp4","suffix":"m4a","duration":200,"bitRate":128}
+ ]}}}

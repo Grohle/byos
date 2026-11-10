@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>My netlabels</title></head>
+  <body>
+    <outline text="Netlabels">
+      <outline type="rss" text="Free Sounds Weekly" xmlUrl="https://podcast.example.org/feed.xml"/>
+      <outline type="rss" text="Example &amp; Co" title="Example &amp; Co releases" xmlUrl="releases.rss"/>
+    </outline>
+    <outline type="rss" text="Duplicate" xmlUrl="https://podcast.example.org/feed.xml"/>
+    <outline text="No feed here"/>
+  </body>
+</opml>

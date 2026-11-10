@@ -1,5 +1,5 @@
-/* freemusic_core.inc.c - Free Music app (freemusic.inc.c): pure logic with no UI or I/O, so it
- * can be tested on the PC (tests/freemusic_test.c):
+/* freemusic_core.inc.c - Vinyl app (freemusic.inc.c; internal id "freemusic"): pure logic with no
+ * UI or I/O, so it can be tested on the PC (tests/freemusic_test.c):
  *   - mini JSON reader (fj_*)
  *   - Internet Archive: advancedsearch (search results), /metadata/<id>/metadata and
  *     /metadata/<id>/files (album page: tracks per format, sizes, durations, licence)
@@ -7,6 +7,8 @@
  *   - FLAC STREAMINFO from the first bytes of a file (sample rate, bits, channels, samples)
  *   - quality labels ("FLAC 24/96", "MP3 320", "MP3 VBR", "OGG"), licence labels, safe file names,
  *     URL encoding and the search URLs.
+ *   - user sources (freemusic_src.inc.c, included at the end): Vinyl catalog JSON, RSS/Atom
+ *     podcast feeds, OPML, Subsonic API, archive.org collections, MD5 (Subsonic token).
  * Sample responses: tests/freemusic_samples/ (recorded with curl, see tests/freemusic_test.sh). */
 #include <stdint.h>
 #include <stdio.h>
@@ -23,33 +25,52 @@ enum { FQ_FLAC24 = 1, FQ_FLAC = 2, FQ_WAV = 4, FQ_MP3 = 8, FQ_MP3VBR = 16, FQ_OG
 #define FQ_LOSSLESS (FQ_FLAC24 | FQ_FLAC | FQ_WAV)
 #define FQ_ANYMP3 (FQ_MP3 | FQ_MP3VBR)
 enum { FC_LOSSLESS, FC_MP3, FC_OGG, FC_N };          /* what the user downloads */
-enum { FM_SRC_IA, FM_SRC_JM };
+enum { FM_SRC_IA, FM_SRC_JM, FM_SRC_CAT, FM_SRC_RSS, FM_SRC_SUB };   /* how an item is read (fm_item.src) */
 
 struct fm_item {
     uint8_t src, qstate, jm_dl, etree, thumb_state, est;
+    uint8_t srank; short rank, page;                 /* merged lists: source order, position in its answer, page */
+    uint32_t sid;                                    /* source (fm_sources) it comes from */
     char id[80], title[140], artist[100], year[12];
     long long size; long downloads;
     unsigned fq; short mp3k;                         /* best constant MP3 bitrate (0: VBR only) */
     int sr, bits, ch;                                /* lossless quality (metadata or STREAMINFO) */
     short ntr; float tlen; long long dsize;          /* from the files list: tracks, duration, size of the best format */
-    char img[200];                                   /* cover / tile URL */
+    char img[300];                                   /* cover / tile URL */
     char lic[120];                                   /* licence URL (may be empty) */
-    char probe[220];                                 /* Jamendo: FLAC URL to read STREAMINFO from */
+    char probe[300];                                 /* Jamendo: FLAC URL to read STREAMINFO from; OPML: the feed URL */
     uint16_t *thumb;                                 /* FM_TH x FM_TH RGB565 (UI) */
 };
 struct fm_file {
     char name[170];                                  /* IA: file name; Jamendo: full URL */
     char title[110], artist[72], orig[170];
-    uint8_t fq, priv, nodl; short kbps, track; long long size; float len;
+    uint8_t fq, priv, nodl, est; short kbps, track; long long size; float len;
+    int uo;                                          /* user sources: offset + 1 of the full URL in fm_album.ub */
 };
 struct fm_track { char title[120], artist[80]; short no; float len; short f[FC_N]; };
 struct fm_album {
     struct fm_item it;
     char desc[700], coll[48], venue[100], cover[170];
     int nf, nt; struct fm_file *f; struct fm_track *t;
-    long long csize[FC_N]; short ccount[FC_N]; unsigned cq[FC_N]; short ckbps[FC_N]; uint8_t cdl[FC_N];
+    long long csize[FC_N]; short ccount[FC_N]; unsigned cq[FC_N]; short ckbps[FC_N]; uint8_t cdl[FC_N], cest[FC_N];
     int restricted;                                  /* "access-restricted-item" / stream_only */
+    char page[200];                                  /* web page of the album (user sources) */
+    char *ub; int ubn, ubcap;                        /* URL pool of the files (user sources) */
 };
+static void fm_album_parts_free(struct fm_album *a) { free(a->f); free(a->t); free(a->ub); a->f = 0; a->t = 0; a->ub = 0; a->nf = a->nt = 0; a->ubn = a->ubcap = 0; }
+/* adds a URL to the pool; returns offset + 1 (0 = no memory) */
+static int fm_pool_add(struct fm_album *a, const char *s)
+{
+    int n = (int)strlen(s) + 1;
+    if (a->ubn + n > a->ubcap) {
+        int nc = a->ubcap ? a->ubcap * 2 : 16384; while (nc < a->ubn + n) nc *= 2;
+        char *b = realloc(a->ub, nc); if (!b) return 0;
+        a->ub = b; a->ubcap = nc;
+    }
+    memcpy(a->ub + a->ubn, s, n); a->ubn += n;
+    return a->ubn - n + 1;
+}
+static const char *fm_pool(const struct fm_album *a, int uo) { return uo > 0 && a->ub && uo - 1 < a->ubn ? a->ub + uo - 1 : ""; }
 
 /* ------------------------------------------------------------------ JSON (walk the text) */
 static const char *fj_w(const char *p) { while (p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++; return p; }
@@ -318,13 +339,14 @@ static const char *const FM_COLQ[FCOL_N] = {
 enum { FSORT_POP, FSORT_NEW, FSORT_REL };
 
 #define FM_IA_FIELDS "fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=date&fl%5B%5D=downloads&fl%5B%5D=format&fl%5B%5D=item_size&fl%5B%5D=licenseurl&fl%5B%5D=collection"
-static void fm_ia_search_url(char *o, int n, const char *text, int coll, int lossless, int genre, int lang, int sort, int rows, int page)
+/* collq: "collection:(...)" part of the query (FM_COLQ, or a user's archive.org collection) */
+static void fm_ia_search_url2(char *o, int n, const char *text, const char *collq, int lossless, int genre, int lang, int sort, int rows, int page)
 {
     char w[160], q[700], e[1400];
     fm_ia_words(text ? text : "", w, sizeof w);
     int k = 0;
     if (w[0]) k += snprintf(q + k, sizeof q - k, "(%s) AND ", w);
-    k += snprintf(q + k, sizeof q - k, "%s AND mediatype:(audio OR etree)", FM_COLQ[coll >= 0 && coll < FCOL_N ? coll : 0]);
+    k += snprintf(q + k, sizeof q - k, "%s AND mediatype:(audio OR etree)", collq);
     if (lossless) k += snprintf(q + k, sizeof q - k, " AND format:(Flac OR \"24bit Flac\")");
     else k += snprintf(q + k, sizeof q - k, " AND format:(Flac OR \"24bit Flac\" OR \"VBR MP3\" OR MP3 OR \"Ogg Vorbis\" OR \"320Kbps MP3\" OR \"256Kbps MP3\" OR \"192Kbps MP3\" OR \"128Kbps MP3\")");
     if (genre >= 0 && genre < FM_NGENRE) k += snprintf(q + k, sizeof q - k, " AND subject:(%s)", FM_GENRES[genre].ia);
@@ -332,6 +354,10 @@ static void fm_ia_search_url(char *o, int n, const char *text, int coll, int los
     fm_urlenc(q, e, sizeof e);
     const char *so = sort == FSORT_NEW ? "&sort%5B%5D=publicdate+desc" : sort == FSORT_REL && w[0] ? "" : "&sort%5B%5D=downloads+desc";
     snprintf(o, n, "https://archive.org/advancedsearch.php?q=%s&%s%s&rows=%d&page=%d&output=json", e, FM_IA_FIELDS, so, rows, page < 1 ? 1 : page);
+}
+static void fm_ia_search_url(char *o, int n, const char *text, int coll, int lossless, int genre, int lang, int sort, int rows, int page)
+{
+    fm_ia_search_url2(o, n, text, FM_COLQ[coll >= 0 && coll < FCOL_N ? coll : 0], lossless, genre, lang, sort, rows, page);
 }
 #define FM_JM_API "https://api.jamendo.com/v3.0"
 static void fm_jm_search_url(char *o, int n, const char *key, const char *text, int lossless, int genre, int lang, int sort, int featured, int rows, int offset)
@@ -470,12 +496,13 @@ static int fm_cmp_name(const void *a, const void *b)
 /* totals per class (size, count, quality) once the tracks are known */
 static void fm_album_totals(struct fm_album *a)
 {
-    for (int c = 0; c < FC_N; c++) { a->csize[c] = 0; a->ccount[c] = 0; a->cq[c] = 0; a->ckbps[c] = 0; a->cdl[c] = 1; }
+    for (int c = 0; c < FC_N; c++) { a->csize[c] = 0; a->ccount[c] = 0; a->cq[c] = 0; a->ckbps[c] = 0; a->cdl[c] = 1; a->cest[c] = 0; }
     for (int t = 0; t < a->nt; t++) for (int c = 0; c < FC_N; c++) {
         int i = a->t[t].f[c]; if (i < 0) continue;
         const struct fm_file *f = &a->f[i];
         a->csize[c] += f->size; a->ccount[c]++; a->cq[c] |= f->fq;
         if (f->nodl) a->cdl[c] = 0;
+        if (f->est) a->cest[c] = 1;
         if (!a->ckbps[c] || (f->kbps && f->kbps < a->ckbps[c])) a->ckbps[c] = f->kbps;   /* the lowest: honest */
     }
     for (int c = 0; c < FC_N; c++) if (!a->ccount[c]) a->cdl[c] = 0;
@@ -485,7 +512,7 @@ static int fm_ia_parse_files(const char *js, struct fm_album *a)
 {
     const char *arr = fj_get(js, "result"); if (!arr || *fj_w(arr) != '[') arr = fj_get(js, "files");
     if (!arr) return -1;
-    free(a->f); free(a->t); a->f = 0; a->t = 0; a->nf = a->nt = 0;
+    fm_album_parts_free(a);
     a->f = calloc(FM_MAXF, sizeof *a->f); a->t = calloc(FM_MAXT, sizeof *a->t);
     if (!a->f || !a->t) return -1;
     char cover[170] = ""; int cover_score = -1;
@@ -628,7 +655,7 @@ static int fm_jm_parse_album(const char *js, struct fm_album *a)
     fj_gs(r, "artist_name", it->artist, sizeof it->artist);
     char dt[24]; fj_gs(r, "releasedate", dt, sizeof dt); fm_year(dt, it->year, sizeof it->year);
     fj_gs(r, "image", it->img, sizeof it->img);
-    free(a->f); free(a->t); a->nf = a->nt = 0;
+    fm_album_parts_free(a);
     a->f = calloc(FM_MAXF, sizeof *a->f); a->t = calloc(FM_MAXT, sizeof *a->t);
     if (!a->f || !a->t) return -1;
     for (const char *t = fj_first(fj_get(r, "tracks")); t && a->nt < FM_MAXT && a->nf + 2 <= FM_MAXF; t = fj_next(t)) {
@@ -698,3 +725,5 @@ static int fm_flac_info(const uint8_t *b, int n, int *sr, int *bits, int *ch, lo
     if (ns) *ns = s;
     return 1;
 }
+
+#include "freemusic_src.inc.c"

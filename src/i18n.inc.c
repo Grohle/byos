@@ -244,7 +244,7 @@ static const char *const TR[][3] = {
     { "Solo USB", "USB only", "USB seul" },
     { "Modo de energía", "Power mode", "Mode d'énergie" },
     { "Panel de HiBy", "HiBy panel", "Panneau HiBy" },
-    { "Batería y energía", "Battery & power", "Batterie et énergie" },
+    { "Batería y energía", "Battery & Power", "Batterie et énergie" },
     { "Ahorro", "Low power", "Économie" },
     { "Rendimiento", "Performance", "Performance" },
     { "Solo USB (no cargar)", "USB only (don't charge)", "USB seul (sans charge)" },

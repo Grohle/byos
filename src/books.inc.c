@@ -33,7 +33,14 @@
 static const int bk_sizes[] = { 14, 15, 16, 17, 19, 21, 24, 27 };
 #define BK_NSIZES ((int)(sizeof bk_sizes / sizeof bk_sizes[0]))
 static int bk_size_i = 3, bk_theme = 0;
-static int bk_tab;                           /* 0 biblioteca, 1 audiolibros, 2 tienda (books_ab.inc.c) */
+/* Dos apps comparten este modulo: Libros (Biblioteca + Audiolibros) y Gutenberg (Explorar + Descargas) */
+static int bk_tab;                           /* Libros: 0 biblioteca, 1 audiolibros, 2 explorar | Gutenberg: 2 explorar, 3 descargas */
+static int bk_gut;                           /* 0 = Libros, 1 = Gutenberg */
+static int bk_tab_last[2] = { 0, 2 };        /* pestana en la que se dejo cada app */
+#define BK_APPID (bk_gut ? "gutenberg" : "books")
+/* el lector se abre tambien desde Gutenberg: quien lo aloja pinta el fondo y dice donde esta la portada */
+static void (*bk_host_render)(uint16_t *d);
+static int bk_host_x, bk_host_y, bk_host_w, bk_host_h, bk_host_c0;
 static char ab_langc[16] = "";               /* idioma de la tienda (clave de ab_langs; "" = el de la interfaz) */
 struct bk_th { uint16_t bg, fg, dim, chrome, sheet, card, accent; };
 static struct bk_th bk_T(void)
@@ -342,9 +349,10 @@ static void bk_blit_scaled(uint16_t *d, const uint16_t *s, int sw, int sh, int r
     }
 }
 
-#include "books_ab.inc.c"                    /* pestanas Audiolibros y Tienda */
+#include "books_ab.inc.c"                    /* Audiolibros y la app Gutenberg (Explorar, Descargas) */
 
 /* --------------------------------------------- dibujo de la biblioteca */
+static int bk_gbtn_w;                        /* ancho del boton "Abrir Gutenberg" de la biblioteca vacia (0 = no esta) */
 static void bk_cell_xy(int i, int *x, int *y) { *x = 20 + (i & 1) * (BK_CW + 16); *y = BK_LIST_Y + 14 + (i >> 1) * BK_PITCH - (int)bk_lscroll; }
 static float bk_lmax(void) { float m = ((bln + 1) / 2) * BK_PITCH + 14 - (AB_TABY - BK_LIST_Y); return m < 0 ? 0 : m; }
 static void bk_lib_render(uint16_t *d, int pressed)
@@ -367,6 +375,7 @@ static void bk_lib_render(uint16_t *d, int pressed)
     }
     int n = bln;
     pthread_mutex_unlock(&bk_mu);
+    bk_gbtn_w = 0;
     /* cabecera fija */
     for (int y = 30; y < BK_LIST_Y; y++) for (int x = 0; x < W; x++) d[y * W + x] = 0;
     draw_text(d, 16, 76, tr("Biblioteca"), 28, 0xFFFF, 0, 0, H);
@@ -376,7 +385,15 @@ static void bk_lib_render(uint16_t *d, int pressed)
         fill_rrect(d, W / 2 - 30, cy - 22, 27, 40, 4, rgb(72, 72, 76), 255); fill_rrect(d, W / 2 + 3, cy - 22, 27, 40, 4, rgb(72, 72, 76), 255);
         fill_rrect(d, W / 2 - 2, cy - 24, 4, 44, 2, rgb(0, 0, 0), 255);
         const char *t = tr("No hay libros"); draw_text(d, (W - tw_n(t, 20, -1)) / 2, cy + 56, t, 20, 0xFFFF, 0, 0, H);
+        wrap_cw = W - 56;
         draw_wrapped(d, 28, cy + 78, W - 56, sd_mounted() ? tr("BOOKS_HELP") : tr("La SD está conectada al ordenador"), 14, rgb(142, 142, 147), 19, 1);
+        wrap_cw = 0;
+        if (!bk_gut && sd_mounted()) {   /* los libros se descargan en la pestana Explorar */
+            const char *b = tr("Explorar"); int bw = tw_n(b, 15, -1) + 36;
+            fill_rrect(d, (W - bw) / 2, cy + 150, bw, 36, 18, pressed == -2 ? rgb(5, 90, 180) : rgb(10, 132, 255), 255);
+            draw_text(d, (W - bw) / 2 + 18, cy + 174, b, 15, 0xFFFF, 0, 0, H);
+            bk_gbtn_w = bw;
+        }
     }
     ab_tabbar(d, 0, 0);
     draw_toast(d);
@@ -934,7 +951,7 @@ static int bk_toc(void)
         if (sy >= 456) {
             int up = 0; double tw = now_ms();
             while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
-            if (up) { bk_toc_render(fr0, -1, cur); if (own_home_gesture(sx, sy, app_by_id("books"))) return -1; continue; }
+            if (up) { bk_toc_render(fr0, -1, cur); if (own_home_gesture(sx, sy, app_by_id(BK_APPID))) return -1; continue; }
             while (cur_down && read_pkt(&p, 1000)) {}
             continue;
         }
@@ -978,7 +995,7 @@ static void bk_cover_rect(struct bk_li *li, int *x, int *y)
     int i = (int)(li - bl); bk_cell_xy(i, x, y);
 }
 /* zoom portada <-> pagina; open=1 abre. lib = biblioteca de fondo (pantalla completa) */
-static void bk_zoom(const uint16_t *lib, const uint16_t *page, const uint16_t *cover, int cx, int cy, int open)
+static void bk_zoom(const uint16_t *lib, const uint16_t *page, const uint16_t *cover, int cx, int cy, int cw, int ch, int open)
 {
     bk_anim = 1;
     double t0 = now_ms(), dur = open ? 340 : 300;
@@ -986,13 +1003,21 @@ static void bk_zoom(const uint16_t *lib, const uint16_t *page, const uint16_t *c
         double t = (now_ms() - t0) / dur; if (t > 1) t = 1;
         double e = open ? ease_out(t) : 1 - ease_out(t);
         dim_buf(fr0, lib, W * H, 32 - (int)(10 * e));
-        int rx = (int)(cx * (1 - e)), ry = (int)(cy * (1 - e)), rw = (int)(BK_CW + (W - BK_CW) * e), rh = (int)(BK_CHT + (H - BK_CHT) * e);
-        draw_scaled(fr0, page, rx, ry, rw, rh, (float)(4 + 10 * (1 - e)) * (e < 0.98 ? 1 : 0));
-        int a = (int)(32 * (1 - e * 1.8)); if (a > 0 && cover) bk_blit_scaled(fr0, cover, BK_CW, BK_CHT, rx, ry, rw, rh, a, (int)(4 + 10 * (1 - e)), 0, H);
+        int rx = (int)(cx * (1 - e)), ry = (int)(cy * (1 - e)), rw = (int)(cw + (W - cw) * e), rh = (int)(ch + (H - ch) * e);
+        float rr = (float)(4 + 10 * (1 - e)); if (rr > rw / 6.f) rr = rw / 6.f;
+        draw_scaled(fr0, page, rx, ry, rw, rh, rr * (e < 0.98 ? 1 : 0));
+        int a = (int)(32 * (1 - e * 1.8)); if (a > 0 && cover) bk_blit_scaled(fr0, cover, BK_CW, BK_CHT, rx, ry, rw, rh, a, (int)rr, 0, H);
         present();
         if (t >= 1) break;
     }
     bk_anim = 0;
+}
+/* escena a la que vuelve el lector al cerrarse: la pinta en d y da el rectangulo de la portada (c0 = recorte superior) */
+static void bk_back_scene(uint16_t *d, int *cx, int *cy, int *cw, int *ch, int *c0)
+{
+    if (bk_host_render) { bk_host_render(d); *cx = bk_host_x; *cy = bk_host_y; *cw = bk_host_w; *ch = bk_host_h; *c0 = bk_host_c0; return; }
+    bk_lscroll = 0;
+    bk_lib_render(d, -1); bk_cover_rect(rb_li, cx, cy); *cw = BK_CW; *ch = BK_CHT; *c0 = BK_LIST_Y;
 }
 /* bucle del lector; 0 = volver a la biblioteca, 1 = salir de la app (el inicio ya se mostro) */
 static int bk_reader(void)
@@ -1013,7 +1038,7 @@ static int bk_reader(void)
         if (sy >= 456) {
             int up = 0; double tw = now_ms();
             while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
-            if (up) { bk_save(1); bk_frame(rd_chrome ? 32 : 0); if (own_home_gesture(sx, sy, app_by_id("books"))) return 1; bk_show(); continue; }
+            if (up) { bk_save(1); bk_frame(rd_chrome ? 32 : 0); if (own_home_gesture(sx, sy, app_by_id(BK_APPID))) return 1; bk_show(); continue; }
             while (cur_down && read_pkt(&p, 1000)) {}
             continue;
         }
@@ -1088,8 +1113,7 @@ static int bk_reader(void)
             bk_lscroll = 0; bk_save(0);
             pthread_mutex_lock(&bk_mu); qsort(bl, bln, sizeof *bl, bk_lcmp); pthread_mutex_unlock(&bk_mu);
             for (int i = 0; i < bln; i++) if (bl[i].h == rb_li->h) rb_li = &bl[i];
-            bk_lib_render(img_base, -1);
-            int cx, cy; bk_cover_rect(rb_li, &cx, &cy);
+            int cx, cy, cw, ch, c0; bk_back_scene(img_base, &cx, &cy, &cw, &ch, &c0);
             const uint16_t *pg = bk_page(rd_ch, rd_pg);
             float pr = 0, v = 0; int ly = cur_y; double lt = now_ms();
             for (;;) {
@@ -1111,13 +1135,13 @@ static int bk_reader(void)
                 for (;;) {
                     double t = (now_ms() - t0) / 280; if (t > 1) t = 1; double e = ease_out(t);
                     dim_buf(fr0, img_base, W * H, 22 + (int)(10 * (pr + (1 - pr) * e)));
-                    int rx = x0 + (int)((cx - x0) * e), ry = y0 + (int)((cy - y0) * e), rw = w0 + (int)((BK_CW - w0) * e), rh = h0 + (int)((BK_CHT - h0) * e);
+                    int rx = x0 + (int)((cx - x0) * e), ry = y0 + (int)((cy - y0) * e), rw = w0 + (int)((cw - w0) * e), rh = h0 + (int)((ch - h0) * e);
                     draw_scaled(fr0, pg, rx, ry, rw, rh, 6 + 14 * pr * (1 - e) + 4 * e);
-                    if (cv) bk_blit_scaled(fr0, cv, BK_CW, BK_CHT, rx, ry, rw, rh, (int)(32 * e), 4, BK_LIST_Y, H);
+                    if (cv) bk_blit_scaled(fr0, cv, BK_CW, BK_CHT, rx, ry, rw, rh, (int)(32 * e), 4, c0, H);
                     present(); if (t >= 1) break;
                 }
                 bk_anim = 0;
-                return 2;   /* la biblioteca ya esta en pantalla */
+                return 2;   /* la escena de vuelta ya esta en pantalla */
             }
             /* volver */
             double t0 = now_ms(); float p0 = pr;
@@ -1139,12 +1163,17 @@ static int bk_reader(void)
 }
 
 /* --------------------------------------------- app */
-static uint64_t bk_resume_h;                 /* libro abierto al salir con el gesto de inicio */
+static uint64_t bk_resume_hh[2];             /* libro abierto al salir con el gesto de inicio (Libros, Gutenberg) */
+#define bk_resume_h bk_resume_hh[bk_gut]
 /* abre el libro i de la biblioteca (con zoom desde su portada); 1 = salir de la app */
 static int bk_read(int i, int from_icon, int ix, int iy)
 {
     struct bk_li *li = &bl[i];
-    if (!from_icon) bk_lib_render(img_base, -1);
+    int cx = 0, cy = 0, cw = BK_CW, ch = BK_CHT, c0 = BK_LIST_Y;
+    if (!from_icon) {
+        if (bk_host_render) { bk_host_render(img_base); cx = bk_host_x; cy = bk_host_y; cw = bk_host_w; ch = bk_host_h; }
+        else { bk_lib_render(img_base, -1); bk_cell_xy(i, &cx, &cy); }
+    }
     uint64_t h = li->h;
     if (!bk_open_book(li)) { toast(tr("No se pudo abrir el libro")); bk_meta_start(); return 0; }
     pthread_mutex_lock(&bk_mu); qsort(bl, bln, sizeof *bl, bk_lcmp); pthread_mutex_unlock(&bk_mu);
@@ -1160,48 +1189,79 @@ static int bk_read(int i, int from_icon, int ix, int iy)
             draw_scaled(fr0, pg, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, hh, win_radius(w, hh, e));
             present(); if (t >= 1) break;
         }
-    } else {
-        int cx, cy; bk_cell_xy(i, &cx, &cy);
-        bk_zoom(img_base, pg, bk_cover(li), cx, cy, 1);
-    }
+    } else bk_zoom(img_base, pg, bk_cover(rb_li), cx, cy, cw, ch, 1);
     bk_resume_h = rb_li->h;
     int r = bk_reader();
     bk_save(1);
     if (r == 1) { bk_close_book(); return 1; }       /* el libro sigue "abierto" al volver a la app */
     bk_resume_h = 0;
     if (r == 0) {   /* cerrar con la X: zoom a la portada */
-        bk_lscroll = 0;
         pthread_mutex_lock(&bk_mu); qsort(bl, bln, sizeof *bl, bk_lcmp); pthread_mutex_unlock(&bk_mu);
-        int k = 0; for (int j = 0; j < bln; j++) if (bl[j].h == h) k = j;
-        bk_lib_render(img_base, -1);
-        int cx, cy; bk_cell_xy(k, &cx, &cy);
+        for (int j = 0; j < bln; j++) if (bl[j].h == h) rb_li = &bl[j];
+        bk_back_scene(img_base, &cx, &cy, &cw, &ch, &c0);
         memcpy(img_app, bk_page(rd_ch, rd_pg), HM_FRAME_BYTES);
-        bk_zoom(img_base, img_app, bk_cover(&bl[k]), cx, cy, 0);
+        bk_zoom(img_base, img_app, bk_cover(rb_li), cx, cy, cw, ch, 0);
     }
     bk_close_book();
     bk_meta_start();                               /* portadas pendientes */
     return 0;
 }
 static void bk_lib_present(int pressed) { bk_lib_render(fr0, pressed); present(); }
-static int bk_start_store;     /* icono "Gutenberg" del inicio: entrar directamente en la tienda */
+static void bk_lib_render0(uint16_t *d) { bk_lib_render(d, -1); }
+/* menu de un libro (pulsacion larga o los tres puntos); rend pinta el fondo. Lo usa tambien Gutenberg */
+static void bk_li_menu(int hit, void (*rend)(uint16_t *d))
+{
+    rend(fr0);
+    struct bk_li *li = &bl[hit];
+    const char *o[3] = { li->done ? tr("Marcar como no leído") : tr("Marcar como terminado"), tr("Empezar desde el principio"), tr("Eliminar") };
+    int a = action_sheet(li->title, o, 3, 2);
+    struct bk_pos ps; bk_pos_load(li->h, &ps);
+    if (a == 0) { ps.done = !li->done; ps.pct = ps.done ? 1 : 0; if (!ps.done) { ps.ch = 0; ps.off = 0; ps.opened = 0; } else if (ps.opened <= 0) ps.opened = (double)time(0); bk_pos_save(li->h, &ps); li->done = ps.done; li->pct = ps.pct; li->opened = ps.opened; }
+    else if (a == 1) { ps.ch = 0; ps.off = 0; ps.pct = 0; ps.done = 0; bk_pos_save(li->h, &ps); li->done = 0; li->pct = 0; }
+    else if (a == 2) {
+        char q[300]; snprintf(q, sizeof q, tr("¿Eliminar «%s»? No se puede deshacer."), li->title);
+        rend(fr0);
+        if (confirm(q, tr("Eliminar"))) {
+            bk_meta_join();
+            char pp[200];
+            if (unlink(li->path)) toast(tr("No se pudo eliminar del todo"));
+            else {
+                snprintf(pp, sizeof pp, BK_DIR "/%016llx.pos", (unsigned long long)li->h); unlink(pp);
+                snprintf(pp, sizeof pp, BK_DIR "/%016llx.cov", (unsigned long long)li->h); unlink(pp);
+                pthread_mutex_lock(&bk_mu); memmove(&bl[hit], &bl[hit + 1], (bln - hit - 1) * sizeof *bl); bln--; pthread_mutex_unlock(&bk_mu);
+                toast(tr("Eliminado"));
+                float mx = bk_lmax(); if (bk_lscroll > mx) bk_lscroll = mx;
+            }
+        }
+    }
+    pthread_mutex_lock(&bk_mu); qsort(bl, bln, sizeof *bl, bk_lcmp); pthread_mutex_unlock(&bk_mu);
+}
 static void books_app_at(int ix, int iy)
 {
     have_under = 0;                               /* se reutilizan img_under / img_sheet / img_base */
     bk_conf_load();
     bk_lib_scan();
     bk_lscroll = 0;
+    /* cada app recuerda su pestana; al volver a un libro abierto desde Gutenberg, debajo queda Descargas */
+    bk_tab = bk_tab_last[bk_gut];
+    if (bk_gut ? bk_tab < 2 : bk_tab > 2) bk_tab = bk_gut ? 2 : 0;
+    if (bk_gut && bk_resume_h) bk_tab = 3;
     ab_open();
     int gone = 0;
-    if (bk_start_store) {                         /* Gutenberg: la tienda de audiolibros y libros */
-        bk_start_store = 0; bk_resume_h = 0; bk_tab = 2;
-        if (!ab_spn[2]) { ab_spn[2] = 1; ab_stk[2][0].kind = AP_STORE; }
-    }
     /* volver al libro que estaba abierto (como iOS) */
     if (bk_resume_h) {
         int i = -1; for (int k = 0; k < bln; k++) if (bl[k].h == bk_resume_h) i = k;
-        if (i >= 0 && bk_read(i, 1, ix, iy)) { gone = 1; goto out; }
+        if (i >= 0) {
+            if (bk_gut) { gut_focus_h = bk_resume_h; bk_host_render = gut_host_render; }
+            int r = bk_read(i, 1, ix, iy);
+            bk_host_render = 0; gut_focus_h = 0;
+            if (r) { gone = 1; goto out; }
+        }
         bk_resume_h = 0;
-        bk_lib_present(-1);
+        if (i < 0) {   /* el libro ya no esta: la app aparece sin zoom */
+            if (bk_tab) ab_render_tab(fr0); else bk_lib_render(fr0, -1);
+            present();
+        }
     } else {
         if (bk_tab) ab_render_tab(img_app); else bk_lib_render(img_app, -1);
         render_launcher(img_base, now_ms());
@@ -1217,9 +1277,9 @@ static void books_app_at(int ix, int iy)
     if (!bk_tab) bk_lib_present(-1);
     float vel = 0; struct pkt p;
     for (;;) {
-        if (bk_tab) {   /* Audiolibros / Tienda */
+        if (bk_tab) {   /* Audiolibros | Gutenberg: Explorar y Descargas */
             if (ab_run()) { gone = 1; break; }
-            bk_lib_scan();                        /* (puede haber EPUB nuevos de la Tienda) */
+            bk_lib_scan();                        /* (puede haber EPUB nuevos de Gutenberg) */
             bk_lib_present(-1); continue;
         }
         if (fabsf(vel) > 0.03f) {
@@ -1232,7 +1292,7 @@ static void books_app_at(int ix, int iy)
         } else if (!read_pkt(&p, bk_meta_run || now_ms() < toast_until + 40 ? 60 : 400)) {
             if (bk_lib_dirty || now_ms() < toast_until + 40) { bk_lib_dirty = 0; bk_lib_present(-1); }
             ab_np_tick(0);                        /* progreso del audiolibro que suena */
-            if (ab_lib_epub_done()) { bk_lib_scan(); bk_lib_present(-1); }   /* EPUB de la Tienda */
+            if (ab_lib_epub_done()) { bk_lib_scan(); bk_lib_present(-1); }   /* EPUB de Gutenberg */
             continue;
         }
         if (!p.down) continue;
@@ -1240,18 +1300,24 @@ static void books_app_at(int ix, int iy)
         if (sy >= 456) {   /* desde abajo: inicio (la ventana sigue al dedo; mantener 1 s: multitarea) */
             int up = 0; double tw = now_ms();
             while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
-            if (up) { bk_lib_render(fr0, -1); if (own_home_gesture(sx, sy, app_by_id("books"))) { gone = 1; break; } bk_lib_present(-1); continue; }
+            if (up) { bk_lib_render(fr0, -1); if (own_home_gesture(sx, sy, app_by_id(BK_APPID))) { gone = 1; break; } bk_lib_present(-1); continue; }
             while (cur_down && read_pkt(&p, 1000)) {}
-            if (sx >= W / 3) bk_tab = sx < 2 * W / 3 ? 1 : 2;   /* toque en la barra de pestanas */
+            if (sx * 3 / W) bk_tab = sx * 3 / W;                /* toque en la barra de pestanas */
             continue;
         }
         if (sy >= AB_TABY) {   /* barra de pestanas */
             while (cur_down && read_pkt(&p, 3000)) {}
-            if (sx >= W / 3) bk_tab = sx < 2 * W / 3 ? 1 : 2;
+            if (sx * 3 / W) bk_tab = sx * 3 / W;
             else { bk_lscroll = 0; bk_lib_present(-1); }
             continue;
         }
         if (sy < BK_LIST_Y) { while (cur_down && read_pkt(&p, 3000)) {} continue; }
+        if (bk_gbtn_w && sy >= 338 && sy < 390 && abs(sx - W / 2) <= bk_gbtn_w / 2 + 6) {   /* biblioteca vacia: abrir Gutenberg */
+            bk_lib_present(-2);
+            while (cur_down && read_pkt(&p, 3000)) {}
+            if (abs(cur_x - sx) < 20 && abs(cur_y - sy) < 20) { ab_src = 1; bk_tab = 2; continue; }   /* libros en Explorar */
+            bk_lib_present(-1); continue;
+        }
         /* celda tocada */
         int hit = -1, dots = 0;
         for (int i = 0; i < bln; i++) {
@@ -1275,30 +1341,7 @@ static void books_app_at(int ix, int iy)
         if (hit < 0) { bk_lib_present(-1); continue; }
         if (longp || dots) {
             while (cur_down && read_pkt(&p, 3000)) {}
-            bk_lib_render(fr0, -1);
-            struct bk_li *li = &bl[hit];
-            const char *o[3] = { li->done ? tr("Marcar como no leído") : tr("Marcar como terminado"), tr("Empezar desde el principio"), tr("Eliminar") };
-            int a = action_sheet(li->title, o, 3, 2);
-            struct bk_pos ps; bk_pos_load(li->h, &ps);
-            if (a == 0) { ps.done = !li->done; ps.pct = ps.done ? 1 : 0; if (!ps.done) { ps.ch = 0; ps.off = 0; ps.opened = 0; } else if (ps.opened <= 0) ps.opened = (double)time(0); bk_pos_save(li->h, &ps); li->done = ps.done; li->pct = ps.pct; li->opened = ps.opened; }
-            else if (a == 1) { ps.ch = 0; ps.off = 0; ps.pct = 0; ps.done = 0; bk_pos_save(li->h, &ps); li->done = 0; li->pct = 0; }
-            else if (a == 2) {
-                char q[300]; snprintf(q, sizeof q, tr("¿Eliminar «%s»? No se puede deshacer."), li->title);
-                bk_lib_render(fr0, -1);
-                if (confirm(q, tr("Eliminar"))) {
-                    bk_meta_join();
-                    char pp[200];
-                    if (unlink(li->path)) toast(tr("No se pudo eliminar del todo"));
-                    else {
-                        snprintf(pp, sizeof pp, BK_DIR "/%016llx.pos", (unsigned long long)li->h); unlink(pp);
-                        snprintf(pp, sizeof pp, BK_DIR "/%016llx.cov", (unsigned long long)li->h); unlink(pp);
-                        pthread_mutex_lock(&bk_mu); memmove(&bl[hit], &bl[hit + 1], (bln - hit - 1) * sizeof *bl); bln--; pthread_mutex_unlock(&bk_mu);
-                        toast(tr("Eliminado"));
-                        float mx = bk_lmax(); if (bk_lscroll > mx) bk_lscroll = mx;
-                    }
-                }
-            }
-            pthread_mutex_lock(&bk_mu); qsort(bl, bln, sizeof *bl, bk_lcmp); pthread_mutex_unlock(&bk_mu);
+            bk_li_menu(hit, bk_lib_render0);
             bk_lib_present(-1); continue;
         }
         if (bk_read(hit, 0, 0, 0)) { gone = 1; break; }
@@ -1309,6 +1352,7 @@ out:
         bk_lib_render(img_app, -1); render_launcher(img_base, now_ms());
     }
     bk_meta_join();                               /* (el hilo guarda el indice si cambio algo) */
+    bk_tab_last[bk_gut] = bk_tab;
     ab_close();
     bk_cover_free();
     free(bl); bl = 0; bln = 0;

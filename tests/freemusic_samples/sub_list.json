@@ -1,0 +1,4 @@
+{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.53.3","openSubsonic":true,"albumList2":{"album":[
+ {"id":"al-1","name":"Hi-Res Dreams","artist":"Studio Band","artistId":"ar-1","coverArt":"al-1_0","songCount":2,"duration":615,"created":"2024-01-01T00:00:00Z","year":2023,"genre":"Jazz"},
+ {"id":"al-2","name":"Compressed","artist":"MP3 Person","coverArt":"al-2_0","songCount":1,"duration":200,"year":2010}
+]}}}

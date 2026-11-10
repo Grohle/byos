@@ -96,11 +96,18 @@ int main(int argc, char **argv)
     { char m1[64] = "Caf\xC3\x83\xC2\xA9 cr\xC3\x83\xC2\xA8me", m2[32] = "F\xC3\xA1" "bulas"; ab_unmojibake(m1); ab_unmojibake(m2);
       CHECK(!strcmp(m1, "Caf\xC3\xA9 cr\xC3\xA8me") && !strcmp(m2, "F\xC3\xA1" "bulas"), "unmojibake '%s' '%s'", m1, m2); }
 
-    /* --- Gutendex */
-    p(D, "gutendex_es.json", f);
-    CHECK(!ab_gut_parse(f, &r), "gutendex");
-    printf("gutendex: %d de %ld; 1: %s | %s | %s | %s\n", r.n, r.found, r.h[0].id, r.h[0].title, r.h[0].author, r.h[0].cover);
-    CHECK(r.n >= 1 && !strcmp(r.h[0].id, "2000") && !strcmp(r.h[0].author, "Miguel de Cervantes Saavedra") && strstr(r.h[0].cover, ".jpg"), "gutendex 1");
+    /* --- Gutenberg (catalogo OPDS) */
+    p(D, "opds_es.xml", f);
+    CHECK(!ab_gut_parse(f, &r), "opds");
+    printf("opds: %d; 1: %s | %s | %s | %s\n", r.n, r.h[0].id, r.h[0].title, r.h[0].author, r.h[0].cover);
+    CHECK(r.n == 25 && !strcmp(r.h[0].id, "2000") && !strcmp(r.h[0].title, "Don Quijote") && !strcmp(r.h[0].author, "Miguel de Cervantes Saavedra") && strstr(r.h[0].cover, "/2000/pg2000.cover.medium.jpg"), "opds 1");
+    for (int i = 0; i < r.n; i++) CHECK(r.h[i].title[0] && !strchr(r.h[i].title, '\n') && !strstr(r.h[i].title, "(Spanish)") && !strstr(r.h[i].author, "downloads"), "opds fila %d '%s' '%s'", i, r.h[i].title, r.h[i].author);
+    p(D, "opds_q.xml", f);
+    CHECK(!ab_gut_parse(f, &r) && r.n >= 5 && !strcmp(r.h[0].id, "84") && !r.h[r.n - 1].author[0], "opds busqueda (%d, autor '%s')", r.n, r.h[r.n - 1].author);
+    { char ds[700]; p(D, "opds_2000.xml", f);
+      CHECK(!ab_gut_detail_parse(f, ds, sizeof ds) && !strncmp(ds, "\"Don Quijote\" by Miguel", 23) && !strstr(ds, "automatically") && ds[strlen(ds) - 1] == '.', "opds resumen '%s'", ds); }
+    { char t[64] = "Faust (Erster Teil) (German)"; ab_gut_title_fix(t); CHECK(!strcmp(t, "Faust (Erster Teil)"), "titulo '%s'", t);
+      strcpy(t, "Diccionario (Spanish) (Tagalog)"); ab_gut_title_fix(t); CHECK(!strcmp(t, "Diccionario"), "titulo '%s'", t); }
 
     /* --- utilidades */
     char o[200];
@@ -117,8 +124,10 @@ int main(int argc, char **argv)
     CHECK(strstr(u, "language%3A%28fre%20OR%20fra%29") && strstr(u, "title%3A%28Jules%20Verne%201%29") && !strstr(u, "sort"), "url busqueda");
     ab_search_url(u, sizeof u, ab_lang_find("all"), 0, 0, 2);
     CHECK(!strstr(u, "language%3A") && strstr(u, "downloads+desc") && strstr(u, "page=2"), "url populares todos");
-    ab_gut_url(u, sizeof u, ab_lang_find("spa"), "don quijote", 1); printf("gut: %s\n", u);
-    CHECK(strstr(u, "languages=es&search=don%20quijote"), "url gutendex");
+    ab_gut_url(u, sizeof u, ab_lang_find("spa"), "don quijote l.en", 0, 1); printf("gut: %s\n", u);
+    CHECK(strstr(u, "search.opds/?sort_order=downloads&query=don%20quijote%20l%20en%20l.es") && !strstr(u, "start_index"), "url opds");
+    ab_gut_url(u, sizeof u, ab_lang_find("all"), 0, 1, 3);
+    CHECK(strstr(u, "sort_order=release_date&start_index=51") && !strstr(u, "query"), "url opds novedades '%s'", u);
     /* cola */
     struct ab_qe q[2] = { { "id1", 'm', "https://a/b.mp3", "/tmp/x/01 - a.mp3", 10 }, { "id2", 'c', "https://a/c|/tmp/c.cov", "/tmp/x/cover.jpg", 0 } };
     CHECK(!ab_q_save("/tmp/ab_test.q", q, 2), "q save");

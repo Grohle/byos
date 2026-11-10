@@ -1,5 +1,7 @@
 #!/bin/bash
-# PC tests of the Free Music parsers (src/freemusic_core.inc.c) against recorded responses.
+# PC tests of the Vinyl parsers (src/freemusic_core.inc.c + freemusic_src.inc.c) against recorded
+# responses and the example sources (Vinyl catalog, RSS/Atom/OPML, Subsonic, archive.org
+# collections, URL detection, MD5), then the texts in the 13 languages.
 # bash tests/freemusic_test.sh            (WSL; no device)
 set -e
 H=/mnt/c/Users/alber/Downloads/Hiby/hibymod
@@ -14,10 +16,14 @@ F=$HOME/hiby/rootfs/usr/resource/fonts/
   python3 - $H/src/freemusic.inc.c $H/src/freemusic_core.inc.c <<'PY'
 import re,sys
 a=open(sys.argv[1],encoding='utf-8').read(); c=open(sys.argv[2],encoding='utf-8').read()
-for name in ('sec_ia','sec_jm','ts','n'):
+for name in ('ts','n'):
     for m in re.finditer(r'const char \*const '+name+r'\[[^\]]*\] = \{([^}]*)\}', a):
         for k in re.findall(r'"([^"]*)"', m.group(1)):
             if k: print(k)
+for m in re.finditer(r'\{ LK_[A-Z_]+, "([^"]+)" \}', a): print(m.group(1))   # section headers
+for line in a.splitlines():                                                  # counts of the sources page
+    if 'const char *unit' in line:
+        for k in re.findall(r'"([^"]*(?:%d|1 )[^"]*)"', line): print(k)
 for m in re.finditer(r'\{ "([^"]+)", "[^"]*", "[^"]*" \}', c[c.index('FM_GENRES[]'):c.index('FM_NGENRE')]): print(m.group(1))
 PY
 } | sort -u > /tmp/freemusic_keys.txt
