@@ -177,7 +177,7 @@ static void gesture_demo(uint16_t *d, int cx, int y0, int edge, int act, double 
 
 /* ------------------------------------------------------------------ paginas */
 static int set_lang_idx, set_icon_idx, set_cols_idx, set_kb_h = 1, set_kb_num = 0, set_kb_layout = 0, set_adb_mode;
-static int g_bottom_app_i, g_bottom_home_i, g_top_i, g_left_i, g_right_i, g_chev;
+static int g_bottom_app_i, g_bottom_home_i, g_top_i, g_topr_i, g_left_i, g_right_i, g_chev;
 static const char *const O_LANG[] = { "Español", "English", "Français" };
 static const char *const O_ICON[] = { "Pequeños", "Normales", "Grandes" };
 static const char *const O_COLS[] = { "3", "4", "5" };
@@ -190,17 +190,17 @@ static const char *const O_G_BOTTOM_HOME[] = { "Reproductor", "Centro de control
 static const int V_G_BOTTOM_HOME[] = { GA_PLAYER, GA_CC, GA_NONE };
 static const char *const O_G_TOP[] = { "Centro de control", "Reproductor", "Nada" };
 static const int V_G_TOP[] = { GA_CC, GA_PLAYER, GA_NONE };
-static const char *const O_G_LEFT[] = { "Atrás (HiBy)", "Reproductor", "Centro de control" };
-static const int V_G_LEFT[] = { GA_BACK, GA_PLAYER, GA_CC };
-static const char *const O_G_RIGHT[] = { "Reproductor", "Centro de control", "Nada" };
-static const int V_G_RIGHT[] = { GA_PLAYER, GA_CC, GA_NONE };
+static const char *const O_G_LEFT[] = { "Atrás", "Reproductor", "Centro de control", "Nada" };
+static const int V_G_LEFT[] = { GA_BACK, GA_PLAYER, GA_CC, GA_NONE };
+static const char *const O_G_RIGHT[] = { "Atrás", "Reproductor", "Centro de control", "Nada" };
+static const int V_G_RIGHT[] = { GA_BACK, GA_PLAYER, GA_CC, GA_NONE };
 static int idx_of(const int *v, int n, int x) { for (int i = 0; i < n; i++) if (v[i] == x) return i; return 0; }
 
 static void sync_from_state(void)
 {
     set_lang_idx = ui_lang; set_icon_idx = sz_idx(); set_cols_idx = L.cols - 3;
     g_bottom_app_i = idx_of(V_G_BOTTOM_APP, 4, G.bottom_app); g_bottom_home_i = idx_of(V_G_BOTTOM_HOME, 3, G.bottom_home);
-    g_top_i = idx_of(V_G_TOP, 3, G.top); g_left_i = idx_of(V_G_LEFT, 3, G.left); g_right_i = idx_of(V_G_RIGHT, 3, G.right);
+    g_top_i = idx_of(V_G_TOP, 3, G.top); g_topr_i = idx_of(V_G_TOP, 3, G.top_r); g_left_i = idx_of(V_G_LEFT, 4, G.left); g_right_i = idx_of(V_G_RIGHT, 4, G.right);
     g_chev = G.chevron;
     FILE *f = fopen("/data/.hibymod_adbmode", "r"); char m[16] = "";
     if (f) { if (!fgets(m, sizeof m, f)) m[0] = 0; fclose(f); } else if (!access("/data/.hibymod_adbwifi", F_OK)) strcpy(m, "wifi");
@@ -212,7 +212,7 @@ static void apply_home(void) { L.icon = 48 + 8 * set_icon_idx; L.cols = 3 + set_
 static void apply_gestures(void)
 {
     G.bottom_app = V_G_BOTTOM_APP[g_bottom_app_i]; G.bottom_home = V_G_BOTTOM_HOME[g_bottom_home_i];
-    G.top = V_G_TOP[g_top_i]; G.left = V_G_LEFT[g_left_i]; G.right = V_G_RIGHT[g_right_i]; G.chevron = g_chev;
+    G.top = V_G_TOP[g_top_i]; G.top_r = V_G_TOP[g_topr_i]; G.left = V_G_LEFT[g_left_i]; G.right = V_G_RIGHT[g_right_i]; G.chevron = g_chev;
     lconf_save();
 }
 static void apply_kb(void) { kb_cfg_height = set_kb_h; kb_cfg_numrow = set_kb_num; kb_cfg_layout = set_kb_layout; lconf_save(); }
@@ -297,9 +297,10 @@ static void page_gestures(struct spage *p)
     p->secs[0] = (struct ssec){ "BORDES", "Desliza desde el borde para ver la animación de ejemplo.", {
         ROW("Abajo, en apps", R_CHOICE, &g_bottom_app_i, O_G_BOTTOM_APP, 4, apply_gestures, 0, 1),
         ROW("Abajo, en el inicio", R_CHOICE, &g_bottom_home_i, O_G_BOTTOM_HOME, 3, apply_gestures, 0, 2),
-        ROW("Arriba", R_CHOICE, &g_top_i, O_G_TOP, 3, apply_gestures, 0, 3),
-        ROW("Izquierda", R_CHOICE, &g_left_i, O_G_LEFT, 3, apply_gestures, 0, 4),
-        ROW("Derecha", R_CHOICE, &g_right_i, O_G_RIGHT, 3, apply_gestures, 0, 5) }, 5 };
+        ROW("Arriba, izquierda", R_CHOICE, &g_top_i, O_G_TOP, 3, apply_gestures, 0, 3),
+        ROW("Arriba, derecha", R_CHOICE, &g_topr_i, O_G_TOP, 3, apply_gestures, 0, 6),
+        ROW("Borde izquierdo", R_CHOICE, &g_left_i, O_G_LEFT, 4, apply_gestures, 0, 4),
+        ROW("Borde derecho", R_CHOICE, &g_right_i, O_G_RIGHT, 4, apply_gestures, 0, 5) }, 6 };
     p->nsec = 1;
 }
 static void page_kb(struct spage *p)
@@ -503,8 +504,8 @@ static void choice_page(const struct srow *rw, const char *back)
         for (int i = 0; i < 7; i++) { fill_rrect(fr0, W - 46 + i, y + 22 + i / 2, 2, 2, 1, rgb(10, 132, 255), 255); }
         for (int i = 0; i < 12; i++) fill_rrect(fr0, W - 40 + i, y + 25 - i, 2, 2, 1, rgb(10, 132, 255), 255);
         if (demo) {
-            int ed = demo == 1 || demo == 2 ? 1 : demo;
-            int act = demo == 1 ? V_G_BOTTOM_APP[*rw->ival] : demo == 2 ? V_G_BOTTOM_HOME[*rw->ival] : demo == 3 ? V_G_TOP[*rw->ival] : demo == 4 ? V_G_LEFT[*rw->ival] : V_G_RIGHT[*rw->ival];
+            int ed = demo == 1 || demo == 2 ? 1 : demo == 6 ? 3 : demo;
+            int act = demo == 1 ? V_G_BOTTOM_APP[*rw->ival] : demo == 2 ? V_G_BOTTOM_HOME[*rw->ival] : demo == 3 || demo == 6 ? V_G_TOP[*rw->ival] : demo == 4 ? V_G_LEFT[*rw->ival] : V_G_RIGHT[*rw->ival];
             if (demo == 2 && act == GA_PLAYER) act = GA_PLAYER;
             gesture_demo(fr0, W / 2, NAVH + 30 + 16, ed, act, now_ms() - t0);
         }

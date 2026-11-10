@@ -33,7 +33,7 @@ Cada animación o pantalla pasa este bucle **hasta quedar impresionado**, no has
 6. **Comparar con iOS real**: curvas (ease-out cúbico o muelle), duraciones (250–350 ms), seguimiento 1:1 del dedo y velocidad al soltar.
 
 ## Reglas técnicas aprendidas (no repetir errores)
-- **Panel con memoria propia (SLCD)**: cada `FBIOPAN_DISPLAY` transfiere la imagen. Se escribe primero y se presenta después; escribir tras presentar corrompe la transferencia y parpadea toda la pantalla.
+- **Panel ST77903 sin memoria propia, barrido continuo desde la DDR a 44,3 Hz** (`docs/investigacion_60fps.md`): `FBIOPAN_DISPLAY` solo elige el búfer y espera al final del fotograma. Se escribe primero y se presenta después; escribir en el búfer que se está barriendo parpadea. 44,3 fps es el techo real (el panel admite como mucho ~50 Hz): las animaciones se diseñan para 44 Hz sin saltos, no para 60.
 - **Copia compartida del shell**: va con cerrojo de secuencia (`fr0_seq`, `ov_seq`). Nunca se debe copiar una imagen a medio dibujar.
 - **Capas**: se actualizan sin apagarlas nunca entre medias.
 - **Presentaciones parciales** (`present_rows`) cuando solo cambia una zona, como la píldora de volumen o la barra de estado.

@@ -164,7 +164,104 @@ static const char *pkg_desc(const struct hpk_info *p) { return p->desc[ui_lang][
 static int pkg_state(const struct hpk_info *p) { return !p->installed[0] ? 0 : hpk_vercmp(p->version, p->installed) > 0 ? 1 : 2; } /* obtener/actualizar/abrir */
 static const char *pill_txt(int s) { return s == 0 ? tr("OBTENER") : s == 1 ? tr("ACTUALIZAR") : tr("ABRIR"); }
 
+
+/* ------------------------------------------------------------------ copia de seguridad (.hpk) */
+/* Empaqueta en ustar el directorio instalado (sin los icon_*.ov generados): el resultado es
+ * un .hpk reinstalable. Los datos de la app (appdata/<id>) van aparte en <id>-datos.tar. */
+static int tar_oct(char *dst, int n, unsigned long long v) { snprintf(dst, n, "%0*llo", n - 1, v); return 0; }
+static int tar_hdr(int fd, const char *name, unsigned long long size, int dir, int mode)
+{
+    unsigned char h[512]; memset(h, 0, sizeof h);
+    if (strlen(name) >= 100) return -1;
+    snprintf((char *)h, 100, "%s%s", name, dir ? "/" : "");
+    tar_oct((char *)h + 100, 8, mode); tar_oct((char *)h + 108, 8, 0); tar_oct((char *)h + 116, 8, 0);
+    tar_oct((char *)h + 124, 12, dir ? 0 : size); tar_oct((char *)h + 136, 12, (unsigned long long)time(0));
+    h[156] = dir ? '5' : '0'; memcpy(h + 257, "ustar", 6); memcpy(h + 263, "00", 2);
+    memset(h + 148, ' ', 8); unsigned sum = 0; for (int i = 0; i < 512; i++) sum += h[i];
+    snprintf((char *)h + 148, 8, "%06o", sum); h[155] = ' ';
+    return write(fd, h, 512) == 512 ? 0 : -1;
+}
+static int tar_tree(int fd, const char *base, const char *rel, int skip_ov)
+{
+    char path[512]; snprintf(path, sizeof path, "%s%s%s", base, rel[0] ? "/" : "", rel);
+    DIR *d = opendir(path); if (!d) return -1;
+    struct dirent *e; int r = 0;
+    while (!r && (e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        if (skip_ov && !rel[0] && !strncmp(e->d_name, "icon_", 5) && strstr(e->d_name, ".ov")) continue;
+        char r2[256], full[600]; snprintf(r2, sizeof r2, "%s%s%s", rel, rel[0] ? "/" : "", e->d_name);
+        snprintf(full, sizeof full, "%s/%s", base, r2);
+        struct stat sb; if (lstat(full, &sb)) continue;
+        if (S_ISDIR(sb.st_mode)) { r = tar_hdr(fd, r2, 0, 1, 0755); if (!r) r = tar_tree(fd, base, r2, skip_ov); continue; }
+        if (!S_ISREG(sb.st_mode)) continue;
+        int in = open(full, O_RDONLY); if (in < 0) { r = -1; break; }
+        r = tar_hdr(fd, r2, sb.st_size, 0, (sb.st_mode & 0111) ? 0755 : 0644);
+        char buf[8192]; long long left = sb.st_size; ssize_t n;
+        while (!r && left > 0 && (n = read(in, buf, sizeof buf)) > 0) { if (write(fd, buf, n) != n) r = -1; left -= n; st->shell_beat++; }
+        close(in);
+        if (!r && sb.st_size % 512) { char z[512] = {0}; if (write(fd, z, 512 - sb.st_size % 512) < 0) r = -1; }
+    }
+    closedir(d);
+    return r;
+}
+static int tar_write(const char *out, const char *dir, int skip_ov)
+{
+    char tmp[300]; snprintf(tmp, sizeof tmp, "%s.part", out);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (fd < 0) return -1;
+    int r = tar_tree(fd, dir, "", skip_ov);
+    char z[1024] = {0}; if (!r && write(fd, z, 1024) != 1024) r = -1;
+    if (fsync(fd)) r = -1; close(fd);
+    if (r || rename(tmp, out)) { unlink(tmp); return -1; }
+    return 0;
+}
+static void app_backup(const struct hpk_info *in)
+{
+    char dir[200], out[300], dd[200]; mkdir(SD_APPS, 0755);
+    snprintf(out, sizeof out, "%s/Copias", SD_APPS); mkdir(out, 0755);
+    snprintf(dir, sizeof dir, "/usr/data/hibymod/apps/%s", in->id);
+    snprintf(out, sizeof out, "%s/Copias/%s-%s.hpk", SD_APPS, in->id, in->installed[0] ? in->installed : in->version);
+    progress_card(0, 0, -1); progress_card(tr("Copiando…"), 0, 0.3);
+    int r = tar_write(out, dir, 1);
+    snprintf(dd, sizeof dd, "/usr/data/hibymod/appdata/%s", in->id);
+    if (!r && hpk_isdir(dd) && hpk_du(dd) > 0) {
+        progress_card(tr("Copiando…"), 0, 0.7);
+        snprintf(out, sizeof out, "%s/Copias/%s-datos.tar", SD_APPS, in->id);
+        r = tar_write(out, dd, 0);
+    }
+    sync();
+    toast(r ? tr("No se pudo hacer la copia") : tr("Copia guardada en Apps/Copias"));
+}
+static void installed_detail(int i)
+{
+    struct hpk_info *in = &inst[i];
+    char t[300]; snprintf(t, sizeof t, "%s %s", in->name[ui_lang][0] ? in->name[ui_lang] : in->name[0], in->installed[0] ? in->installed : in->version);
+    const char *o[4] = { tr("Abrir"), tr("Copia de seguridad"), tr("Desinstalar"), tr("Desinstalar y borrar datos") };
+    int a = action_sheet(t, o, 4, 2);
+    char id[HPK_ID_MAX + 4]; snprintf(id, sizeof id, "x.%s", in->id);
+    int ai = app_by_id(id);
+    if (a == 0 && ai >= 0) { run_ext_app(ai, W / 2 - L.icon / 2, H / 2 - L.icon / 2); return; }
+    if (a == 1) { app_backup(in); return; }
+    if (a == 2 || a == 3) {
+        if (!confirm(tr(a == 2 ? "¿Desinstalar la app? Sus datos se conservan." : "¿Desinstalar y borrar sus datos? No se puede deshacer."), tr("Desinstalar"))) return;
+        char keep[HPK_ID_MAX + 1]; snprintf(keep, sizeof keep, "%s", in->id);
+        if (ai >= 0) remove_app_everywhere(ai);
+        int r = hpk_uninstall_ex(keep, a == 3 ? HPK_PURGE_DATA : 0);
+        toast(r ? hpk_msg(hpk_errkey(r), ui_lang) : tr("Desinstalada"));
+        register_installed_apps(); load_icons(); relabel_apps(); lconf_save();
+    }
+}
+
 static float st_scroll;
+/* disposicion: paquetes de la SD y debajo las instaladas; y de la fila i (global) */
+#define ST_ROW 64
+static int st_inst_y0(void) { return 124 + (npkgs ? npkgs * ST_ROW : 60) + 36; }
+static int st_row_at(int sy)        /* 0..npkgs-1 paquete, 100+k instalada, -1 nada */
+{
+    int y = sy + (int)st_scroll;
+    if (y >= 124 && y < 124 + npkgs * ST_ROW) return (y - 124) / ST_ROW;
+    int y0 = st_inst_y0(); if (y >= y0 && y < y0 + ninst * ST_ROW) return 100 + (y - y0) / ST_ROW;
+    return -1;
+}
 static void store_render(uint16_t *d, int sel)
 {
     for (int i = 0; i < W * H; i++) d[i] = 0;
@@ -186,6 +283,23 @@ static void store_render(uint16_t *d, int sel)
             draw_text(d, W - 16 - pw + 12, y + 37, pt, 12, rgb(10, 132, 255), 0, 94, H);
         }
         if (i < npkgs - 1) for (int x = 76; x < W; x++) if (y + 63 >= 94 && y + 63 < H) d[(y + 63) * W + x] = rgb(38, 38, 40);
+    }
+    /* instaladas: gestionar (abrir, copia de seguridad, desinstalar) */
+    y = st_inst_y0() - 36 - (int)st_scroll + 22;
+    if (y > 94 && y < H) draw_text(d, 16, y, tr("INSTALADAS"), 12, rgb(142, 142, 147), 0, 94, H);
+    y = st_inst_y0() - (int)st_scroll;
+    if (!ninst && y > 94 && y < H) draw_text(d, 16, y + 20, tr("Ninguna app instalada"), 13, rgb(142, 142, 147), 0, 94, H);
+    for (int i = 0; i < ninst; i++, y += ST_ROW) {
+        if (y + ST_ROW < 94 || y > H) continue;
+        if (sel == 100 + i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(28, 28, 30), 255);
+        char id[HPK_ID_MAX + 4]; snprintf(id, sizeof id, "x.%s", inst[i].id);
+        int ai = app_by_id(id);
+        if (ai >= 0 && apps[ai].icon[0].w) blit(d, &apps[ai].icon[0], 16, y + 8, 32, 255); else fill_rrect(d, 16, y + 8, 48, 48, 11, rgb(60, 60, 66), 255);
+        draw_text(d, 76, y + 28, inst[i].name[ui_lang][0] ? inst[i].name[ui_lang] : inst[i].name[0], 15, 0xFFFF, 170, 94, H);
+        char sub[64]; snprintf(sub, sizeof sub, "%s · %.0f KB", inst[i].installed[0] ? inst[i].installed : inst[i].version, inst[i].size / 1024.0);
+        draw_text(d, 76, y + 46, sub, 12, rgb(142, 142, 147), 170, 94, H);
+        for (int k = 0; k < 6; k++) { int cx = W - 24 + k / 2 - 1; if (y + 26 + k < H && y + 26 + k > 94) { d[(y + 26 + k) * W + cx] = rgb(90, 90, 96); d[(y + 37 - k) * W + cx] = rgb(90, 90, 96); } }
+        if (i < ninst - 1) for (int x = 76; x < W; x++) if (y + 63 >= 94 && y + 63 < H) d[(y + 63) * W + x] = rgb(38, 38, 40);
     }
     memcpy(d, fr1, 30 * W * 2);
     for (int yy = 30; yy < 94; yy++) for (int x = 0; x < W; x++) d[yy * W + x] = 0;
@@ -250,15 +364,16 @@ static void store_app_ui(int ix, int iy)
         if (!p.down) continue;
         int sx = p.x, sy = p.y, moved = 0; float s0 = st_scroll;
         if (sy >= 456) { while (cur_down && read_pkt(&p, 1000)) {} if (sy - cur_y > 20) break; continue; }
-        int i = (sy - 124 + (int)st_scroll) / 64;
-        if (i >= 0 && i < npkgs && sy > 94) { store_render(fr0, i); present(); }
+        int i = sy > 94 ? st_row_at(sy) : -1;
+        if (i >= 0) { store_render(fr0, i); present(); }
         while (cur_down && read_pkt(&p, 30)) {
             if (abs(cur_y - sy) > 8) moved = 1;
-            if (moved) { float maxs = 124 + npkgs * 64 - H; if (maxs < 0) maxs = 0; st_scroll = s0 - (cur_y - sy); if (st_scroll < 0) st_scroll = 0; if (st_scroll > maxs) st_scroll = maxs; store_render(fr0, -1); present(); }
+            if (moved) { float maxs = st_inst_y0() + ninst * ST_ROW + 20 - H; if (maxs < 0) maxs = 0; st_scroll = s0 - (cur_y - sy); if (st_scroll < 0) st_scroll = 0; if (st_scroll > maxs) st_scroll = maxs; store_render(fr0, -1); present(); }
         }
         (void)sx;
         if (moved || sy <= 94) { store_render(fr0, -1); present(); continue; }
         if (i >= 0 && i < npkgs && !pkgs[i].status) store_detail(i);
+        else if (i >= 100 && i - 100 < ninst) { installed_detail(i - 100); store_scan(); }
         store_render(fr0, -1); present();
     }
     drain_until_up();

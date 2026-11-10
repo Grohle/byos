@@ -85,6 +85,35 @@ static void cc_blur(const uint16_t *src, uint16_t *dst)
     }
 }
 
+/* rectangulos redondeados con mascara de cobertura cacheada: sin raiz cuadrada por pixel
+ * (el panel se compone en ~1/4 del tiempo: importa cuando el reproductor ocupa la CPU) */
+static struct { int w, h; float r; uint8_t *m; } cc_masks[6]; static int cc_nmask;
+static const uint8_t *cc_mask(int w, int h, float r)
+{
+    for (int i = 0; i < cc_nmask; i++) if (cc_masks[i].w == w && cc_masks[i].h == h && cc_masks[i].r == r) return cc_masks[i].m;
+    uint8_t *m = malloc(w * h); if (!m) return 0;
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+        float px = x + .5f, py = y + .5f, qx = fabsf(px - w / 2.f) - (w / 2.f - r), qy = fabsf(py - h / 2.f) - (h / 2.f - r);
+        float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
+        float d = sqrtf(ox * ox + oy * oy) + (qx > qy ? (qx < 0 ? qx : 0) : (qy < 0 ? qy : 0)) - r;
+        float c = 0.5f - d; m[y * w + x] = (uint8_t)(c <= 0 ? 0 : c >= 1 ? 255 : c * 255);
+    }
+    if (cc_nmask < 6) { cc_masks[cc_nmask].w = w; cc_masks[cc_nmask].h = h; cc_masks[cc_nmask].r = r; cc_masks[cc_nmask++].m = m; }
+    return m;
+}
+static uint16_t blend565(uint16_t a, uint16_t b, int k);
+static void cc_rrect(uint16_t *d, int x0, int y0, int w, int h, float r, uint16_t col, int alpha)
+{
+    const uint8_t *m = cc_mask(w, h, r); if (!m) { fill_rrect(d, x0, y0, w, h, r, col, alpha); return; }
+    for (int y = 0; y < h; y++) {
+        int yy = y0 + y; if (yy < 0 || yy >= H) continue;
+        uint16_t *row = d + yy * W; const uint8_t *mr = m + y * w;
+        for (int x = 0; x < w; x++) {
+            int c = mr[x]; if (!c) continue; int xx = x0 + x; if (xx < 0 || xx >= W) continue;
+            int k = (c * alpha + 127) / 255 * 32 / 255; if (k) row[xx] = blend565(row[xx], col, k);
+        }
+    }
+}
 static void cc_tile(uint16_t *d, int x, int y, int tile)
 {
     int on = 0; uint16_t acc = rgb(10, 132, 255); const char *ic = "gear";
@@ -98,8 +127,8 @@ static void cc_tile(uint16_t *d, int x, int y, int tile)
     case CT_FILES: ic = "folder"; break;
     case CT_SETTINGS: ic = "gear"; break;
     }
-    if (on) fill_rrect(d, x, y, CC_T, CC_T, CC_T / 2.f, acc, 255);                 /* iOS 26: circulo de color */
-    else fill_rrect(d, x, y, CC_T, CC_T, CC_T / 2.f, rgb(255, 255, 255), 46);      /* cristal */
+    if (on) cc_rrect(d, x, y, CC_T, CC_T, CC_T / 2.f, acc, 255);                 /* iOS 26: circulo de color */
+    else cc_rrect(d, x, y, CC_T, CC_T, CC_T / 2.f, rgb(255, 255, 255), 46);      /* cristal */
     const struct sprite *s = cc_icon(ic);
     if (s && s->w) blit(d, s, x + (CC_T - s->w) / 2, y + (CC_T - s->h) / 2, 32, 255);
 }
@@ -119,19 +148,19 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
         dst[i] = (uint16_t)((br > 31 ? 31 : br) << 11 | (bgc > 63 ? 63 : bgc) << 5 | (bb > 31 ? 31 : bb));
     }
     /* Reproduciendo */
-    fill_rrect(dst, NP_X, CC_Y, NP_W, BR_H, 22, rgb(255, 255, 255), pressed == 100 ? 80 : 46);
+    cc_rrect(dst, NP_X, CC_Y, NP_W, BR_H, 22, rgb(255, 255, 255), pressed == 100 ? 80 : 46);
     int a = app_by_id("nowplaying");
     if (a >= 0) blit_scaled(dst, &apps[a].icon[2], NP_X + 16, CC_Y + 16, 44, 44, 255);
     draw_text(dst, NP_X + 14, CC_Y + 92, tr("Reproduciendo"), 15, 0xFFFF, NP_W - 22, 0, H);
     draw_text(dst, NP_X + 14, CC_Y + 113, tr(music_on ? "Sonando" : "En pausa"), 13, rgb(200, 200, 206), NP_W - 22, 0, H);
     /* brillo */
     int bl = cc_bl_level(); float lv = bl / 101.f; if (lv > 1) lv = 1;
-    fill_rrect(dst, BR_X, CC_Y, CC_T, BR_H, 22, rgb(255, 255, 255), 46);
+    cc_rrect(dst, BR_X, CC_Y, CC_T, BR_H, 22, rgb(255, 255, 255), 46);
     int fh = (int)(BR_H * lv); if (fh > 0) {
         /* relleno blanco recortado por abajo: se dibuja el redondeado y se tapa lo de arriba */
         static uint16_t tmp[CC_T * (2 * CC_T + CC_G)];
         for (int y = 0; y < BR_H; y++) memcpy(tmp + y * CC_T, dst + (CC_Y + y) * W + BR_X, CC_T * 2);
-        fill_rrect(dst, BR_X, CC_Y, CC_T, BR_H, 22, rgb(245, 245, 247), 255);
+        cc_rrect(dst, BR_X, CC_Y, CC_T, BR_H, 22, rgb(245, 245, 247), 255);
         for (int y = 0; y < BR_H - fh; y++) memcpy(dst + (CC_Y + y) * W + BR_X, tmp + y * CC_T, CC_T * 2);
     }
     const struct sprite *sun = cc_icon("sun");
@@ -141,7 +170,7 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
             for (int y = 0; y < sun->h; y++) for (int x = 0; x < sun->w; x++) { int al = sun->a[y * sun->w + x]; if (al) { uint16_t *p = dst + (sy + y) * W + sx + x; *p = blend565(*p, rgb(60, 60, 64), al * 32 / 255); } }
         } else blit(dst, sun, sx, sy, 32, 255);
     }
-    for (int i = 0; i < cc_ntiles; i++) { int x, y; cc_tile_rect(i, &x, &y); cc_tile(dst, x, y, cc_tiles[i]); if (pressed == i) fill_rrect(dst, x, y, CC_T, CC_T, CC_T / 2.f, 0xFFFF, 50); }
+    for (int i = 0; i < cc_ntiles; i++) { int x, y; cc_tile_rect(i, &x, &y); cc_tile(dst, x, y, cc_tiles[i]); if (pressed == i) cc_rrect(dst, x, y, CC_T, CC_T, CC_T / 2.f, 0xFFFF, 50); }
     /* rotulo del ultimo cambio (como el aviso de iOS al tocar un control) */
     if (cc_caption && now_ms() - cc_caption_t < 1800) {
         int w = tw_n(cc_caption, 13, -1) + 28; if (w > W - 40) w = W - 40;
@@ -182,13 +211,114 @@ static void cc_open_app(const char *id)
     launch_app(a, ix, iy);
 }
 
+/* ---- paginas: Centro de control <-> Reproductor (horizontal) e inicio (hacia arriba) ---- */
+static int cc_from_launcher, cc_player_right;   /* de donde venimos; el reproductor esta a la derecha */
+/* dos pantallas lado a lado: a en x = o, b en x = o + W (o en [-W, 0]) */
+static void cc_hpage(const uint16_t *a, const uint16_t *b, int o)
+{
+    if (o > 0) o = 0; if (o < -W) o = -W;
+    for (int y = 0; y < H; y++) {
+        uint16_t *d = fr0 + y * W; const uint16_t *ra = a + y * W, *rb = b + y * W;
+        int na = W + o;                                   /* columnas visibles de a */
+        if (na > 0) memcpy(d, ra - o, na * 2);
+        if (na < W) memcpy(d + (na > 0 ? na : 0), rb, (W - (na > 0 ? na : 0)) * 2);
+    }
+}
+static const uint16_t *cc_player_img(void)
+{
+    if (cc_player_right) return cc_under;               /* venimos del reproductor: es el fondo */
+    if (have_cache_plane) return img_cache_plane;
+    static uint16_t *ph; if (!ph) ph = malloc(HM_FRAME_BYTES);
+    for (int i = 0; i < W * H; i++) ph[i] = rgb(18, 18, 20);
+    int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(ph, &apps[a].icon[2], W / 2 - 48, H / 2 - 70, 96, 96, 255);
+    return ph;
+}
+/* arrastre hacia la izquierda desde el centro de control: entra el reproductor.
+ * Devuelve 1 si se completo (y la pantalla ya es del reproductor). */
+static int cc_to_player(const uint16_t *panel, int sx)
+{
+    const uint16_t *pl = cc_player_img();
+    if (!cc_player_right) nav_start(NAV_TO_PLANE);       /* se adelanta mientras se arrastra */
+    struct pkt p; double vel = 0, lt = now_ms(); int lx = sx, o = 0;
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_x - lx) / (t - lt); lx = cur_x; lt = t; }
+        o = cur_x - sx; cc_hpage(panel, nav_done && nav_ok && !cc_player_right ? fr1 : pl, o); present();
+        if (got && !p.down) break;
+        if (!got) msleep(2);
+    }
+    int done = -o > W * 0.35 || vel < -0.35;
+    double t0 = now_ms(); int o0 = o, to = done ? -W : 0;
+    for (;;) {
+        double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1;
+        cc_hpage(panel, nav_done && nav_ok && !cc_player_right ? fr1 : pl, o0 + (int)((to - o0) * ease_out(t))); present();
+        if (t >= 1) break;
+    }
+    if (!done) {
+        if (!cc_player_right && nav_wait(3000) == 1) { nav_start(NAV_BACK); nav_wait(2000); }   /* deshacer */
+        memcpy(fr0, panel, HM_FRAME_BYTES); present();
+        return 0;
+    }
+    if (!cc_player_right) {
+        int ok = nav_wait(3000);
+        if (ok == 1) { memcpy(fr0, fr1, HM_FRAME_BYTES); present(); memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1; }
+        if (cc_from_launcher) { launcher_on = 0; home_publish(); }
+    }
+    cmd('R');
+    return 1;
+}
+/* panel (centro de control o reproductor) hacia arriba siguiendo al dedo: aparece el inicio */
+static void hpanel_frame(const uint16_t *home, const uint16_t *top, int off)
+{
+    if (off < 0) off = 0; if (off > H) off = H;
+    int k = 18 + 14 * off / H;
+    for (int y = 0; y < H; y++) {
+        uint16_t *d = fr0 + y * W; int sy = y + off;
+        if (sy < H) memcpy(d, top + sy * W, W * 2);
+        else { const uint16_t *h = home + y * W; for (int x = 0; x < W; x++) d[x] = dim565(h[x], k); }
+    }
+    for (int s = 1; s <= 8; s++) { int y = H - off + s - 1; if (y >= 0 && y < H) for (int x = 0; x < W; x++) fr0[y * W + x] = dim565(fr0[y * W + x], 18 + s * 2); }
+}
+/* devuelve 1 si se fue al inicio */
+static int panel_up_home(const uint16_t *top, int sy, int from_launcher)
+{
+    uint16_t *home = img_app;
+    if (launcher_enabled) render_launcher(home, now_ms()); else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES); else memset(home, 0, HM_FRAME_BYTES);
+    if (!from_launcher) nav_start(NAV_HOME);
+    struct pkt p; double vel = 0, lt = now_ms(); int ly = sy, off = 0;
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lt = t; }
+        off = sy - cur_y; hpanel_frame(home, top, off); present();
+        if (got && !p.down) break;
+        if (!got) msleep(2);
+    }
+    int done = off > 110 || vel < -0.4;
+    double t0 = now_ms(); int o0 = off, to = done ? H : 0;
+    for (;;) {
+        double t = (now_ms() - t0) / (done ? 260.0 : 200.0); if (t > 1) t = 1;
+        hpanel_frame(home, top, o0 + (int)((to - o0) * ease_out(t))); present();
+        if (t >= 1) break;
+    }
+    if (!done) {
+        if (!from_launcher && nav_wait(3000) == 1) { /* ya navego al inicio: no se puede deshacer, se acepta */ if (launcher_resume()) return 1; }
+        memcpy(fr0, top, HM_FRAME_BYTES); present();
+        return 0;
+    }
+    if (from_launcher) { launcher_present(); return 1; }
+    nav_wait(3000);
+    if (!launcher_resume()) cmd('R');
+    return 1;
+}
+
+static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y);
 /* start_y >= 0: se abre siguiendo al dedo desde ahi; < 0: se abre solo (animado) */
-static void cc_open(int start_y)
+static int cc_prepare(void)
 {
     if (!cc_ic_ok) { for (int i = 0; cc_ic_name[i]; i++) { char n[32]; snprintf(n, sizeof n, "cc_%s", cc_ic_name[i]); load_sprite(n, &cc_ic[i]); } cc_ic_ok = 1; }
-    int from_launcher = launcher_on;
-    uint16_t *under = img_under, *panel = img_base, *blur = img_sheet;
-    if (from_launcher) render_launcher(under, now_ms());
+    cc_from_launcher = launcher_on;
+    uint16_t *under = img_under;
+    if (cc_from_launcher) render_launcher(under, now_ms());
     else {
         memcpy(under, visible(), HM_FRAME_BYTES);
         if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
@@ -196,16 +326,52 @@ static void cc_open(int start_y)
         st->ov_on = 0; ov_cur = 0;
         cmd('C');
         double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
-        if (!st->capture) return;
+        if (!st->capture) return 0;
     }
     have_under = 0;
     double tb = now_ms();
-    cc_blur(under, blur); cc_under = under;
+    cc_blur(under, img_sheet); cc_under = under;
     double tb2 = now_ms();
     cc_caption = 0;
-    cc_render(panel, blur, -1);
+    cc_render(img_base, img_sheet, -1);
     lg("centro de control: desenfoque %.0f ms, panel %.0f ms", tb2 - tb, now_ms() - tb2);
-    double e = 0;
+    return 1;
+}
+static void cc_open(int start_y)
+{
+    cc_player_right = 0;
+    if (!cc_prepare()) return;
+    cc_session(img_under, img_base, img_sheet, 0, start_y);
+}
+/* desde Now Playing deslizando hacia la derecha: el centro de control entra por la izquierda */
+static void cc_from_player(int sx)
+{
+    cc_player_right = 1;
+    if (!cc_prepare()) return;
+    uint16_t *under = img_under, *panel = img_base;
+    struct pkt p; double vel = 0, lt = now_ms(); int lx = sx, o = 0;
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_x - lx) / (t - lt); lx = cur_x; lt = t; }
+        o = cur_x - sx; if (o < 0) o = 0;
+        cc_hpage(panel, under, o - W); present();
+        if (got && !p.down) break;
+        if (!got) msleep(2);
+    }
+    int done = o > W * 0.35 || vel > 0.35;
+    double t0 = now_ms(); int o0 = o, to = done ? W : 0;
+    for (;;) {
+        double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1;
+        cc_hpage(panel, under, o0 + (int)((to - o0) * ease_out(t)) - W); present();
+        if (t >= 1) break;
+    }
+    if (!done) { cmd('R'); return; }
+    cc_session(under, panel, img_sheet, 1, -2);
+}
+
+static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y)
+{
+    int from_launcher = cc_from_launcher;
     struct pkt p;
     if (start_y >= 0) {           /* tirar hacia abajo */
         double vel = 0, lt = now_ms(); int ly = start_y;
@@ -219,7 +385,7 @@ static void cc_open(int start_y)
         lg("cc: suelta e=%.2f vel=%.2f", e, vel);
         if (e < 0.3 && vel < 0.3) { cc_animate(under, panel, e, 0, 160); goto out; }
     }
-    cc_animate(under, panel, e, 1, start_y >= 0 ? 200 : 260);
+    if (start_y != -2) cc_animate(under, panel, e, 1, start_y >= 0 ? 200 : 260);
     for (;;) {
         if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 1000)) {
             if (cc_caption && now_ms() - cc_caption_t >= 1800) { cc_caption = 0; cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
@@ -227,7 +393,6 @@ static void cc_open(int start_y)
         }
         if (!p.down) continue;
         int sx = p.x, sy = p.y, hit = cc_hit(sx, sy);
-        lg("cc: toque %d,%d -> %d", sx, sy, hit);
         if (hit == 101) {                 /* brillo: arrastrar */
             int b0 = cc_bl_level(), y0 = sy;
             while (cur_down) {
@@ -240,13 +405,24 @@ static void cc_open(int start_y)
             continue;
         }
         if (hit >= 0) { cc_render(fr0, blur, hit); present(); }
-        int moved = 0;
-        while (cur_down && read_pkt(&p, 3000)) if (abs(cur_y - sy) > 14 || abs(cur_x - sx) > 14) moved = 1;
-        int up = sy - cur_y;
-        if (moved && (up > 30 || sy >= 450)) break;          /* deslizar hacia arriba: cerrar */
-        if (moved) { cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); continue; }
+        /* decidir pronto: toque, pagina horizontal o subir al inicio */
+        int dir = 0;
+        while (cur_down && read_pkt(&p, 3000)) {
+            int dx = cur_x - sx, dy = cur_y - sy;
+            if (dx < -14 && -dx > abs(dy)) { dir = 1; break; }        /* izquierda: reproductor */
+            if (dy < -14 && -dy > abs(dx)) { dir = 2; break; }        /* arriba: inicio */
+            if (abs(dx) > 14 || dy > 14) { dir = 3; }
+        }
+        if (dir == 1) { if (cc_to_player(panel, sx)) return; continue; }
+        if (dir == 2) { if (panel_up_home(panel, sy, from_launcher)) return; continue; }
+        if (dir == 3) { while (cur_down && read_pkt(&p, 3000)) {} cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); continue; }
         if (hit < 0) break;                                   /* toque fuera: cerrar */
-        if (hit == 100) { cc_animate(under, panel, 1, 0, 180); cc_open_app("nowplaying"); return; }
+        if (hit == 100) {
+            if (cc_player_right) { cc_hpage(panel, under, 0); double t0 = now_ms();   /* volver al reproductor */
+                for (;;) { double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1; cc_hpage(panel, under, -(int)(W * ease_out(t))); present(); if (t >= 1) break; }
+                cmd('R'); return; }
+            cc_animate(under, panel, 1, 0, 180); cc_open_app("nowplaying"); return;
+        }
         int tile = cc_tiles[hit];
         switch (tile) {
         case CT_NOCHARGE:
@@ -274,4 +450,17 @@ static void cc_open(int start_y)
     cc_animate(under, panel, 1, 0, 200);
 out:
     if (from_launcher) launcher_present(); else cmd('R');
+}
+
+/* Now Playing hacia arriba (desde el centro de la pantalla): el panel sube y aparece el inicio */
+static void plane_up(int sy)
+{
+    memcpy(img_sheet, visible(), HM_FRAME_BYTES);
+    if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
+        memcpy(img_sheet + (st->ov_uy + r) * W + st->ov_ux, st->ov_under + r * st->ov_uw, st->ov_uw * 2);
+    have_under = 0; st->ov_on = 0; ov_cur = 0;
+    cmd('C');
+    double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
+    if (!st->capture) return;
+    if (!panel_up_home(img_sheet, sy, 0)) cmd('R');
 }

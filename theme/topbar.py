@@ -200,6 +200,7 @@ print("cifras: alto", min(rows_h), "-", max(rows_h), "px;", len(out), "ficheros"
 
 if "--deploy" in sys.argv:
     for rel, src in out:
+        if "theme2" in rel: continue   # theme2 solo en el rootfs: en el aparato se montaria incompleto
         dst = "/usr/data/hibymod/theme/" + rel
         subprocess.run([ADB, "-s", DEV, "shell", f"mkdir -p '{os.path.dirname(dst)}'"], check=True)
         subprocess.run([ADB, "-s", DEV, "push", src, dst], check=True, capture_output=True)

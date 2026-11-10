@@ -272,6 +272,9 @@ static int action_sheet(const char *title, const char **opts, int n, int destruc
         present();
     }
     struct pkt p;
+    /* solo cuenta un toque NUEVO: descartar lo que quede del que abrio la hoja */
+    while (read_pkt(&p, 0)) {}
+    while (cur_down && read_pkt(&p, 3000)) {}
     for (;;) {
         if (!read_pkt(&p, 300) || !p.down) continue;
         int y = p.y; while (cur_down && read_pkt(&p, 3000)) {}

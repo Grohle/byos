@@ -249,7 +249,8 @@ static void home_publish(void);
 static void plane_home_drag(int sy);
 /* gestos configurables (gestures.inc.c) */
 enum { GA_NONE, GA_HOME, GA_PLAYER, GA_CC, GA_BACK };
-static struct { int bottom_app, bottom_home, top, left, right, chevron; } G = { GA_HOME, GA_PLAYER, GA_CC, GA_BACK, GA_PLAYER, 1 };
+/* top = mitad izquierda del borde superior, top_r = mitad derecha */
+static struct { int bottom_app, bottom_home, top, left, right, chevron, top_r; } G = { GA_HOME, GA_PLAYER, GA_CC, GA_BACK, GA_BACK, 1, GA_PLAYER };
 static int last_app = -1;   /* ultima app abierta desde el launcher */
 static void gestures_conf_line(char *k, char *v);
 static void gestures_conf_save(FILE *f);
@@ -349,8 +350,8 @@ static void *nav_thread(void *arg)
         } else if (req == NAV_BACK) {
             uint32_t c = st->cap_frames;
             inj_tap(22, 48);
-            settle(c, 600, 120);
-            ok = !is_plane(fr1);
+            settle(c, 600, 70);
+            ok = st->cap_frames != c;
         } else if (req == NAV_HOME) {
             ok = back_to_home();
         } else if (req == NAV_APP) {
@@ -595,9 +596,9 @@ static int music_session(void)
 /* ------------------------------------------------------------------ aviso de volumen (prototipo) */
 /* Pildora de cristal vertical en el borde derecho, nivel blanco desde abajo; aparece
  * ensanchandose (12 -> 16 px), el nivel se anima y se desvanece a los 1,4 s sin teclas. */
-#define HUD_X 293
+#define HUD_X 289
 #define HUD_Y 113
-#define HUD_W 24
+#define HUD_W 28
 #define HUD_H 160
 #define HUD_PILL_H 150
 static uint16_t hud_rgb[HUD_W * HUD_H];
@@ -622,6 +623,7 @@ static int read_volume(void)
     return (u >= 0 && u <= 100) ? u : -1;
 }
 static int vol_guess = 30;
+static double hud_bump;
 static void hud_draw(double vis, double width, double level)
 {
     memset(hud_a, 0, sizeof hud_a);
@@ -652,6 +654,21 @@ static void hud_draw(double vis, double width, double level)
             hud_a[i] = (uint8_t)(aa * cov * vis);
         }
     }
+    /* altavoz abajo, dentro de la pildora (oscuro sobre el relleno, claro sobre el cristal) */
+    if (width > 13) {
+        double cx = (left + right) / 2, cy = bot - 11;
+        for (int y = (int)cy - 5; y <= (int)cy + 5; y++) for (int x = (int)cx - 5; x <= (int)cx + 5; x++) {
+            if (x < 0 || x >= HUD_W || y < 0 || y >= HUD_H) continue;
+            double px = x + 0.5 - cx, py = y + 0.5 - cy, on = 0;
+            if (px >= -4.5 && px <= -2 && fabs(py) <= 1.6) on = 1;                       /* cuerpo */
+            if (px > -2 && px <= 0.8 && fabs(py) <= 1.6 + (px + 2) * 1.2) on = 1;        /* cono */
+            if (level > 0.01) { double rr2 = sqrt((px - 0.5) * (px - 0.5) + py * py); if (px > 1.8 && rr2 > 2.6 && rr2 < 3.8 && fabs(py) < px * 1.3) on = 1; }
+            if (!on) continue;
+            int i = y * HUD_W + x; int filled = y + 0.5 > fill_top;
+            hud_rgb[i] = filled ? rgb(70, 70, 76) : 0xFFFF;
+            hud_a[i] = (uint8_t)(235 * vis);
+        }
+    }
 }
 static void hud_upload(void)
 {
@@ -672,6 +689,7 @@ static void hud_key(int code)
     double t = now_ms();
     if (!hud_active) { hud_shown_at = t; hud_active = 1; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
     hud_last_key = t;
+    hud_bump = 1;                                   /* la pildora se ensancha un instante (iOS) */
     /* sin barra de estado (Now Playing): se sigue el paso de la rueda */
     if (ocr_volume(st->capture ? fr1 : visible()) < 0) { vol_guess += code == KEY_RIGHT ? 1 : -1; if (vol_guess < 0) vol_guess = 0; if (vol_guess > 100) vol_guess = 100; }
     lg("volumen: tecla %d", code);
@@ -683,8 +701,12 @@ static int hud_step(void)
     double t = now_ms();
     int v = read_volume(); if (v >= 0) vol_guess = v;
     double target = vol_guess / 100.0;
-    hud_level += (target - hud_level) * 0.45;
-    if (fabs(target - hud_level) < 0.004) hud_level = target;
+    /* muelle casi critico: llega rapido y sin saltos; el ensanchamiento se relaja */
+    static double vel, lt; double dt = lt ? (t - lt) / 16.7 : 1; lt = t; if (dt > 3) dt = 3;
+    vel += ((target - hud_level) * 0.30 - vel * 0.55) * dt; hud_level += vel * dt;
+    if (fabs(target - hud_level) < 0.003 && fabs(vel) < 0.002) { hud_level = target; vel = 0; }
+    if (hud_level < 0) hud_level = 0; if (hud_level > 1) hud_level = 1;
+    hud_bump *= pow(0.86, dt); if (hud_bump < 0.01) hud_bump = 0;
     double in = (t - hud_shown_at) / 220.0; if (in > 1) in = 1;
     double idle = t - hud_last_key;
     double out = idle < 1400 ? 1 : 1 - (idle - 1400) / 300.0;
@@ -697,7 +719,8 @@ static int hud_step(void)
         return 0;
     }
     double e = ease_out(in);
-    hud_draw(e * out, 12 + 4 * e, hud_level);
+    double o = out < 1 ? out : 1;
+    hud_draw(e * out, (12 + 5 * e + 5 * hud_bump) * (0.7 + 0.3 * o), hud_level);
     if (launcher_on) launcher_present_hud(); else hud_upload();
     return 1;
 }
@@ -1027,11 +1050,15 @@ int main(int argc, char **argv)
             int sx = p.x, sy = p.y, decided = 0;
             while (!decided && read_pkt(&p, 1000)) {
                 if (!p.down) { decided = 1; break; }
-                int dy = p.y - sy, dx = abs(p.x - sx);
+                int dy = p.y - sy, dx = abs(p.x - sx), rx = p.x - sx;
                 if (dy > 16 && dy > dx * 2) { decided = 2; break; }
+                if (dy < -16 && -dy > dx * 2) { decided = 3; break; }     /* arriba: al inicio */
+                if (rx > 16 && rx > abs(dy) * 2) { decided = 4; break; }  /* derecha: centro de control */
                 if (dx > 16 || dy < -16) { decided = 1; break; }
                 if (nh < 16) held[nh++] = p; else { decided = 1; break; }
             }
+            if (decided == 3) { lg("Now Playing: arriba -> inicio"); plane_up(sy); drain_until_up(); update_overlay(); continue; }
+            if (decided == 4) { lg("Now Playing -> centro de control"); cc_from_player(sx); drain_until_up(); update_overlay(); continue; }
             if (decided == 2) {
                 lg("cerrar Now Playing deslizando");
                 cur_y = sy;

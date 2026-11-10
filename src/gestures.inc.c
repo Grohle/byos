@@ -13,20 +13,25 @@ static const char *ga_names[] = { "none", "home", "player", "cc", "back" };
 static int ga_parse(const char *s) { for (int i = 0; i < 5; i++) if (s && !strcmp(s, ga_names[i])) return i; return -1; }
 
 /* lineas "gesture CLAVE VALOR" de launcher.conf */
+static int g_conf_v2;   /* los valores guardados antes de la v2 se ignoran: nuevos por defecto */
 static void gestures_conf_line(char *k, char *v)
 {
     int a = ga_parse(v);
     if (!k || !v) return;
+    if (!strcmp(k, "v")) { g_conf_v2 = atoi(v) >= 2; return; }
+    if (!g_conf_v2) return;
     if (!strcmp(k, "chevron")) { G.chevron = atoi(v) != 0; return; }
     if (a < 0) return;
     if (!strcmp(k, "bottom_app") && a != GA_BACK) G.bottom_app = a;
     else if (!strcmp(k, "bottom_home") && a != GA_BACK && a != GA_HOME) G.bottom_home = a;
     else if (!strcmp(k, "top") && a != GA_HOME && a != GA_BACK) G.top = a;
     else if (!strcmp(k, "left") && a != GA_HOME) G.left = a;
-    else if (!strcmp(k, "right") && a != GA_HOME && a != GA_BACK) G.right = a;
+    else if (!strcmp(k, "right") && a != GA_HOME) G.right = a;
+    else if (!strcmp(k, "top_r") && a != GA_HOME && a != GA_BACK) G.top_r = a;
 }
 static void gestures_conf_save(FILE *f)
 {
+    fprintf(f, "gesture v 2\ngesture top_r %s\n", ga_names[G.top_r]);
     fprintf(f, "gesture bottom_app %s\ngesture bottom_home %s\ngesture top %s\ngesture left %s\ngesture right %s\ngesture chevron %d\n",
             ga_names[G.bottom_app], ga_names[G.bottom_home], ga_names[G.top], ga_names[G.left], ga_names[G.right], G.chevron);
 }
@@ -296,6 +301,116 @@ static void app_switch_gesture(int sy, int sx)
     cmd('R');
 }
 
+/* ------------------------------------------------------------------ atras (estilo Xiaomi / Android) */
+/* Burbuja oscura que nace del borde siguiendo al dedo (perfil de campana, bordes suaves) con
+ * una flecha que se marca al pasar el umbral. Al soltar armada: la pantalla anterior entra
+ * con transicion completa (la actual sale hacia el lado del gesto, la nueva con paralaje).
+ * Solo se redibujan las filas de la burbuja (present_rows): el coste por fotograma es minimo. */
+#define BK_HH 96          /* media altura de la burbuja */
+#define BK_WMAX 34.f      /* ancho maximo */
+#define BK_ARM 64         /* recorrido del dedo para armar */
+static void back_bubble(uint16_t *d, int right, int cy, float w, float arrow, int armed)
+{
+    if (w < 0.5f) return;
+    for (int y = cy - BK_HH; y <= cy + BK_HH; y++) {
+        if (y < 30 || y >= H) continue;
+        float t = (y - cy) / (float)BK_HH, prof = 0.5f + 0.5f * cosf(3.14159f * t);
+        float ww = w * prof; int full = (int)ww; float frac = ww - full;
+        uint16_t *row = d + y * W;
+        for (int i = 0; i <= full && i < W; i++) {
+            int x = right ? W - 1 - i : i;
+            /* gris translucido: oscurece lo claro y aclara lo oscuro (se ve sobre cualquier fondo) */
+            int k = i < full ? 26 : (int)(26 * frac);
+            uint16_t q = row[x];
+            int r = ((q >> 11) * (32 - k) + 7 * k) >> 5, g = (((q >> 5) & 63) * (32 - k) + 15 * k) >> 5, bl = ((q & 31) * (32 - k) + 8 * k) >> 5;
+            row[x] = (uint16_t)(r << 11 | g << 5 | bl);
+        }
+    }
+    if (w > 10 && arrow > 0.02f) {             /* flecha "<" o ">" (apunta al borde) */
+        float ax = w * 0.52f; int a = (int)(255 * arrow); if (a > 255) a = 255;
+        uint16_t col = armed ? 0xFFFF : rgb(200, 200, 205);
+        for (int i = 0; i <= 7; i++) {
+            float fx = ax - 3.5f + i * 0.55f;
+            float x = right ? W - 1 - fx : fx;
+            fill_circle(d, x, cy - i, 1.15f, col, a); fill_circle(d, x, cy + i, 1.15f, col, a);
+        }
+    }
+}
+static float back_w(float dist) { return BK_WMAX * (1 - expf(-dist / 70.f)); }      /* goma */
+static void back_frame(const uint16_t *old, int right, int cy, float w, float arrow, int armed, int *py0, int *py1)
+{
+    int y0 = cy - BK_HH - 2, y1 = cy + BK_HH + 3; if (y0 < 30) y0 = 30; if (y1 > H) y1 = H;
+    int a0 = y0 < *py0 ? y0 : *py0, a1 = y1 > *py1 ? y1 : *py1;          /* union con la anterior */
+    memcpy(fr0 + a0 * W, old + a0 * W, (a1 - a0) * W * 2);
+    back_bubble(fr0, right, cy, w, arrow, armed);
+    present_rows(a0, a1);
+    *py0 = y0; *py1 = y1;
+}
+/* transicion de vuelta: right=0 (desde la izquierda): la actual sale hacia la derecha */
+static void back_transition(const uint16_t *old, const uint16_t *neu, int right)
+{
+    double t0 = now_ms();
+    for (;;) {
+        double t = (now_ms() - t0) / 270.0; if (t > 1) t = 1;
+        float e = (float)ease_out(t);
+        int off = (int)(W * e);
+        int tx = right ? -off : off;                       /* x de la pantalla que se va */
+        int bx = right ? (W - off) / 3 : -(W - off) / 3;     /* la nueva, con paralaje */
+        int k = 22 + (int)(10 * e);
+        memcpy(fr0, neu, 30 * W * 2);
+        for (int y = 30; y < H; y++) {
+            uint16_t *dr = fr0 + y * W; const uint16_t *o = old + y * W, *n = neu + y * W;
+            for (int x = 0; x < W; x++) {
+                int ox = x - tx;
+                if (ox >= 0 && ox < W) dr[x] = o[ox];
+                else { int nx = x - bx; dr[x] = nx >= 0 && nx < W ? dim565(n[nx], k) : 0; }
+            }
+            int ex = right ? W + tx : tx;                  /* sombra en el borde de la que se va */
+            for (int s = 1; s <= 5; s++) { int x = right ? ex + s - 1 : ex - s; if (x >= 0 && x < W) dr[x] = dim565(dr[x], 20 + s * 2); }
+        }
+        present();
+        if (t >= 1) break;
+    }
+}
+static void back_gesture(int right, int sx, int sy)
+{
+    uint16_t *old = img_sheet, *neu = img_app;
+    memcpy(old, visible(), HM_FRAME_BYTES);
+    if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
+        memcpy(old + (st->ov_uy + r) * W + st->ov_ux, st->ov_under + r * st->ov_uw, st->ov_uw * 2);
+    have_under = 0;
+    st->ov_on = 0; ov_cur = 0;
+    cmd('C');
+    double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
+    if (!st->capture) return;
+    memcpy(fr0, old, HM_FRAME_BYTES);
+    struct pkt p; int py0 = H, py1 = 0, armed = 0, cy = sy; float w = 0, ar = 0;
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        if (!got) { msleep(3); if (!cur_down) break; continue; }
+        float dist = right ? sx - cur_x : cur_x - sx; if (dist < 0) dist = 0;
+        cy = cur_y < 30 + BK_HH / 2 ? 30 + BK_HH / 2 : cur_y > H - BK_HH / 2 ? H - BK_HH / 2 : cur_y;
+        armed = dist > BK_ARM; w = back_w(dist); ar = dist / BK_ARM; if (ar > 1) ar = 1;
+        back_frame(old, right, cy, w, ar, armed, &py0, &py1);
+        if (!p.down) break;
+    }
+    lg("atras: %s", armed ? "si" : "no");
+    if (armed) nav_start(NAV_BACK);
+    double t0 = now_ms(); float w0 = w;                   /* la burbuja se recoge */
+    for (;;) {
+        double t = (now_ms() - t0) / 120.0; if (t > 1) t = 1;
+        back_frame(old, right, cy, w0 * (1 - (float)ease_out(t)), ar * (float)(1 - t), armed, &py0, &py1);
+        if (t >= 1) break;
+    }
+    if (!armed) { cmd('R'); return; }
+    int ok = nav_wait(1500);
+    memcpy(neu, fr1, HM_FRAME_BYTES);
+    int home = is_home(neu) && launcher_enabled;
+    if (home) render_launcher(neu, now_ms());
+    if (ok == 1) back_transition(old, neu, right);
+    if (!home || !launcher_resume()) cmd('R');
+}
+
 /* ------------------------------------------------------------------ despacho */
 /* Llamado al empezar un toque fuera del launcher. Devuelve 1 si era un gesto del sistema. */
 static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
@@ -303,9 +418,9 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
     int sx = p->x, sy = p->y, zone = 0;
     if (sy >= 456) zone = 1; else if (sy < 14) zone = 3; else if (sx < 10) zone = 4; else if (sx > W - 10) zone = 5;
     if (!zone) return 0;
-    int act = zone == 1 ? (plane ? GA_HOME : G.bottom_app) : zone == 3 ? G.top : zone == 4 ? G.left : G.right;
+    int act = zone == 1 ? (plane ? GA_HOME : G.bottom_app) : zone == 3 ? (sx < W / 2 ? G.top : G.top_r) : zone == 4 ? G.left : G.right;
     if (zone == 1 && is_cc(v)) return 0;                     /* cerrar el centro de control: es de HiBy */
-    if ((zone == 4 && act == GA_BACK) || act == GA_NONE) return 0;   /* lo hace HiBy */
+    if (act == GA_NONE) return 0;
     /* retener el toque hasta saber si es el gesto (alejarse del borde) o un toque normal */
     struct pkt held[16]; int nh = 0; held[nh++] = *p; int decided = 0;
     while (!decided && read_pkt(p, 1000)) {
@@ -319,7 +434,8 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
     }
     if (decided != 2) { for (int i = 0; i < nh; i++) fwd(&held[i]); if (p->n) fwd(p); return 1; }
     if (plane && zone == 1) { plane_home_drag(sy); drain_until_up(); update_overlay(); return 1; }
-    if (act == GA_HOME) app_switch_gesture(sy, sx);
+    if (act == GA_BACK) back_gesture(zone == 5, sx, sy);
+    else if (act == GA_HOME) app_switch_gesture(sy, sx);
     else if (act == GA_PLAYER) { if (zone == 1) sheet_open_drag(sy); else player_from_edge(zone == 5 ? 1 : zone == 4 ? 2 : 3, zone == 3 ? sy : sx); }
     else if (act == GA_CC) { if (zone == 3) cc_open(sy); else { drain_until_up(); cc_open(-1); } }
     drain_until_up();

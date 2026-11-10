@@ -228,6 +228,18 @@ static const char *const TR[][3] = {
     { "CC_HELP", "Choose the controls shown in the Control Centre (swipe down from the top).", "Choisissez les commandes du Centre de contrôle (balayez depuis le haut)." },
     { "POWER_HELP", "Low power: 30 fps animations and brightness capped at 40 %. Normal: 44 fps (the panel's maximum). Performance: no limits, for when it's plugged in. There is no overclock: the CPU already runs 10 % above its rating.", "Économie : animations à 30 i/s et luminosité limitée à 40 %. Normal : 44 i/s (le maximum de l'écran). Performance : sans limites, quand il est branché. Pas d'overclock : le processeur tourne déjà 10 % au-dessus de sa fréquence nominale." },
     { "NOCHARGE_HELP", "The HiBy runs from USB power without charging the battery: good for long sessions plugged in (DAC, desk).", "Le HiBy fonctionne sur l'alimentation USB sans charger la batterie : idéal pour de longues sessions branché (DAC, bureau)." },
+    { "Arriba, izquierda", "Top, left", "Haut, gauche" },
+    { "Arriba, derecha", "Top, right", "Haut, droite" },
+    { "Borde izquierdo", "Left edge", "Bord gauche" },
+    { "Borde derecho", "Right edge", "Bord droit" },
+    { "INSTALADAS", "INSTALLED", "INSTALLÉES" },
+    { "Ninguna app instalada", "No apps installed", "Aucune app installée" },
+    { "Copia de seguridad", "Back up", "Sauvegarder" },
+    { "Desinstalar y borrar datos", "Uninstall and delete data", "Désinstaller et effacer les données" },
+    { "¿Desinstalar y borrar sus datos? No se puede deshacer.", "Uninstall and delete its data? This can't be undone.", "Désinstaller et effacer ses données ? Action irréversible." },
+    { "Copiando…", "Copying…", "Copie…" },
+    { "No se pudo hacer la copia", "The backup failed", "La sauvegarde a échoué" },
+    { "Copia guardada en Apps/Copias", "Backup saved in Apps/Copias", "Sauvegarde enregistrée dans Apps/Copias" },
     { "ADB_HELP_OFF", "ADB lets a computer control the HiBy (developer tools). Leave it off if you don't use it.", "ADB permet à un ordinateur de piloter le HiBy (outils de développement). Laissez-le désactivé si vous ne l'utilisez pas." },
 };
 /* textos largos en espanol (la clave no es el texto) */

@@ -101,6 +101,7 @@ print("\n".join(r for r, _ in out))
 
 if "--deploy" in sys.argv:
     for rel, src in out:
+        if "theme2" in rel: continue   # solo en el rootfs (montar theme2 incompleto rompe ese tema)
         if rel.startswith("@"):
             dst = "/usr/data/hibymod/theme/" + rel[1:]
         elif rel.startswith("theme"):
