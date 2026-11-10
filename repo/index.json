@@ -1,0 +1,59 @@
+{
+ "format": 1,
+ "name": {
+  "es": "HiByOS",
+  "en": "HiByOS",
+  "fr": "HiByOS"
+ },
+ "homepage": "https://github.com/Grohle/hibyos",
+ "apps": [
+  {
+   "id": "org.hibymod.navegador",
+   "version": "1.0.0",
+   "min_hibymod": "0.1.0",
+   "name": {
+    "es": "Navegador",
+    "en": "Browser",
+    "fr": "Navigateur"
+   },
+   "desc": {
+    "es": "Navegador web ligero (NetSurf, sin JavaScript) para páginas sencillas y búsquedas",
+    "en": "Lightweight web browser (NetSurf, no JavaScript) for simple pages and searches",
+    "fr": "Navigateur web léger (NetSurf, sans JavaScript) pour pages simples et recherches"
+   },
+   "author": "NetSurf / hibymod",
+   "category": "internet",
+   "ram_kb": 7000,
+   "stop_player": true,
+   "featured": true,
+   "size": 4300800,
+   "sha256": "2d5593b90d26e8fe0f0b34dc083627430047157c1e9ee41d3bccf6761a381ad3",
+   "icon": "icons/org.hibymod.navegador.png",
+   "hpk": "https://github.com/Grohle/hibyos/releases/download/apps-1/org.hibymod.navegador-1.0.0.hpk"
+  },
+  {
+   "id": "org.hibymod.hola",
+   "version": "1.0.0",
+   "min_hibymod": "0.1.0",
+   "name": {
+    "es": "Hola",
+    "en": "Hello",
+    "fr": "Bonjour"
+   },
+   "desc": {
+    "es": "Demo: saludo, degradado y un círculo que sigue al dedo",
+    "en": "Demo: greeting, gradient and a circle that follows your finger",
+    "fr": "Démo : salutation, dégradé et un cercle qui suit le doigt"
+   },
+   "author": "hibymod",
+   "category": "demo",
+   "ram_kb": 900,
+   "stop_player": false,
+   "featured": false,
+   "size": 81920,
+   "sha256": "195c6d7a619da7ff014f4b49f24b8c245eb3469e646c9a3ed1cd4482bbacc2f3",
+   "icon": "icons/org.hibymod.hola.png",
+   "hpk": "https://github.com/Grohle/hibyos/releases/download/apps-1/org.hibymod.hola-1.0.0.hpk"
+  }
+ ]
+}
