@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="64" viewBox="0 0 300 64" role="img" aria-label="Buy me a coffee">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2c2e"/>
+      <stop offset="1" stop-color="#1c1c1e"/>
+    </linearGradient>
+    <linearGradient id="cup" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe14d"/>
+      <stop offset="1" stop-color="#ffb800"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="299" height="63" rx="18" fill="url(#bg)" stroke="#3a3a3c"/>
+  <rect x="12" y="12" width="40" height="40" rx="10" fill="url(#cup)"/>
+  <g fill="none" stroke="#1c1c1e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 28h16v6.5a8 7.5 0 0 1-16 0z"/>
+    <path d="M38 30h2.3a3.3 3.3 0 0 1 0 6.6h-2.5"/>
+    <path d="M26.5 23.5v-3M30 23.5v-3M33.5 23.5v-3" stroke-width="1.9"/>
+  </g>
+  <g font-family="-apple-system, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <text x="66" y="30" font-size="18" font-weight="600" fill="#ffffff">Buy me a coffee</text>
+    <text x="66" y="47" font-size="12.5" fill="#98989f">Support HiByOS</text>
+  </g>
+</svg>

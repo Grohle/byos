@@ -17,6 +17,10 @@
   <img src="https://img.shields.io/badge/built%20with-AI%20agents-BF5AF2" alt="Built with AI agents">
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/grohle"><img src="docs/media/donate.svg" height="52" alt="Buy me a coffee"></a>
+</p>
+
 ---
 
 HiByOS is a community firmware for the **HiBy R3 II (2025)** digital audio player. It keeps
@@ -57,6 +61,7 @@ frame by frame.
 - [Building from source](#building-from-source)
 - [How it works](#how-it-works)
 - [Status and known limitations](#status-and-known-limitations)
+- [Support the project](#support-the-project)
 - [Licence](#licence)
 
 ## Apps
@@ -528,6 +533,21 @@ stock interface and plays the audio. Around it:
 - **YouTube Music is not included.** The research is in `docs/`.
 - **USB only (no charging).** The battery charger driver re-enables charging a few seconds
   after every plug-in, so HiByOS reasserts the setting every 30 s while USB is connected.
+
+## Support the project
+
+HiByOS is free and will stay free. If you enjoy it and want to support the time that goes
+into it, you can buy me a coffee:
+
+<p>
+  <a href="https://buymeacoffee.com/grohle"><img src="docs/media/donate.svg" height="52" alt="Buy me a coffee"></a>
+</p>
+
+The same links are on the player: open **Settings → General → Info** and tap **GitHub** or
+a link under **Support the project** to show its QR code, then scan it with your phone.
+
+Donations are voluntary and do not buy features or support. Bug reports, ideas and pull
+requests help just as much.
 
 ## Licence
 

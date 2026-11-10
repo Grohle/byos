@@ -397,7 +397,7 @@ static const char *ss_space(int i, long long fr, long long tot)
 static const char *v_sd(void) { return ss_space(5, si_ui.sd_free, si_ui.sd_tot); }
 static const char *v_int(void) { return ss_space(6, si_ui.in_free, si_ui.in_tot); }
 static int ui_sd_pm, ui_in_pm;
-static const char *v_repo2(void) { return "Grohle/hibyos"; }
+#include "support.inc.c"               /* enlaces del proyecto y de donacion, cada uno con su QR */
 
 /* ------------------------------------------------------------------ Wi-Fi y Bluetooth
  * HOOK wireless_app: la app Inalambrico propia (src/wireless.inc.c, de otro agente) se usa si
@@ -530,8 +530,9 @@ static void page_about(struct spage *p)
     p->secs[1] = (struct ssec){ "ALMACENAMIENTO", 0, { ROWB("Tarjeta SD", &ui_sd_pm, v_sd), ROWB("Memoria interna", &ui_in_pm, v_int),
                                                        ROWV("Memoria libre", v_mem2) }, 3 };
     p->secs[2] = (struct ssec){ 0, 0, { ROWV("Dirección Wi-Fi", v_mac) }, 1 };
-    p->secs[3] = (struct ssec){ "PROYECTO", "ABOUT_HELP", { ROWV("GitHub", v_repo2) }, 1 };
+    p->secs[3] = (struct ssec){ "PROYECTO", "ABOUT_HELP", { sup_row(0) }, 1 };      /* GitHub: abre su QR */
     p->nsec = 4;
+    if (sup_donate_sec(&p->secs[4])) p->nsec = 5;                                   /* donaciones, cada una con su QR */
 }
 static void nav_about(void) { si_refresh(); open_page(page_about, "General"); }
 
