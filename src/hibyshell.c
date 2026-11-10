@@ -1090,6 +1090,26 @@ static int open_touch(void)
     return -1;
 }
 
+/* La memoria interna (UBIFS, ~36 MB) va justa y casi llena se vuelve lentisima; la SD sobra.
+ * Las caches de las apps (listas y miniaturas de Libros, Vinyl, letras y caratulas, tienda...)
+ * se pueden rehacer: /usr/data/hibymod/cache pasa a ser un enlace a HiByOS/cache/int de la SD.
+ * Sin tarjeta al arrancar, vuelve a ser una carpeta interna (nada se rompe; solo no hay cache). */
+static void cache_to_sd(void)
+{
+    static const char *C = "/usr/data/hibymod/cache", *S = "/usr/data/mnt/sd_0/HiByOS/cache/int";
+    struct stat sb; int islink = !lstat(C, &sb) && S_ISLNK(sb.st_mode), isdir = !islink && !lstat(C, &sb) && S_ISDIR(sb.st_mode);
+    if (!access("/usr/data/mnt/sd_0/HiByOS", W_OK)) {
+        if (islink) return;
+        mkdir("/usr/data/mnt/sd_0/HiByOS/cache", 0755); mkdir(S, 0755);
+        if (access(S, W_OK)) return;
+        if (isdir) { if (system("rm -rf /usr/data/hibymod/cache")) {} }
+        if (symlink(S, C)) { lg("cache: no se pudo enlazar a la SD (%s)", strerror(errno)); mkdir(C, 0755); }
+        else lg("cache: en la SD (%s)", S);
+    } else if (islink) {
+        unlink(C); mkdir(C, 0755); lg("cache: sin SD, carpeta interna");
+    }
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -1102,6 +1122,7 @@ int main(int argc, char **argv)
      * ayudantes (hibywall, hibynet, hibytag) no arrancan. */
     { int f = open("/proc/sys/vm/overcommit_memory", O_WRONLY); if (f >= 0) { if (write(f, "1", 1) != 1) lg("overcommit: no se pudo"); close(f); } }
     perf_on = !access("/tmp/hibymod/perf", F_OK);
+    cache_to_sd();
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);
     if (!st) { lg("sin estado compartido"); return 1; }
     for (int i = 0; i < 300 && st->magic != HM_MAGIC; i++) msleep(200);
