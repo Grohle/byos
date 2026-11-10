@@ -99,7 +99,7 @@ static void run_ext_app(int a, int ix, int iy)
     /* el icono crece hasta negro (la app dibujara su primera imagen) */
     render_launcher(img_base, now_ms());
     double t0 = now_ms();
-    static uint16_t *black; if (!black) black = calloc(W * H, 2);
+    static uint16_t *black; if (!black) black = lazy_alloc((void **)&black, (size_t)(W * H) * (2), 1);
     const uint16_t *blk = black; if (!blk) { memset(img_sheet, 0, HM_FRAME_BYTES); blk = img_sheet; }   /* sin memoria: un bufer comun */
     for (;;) {
         double t = (now_ms() - t0) / 300.0; if (t > 1) t = 1; double e = ease_out(t);   /* igual que el resto de apps */

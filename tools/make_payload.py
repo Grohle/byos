@@ -80,6 +80,7 @@ BINS = {  # payload/bin/<name>: source
     "hibymod_disp.so": "bin/hibymod_disp.so",
     "hibynet": "bin/hibynet",          # lyrics and covers (LRCLIB, iTunes, Cover Art Archive)
     "cacert.pem": "bin/cacert.pem",    # Mozilla TLS roots for hibynet
+    "hibybudsd": "out/agent_buds/hibybudsd",   # headphones daemon (tools/wsl/zbuild_buds.sh); the Headphones app needs it
 }
 # sources of each binary (only to warn when the binary is older than its code)
 SRCS = {
@@ -89,6 +90,7 @@ SRCS = {
     "hibytag": ["src/hibytag.c", "src/hibytag.h"],
     "hibymod_disp.so": ["src/hibymod_disp.c", "src/hm_shared.h"],
     "hibynet": ["src/hibynet.c"],
+    "hibybudsd": ["src/hibybudsd.c"],
 }
 THEME_SUBS = ("layout/theme3", "litegui/theme3")
 # Replacements of root filesystem scripts (docs/OTA.md): name in sys/ -> marker. A script is

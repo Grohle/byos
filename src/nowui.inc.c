@@ -1512,7 +1512,7 @@ static int own_home_gesture(int sx, int sy, int self)
     render_launcher(home, now_ms());
     dim_buf(bg, home, W * H, 22); dim_buf(bg2, home, W * H, 11);
     have_under = 0;
-    static uint16_t *phb; if (!phb) phb = malloc(HM_FRAME_BYTES);
+    static uint16_t *phb; if (!phb) phb = lazy_alloc((void **)&phb, HM_FRAME_BYTES, 0);
     const uint16_t *ph = 0;          /* la tarjeta del reproductor se prepara solo si se mantiene el gesto */
     sw_player_first = 0;
     struct pkt p; double vel = 0, lt = now_ms(), still_t = 0, arm_t = 0, prog = 0; int ly = sy, lx = sx, armed = 0;

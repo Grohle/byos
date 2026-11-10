@@ -1879,7 +1879,7 @@ static void ab_pop(int animate)
 static int ab_open_player(void)
 {
     ab_render(fr0);
-    static uint16_t *under; if (!under) under = malloc(HM_FRAME_BYTES);
+    static uint16_t *under; if (!under) under = lazy_alloc((void **)&under, HM_FRAME_BYTES, 0);
     if (!under) return 0;
     memcpy(under, fr0, HM_FRAME_BYTES);
     int r = np_app_run(under, -1, -1);   /* al cerrarlo se ve la pestana (debajo) */

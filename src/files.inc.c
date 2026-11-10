@@ -357,7 +357,7 @@ static uint32_t fs_sum(uint32_t a, const uint8_t *b, ssize_t n)   /* Adler-32 */
 }
 static int fs_copy_file(const char *src, const char *dst, mode_t mode, struct fs_mv *m)
 {
-    static uint8_t *buf; if (!buf) buf = malloc(65536);
+    static uint8_t *buf; if (!buf) buf = lazy_alloc((void **)&buf, 65536, 0);
     if (!buf) return -1;
     int fi = open(src, O_RDONLY); if (fi < 0) return -1;
     int fo = open(dst, O_WRONLY | O_CREAT | O_EXCL, mode & 0777); if (fo < 0) { close(fi); return -1; }
@@ -527,7 +527,7 @@ static int tx_vmove(int cur, int dir)
 static int fs_gone;          /* salio con el gesto de inicio: el inicio ya esta en pantalla */
 static void text_editor(const char *path, const char *name)
 {
-    static char *buf; if (!buf) buf = malloc(TXT_CAP);
+    static char *buf; if (!buf) buf = lazy_alloc((void **)&buf, TXT_CAP, 0);
     if (!buf) { toast(tr("No se pudo abrir")); return; }
     int f = open(path, O_RDONLY);
     int n = f >= 0 ? (int)read(f, buf, TXT_CAP - 1) : 0; if (n < 0) n = 0;

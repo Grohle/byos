@@ -533,6 +533,23 @@ static int read_pkt(struct pkt *p, int timeout_ms)
     }
 }
 static void fwd(const struct pkt *p) { inj(p->ev, p->n); }
+/* Bufers de trabajo de pantalla completa (300 KB) que antes se reservaban al primer uso y no se
+ * soltaban nunca: con el uso iban sumando varios MB de RAM en un aparato de 57 MB. Ahora se
+ * registran y se sueltan todos en reposo (bucle principal, sin gesto ni app en curso); musl los
+ * devuelve al sistema (mmap). Solo para bufers que se rellenan desde cero en cada uso. */
+static void **lazy_slot[32]; static int lazy_n;
+static void *lazy_alloc(void **slot, size_t n, int zero)
+{
+    void *p = zero ? calloc(1, n) : malloc(n);
+    if (!p) return 0;
+    int k = 0; while (k < lazy_n && lazy_slot[k] != slot) k++;
+    if (k == lazy_n && lazy_n < 32) lazy_slot[lazy_n++] = slot;
+    return p;
+}
+static void lazy_release(void)
+{
+    for (int k = 0; k < lazy_n; k++) if (*lazy_slot[k]) { free(*lazy_slot[k]); *lazy_slot[k] = 0; }
+}
 /* misma pagina: menos del 3 % de muestras distintas por debajo de la barra de estado */
 static int same_page(const uint16_t *a, const uint16_t *b)
 {
@@ -1252,7 +1269,7 @@ int main(int argc, char **argv)
                 } else if (!is_stream_page(vv) && !is_home(vv)) { /* sigue en la app */ }
             }
         }
-        if (pr <= 0 || !(pf[0].revents & POLLIN)) continue;
+        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) lazy_release(); continue; }
         struct pkt p;
         if (!read_pkt(&p, 300)) continue;
         if (launcher_on && p.down && p.n) { launcher_touch(&p); last_cap = st->cap_frames; continue; }

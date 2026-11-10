@@ -100,7 +100,7 @@ static void player_from_edge(int dir, int start)
         if (t >= 1) break;
     }
     if (!complete) { if (launcher_on) launcher_present(); else cmd('R'); return; }
-    static uint16_t *under_copy; if (!under_copy) under_copy = malloc(HM_FRAME_BYTES);
+    static uint16_t *under_copy; if (!under_copy) under_copy = lazy_alloc((void **)&under_copy, HM_FRAME_BYTES, 0);
     if (!under_copy) { if (launcher_on) launcher_present(); else cmd('R'); return; }
     memcpy(under_copy, img_under, HM_FRAME_BYTES);
     int home = np_from_screen(under_copy);
@@ -287,7 +287,7 @@ static void app_switch_gesture(int sy, int sx)
     dim_buf(bg, home, W * H, 22); dim_buf(bg2, home, W * H, 11);
     have_under = 0;
     /* tarjeta del reproductor (el propio): se prepara solo si se mantiene el gesto */
-    static uint16_t *ph_card; if (!ph_card) ph_card = malloc(W * H * 2);
+    static uint16_t *ph_card; if (!ph_card) ph_card = lazy_alloc((void **)&ph_card, W * H * 2, 0);
     const uint16_t *ph = 0;
     st->ov_on = 0; ov_cur = 0;
     cmd('C');
@@ -529,7 +529,7 @@ static int app_back_gesture(int sx, int sy)
         if (now_ms() - t0 > 600) return 0;                   /* quieto: pulsacion normal */
         read_pkt(&p, 30);
     }
-    static uint16_t *old; if (!old) old = malloc(HM_FRAME_BYTES);
+    static uint16_t *old; if (!old) old = lazy_alloc((void **)&old, HM_FRAME_BYTES, 0);
     if (!old) { drain_until_up(); return 1; }
     memcpy(old, fr0, HM_FRAME_BYTES);
     int py0 = H, py1 = 0, armed = 0, cy = sy; float w = 0, ar = 0;
@@ -563,7 +563,7 @@ static void launch_app(int a, int ix, int iy);
 static void home_switcher(int sy)
 {
     uint16_t *home = img_base, *bg = img_under;
-    static uint16_t *appc; if (!appc) appc = malloc(HM_FRAME_BYTES);
+    static uint16_t *appc; if (!appc) appc = lazy_alloc((void **)&appc, HM_FRAME_BYTES, 0);
     if (!appc) return;
     render_launcher(home, now_ms());
     int have_app = 0;

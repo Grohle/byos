@@ -319,7 +319,7 @@ static const uint16_t *cc_player_img(void)
 {
     if (cc_player_right) return cc_under;               /* venimos del reproductor: es el fondo */
     if (have_cache_plane) return img_cache_plane;
-    static uint16_t *ph; if (!ph) ph = malloc(HM_FRAME_BYTES);
+    static uint16_t *ph; if (!ph) ph = lazy_alloc((void **)&ph, HM_FRAME_BYTES, 0);
     if (!ph) return cc_under ? cc_under : img_under;     /* sin memoria: sin marcador */
     for (int i = 0; i < W * H; i++) ph[i] = rgb(18, 18, 20);
     int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(ph, &apps[a].icon[2], W / 2 - 48, H / 2 - 70, 96, 96, 255);
@@ -331,7 +331,7 @@ static int np_from_screen(const uint16_t *under);
 static int cc_to_player(const uint16_t *panel, int sx)
 {
     /* el reproductor propio (nowui): su pagina entra por la derecha siguiendo al dedo */
-    static uint16_t *npimg; if (!npimg) npimg = malloc(HM_FRAME_BYTES);
+    static uint16_t *npimg; if (!npimg) npimg = lazy_alloc((void **)&npimg, HM_FRAME_BYTES, 0);
     if (npimg && np_card(npimg)) {
         struct pkt p; double vel = 0, lt = now_ms(); int lx = sx, o = 0;
         while (cur_down) {
@@ -349,7 +349,7 @@ static int cc_to_player(const uint16_t *panel, int sx)
             if (t >= 1) break;
         }
         if (!done) { memcpy(fr0, panel, HM_FRAME_BYTES); present(); return 0; }
-        static uint16_t *under; if (!under) under = malloc(HM_FRAME_BYTES);
+        static uint16_t *under; if (!under) under = lazy_alloc((void **)&under, HM_FRAME_BYTES, 0);
         if (under) { if (cc_under) memcpy(under, cc_under, HM_FRAME_BYTES); else memcpy(under, panel, HM_FRAME_BYTES); }
         int home = under ? np_from_screen(under) : 0;
         if (cc_in_app) { cc_app_restore(); return 1; }
@@ -709,7 +709,7 @@ out:
  * reproductor siguiendo al dedo; al cerrar, la app vuelve a estar como estaba */
 static void own_top_gesture(int sx, int sy)
 {
-    static uint16_t *keep; if (!keep) keep = malloc(HM_FRAME_BYTES);
+    static uint16_t *keep; if (!keep) keep = lazy_alloc((void **)&keep, HM_FRAME_BYTES, 0);
     if (!keep) { drain_until_up(); return; }
     memcpy(keep, fr0, HM_FRAME_BYTES);
     int act = sx < W / 2 ? G.top : G.top_r;
