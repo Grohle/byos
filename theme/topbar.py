@@ -105,10 +105,13 @@ def headphones():
     return im
 
 
-def pill(t, w=None, sz=7.6):
-    """salida (LO, 4.4, OPT, BT, ADB): capsula con texto en negrita"""
+def pill(t, w=None, sz=7.6, maxw=None):
+    """capsula con texto en negrita (salida: LO, 4.4, OPT, BT, ADB; codecs Bluetooth). Con maxw,
+    la letra se reduce hasta que quepa."""
     f = font(sz, bold=True)
     tw = f.getlength(t) / S
+    while maxw and tw + 7 > maxw and sz > 5.6:
+        sz -= 0.2; f = font(sz, bold=True); tw = f.getlength(t) / S
     w = w or int(round(tw + 7))
     im, d = canvas(w)
     d.rounded_rectangle([P(0.8, 5.0), P(w - 0.8, 15.0)], 3.0 * S, outline=WHITE, width=int(1.3 * S))
@@ -221,8 +224,12 @@ else:
         return battery_bg(GREEN, 255)
 
 done("speaker", speaker()); done("po", headphones())
-done("lo", pill("LO")); done("balance", pill("4.4")); done("spdif", pill("OPT"))
-done("usb", usb()); done("a2dp", pill("BT")); done("adb", pill("ADB", sz=7.0))
+done("lo", pill("LO", maxw=19)); done("balance", pill("4.4", maxw=19)); done("spdif", pill("OPT", maxw=19))
+done("usb", usb()); done("a2dp", pill("BT", maxw=19)); done("adb", pill("ADB", sz=7.0, maxw=19))
+# codec del Bluetooth (los de serie median 32 px y pisaban al altavoz)
+for n, t in (("sbc", "SBC"), ("aptx", "aptX"), ("aptx_hd", "aptX HD"), ("ldac", "LDAC"), ("uat", "UAT"), ("aac", "AAC")):
+    done(n, pill(t, maxw=28))
+done("am", blank(1)); done("pm", blank(1))              # como iOS: sin AM/PM en la barra
 done("play", play()); done("pause", pause())
 for i in range(4): done(f"wifi_connect_{i}", wifi(i if i else 1))
 done("wifi_unconnect", blank(17))                       # como iOS: sin Wi-Fi no hay icono
@@ -243,16 +250,39 @@ X_NET = X_PCT - 6 - wd("wifi_connect_3")
 X_BT = X_NET - 5 - wd("bluetooth")
 X_PLAY = M + 4 * DW + wd("colon") + 5                    # estado de reproduccion tras la hora
 X_HL = X_PLAY + wd("play") + 4                            # HiBy Link a la izquierda (indicador secundario)
-X_VOLN = 146                                              # volumen: donde lo lee el OCR del shell (3 cifras)
+CODECS = ("sbc", "aptx", "aptx_hd", "ldac", "uat", "aac")
+OUTS = ("po", "lo", "balance", "spdif", "usb", "a2dp", "adb")
+X_CODEC = X_HL + wd("hl_connect") + 4                     # codec del Bluetooth (si se muestra)
+X_VOLN = 147                                              # volumen: donde lo lee el OCR del shell (3 cifras)
 X_SPK = X_VOLN - 3 - wd("speaker")
 X_OUT = X_VOLN + 3 * DW + 4                               # salida tras el volumen de 3 cifras
-assert X_OUT + wd("po") + 5 <= X_BT, "el grupo central pisa al de la derecha"
 POS = {
-    "topbar_nv_clock": M, "topbar_iv_play_status": X_PLAY,
+    "topbar_nv_clock": M, "topbar_iv_play_status": X_PLAY, "topbar_iv_hl": X_HL, "topbar_iv_bt_sink_type": X_CODEC,
     "topbar_iv_speaker": X_SPK, "topbar_nv_speaker": X_VOLN, "topbar_iv_output": X_OUT,
-    "topbar_iv_hl": X_HL, "topbar_iv_bt": X_BT, "topbar_iv_net": X_NET,
+    "topbar_iv_bt": X_BT, "topbar_iv_net": X_NET,
     "topbar_nv_battery": X_PCT, "topbar_iv_battery": X_BATT,
+    "topbar_iv_clock": X_PLAY,                            # AM/PM: imagen vacia de 1 px
 }
+# ningun simbolo pisa a otro, en NINGUNA combinacion: cada hueco con el ancho maximo de todo
+# lo que puede mostrar (cifras incluidas) y al menos 3 px de aire con el siguiente
+GAP = 3
+SLOTS = [
+    ("hora", POS["topbar_nv_clock"], 4 * DW + wd("colon")),
+    ("reproduccion", X_PLAY, max(wd("play"), wd("pause"))),
+    ("HiBy Link", X_HL, wd("hl_connect")),
+    ("codec BT", X_CODEC, max(wd(c) for c in CODECS)),
+    ("altavoz", X_SPK, wd("speaker")),
+    ("volumen", X_VOLN, 3 * DW),
+    ("salida", X_OUT, max(wd(o) for o in OUTS)),
+    ("Bluetooth", X_BT, wd("bluetooth")),
+    ("Wi-Fi", X_NET, max(wd(f"wifi_connect_{i}") for i in range(4))),
+    ("bateria %", X_PCT, 3 * DW + wd("percent")),
+    ("pila", X_BATT, max(wd("battery_bg"), wd("battery_charge_bg"), wd("battery_low_bg"), wd("battery"))),
+]
+for (a, xa, wa), (b, xb, wb) in zip(SLOTS, SLOTS[1:]):
+    assert xa + wa + GAP <= xb, f"{a} ({xa}+{wa}) pisa a {b} ({xb})"
+assert SLOTS[-1][1] + SLOTS[-1][2] <= 320 - M + 1, "la pila se sale del margen"
+for name, x, w in SLOTS: print(f"  {name:13s} x={x:3d} w={w:2d} -> {x + w}")
 
 out = []
 for th in ("theme2", "theme3"):
@@ -264,12 +294,14 @@ for th in ("theme2", "theme3"):
         n = V.get(el, "name")
         if n in POS: V.set_(el, "x", POS[n]); V.set_(el, "y", 5)
         if n == "topbar_nv_battery": V.set_(el, "w", 3 * DW + wd("percent"))
+        if n == "topbar_nv_speaker": V.set_(el, "w", 3 * DW)
+        if n == "topbar_nv_clock": V.set_(el, "w", 4 * DW + wd("colon"))
     rel = f"layout/{th}/topbar/topbar.view"; p = os.path.join(OVL, rel)
     os.makedirs(os.path.dirname(p), exist_ok=True); V.save(p, root); out.append((rel, p))
 
 
 # ---- vista previa: tres fondos, a 4x ---------------------------------------------------
-def bar(bg, clock="09:41", vol="25", pct="100", play_ic="pause", out_ic="po", net=3, bt=True, hl=False, batt="battery_bg", level=1.0):
+def bar(bg, clock="09:41", vol="25", pct="100", play_ic="pause", out_ic="po", net=3, bt=True, hl=False, batt="battery_bg", level=1.0, codec=None):
     im = Image.new("RGBA", (320, 30), bg)
     def put(n, x): im.alpha_composite(files[n], (x, 5))
     x = POS["topbar_nv_clock"]
@@ -279,6 +311,7 @@ def bar(bg, clock="09:41", vol="25", pct="100", play_ic="pause", out_ic="po", ne
     for c in vol: put(c, x); x += wd(c)
     put(out_ic, POS["topbar_iv_output"])
     if hl: put("hl_connect", POS["topbar_iv_hl"])
+    if codec: put(codec, POS["topbar_iv_bt_sink_type"])
     if bt: put("bluetooth", POS["topbar_iv_bt"])
     put(f"wifi_connect_{net}", POS["topbar_iv_net"])
     x = POS["topbar_nv_battery"]
@@ -293,7 +326,10 @@ def bar(bg, clock="09:41", vol="25", pct="100", play_ic="pause", out_ic="po", ne
 rows = [bar((0, 0, 0, 255)),
         bar((178, 96, 66, 255), clock="01:15", vol="7", pct="68", play_ic="play", out_ic="lo", level=0.68, hl=True),
         bar((40, 44, 70, 255), clock="23:58", vol="100", pct="15", out_ic="usb", net=1, bt=False, batt="battery_low_bg", level=0.15),
-        bar((30, 30, 30, 255), clock="12:00", vol="60", pct="82", out_ic="balance", batt="battery_charge_bg", level=0.82)]
+        bar((30, 30, 30, 255), clock="12:00", vol="60", pct="82", out_ic="balance", batt="battery_charge_bg", level=0.82),
+        # el peor caso: todo a la vez y lo mas ancho de cada hueco
+        bar((0, 0, 0, 255), clock="23:58", vol="100", pct="100", play_ic="play", out_ic="spdif", hl=True, codec="aptx_hd", batt="battery_charge_bg"),
+        bar((70, 70, 74, 255), clock="10:08", vol="88", pct="100", out_ic="adb", hl=True, codec="ldac", net=2)]
 prev = Image.new("RGB", (320, 30 * len(rows) + 3 * (len(rows) - 1)), (255, 0, 255))
 for i, r in enumerate(rows): prev.paste(r, (0, i * 33))
 os.makedirs(os.path.join(HERE, "out"), exist_ok=True)
