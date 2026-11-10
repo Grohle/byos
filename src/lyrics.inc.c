@@ -13,6 +13,37 @@
 struct cover_c { char src[16], url[300], artist[96], album[96], year[8]; uint16_t *thumb; };
 struct lyr_c { char id[24], artist[96], title[128], album[96]; int dur, synced; };
 
+
+static void dir_of(const char *path, char *out, int cap);
+/* pistas de audio de la carpeta (el album): para aplicar a todo el album */
+static int is_audio_ext(const char *n)
+{
+    const char *x = strrchr(n, '.'); if (!x) return 0;
+    return !strcasecmp(x, ".flac") || !strcasecmp(x, ".mp3") || !strcasecmp(x, ".m4a") || !strcasecmp(x, ".mp4") || !strcasecmp(x, ".aac");
+}
+static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+static char **album_files(const char *path, int *n)
+{
+    char dir[600]; dir_of(path, dir, sizeof dir);
+    DIR *d = opendir(dir); struct dirent *e; char **v = 0; int c = 0, cap = 0;
+    while (d && (e = readdir(d))) {
+        if (e->d_name[0] == '.' || !is_audio_ext(e->d_name)) continue;
+        if (c == cap) { cap = cap ? cap * 2 : 32; v = realloc(v, cap * sizeof *v); }
+        char b[900]; snprintf(b, sizeof b, "%s/%s", dir, e->d_name); v[c++] = strdup(b);
+    }
+    if (d) closedir(d);
+    if (c) qsort(v, c, sizeof *v, cmp_str);
+    *n = c; return v;
+}
+static void free_list(char **v, int n) { for (int i = 0; i < n; i++) free(v[i]); free(v); }
+/* "Solo esta cancion" / "Todo el album (N)": 0, 1 o -1 (cancelar) */
+static int ask_scope(int nalbum)
+{
+    char t[80]; snprintf(t, sizeof t, tr("Todo el álbum (%d canciones)"), nalbum);
+    const char *o[2] = { tr("Solo esta canción"), t };
+    return action_sheet(tr("¿Dónde aplicarlo?"), o, 2, -1);
+}
+
 static int net_ready(void)
 {
     if (access(NETBIN, X_OK)) { toast(tr("Falta el componente de red (hibynet)")); return 0; }
@@ -116,6 +147,11 @@ static int cover_save(const char *img, const char *dir)
     (void)dir;
     const char *ext = strrchr(img, '.');
     if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg"))) { toast(tr("Usa una imagen JPG")); return -1; }
+    char **alb = 0; int nalb = 0; char *const *keep_p = cv_paths; int keep_n = cv_n;
+    if (cv_n == 1) {
+        alb = album_files(cv_paths[0], &nalb);
+        if (nalb > 1) { int sc = ask_scope(nalb); if (sc < 0) { free_list(alb, nalb); return -1; } if (sc == 1) { cv_paths = alb; cv_n = nalb; } }
+    }
     progress_card(0, 0, -1);
     int bad = 0, big = 0;
     for (int i = 0; i < cv_n; i++) {
@@ -131,7 +167,9 @@ static int cover_save(const char *img, const char *dir)
     char o[256]; run_capture(argv, o, sizeof o); free(argv);
     sync();
     toast(big ? tr("La imagen pasa de 1 MB") : bad == cv_n ? tr("No se pudo guardar") : bad ? tr("Algunas no se pudieron guardar") : tr("Carátula guardada"));
-    return bad == cv_n ? -1 : 0;
+    int r = bad == cv_n ? -1 : 0;
+    cv_paths = keep_p; cv_n = keep_n; if (alb) free_list(alb, nalb);
+    return r;
 }
 static void cover_search(char *const *paths, int n, const char *artist, const char *album)
 {
@@ -243,9 +281,44 @@ static int lyrics_preview(const char *lrc, const char *title)
         if (sy < 94 && x > W - 100) return 1;
     }
 }
+
+static void lyrics_album(char **v, int n)
+{
+    int ok = 0;
+    progress_card(0, 0, -1);
+    for (int i = 0; i < n; i++) {
+        char sub[64]; snprintf(sub, sizeof sub, tr("%d de %d"), i + 1, n);
+        progress_card(tr("Buscando letras"), sub, (double)i / n);
+        ht_tags t; if (ht_read(v[i], &t)) { ht_tags_free(&t); continue; }
+        const char *ar = t.v[HT_ARTIST] ? t.v[HT_ARTIST] : "", *ti = t.v[HT_TITLE] ? t.v[HT_TITLE] : "", *al = t.v[HT_ALBUM] ? t.v[HT_ALBUM] : "";
+        char *argv[] = { NETBIN, "lyrics", (char *)ar, (char *)ti, (char *)al, 0 };
+        static char out[8192]; char id[24] = ""; int best_synced = -1;
+        if (ti[0] && run_capture(argv, out, sizeof out) > 0)
+            for (char *sv = 0, *l = strtok_r(out, "\n", &sv); l; l = strtok_r(0, "\n", &sv)) {
+                char *f[6]; if (split_tabs(l, f, 6) < 6) continue;
+                int sy = atoi(f[5]); if (sy > best_synced) { best_synced = sy; snprintf(id, sizeof id, "%s", f[0]); if (sy) break; }
+            }
+        ht_tags_free(&t);
+        if (!id[0]) continue;
+        char dst[600]; snprintf(dst, sizeof dst, "%s", v[i]);
+        char *dot = strrchr(dst, '.'), *sl = strrchr(dst, '/'); if (dot && (!sl || dot > sl)) *dot = 0;
+        strncat(dst, ".lrc", sizeof dst - strlen(dst) - 1);
+        char *a2[] = { NETBIN, "lyrics-get", id, NETDIR "/l.lrc", 0 }; char o[256];
+        if (run_capture(a2, o, sizeof o) >= 0 && !access(NETDIR "/l.lrc", R_OK) && !copy_file(NETDIR "/l.lrc", dst)) ok++;
+    }
+    sync();
+    char m[96]; snprintf(m, sizeof m, tr("Letras guardadas: %d de %d"), ok, n);
+    toast(m);
+}
+
 static void lyrics_search(const char *path, const char *artist, const char *title, const char *album)
 {
     if (!net_ready()) return;
+    {   /* una cancion o todo el album */
+        int nalb = 0; char **alb = album_files(path, &nalb);
+        if (nalb > 1) { int sc = ask_scope(nalb); if (sc < 0) { free_list(alb, nalb); return; } if (sc == 1) { lyrics_album(alb, nalb); free_list(alb, nalb); return; } }
+        free_list(alb, nalb);
+    }
     char a[128], t[160], b[128], q[300];
     snprintf(a, sizeof a, "%s", artist ? artist : ""); snprintf(t, sizeof t, "%s", title ? title : ""); snprintf(b, sizeof b, "%s", album ? album : "");
     lyrics_fetch(a, t, b);

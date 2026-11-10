@@ -1,10 +1,10 @@
 /* settings_app.inc.c - "Personalizar": ajustes de hibymod con listas agrupadas estilo iOS.
  * Paginas: General (idioma), Inicio, Gestos (con animacion de ejemplo), Teclado,
  * Desarrollador (ADB) y Acerca de. Navegacion con transicion de iOS y "atras" deslizando
- * desde el borde. Todo el texto pasa por tr() (ES/EN/FR). */
+ * desde el borde. Todo el texto pasa por tr() (13 idiomas, ver i18n.inc.c). */
 
 static int cc_tiles[8], cc_ntiles;   /* definidos en cc.inc.c */
-enum { R_NAV, R_TOGGLE, R_CHOICE, R_ACTION, R_INFO };
+enum { R_NAV, R_TOGGLE, R_CHOICE, R_ACTION, R_INFO, R_CHECK };   /* R_CHECK: opcion con marca; nopts = su valor */
 struct srow {
     const char *title; int type;
     int *ival;                         /* TOGGLE / CHOICE */
@@ -20,22 +20,55 @@ struct spage { const char *title; struct ssec secs[5]; int nsec; int hero; };   
 #define ROWH 44
 static float sp_scroll;
 
+/* chino/japones: se puede partir entre dos caracteres cualesquiera */
+static int wrap_cjk(int c) { return (c >= 0x2E80 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF00 && c <= 0xFFEF); }
+/* signos que no empiezan linea (se pegan a lo anterior) */
+static int wrap_nostart(int c)
+{
+    static const int k[] = { 0x3001, 0x3002, 0xFF0C, 0xFF0E, 0xFF1A, 0xFF1B, 0xFF01, 0xFF1F, 0xFF09, 0x300D, 0x300F, 0x3011, 0x3009, 0x300B,
+                             0x201D, 0x2019, 0x30FC, 0x2026, 0x22EF, 0x30FB, ',', '.', ':', ';', '!', '?', ')', 0 };
+    for (int i = 0; k[i]; i++) if (c == k[i]) return 1;
+    return 0;
+}
+static void wrap_emit(uint16_t *dst, int x, int *yy, const char *a, const char *b, int size, uint16_t col, int lh, int draw)
+{
+    if (draw) {
+        char line[512]; int n = (int)(b - a); if (n > (int)sizeof line - 1) n = sizeof line - 1;
+        while (n > 0 && a[n - 1] == ' ') n--;
+        memcpy(line, a, n); line[n] = 0;
+        draw_text(dst, x, *yy + size, line, size, col, 0, 0, H);
+    }
+    *yy += lh;
+}
 static int draw_wrapped(uint16_t *dst, int x, int y, int w, const char *s, int size, uint16_t col, int lh, int draw)
 {
-    /* parte en palabras sin pasarse de w; devuelve la altura usada */
-    char line[256]; int ln = 0, yy = y; const char *p = s;
-    line[0] = 0;
-    while (*p) {
-        const char *ws = p; while (*p && *p != ' ') p++;
-        int wl = (int)(p - ws);
-        char cand[256]; snprintf(cand, sizeof cand, "%s%s%.*s", line, ln ? " " : "", wl, ws);
-        if (ln && tw_n(cand, size, -1) > w) {
-            if (draw) draw_text(dst, x, yy + size, line, size, col, 0, 0, H);
-            yy += lh; snprintf(line, sizeof line, "%.*s", wl, ws); ln = wl;
-        } else { snprintf(line, sizeof line, "%s", cand); ln = (int)strlen(line); }
+    /* parte en lineas sin pasarse de w: en los espacios y, en chino/japones, entre caracteres;
+     * un trozo sin espacios mas ancho que w (tailandes, rutas) se parte por caracteres sin
+     * separar las marcas combinantes. Devuelve la altura usada */
+    int yy = y; const char *ls = 0, *le = 0, *p = s;      /* linea en curso: [ls, le) del original */
+    for (;;) {
         while (*p == ' ') p++;
+        if (!*p) break;
+        const char *ts = p, *q = p; int c = utf8_next(&q);
+        p = q;
+        if (!wrap_cjk(c)) while (*p && *p != ' ') { const char *r = p; int d = utf8_next(&r); if (wrap_cjk(d) && !wrap_nostart(d)) break; p = r; }
+        while (*p) { const char *r = p; int d = utf8_next(&r); if (!wrap_nostart(d) && !text_is_mark(d)) break; p = r; }
+        if (!ls) { ls = ts; le = p; }
+        else if (tw_n(ls, size, (int)(p - ls)) <= w) le = p;
+        else { wrap_emit(dst, x, &yy, ls, le, size, col, lh, draw); ls = ts; le = p; }
+        while (tw_n(ls, size, (int)(le - ls)) > w) {      /* trozo solo que no cabe: por caracteres */
+            const char *cut = ls, *r = ls;
+            while (r < le) {
+                const char *r2 = r; utf8_next(&r2);
+                while (r2 < le) { const char *r3 = r2; int d = utf8_next(&r3); if (!text_is_mark(d)) break; r2 = r3; }
+                if (cut > ls && tw_n(ls, size, (int)(r2 - ls)) > w) break;
+                cut = r = r2;
+            }
+            if (cut >= le) break;
+            wrap_emit(dst, x, &yy, ls, cut, size, col, lh, draw); ls = cut;
+        }
     }
-    if (ln) { if (draw) draw_text(dst, x, yy + size, line, size, col, 0, 0, H); yy += lh; }
+    if (ls) wrap_emit(dst, x, &yy, ls, le, size, col, lh, draw);
     return yy - y;
 }
 
@@ -93,7 +126,12 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
             int tmax = (rw->type == R_TOGGLE ? W - 32 - 24 - 60 : vx - 32 - (v ? vw + 12 : 0));
             draw_text(d, 32, ry + 28, tr(rw->title), 15, tc, tmax, NAVH + 30, H);
             if (rw->type == R_TOGGLE && rw->ival) { if (ry + 6 >= NAVH + 30) sp_switch(d, W - 16 - 12 - 51, ry + 6, *rw->ival); }
-            else {
+            else if (rw->type == R_CHECK) {                 /* marca azul de iOS en la opcion elegida */
+                if (rw->ival && *rw->ival == rw->nopts && ry + 14 >= NAVH + 30) {
+                    for (int i = 0; i < 7; i++) fill_rrect(d, W - 46 + i, ry + 22 + i / 2, 2, 2, 1, rgb(10, 132, 255), 255);
+                    for (int i = 0; i < 12; i++) fill_rrect(d, W - 40 + i, ry + 25 - i, 2, 2, 1, rgb(10, 132, 255), 255);
+                }
+            } else {
                 if (v) draw_text(d, vx - vw, ry + 28, v, 15, rgb(142, 142, 147), 128, NAVH + 30, H);
                 if (chev && ry + 16 >= NAVH + 30) for (int i = 0; i < 6; i++) {
                     int cx = W - 16 - 18 + i - 2; d[(ry + 16 + i) * W + cx] = rgb(90, 90, 96); d[(ry + 28 - i) * W + cx] = rgb(90, 90, 96);
@@ -178,7 +216,6 @@ static void gesture_demo(uint16_t *d, int cx, int y0, int edge, int act, double 
 /* ------------------------------------------------------------------ paginas */
 static int set_lang_idx, set_icon_idx, set_cols_idx, set_kb_h = 1, set_kb_num = 0, set_kb_layout = 0, set_adb_mode;
 static int g_bottom_app_i, g_bottom_home_i, g_top_i, g_topr_i, g_left_i, g_right_i, g_chev;
-static const char *const O_LANG[] = { "Español", "English", "Français" };
 static const char *const O_ICON[] = { "Pequeños", "Normales", "Grandes" };
 static const char *const O_COLS[] = { "3", "4", "5" };
 static const char *const O_KBH[] = { "Compacta", "Normal", "Alta" };
@@ -198,7 +235,7 @@ static int idx_of(const int *v, int n, int x) { for (int i = 0; i < n; i++) if (
 
 static void sync_from_state(void)
 {
-    set_lang_idx = ui_lang; set_icon_idx = sz_idx(); set_cols_idx = L.cols - 3;
+    set_lang_idx = ui_lang_sys ? -1 : ui_lang; set_icon_idx = sz_idx(); set_cols_idx = L.cols - 3;
     g_bottom_app_i = idx_of(V_G_BOTTOM_APP, 4, G.bottom_app); g_bottom_home_i = idx_of(V_G_BOTTOM_HOME, 3, G.bottom_home);
     g_top_i = idx_of(V_G_TOP, 3, G.top); g_topr_i = idx_of(V_G_TOP, 3, G.top_r); g_left_i = idx_of(V_G_LEFT, 4, G.left); g_right_i = idx_of(V_G_RIGHT, 4, G.right);
     g_chev = G.chevron;
@@ -207,7 +244,14 @@ static void sync_from_state(void)
     set_adb_mode = !strncmp(m, "usb", 3) ? 2 : !strncmp(m, "wifi", 4) ? 1 : 0;
 }
 static void relabel_apps(void);
-static void apply_lang(void) { ui_lang = set_lang_idx; relabel_apps(); lconf_save(); }
+/* idioma: -1 = igual que el sistema (el del reproductor de HiBy) */
+static void apply_lang(void)
+{
+    ui_lang_sys = set_lang_idx < 0;
+    ui_lang = ui_lang_sys ? lang_system() : lang_ok(set_lang_idx) ? set_lang_idx : LANG_EN;
+    relabel_apps(); lconf_save();
+}
+static const char *v_lang(void) { return LANG_NAMES[lang_ok(ui_lang) ? ui_lang : LANG_EN]; }
 static void apply_home(void) { L.icon = 48 + 8 * set_icon_idx; L.cols = 3 + set_cols_idx; lconf_save(); }
 static void apply_gestures(void)
 {
@@ -257,13 +301,15 @@ static void page_general(struct spage *p), page_home(struct spage *p), page_gest
             page_kb(struct spage *p), page_dev(struct spage *p), page_about(struct spage *p);
 static void open_page(void (*build)(struct spage *), const char *back);
 static void nav_general(void) { open_page(page_general, "Personalizar"); }
+static void page_lang(struct spage *p);
+static void nav_lang(void) { open_page(page_lang, "General"); }
 static void nav_home(void) { open_page(page_home, "Personalizar"); }
 static void nav_gestures(void) { open_page(page_gestures, "Personalizar"); }
 static void nav_kb(void) { open_page(page_kb, "Personalizar"); }
 static void nav_dev(void) { open_page(page_dev, "Personalizar"); }
 static void nav_about(void) { open_page(page_about, "Personalizar"); }
 static void nav_audio(void);
-static void nav_cc(void), nav_power(void);
+static void nav_cc(void), nav_power(void), nav_ota(void);
 
 #define ROW(t, ty, iv, op, no, f, v, g) (struct srow){ t, ty, iv, op, no, f, v, g }
 static void page_root(struct spage *p)
@@ -272,14 +318,29 @@ static void page_root(struct spage *p)
     p->secs[0] = (struct ssec){ 0, 0, { ROW("General", R_NAV, 0, 0, 0, nav_general, 0, 0), ROW("Inicio", R_NAV, 0, 0, 0, nav_home, 0, 0),
                                         ROW("Gestos", R_NAV, 0, 0, 0, nav_gestures, 0, 0), ROW("Centro de control", R_NAV, 0, 0, 0, nav_cc, 0, 0),
                                         ROW("Teclado", R_NAV, 0, 0, 0, nav_kb, 0, 0) }, 5 };
-    p->secs[1] = (struct ssec){ 0, 0, { ROW("Batería y energía", R_NAV, 0, 0, 0, nav_power, 0, 0), ROW("Audio y sistema", R_NAV, 0, 0, 0, nav_audio, 0, 0), ROW("Desarrollador", R_NAV, 0, 0, 0, nav_dev, 0, 0), ROW("Acerca de", R_NAV, 0, 0, 0, nav_about, 0, 0) }, 4 };
+    p->secs[1] = (struct ssec){ 0, 0, { ROW("Batería y energía", R_NAV, 0, 0, 0, nav_power, 0, 0), ROW("Audio y sistema", R_NAV, 0, 0, 0, nav_audio, 0, 0), ROW("Desarrollador", R_NAV, 0, 0, 0, nav_dev, 0, 0), ROW("Actualización de software", R_NAV, 0, 0, 0, nav_ota, 0, 0), ROW("Acerca de", R_NAV, 0, 0, 0, nav_about, 0, 0) }, 5 };
     p->nsec = 2;
 }
 static void page_general(struct spage *p)
 {
     *p = (struct spage){ "General" };
-    p->secs[0] = (struct ssec){ 0, 0, { ROW("Idioma", R_CHOICE, &set_lang_idx, O_LANG, 3, apply_lang, 0, 0) }, 1 };
+    p->secs[0] = (struct ssec){ 0, 0, { ROW("Idioma", R_NAV, 0, 0, 0, nav_lang, v_lang, 0) }, 1 };
     p->nsec = 1;
+}
+/* idiomas por su propio nombre (como iOS); los 13 del firmware de HiBy */
+static void page_lang(struct spage *p)
+{
+    static const int ord[] = { LANG_EN, LANG_ES, LANG_FR, LANG_DE, LANG_IT, LANG_PL, LANG_RU,
+                               LANG_UK, LANG_JA, LANG_KO, LANG_ZHS, LANG_ZHT, LANG_TH };
+    *p = (struct spage){ "Idioma" };
+    p->secs[0] = (struct ssec){ 0, "LANG_SYS_HELP", { ROW("Igual que el sistema", R_CHECK, &set_lang_idx, 0, -1, apply_lang, 0, 0) }, 1 };
+    p->secs[1] = (struct ssec){ 0, 0, { { 0 } }, 7 };
+    p->secs[2] = (struct ssec){ 0, 0, { { 0 } }, 6 };
+    for (int i = 0; i < 13; i++) {
+        struct srow *r = i < 7 ? &p->secs[1].rows[i] : &p->secs[2].rows[i - 7];
+        *r = ROW(LANG_NAMES[ord[i]], R_CHECK, &set_lang_idx, 0, ord[i], apply_lang, 0, 0);
+    }
+    p->nsec = 3;
 }
 static void page_home(struct spage *p)
 {
@@ -465,15 +526,19 @@ static void page_cc(struct spage *p)
         ROW("Archivos", R_TOGGLE, &cc_on[6], 0, 0, apply_cc, 0, 0), ROW("Personalizar", R_TOGGLE, &cc_on[7], 0, 0, apply_cc, 0, 0) }, 8 };
     p->nsec = 1;
 }
+static const char *const O_HZ[] = { "45 Hz (de serie)", "60 Hz" };
+static int set_hz_i;
+static void apply_hz(void) { lcd_hz = set_hz_i ? 60 : 45; lcd_apply(); pw_save(); }
 static void page_power(struct spage *p)
 {
     *p = (struct spage){ "Batería y energía" };
     p->secs[0] = (struct ssec){ 0, "POWER_HELP", { ROW("Modo de energía", R_CHOICE, &pw_mode, O_POWER, 3, apply_power, 0, 0) }, 1 };
     p->secs[1] = (struct ssec){ 0, "NOCHARGE_HELP", { ROW("Solo USB (no cargar)", R_TOGGLE, &set_nocharge, 0, 0, apply_nocharge, 0, 0) }, 1 };
     p->nsec = 2;
+    (void)set_hz_i; (void)O_HZ; (void)apply_hz;
 }
 static void nav_cc(void) { cc_sync(); open_page(page_cc, "Personalizar"); }
-static void nav_power(void) { set_nocharge = pw_nocharge; open_page(page_power, "Personalizar"); }
+static void nav_power(void) { set_nocharge = pw_nocharge; set_hz_i = lcd_hz == 60; open_page(page_power, "Personalizar"); }
 
 static const char *v_apps(void) { int n = 0; DIR *d = opendir("/usr/data/hibymod/apps"); struct dirent *e; while (d && (e = readdir(d))) if (e->d_name[0] != '.') n++; if (d) closedir(d); snprintf(sv_buf[3], 64, "%d", n); return sv_buf[3]; }
 static const char *v_repo(void) { return "Grohle/hibyos"; }
@@ -575,6 +640,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
         if (hi < 0 || !rw) continue;
         if (rw->type == R_NAV && rw->fn) rw->fn();
         else if (rw->type == R_TOGGLE && rw->ival) { *rw->ival = !*rw->ival; if (rw->fn) rw->fn(); }
+        else if (rw->type == R_CHECK && rw->ival) { if (*rw->ival != rw->nopts) { *rw->ival = rw->nopts; if (rw->fn) rw->fn(); } }
         else if (rw->type == R_CHOICE && rw->ival) {
             struct spage cur; build(&cur); sp_render(img_under, &cur, -1, back); have_under = 0;
             choice_page(rw, pg.title);

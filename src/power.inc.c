@@ -4,7 +4,7 @@
  *
  *  Ahorro:       30 fps en las animaciones, brillo como mucho 40, vm.dirty_expire 60 s
  *  Normal:       44 fps (el maximo del panel), brillo del usuario, 30 s
- *  Rendimiento:  como Normal; pensado para ir enchufado (sin topes)
+ *  Rendimiento:  pantalla a 60 Hz (reloj del LCD), sin topes; pensado para ir enchufado
  *
  * Solo USB: el AXP2101 deja de cargar (axp_battery/charger = 0) y el aparato se alimenta
  * del USB. El driver vuelve a activar la carga ~5 s despues de cada enchufado, y "cat
@@ -38,6 +38,7 @@ static void pw_save(void)
 }
 static void pw_apply(void)
 {
+    lcd_hz = pw_mode == PW_PERF ? 60 : 45; lcd_apply();      /* 60 Hz solo en Rendimiento */
     int bl = sysfs_get(BL_PATH, -1);
     if (pw_mode == PW_SAVE) {
         if (bl > 40) { pw_user_bl = bl; sysfs_put(BL_PATH, 40); }
@@ -66,8 +67,9 @@ static void pw_load(void)
         else if (!strcmp(k, "lcd_hz")) lcd_hz = v == 60 ? 60 : 45;
     }
     if (f) fclose(f);
+    lcd_hz = pw_mode == PW_PERF ? 60 : 45;
     if (pw_mode == PW_SAVE) pw_apply();
-    if (lcd_hz != 45) lcd_apply();
+    lcd_apply();
 }
 /* llamado en cada vuelta del bucle principal (barato: lee sysfs como mucho 1 vez/s) */
 static void pw_tick(void)

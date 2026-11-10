@@ -41,7 +41,7 @@ Cada animación o pantalla pasa este bucle **hasta quedar impresionado**, no has
 - **El inicio de fábrica es un espejo del launcher** (`launcher/mirror.png` con los iconos de fábrica transparentes). La librería sustituye su primer fotograma por el launcher (`home_sub`).
 - **El volumen** se lee de la barra de estado con plantillas reales de HiBy (`src/digits.h`), nunca de `user.ini`, que va con retraso.
 - **Memoria**: el shell usa ~4.5 MB y quedan ~7–11 MB libres. Los búferes grandes se reutilizan (`img_under`, `img_sheet`, `img_base`, `img_app`) y no se añaden nuevos sin medir.
-- **Idiomas**: todo el texto nuevo en inglés, francés y español.
+- **Idiomas**: los 13 del firmware de HiBy (es, en, fr, de, it, ja, ko, pl, ru, zh-Hans, th, zh-Hant, uk). Todo texto nuevo pasa por `tr("literal en español")`: se añade la fila es/en/fr a `TR` en `src/i18n.inc.c` y una entrada en cada `src/lang/<idioma>.inc.c` (lo que falte sale en inglés). `bash tests/i18n_test.sh` comprueba claves, `%s/%d`, glifos y anchos. Los textos largos (pies de ajustes) se parten con `draw_wrapped`, que ya sabe partir chino/japonés y tailandés.
 
 ## Alcance pendiente
 - Centro de control propio (desplegar a la primera, animación fluida).

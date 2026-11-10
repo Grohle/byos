@@ -1,4 +1,4 @@
-/* hibymod_disp.so v4 - puente de pantalla y entrada entre hiby_player y hibyshell
+/* hibymod_disp.so v5 - puente de pantalla y entrada entre hiby_player y hibyshell
  * (LD_PRELOAD en hiby_player; ver hm_shared.h).
  *
  * PANTALLA: hiby_player compone con su DMA directamente en /dev/fb0 (2 bufers, sin
@@ -20,6 +20,11 @@
  *
  * VISTAS: se anota cada .view que abre el reproductor (registro circular) para que el shell
  * sepa en que pantalla esta.
+ *
+ * LO QUE SUENA (v5): se anotan los ficheros de audio que abre el reproductor (open/fopen/
+ * close/lseek) y lo que escribe al PCM (ioctl WRITEI de tinyalsa o snd_pcm_writei de
+ * libasound): tramas, frecuencia, vaciados. El shell lo interpreta (src/nowplaying.inc.c).
+ * Coste: unas comparaciones de fd por llamada; nada de esto toca el mutex de la pantalla.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -40,6 +45,10 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/syscall.h>
+#include <sched.h>
+#include <strings.h>
+#include <sound/asound.h>
 #include <time.h>
 #include <unistd.h>
 #include <linux/fb.h>
@@ -48,6 +57,7 @@
 #include "hm_shared.h"
 
 #define HOLD_MAX_S 120
+_Static_assert(sizeof(struct hm_state) <= HM_STATE_SIZE, "hm_state no cabe en HM_STATE_SIZE");
 
 static int active, fb_fd = -1;
 static struct hm_state *st;
@@ -62,6 +72,9 @@ static int (*r_openat64)(int, const char *, int, ...);
 static FILE *(*r_fopen)(const char *, const char *);
 static FILE *(*r_fopen64)(const char *, const char *);
 static int (*r_ioctl)(int, unsigned long, ...);
+static int (*r_close)(int);
+static off_t (*r_lseek)(int, off_t, int);
+static off64_t (*r_lseek64)(int, off64_t, int);
 
 static char real_ts[32], virt_ts[32];
 static int uin = -1;
@@ -78,7 +91,11 @@ static void resolve(void)
     r_openat64 = dlsym(RTLD_NEXT, "openat64");
     r_fopen = dlsym(RTLD_NEXT, "fopen");
     r_fopen64 = dlsym(RTLD_NEXT, "fopen64");
-    r_ioctl = dlsym(RTLD_NEXT, "ioctl");
+    r_close = dlsym(RTLD_NEXT, "close");
+    r_lseek = dlsym(RTLD_NEXT, "lseek");
+    r_lseek64 = dlsym(RTLD_NEXT, "lseek64");
+    __sync_synchronize();
+    r_ioctl = dlsym(RTLD_NEXT, "ioctl");      /* el ultimo: resolve() sale pronto si ya esta */
 }
 
 /* ---------------------------------------------------------------- memoria de pantalla */
@@ -428,6 +445,7 @@ __attribute__((constructor)) static void init(void)
         }
         else { r_ioctl(uin, UI_DEV_DESTROY); close(uin); uin = -1; virt_ts[0] = 0; }
     }
+    st->np_magic = HM_NP_MAGIC;
     st->magic = HM_MAGIC;
     active = 1;
 }
@@ -455,10 +473,145 @@ static void note_view(const char *path)
     }
 }
 
+/* ---------------------------------------------------------------- lo que suena */
+static pthread_mutex_t np_mu = PTHREAD_MUTEX_INITIALIZER;   /* solo escritores de np_open[] */
+static volatile int pcm_fd = -1;
+static __thread int in_alsa;              /* dentro de libasound: sus ioctl no se cuentan dos veces */
+
+static uint32_t np_now(void)
+{
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)t.tv_sec * 1000u + (uint32_t)(t.tv_nsec / 1000000);
+}
+
+static int is_audio(const char *p)
+{
+    if (strncmp(p, "/data/mnt/", 10) && strncmp(p, "/usr/data/mnt/", 14) && strncmp(p, "/mnt/", 5)) return 0;
+    const char *d = strrchr(p, '.');
+    if (!d || strchr(d, '/') || strlen(d) > 6) return 0;
+    static const char *ext[] = { ".flac", ".mp3", ".m4a", ".aac", ".alac", ".wav", ".aif", ".aiff", ".ape",
+        ".wv", ".ogg", ".oga", ".opus", ".dsf", ".dff", ".wma", ".mp2", ".iso", ".mqa", ".tak", ".tta", 0 };
+    for (int i = 0; ext[i]; i++) if (!strcasecmp(d, ext[i])) return 1;
+    return 0;
+}
+
+static void np_begin(void) { pthread_mutex_lock(&np_mu); st->np_seq++; __sync_synchronize(); }
+static void np_end(void) { __sync_synchronize(); st->np_seq++; pthread_mutex_unlock(&np_mu); }
+
+static void note_audio_open(const char *path, int fd)
+{
+    np_begin();
+    uint32_t now = np_now();
+    /* un fd reutilizado sin que viesemos el cierre (fclose cierra por dentro de libc) */
+    for (int i = 0; i < HM_NP_SLOTS; i++)
+        if (st->np_open[i].gen && st->np_open[i].fd == fd) { st->np_open[i].fd = -1; st->np_open[i].close_ms = now; }
+    /* ranura: una vacia; si no, la cerrada mas antigua; si no, la mas antigua */
+    int k = -1;
+    for (int i = 0; i < HM_NP_SLOTS && k < 0; i++) if (!st->np_open[i].gen) k = i;
+    if (k < 0)
+        for (int i = 0; i < HM_NP_SLOTS; i++)
+            if (st->np_open[i].fd < 0 && (k < 0 || st->np_open[i].gen < st->np_open[k].gen)) k = i;
+    if (k < 0) { k = 0; for (int m = 1; m < HM_NP_SLOTS; m++) if (st->np_open[m].gen < st->np_open[k].gen) k = m; }
+    struct hm_np_open *e = &st->np_open[k];
+    snprintf(e->path, sizeof e->path, "%s", path);
+    e->fd = fd; e->tid = (uint32_t)syscall(SYS_gettid);
+    e->open_ms = now; e->close_ms = 0; e->frames_at_open = st->pcm_frames;
+    e->nseeks = 0; e->seek_ms = 0; e->seek_frames = 0; e->seek_lo = 0; e->seek_hi = 0;
+    e->gen = ++st->np_gen;
+    np_end();
+}
+
+static int np_slot(int fd)
+{
+    for (int i = 0; i < HM_NP_SLOTS; i++) if (st->np_open[i].gen && st->np_open[i].fd == fd) return i;
+    return -1;
+}
+
+static void note_close(int fd)
+{
+    if (fd == pcm_fd) { pcm_fd = -1; st->pcm_open = 0; }
+    if (np_slot(fd) < 0) return;           /* lo normal: sin cerrojo */
+    np_begin();
+    int i = np_slot(fd);
+    if (i >= 0) { st->np_open[i].fd = -1; st->np_open[i].close_ms = np_now(); }
+    np_end();
+}
+
+static void note_seek(int fd, long long off)
+{
+    if (np_slot(fd) < 0) return;
+    np_begin();
+    int i = np_slot(fd);
+    if (i >= 0) {
+        struct hm_np_open *e = &st->np_open[i];
+        e->seek_lo = (uint32_t)off; e->seek_hi = (uint32_t)((unsigned long long)off >> 32);
+        e->seek_ms = np_now(); e->seek_frames = st->pcm_frames; e->nseeks++;
+    }
+    np_end();
+}
+
+/* Proteccion del audio: el hilo que escribe al PCM (en este firmware "HiBy_Main_Thread",
+ * ioctl WRITEI de tinyalsa; con BT/USB, snd_pcm_writei) pasa a SCHED_FIFO 10 la primera vez
+ * que escribe. Casi siempre esta dormido esperando al DMA, asi que no le quita CPU a la UI;
+ * solo gana la latencia de despertar. El kernel limita el tiempo real al 95 %
+ * (sched_rt_runtime_us = 950000), asi que un fallo suyo no congela el sistema.
+ * Se desactiva con /usr/data/hibymod/no_rt. El decodificador ("lg_music_player") no se toca. */
+#define RT_PRIO 10
+static __thread int rt_done;
+static void rt_boost(void)
+{
+    rt_done = 1;
+    if (!access("/usr/data/hibymod/no_rt", F_OK)) return;
+    struct sched_param sp = { .sched_priority = RT_PRIO };
+    int e = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+    uint32_t tid = (uint32_t)syscall(SYS_gettid);
+    st->rt_err = (uint32_t)e; st->rt_count++;
+    if (!e) { st->rt_tid = tid; st->rt_prio = RT_PRIO; }
+    int f = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (f >= 0) {
+        char l[96], c[20] = "";
+        int k = r_open("/proc/thread-self/comm", O_RDONLY);
+        if (k >= 0) { ssize_t n = read(k, c, sizeof c - 1); if (n > 0) c[n - 1] = 0; r_close(k); }
+        int n = snprintf(l, sizeof l, "rt: hilo %u (%s) SCHED_FIFO %d: %s\n", tid, c, RT_PRIO, e ? strerror(e) : "ok");
+        if (write(f, l, n) < 0) {}
+        r_close(f);
+    }
+}
+
+static void pcm_wrote(long n)
+{
+    if (!rt_done) rt_boost();
+    if (n <= 0) return;
+    st->pcm_frames += (uint32_t)n;
+    st->pcm_last_ms = np_now();
+    st->pcm_paused = 0;
+}
+
+/* ioctl de tinyalsa sobre el PCM (despues de la llamada real) */
+static void pcm_ioctl(unsigned long req, void *arg, int r)
+{
+    if (r < 0 || in_alsa) return;
+    if (req == SNDRV_PCM_IOCTL_WRITEI_FRAMES && arg) pcm_wrote(((struct snd_xferi *)arg)->result);
+    else if (req == SNDRV_PCM_IOCTL_WRITEN_FRAMES && arg) pcm_wrote(((struct snd_xfern *)arg)->result);
+    else if (req == SNDRV_PCM_IOCTL_HW_PARAMS && arg) {
+        struct snd_pcm_hw_params *p = arg;
+        st->pcm_rate = p->intervals[SNDRV_PCM_HW_PARAM_RATE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min;
+        st->pcm_bits = p->intervals[SNDRV_PCM_HW_PARAM_SAMPLE_BITS - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min;
+        st->pcm_channels = p->intervals[SNDRV_PCM_HW_PARAM_CHANNELS - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min;
+    }
+    else if (req == SNDRV_PCM_IOCTL_DROP) { st->pcm_drops++; st->pcm_drop_ms = np_now(); }
+    else if (req == SNDRV_PCM_IOCTL_PREPARE) st->pcm_prepares++;
+    else if (req == SNDRV_PCM_IOCTL_PAUSE) st->pcm_paused = (uintptr_t)arg ? 1 : 0;
+}
+
 static int track(const char *path, int fd)
 {
     if (active && fd >= 0 && path && !strcmp(path, "/dev/fb0")) fb_fd = fd;
     if (fd >= 0) note_view(path);
+    if (active && fd >= 0 && path) {
+        if (!strncmp(path, "/dev/snd/pcmC", 13) && path[strlen(path) - 1] == 'p') { pcm_fd = fd; st->pcm_open = 1; }
+        else if (is_audio(path)) note_audio_open(path, fd);
+    }
     return fd;
 }
 
@@ -519,15 +672,23 @@ FILE *fopen(const char *path, const char *mode)
 {
     resolve();
     FILE *f = r_fopen(path, mode);
-    if (f) note_view(path);
+    if (f) { note_view(path); if (active && path && is_audio(path)) note_audio_open(path, fileno(f)); }
     return f;
+}
+
+int fclose(FILE *f)
+{
+    static int (*r)(FILE *);
+    if (!r) r = dlsym(RTLD_NEXT, "fclose");
+    if (active && f && st) { int fd = fileno(f); if (fd >= 0 && np_slot(fd) >= 0) note_close(fd); }
+    return r(f);
 }
 
 FILE *fopen64(const char *path, const char *mode)
 {
     resolve();
     FILE *f = r_fopen64(path, mode);
-    if (f) note_view(path);
+    if (f) { note_view(path); if (active && path && is_audio(path)) note_audio_open(path, fileno(f)); }
     return f;
 }
 
@@ -565,5 +726,83 @@ int ioctl(int fd, unsigned long req, ...)
         pthread_mutex_unlock(&mu);
         return r;
     }
+    if (active && fd >= 0 && fd == pcm_fd) {
+        int r = r_ioctl(fd, req, arg);
+        pcm_ioctl(req, arg, r);
+        return r;
+    }
     return r_ioctl(fd, req, arg);
+}
+
+int close(int fd)
+{
+    resolve();
+    if (active && fd >= 0) note_close(fd);
+    return r_close(fd);
+}
+
+off_t lseek(int fd, off_t off, int wh)
+{
+    resolve();
+    off_t r = r_lseek(fd, off, wh);
+    if (active && r >= 0) note_seek(fd, (long long)r);
+    return r;
+}
+
+off64_t lseek64(int fd, off64_t off, int wh)
+{
+    resolve();
+    off64_t r = r_lseek64(fd, off, wh);
+    if (active && r >= 0) note_seek(fd, (long long)r);
+    return r;
+}
+
+/* libasound (Bluetooth por bluealsa, DAC USB). El reproductor la enlaza, asi que estas
+ * definiciones tapan las suyas; se llama a la real con dlsym(RTLD_NEXT). */
+long snd_pcm_writei(void *pcm, const void *buf, unsigned long n)
+{
+    static long (*r)(void *, const void *, unsigned long);
+    if (!r) r = dlsym(RTLD_NEXT, "snd_pcm_writei");
+    if (!r) return -38;
+    int sv = in_alsa; in_alsa = 1;
+    long k = r(pcm, buf, n);
+    in_alsa = sv;
+    if (active && !sv) pcm_wrote(k);
+    return k;
+}
+
+int snd_pcm_hw_params(void *pcm, void *params)
+{
+    static int (*r)(void *, void *);
+    static int (*get_rate)(const void *, unsigned *, int *);
+    static int (*get_ch)(const void *, unsigned *);
+    if (!r) {
+        get_rate = dlsym(RTLD_NEXT, "snd_pcm_hw_params_get_rate");
+        get_ch = dlsym(RTLD_NEXT, "snd_pcm_hw_params_get_channels");
+        r = dlsym(RTLD_NEXT, "snd_pcm_hw_params");
+    }
+    if (!r) return -38;
+    int sv = in_alsa; in_alsa = 1;
+    int k = r(pcm, params);
+    in_alsa = sv;
+    if (active && !sv && k >= 0) {
+        unsigned v = 0; int d = 0;
+        if (get_rate && get_rate(params, &v, &d) >= 0) st->pcm_rate = v;
+        if (get_ch && get_ch(params, &v) >= 0) st->pcm_channels = v;
+        st->pcm_bits = 0;
+        st->pcm_open = 1;
+    }
+    return k;
+}
+
+int snd_pcm_drop(void *pcm)
+{
+    static int (*r)(void *);
+    if (!r) r = dlsym(RTLD_NEXT, "snd_pcm_drop");
+    if (!r) return -38;
+    int sv = in_alsa; in_alsa = 1;
+    int k = r(pcm);
+    in_alsa = sv;
+    if (active && !sv) { st->pcm_drops++; st->pcm_drop_ms = np_now(); }
+    return k;
 }

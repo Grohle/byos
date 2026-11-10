@@ -46,7 +46,7 @@ static struct lapp apps[40] = {
 };
 static int napps = 12;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
-static const char *app_label(int a) { return apps[a].names3[ui_lang] && apps[a].names3[ui_lang][0] ? apps[a].names3[ui_lang] : tr(apps[a].label); }
+static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
 static struct {
     int icon, cols;
@@ -144,17 +144,29 @@ static void lconf_save(void)
     gestures_conf_save(f);
     cc_conf_save(f);
     wg_conf_save(f);
-    fprintf(f, "lang %s\nkb %d %d %d\n", lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout);
+    fprintf(f, "lang %s\nkb %d %d %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout);
     fclose(f);
     rename(LCONF ".tmp", LCONF);
 }
 
+/* distribucion de teclado por defecto segun el idioma: 0 ES, 1 EN (QWERTY), 2 FR (AZERTY) */
+static int kb_layout_for(int l) { return l == LANG_ES ? 0 : l == LANG_FR ? 2 : 1; }
+static void relabel_apps(void);
+/* "Igual que el sistema": si el usuario cambio el idioma en los ajustes de HiBy, seguirlo */
+static void lang_sys_poll(void)
+{
+    if (!ui_lang_sys) return;
+    int l = lang_system();
+    if (l != ui_lang) { ui_lang = l; relabel_apps(); }
+}
 static void lconf_load(void)
 {
     lconf_default();
+    ui_lang_sys = 1; ui_lang = lang_system();        /* sin "lang" (instalacion nueva): el del sistema */
+    kb_cfg_layout = kb_layout_for(ui_lang);
     FILE *f = fopen(LCONF, "r");
     if (!f) return;
-    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0, layout2 = 0;
+    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0, layout2 = 0, got_kb = 0;
     int npn[MAXPAGES] = {0}, np[MAXPAGES][MAXAPPS], nd = 0, dk[4];
     while (fgets(line, sizeof line, f)) {
         char *t = strtok(line, " \t\r\n");
@@ -162,9 +174,9 @@ static void lconf_load(void)
         if (!strcmp(t, "layout")) { char *v = strtok(0, " \t\r\n"); layout2 = v && atoi(v) >= 2; }
         else if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
         else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
-        else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); if (v) ui_lang = !strcmp(v, "en") ? LANG_EN : !strcmp(v, "fr") ? LANG_FR : LANG_ES; }
+        else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
-            if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; } }
+            if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; got_kb = 1; } }
         else if (!strcmp(t, "widgets")) wg_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "cc")) cc_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
@@ -176,6 +188,7 @@ static void lconf_load(void)
         }
     }
     fclose(f);
+    if (!got_kb) kb_cfg_layout = kb_layout_for(ui_lang);
     if (!got_dock && !pages) return;
     L.dn = nd; memcpy(L.dock, dk, sizeof dk);
     L.npages = pages; memcpy(L.pn, npn, sizeof npn); memcpy(L.page, np, sizeof np);
@@ -552,6 +565,7 @@ static void launcher_enter(void) { launcher_enter_ex(0); }
 static void launcher_enter_ex(int instant)
 {
     if (launcher_on || !launcher_enabled) return;
+    lang_sys_poll();
     st->ov_on = 0; ov_cur = 0;
     cmd('C');
     double t = now_ms();

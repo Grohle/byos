@@ -4,23 +4,66 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-static stbtt_fontinfo font;
+static stbtt_fontinfo font;       /* principal: default.otf (latin, cirilico basico, kana y CJK) */
 static int font_ok;
+static float font_em_k;           /* px de em por px de alto de la principal (iguala las de reserva) */
 
-static int text_init(void)
+/* Fuentes de reserva del firmware, por glifo: solo se mapean (mmap, sin copiar a RAM) la primera
+ * vez que hace falta un caracter que la principal no tiene. msyh: latin extendido (polaco) y
+ * cirilico completo (ucraniano); Korean: hangul; Thai: tailandes. */
+#ifndef TEXT_FONT_DIRS
+#define TEXT_FONT_DIRS "/usr/data/hibymod/fast/", "/usr/resource/fonts/"
+#endif
+static const char *const font_dirs[] = { TEXT_FONT_DIRS, 0 };
+static struct { const char *file; stbtt_fontinfo fi; int st; long len; } font_fb[] = { { "msyh.ttf", { 0 }, 0, 0 }, { "Korean.ttf", { 0 }, 0, 0 }, { "Thai.ttf", { 0 }, 0, 0 } };
+#define FONT_NFB ((int)(sizeof font_fb / sizeof font_fb[0]))
+
+static long font_map(const char *file, stbtt_fontinfo *fi)
 {
-    const char *paths[] = { "/usr/data/hibymod/fast/default.otf", "/usr/resource/fonts/default.otf", 0 };
-    for (int i = 0; paths[i]; i++) {
-        int f = open(paths[i], O_RDONLY);
+    for (int i = 0; font_dirs[i]; i++) {
+        char p[160]; snprintf(p, sizeof p, "%s%s", font_dirs[i], file);
+        int f = open(p, O_RDONLY);
         if (f < 0) continue;
-        struct stat s; fstat(f, &s);
+        struct stat s; if (fstat(f, &s) || s.st_size < 64) { close(f); continue; }
         void *m = mmap(0, s.st_size, PROT_READ, MAP_SHARED, f, 0);
         close(f);
         if (m == MAP_FAILED) continue;
-        if (stbtt_InitFont(&font, m, stbtt_GetFontOffsetForIndex(m, 0))) { font_ok = 1; return 1; }
+        if (stbtt_InitFont(fi, m, stbtt_GetFontOffsetForIndex(m, 0))) return (long)s.st_size;
         munmap(m, s.st_size);
     }
     return 0;
+}
+
+static int text_init(void)
+{
+    if (!font_map("default.otf", &font)) return 0;
+    font_ok = 1;
+    font_em_k = stbtt_ScaleForPixelHeight(&font, 1) / stbtt_ScaleForMappingEmToPixels(&font, 1);
+    return 1;
+}
+
+/* fuente y glifo de un codigo: la principal o, si no lo tiene, la primera de reserva que si */
+static const stbtt_fontinfo *font_glyph(int cp, int *gi)
+{
+    int g = stbtt_FindGlyphIndex(&font, cp);
+    if (g || cp < 0x80) { *gi = g; return &font; }
+    for (int i = 0; i < FONT_NFB; i++) {
+        if (!font_fb[i].st) { font_fb[i].len = font_map(font_fb[i].file, &font_fb[i].fi); font_fb[i].st = font_fb[i].len ? 1 : -1; }
+        if (font_fb[i].st > 0 && (g = stbtt_FindGlyphIndex(&font_fb[i].fi, cp))) { *gi = g; return &font_fb[i].fi; }
+    }
+    *gi = 0; return &font;
+}
+/* escala de una fuente para "px" de alto de la principal (las de reserva, al mismo tamano de em) */
+static float font_scale(const stbtt_fontinfo *f, float px)
+{
+    return f == &font ? stbtt_ScaleForPixelHeight(&font, px) : stbtt_ScaleForMappingEmToPixels(f, px * font_em_k);
+}
+/* marcas combinantes (diacriticos, vocales y tonos tailandeses): no avanzan */
+static int text_is_mark(int cp) { return (cp >= 0x300 && cp < 0x370) || cp == 0xE31 || (cp >= 0xE34 && cp <= 0xE3A) || (cp >= 0xE47 && cp <= 0xE4E); }
+static float glyph_adv_px(const stbtt_fontinfo *f, int gi, int cp, float sc)
+{
+    if (text_is_mark(cp)) return 0;
+    int adv, lsb; stbtt_GetGlyphHMetrics(f, gi, &adv, &lsb); return adv * sc;
 }
 
 static int utf8_next(const char **s)
@@ -39,38 +82,47 @@ static int utf8_next(const char **s)
 static int text_width(const char *t, float px)
 {
     if (!font_ok) return 0;
-    float sc = stbtt_ScaleForPixelHeight(&font, px);
-    int w = 0, prev = 0, c;
+    float w = 0; int prev = 0, c; const stbtt_fontinfo *pf = 0;
     while ((c = utf8_next(&t))) {
-        int adv, lsb; stbtt_GetCodepointHMetrics(&font, c, &adv, &lsb);
-        if (prev) w += stbtt_GetCodepointKernAdvance(&font, prev, c);
-        w += adv; prev = c;
+        int gi; const stbtt_fontinfo *f = font_glyph(c, &gi); float sc = font_scale(f, px);
+        if (prev && f == pf) w += stbtt_GetGlyphKernAdvance(f, prev, gi) * sc;
+        w += glyph_adv_px(f, gi, c, sc); prev = gi; pf = f;
     }
-    return (int)(w * sc + 0.5f);
+    return (int)(w + 0.5f);
 }
 
-/* rasteriza "t" en una mascara de cobertura (w x h), linea base a la altura de ascent */
+/* rasteriza "t" en una mascara de cobertura (w x h), linea base a la altura de ascent
+ * (mas alta si un glifo de reserva, p. ej. un tono tailandes, sale de la caja de la principal) */
 static uint8_t *text_mask(const char *t, float px, int *ow, int *oh, int *obase)
 {
     if (!font_ok) return 0;
-    float sc = stbtt_ScaleForPixelHeight(&font, px);
+    float sc0 = stbtt_ScaleForPixelHeight(&font, px);
     int asc, desc, gap; stbtt_GetFontVMetrics(&font, &asc, &desc, &gap);
-    int base = (int)(asc * sc + 0.5f), h = (int)((asc - desc) * sc + 0.999f) + 1;
+    int base = (int)(asc * sc0 + 0.5f), h = (int)((asc - desc) * sc0 + 0.999f) + 1;
     int w = text_width(t, px) + 2;
     if (w <= 2) return 0;
-    uint8_t *m = calloc(w * h, 1);
-    float x = 1; int prev = 0, c;
-    const char *s = t;
+    int top = 0, bot = h, c; const char *s = t;
     while ((c = utf8_next(&s))) {
-        int adv, lsb; stbtt_GetCodepointHMetrics(&font, c, &adv, &lsb);
-        if (prev) x += stbtt_GetCodepointKernAdvance(&font, prev, c) * sc;
+        int gi; const stbtt_fontinfo *f = font_glyph(c, &gi); if (f == &font) continue;
+        float sc = font_scale(f, px); int x0, y0, x1, y1;
+        stbtt_GetGlyphBitmapBox(f, gi, sc, sc, &x0, &y0, &x1, &y1);
+        if (base + y0 < top) top = base + y0;
+        if (base + y1 + 1 > bot) bot = base + y1 + 1;
+    }
+    base -= top; h = bot - top;
+    uint8_t *m = calloc(w * h, 1);
+    float x = 1; int prev = 0; const stbtt_fontinfo *pf = 0;
+    s = t;
+    while ((c = utf8_next(&s))) {
+        int gi; const stbtt_fontinfo *f = font_glyph(c, &gi); float sc = font_scale(f, px);
+        if (prev && f == pf) x += stbtt_GetGlyphKernAdvance(f, prev, gi) * sc;
         int x0, y0, x1, y1;
         float fx = x - (int)x;
-        stbtt_GetCodepointBitmapBoxSubpixel(&font, c, sc, sc, fx, 0, &x0, &y0, &x1, &y1);
+        stbtt_GetGlyphBitmapBoxSubpixel(f, gi, sc, sc, fx, 0, &x0, &y0, &x1, &y1);
         int gw = x1 - x0, gh = y1 - y0;
         if (gw > 0 && gh > 0) {
             uint8_t *g = malloc(gw * gh);
-            stbtt_MakeCodepointBitmapSubpixel(&font, g, gw, gh, gw, sc, sc, fx, 0, c);
+            stbtt_MakeGlyphBitmapSubpixel(f, g, gw, gh, gw, sc, sc, fx, 0, gi);
             for (int yy = 0; yy < gh; yy++) {
                 int ty = base + y0 + yy; if (ty < 0 || ty >= h) continue;
                 for (int xx = 0; xx < gw; xx++) {
@@ -80,7 +132,7 @@ static uint8_t *text_mask(const char *t, float px, int *ow, int *oh, int *obase)
             }
             free(g);
         }
-        x += adv * sc; prev = c;
+        x += glyph_adv_px(f, gi, c, sc); prev = gi; pf = f;
     }
     *ow = w; *oh = h; *obase = base;
     return m;
@@ -103,14 +155,14 @@ static struct glyph *glyph_get(int cp, int size)
                 for (int k = 0; k < GCACHE; k++) { free(gcache[k].bmp); gcache[k].bmp = 0; gcache[k].size = 0; }
                 gcache_n = 0; return glyph_get(cp, size);
             }
-            float sc = stbtt_ScaleForPixelHeight(&font, (float)size);
-            int x0, y0, x1, y1, adv, lsb;
-            stbtt_GetCodepointHMetrics(&font, cp, &adv, &lsb);
-            stbtt_GetCodepointBitmapBox(&font, cp, sc, sc, &x0, &y0, &x1, &y1);
+            int gi; const stbtt_fontinfo *f = font_glyph(cp, &gi);
+            float sc = font_scale(f, (float)size);
+            int x0, y0, x1, y1;
+            stbtt_GetGlyphBitmapBox(f, gi, sc, sc, &x0, &y0, &x1, &y1);
             g->cp = cp; g->size = size; g->w = x1 - x0; g->h = y1 - y0; g->xo = x0; g->yo = y0;
-            g->adv = (int)(adv * sc * 64);           /* 26.6 */
+            g->adv = (int)(glyph_adv_px(f, gi, cp, sc) * 64);           /* 26.6 */
             g->bmp = 0;
-            if (g->w > 0 && g->h > 0) { g->bmp = malloc(g->w * g->h); stbtt_MakeCodepointBitmap(&font, g->bmp, g->w, g->h, g->w, sc, sc, cp); }
+            if (g->w > 0 && g->h > 0) { g->bmp = malloc(g->w * g->h); stbtt_MakeGlyphBitmap(f, g->bmp, g->w, g->h, g->w, sc, sc, gi); }
             gcache_n++;
             return g;
         }

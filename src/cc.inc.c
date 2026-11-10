@@ -134,6 +134,16 @@ static void cc_tile(uint16_t *d, int x, int y, int tile)
 }
 static int cc_bl_level(void) { int b = sysfs_get(BL_PATH, 60); return b < 0 ? 60 : b; }
 /* compone el panel completo en dst a partir del fondo desenfocado */
+static void cc_slider_paint(uint16_t *d, const uint16_t *blur, float lv, float scale, float stretch);
+/* triangulo de reproduccion: base vertical en x0 (dir 1 apunta a la derecha) o punta en x0+w (dir -1) */
+static void cc_tri(uint16_t *d, int x0, int cy, int w, int half, int dir)
+{
+    for (int i = 0; i < w; i++) {
+        int col = dir > 0 ? x0 + i : x0 - i;               /* dir -1: la base esta a la derecha (en x0) */
+        float hh = half * (1 - (i + .5f) / w);
+        for (int y = (int)(cy - hh); y <= (int)(cy + hh); y++) if (col >= 0 && col < W && y >= 0 && y < H) d[y * W + col] = 0xFFFF;
+    }
+}
 static const uint16_t *cc_under;
 static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
 {
@@ -147,29 +157,30 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
         int br = (bg >> 11) * na / 63 + r, bgc = ((bg >> 5) & 63) * na / 63 + g, bb = (bg & 31) * na / 63 + b;
         dst[i] = (uint16_t)((br > 31 ? 31 : br) << 11 | (bgc > 63 ? 63 : bgc) << 5 | (bb > 31 ? 31 : bb));
     }
-    /* Reproduciendo */
-    cc_rrect(dst, NP_X, CC_Y, NP_W, BR_H, 22, rgb(255, 255, 255), pressed == 100 ? 80 : 46);
-    int a = app_by_id("nowplaying");
-    if (a >= 0) blit_scaled(dst, &apps[a].icon[2], NP_X + 16, CC_Y + 16, 44, 44, 255);
-    draw_text(dst, NP_X + 14, CC_Y + 92, tr("Reproduciendo"), 15, 0xFFFF, NP_W - 22, 0, H);
-    draw_text(dst, NP_X + 14, CC_Y + 113, tr(music_on ? "Sonando" : "En pausa"), 13, rgb(200, 200, 206), NP_W - 22, 0, H);
-    /* brillo */
-    int bl = cc_bl_level(); float lv = bl / 101.f; if (lv > 1) lv = 1;
-    cc_rrect(dst, BR_X, CC_Y, CC_T, BR_H, 22, rgb(255, 255, 255), 46);
-    int fh = (int)(BR_H * lv); if (fh > 0) {
-        /* relleno blanco recortado por abajo: se dibuja el redondeado y se tapa lo de arriba */
-        static uint16_t tmp[CC_T * (2 * CC_T + CC_G)];
-        for (int y = 0; y < BR_H; y++) memcpy(tmp + y * CC_T, dst + (CC_Y + y) * W + BR_X, CC_T * 2);
-        cc_rrect(dst, BR_X, CC_Y, CC_T, BR_H, 22, rgb(245, 245, 247), 255);
-        for (int y = 0; y < BR_H - fh; y++) memcpy(dst + (CC_Y + y) * W + BR_X, tmp + y * CC_T, CC_T * 2);
+    /* Reproduciendo (iOS): caratula, titulo, artista y controles */
+    {
+        static uint16_t cov[128 * 128]; struct np_info ni; int cok = 0;
+        npx_snapshot(&ni, cov, &cok);
+        cc_rrect(dst, NP_X, CC_Y, NP_W, BR_H, 22, rgb(255, 255, 255), pressed == 100 ? 80 : 46);
+        if (cok) npx_blit_cover(dst, cov, NP_X + 14, CC_Y + 14, 48, 9);
+        else { int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(dst, &apps[a].icon[2], NP_X + 14, CC_Y + 14, 48, 48, 255); }
+        const char *ti = ni.source && ni.title[0] ? ni.title : tr("Reproduciendo");
+        const char *ar = ni.source && ni.artist[0] ? ni.artist : tr(ni.playing ? "Sonando" : "En pausa");
+        { int sz = 14; while (sz > 11 && tw_n(ti, sz, -1) > NP_W - 24) sz--; draw_text(dst, NP_X + 12, CC_Y + 84, ti, sz, 0xFFFF, NP_W - 24, 0, H); }
+        draw_text(dst, NP_X + 12, CC_Y + 102, ar, 12, rgb(200, 200, 206), NP_W - 24, 0, H);
+        /* controles: anterior, reproducir/pausa, siguiente */
+        int cy = CC_Y + BR_H - 20, cx = NP_X + NP_W / 2;
+        uint16_t c = 0xFFFF;
+        /* anterior |<< */
+        fill_rrect(dst, cx - 40, cy - 6, 2, 12, 1, c, 255);
+        cc_tri(dst, cx - 30, cy, 7, 6, -1); cc_tri(dst, cx - 23, cy, 7, 6, -1);
+        if (ni.playing) { fill_rrect(dst, cx - 6, cy - 8, 4, 16, 1, c, 255); fill_rrect(dst, cx + 2, cy - 8, 4, 16, 1, c, 255); }
+        else cc_tri(dst, cx - 5, cy, 13, 8, 1);
+        cc_tri(dst, cx + 30, cy, 7, 6, 1); cc_tri(dst, cx + 37, cy, 7, 6, 1);
+        fill_rrect(dst, cx + 44, cy - 6, 2, 12, 1, c, 255);
     }
-    const struct sprite *sun = cc_icon("sun");
-    if (sun && sun->w) {
-        int sx = BR_X + (CC_T - sun->w) / 2, sy = CC_Y + BR_H - sun->h - 14;
-        if (fh > 26) { /* sobre blanco: icono gris oscuro */
-            for (int y = 0; y < sun->h; y++) for (int x = 0; x < sun->w; x++) { int al = sun->a[y * sun->w + x]; if (al) { uint16_t *p = dst + (sy + y) * W + sx + x; *p = blend565(*p, rgb(60, 60, 64), al * 32 / 255); } }
-        } else blit(dst, sun, sx, sy, 32, 255);
-    }
+    /* brillo: el mismo dibujo que durante el arrastre */
+    { float lv = cc_bl_level() / 101.f; cc_slider_paint(dst, blur, lv > 1 ? 1 : lv, 1, 0); }
     for (int i = 0; i < cc_ntiles; i++) { int x, y; cc_tile_rect(i, &x, &y); cc_tile(dst, x, y, cc_tiles[i]); if (pressed == i) cc_rrect(dst, x, y, CC_T, CC_T, CC_T / 2.f, 0xFFFF, 50); }
     /* rotulo del ultimo cambio (como el aviso de iOS al tocar un control) */
     if (cc_caption && now_ms() - cc_caption_t < 1800) {
@@ -369,6 +380,75 @@ static void cc_from_player(int sx)
     cc_session(under, panel, img_sheet, 1, -2);
 }
 
+
+/* ---- deslizador de brillo (iOS): crece al tocarlo, el relleno sigue al dedo 1:1 y el brillo
+ * real cambia en el mismo fotograma; goma en los extremos; el sol crece con el nivel.
+ * Solo se redibuja su zona (present_rows): cabe de sobra en 16 ms a 60 Hz. */
+static void cc_sun(uint16_t *d, float cx, float cy, float lv, uint16_t col)
+{
+    float r = 4.2f + 1.6f * lv, r0 = r + 2.6f, r1 = r0 + 2.2f + 2.6f * lv;
+    fill_circle(d, cx, cy, r, col, 255);
+    for (int i = 0; i < 8; i++) {
+        float a = i * 0.7854f, c = cosf(a), sn = sinf(a);
+        for (float t = r0; t <= r1; t += 0.8f) fill_circle(d, cx + c * t, cy + sn * t, 1.05f, col, 255);
+    }
+}
+static void cc_slider_paint(uint16_t *d, const uint16_t *blur, float lv, float scale, float stretch)
+{
+    /* zona: el modulo con margen para el crecimiento y la goma */
+    int zy0 = CC_Y - 14, zy1 = CC_Y + BR_H + 14;
+    for (int y = zy0; y < zy1; y++) memcpy(d + y * W + BR_X - 10, blur + y * W + BR_X - 10, (CC_T + 20) * 2);
+    float w = CC_T * scale, h = BR_H * scale + fabsf(stretch);
+    float cx = BR_X + CC_T / 2.f, cy = CC_Y + BR_H / 2.f - (stretch > 0 ? stretch / 2 : stretch < 0 ? stretch / 2 : 0);
+    int x0 = (int)(cx - w / 2 + .5f), y0 = (int)(cy - h / 2 + .5f), iw = (int)(w + .5f), ih = (int)(h + .5f);
+    float rad = 22 * scale;
+    fill_rrect(d, x0, y0, iw, ih, rad, rgb(255, 255, 255), 46);
+    int fh = (int)(ih * lv + .5f);
+    if (fh > 0) {
+        static uint16_t tmp[(CC_T + 20) * (2 * CC_T + CC_G + 40)];
+        int cut = ih - fh;                               /* filas de arriba que no se llenan */
+        for (int y = 0; y < cut; y++) memcpy(tmp + y * iw, d + (y0 + y) * W + x0, iw * 2);
+        fill_rrect(d, x0, y0, iw, ih, rad, rgb(245, 245, 247), 255);
+        for (int y = 0; y < cut; y++) memcpy(d + (y0 + y) * W + x0, tmp + y * iw, iw * 2);
+    }
+    float sy = y0 + ih - 22 * scale;
+    cc_sun(d, cx, sy, lv, sy > y0 + ih - fh ? rgb(70, 70, 76) : 0xFFFF);
+}
+static void cc_slider_draw(uint16_t *d, const uint16_t *blur, float lv, float scale, float stretch)
+{
+    cc_slider_paint(d, blur, lv, scale, stretch); present_rows(CC_Y - 14, CC_Y + BR_H + 14);
+}
+static void cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
+{
+    float lv0 = cc_bl_level() / 101.f, lv = lv0, scale = 1, stretch = 0; int last = -1;
+    struct pkt p; double lt = now_ms();
+    memcpy(fr0, panel, HM_FRAME_BYTES);
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        float raw = lv0 + (sy - cur_y) / (float)BR_H;          /* 1:1 con el dedo */
+        float over = raw > 1 ? raw - 1 : raw < 0 ? raw : 0;
+        lv = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+        if (pw_mode == PW_SAVE && lv > 40 / 101.f) lv = 40 / 101.f;
+        int nb = (int)(lv * 101 + .5f); if (nb < 2) nb = 2;
+        if (nb != last) { sysfs_put(BL_PATH, nb); last = nb; }
+        double t = now_ms(); float k = (float)((t - lt) / 16.7); lt = t; if (k > 3) k = 3;
+        scale += (1.06f - scale) * (1 - powf(0.65f, k));          /* crece con muelle */
+        float st_t = over * BR_H; st_t = st_t > 0 ? 14 * (1 - expf(-st_t / 40)) : -14 * (1 - expf(st_t / 40));   /* goma */
+        stretch += (st_t - stretch) * (1 - powf(0.5f, k));
+        cc_slider_draw(fr0, blur, lv, scale, stretch);
+        if (got && !p.down) break;
+        if (!got) msleep(2);
+    }
+    double t0 = now_ms(); float s0 = scale, g0 = stretch;          /* vuelve a su tamano */
+    for (;;) {
+        double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1;
+        float e = (float)ease_out(t);
+        cc_slider_draw(fr0, blur, lv, s0 + (1 - s0) * e, g0 * (1 - e));
+        if (t >= 1) break;
+    }
+    cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+}
+
 static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y)
 {
     int from_launcher = cc_from_launcher;
@@ -387,23 +467,13 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
     }
     if (start_y != -2) cc_animate(under, panel, e, 1, start_y >= 0 ? 200 : 260);
     for (;;) {
-        if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 1000)) {
-            if (cc_caption && now_ms() - cc_caption_t >= 1800) { cc_caption = 0; cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
+        if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 500)) {
+            if ((cc_caption && now_ms() - cc_caption_t >= 1800) || npx_changed) { npx_changed = 0; cc_caption = 0; cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
             continue;
         }
         if (!p.down) continue;
         int sx = p.x, sy = p.y, hit = cc_hit(sx, sy);
-        if (hit == 101) {                 /* brillo: arrastrar */
-            int b0 = cc_bl_level(), y0 = sy;
-            while (cur_down) {
-                int nb = b0 + (y0 - cur_y) * 101 / BR_H; if (nb < 4) nb = 4; if (nb > 101) nb = 101;
-                if (pw_mode == PW_SAVE && nb > 40) nb = 40;
-                sysfs_put(BL_PATH, nb);
-                cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present();
-                read_pkt(&p, 40);
-            }
-            continue;
-        }
+        if (hit == 101) { cc_brightness_drag(panel, blur, sy); continue; }   /* brillo (iOS) */
         if (hit >= 0) { cc_render(fr0, blur, hit); present(); }
         /* decidir pronto: toque, pagina horizontal o subir al inicio */
         int dir = 0;
@@ -417,6 +487,14 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
         if (dir == 2) { if (panel_up_home(panel, sy, from_launcher)) return; continue; }
         if (dir == 3) { while (cur_down && read_pkt(&p, 3000)) {} cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present(); continue; }
         if (hit < 0) break;                                   /* toque fuera: cerrar */
+        if (hit == 100 && sy > CC_Y + BR_H - 40) {          /* controles de reproduccion */
+            int cx = NP_X + NP_W / 2;
+            if (sx < cx - 22) pc_prev(); else if (sx > cx + 22) pc_next(); else pc_toggle();
+            msleep(350); npx_changed = 1;
+            { struct np_info ni; memset(&ni, 0, sizeof ni); if (np_get(&ni) > 0) { pthread_mutex_lock(&npx_mu); npx = ni; pthread_mutex_unlock(&npx_mu); } }
+            cc_render(panel, blur, -1); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+            continue;
+        }
         if (hit == 100) {
             if (cc_player_right) { cc_hpage(panel, under, 0); double t0 = now_ms();   /* volver al reproductor */
                 for (;;) { double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1; cc_hpage(panel, under, -(int)(W * ease_out(t))); present(); if (t >= 1) break; }

@@ -164,7 +164,7 @@ El shell lanza `apps/<id>/<exec>` con el directorio de trabajo en `HM_APP_DIR` y
 |----------|-------|
 | `HM_APP_DIR` | directorio de instalación (solo lectura por convención) |
 | `HM_DATA_DIR` | `/usr/data/hibymod/appdata/<id>` (escribible, persistente) |
-| `HM_LANG` | `es`, `en` o `fr` |
+| `HM_LANG` | idioma de la interfaz: `es`, `en`, `fr`, `de`, `it`, `ja`, `ko`, `pl`, `ru`, `zh-Hans`, `th`, `zh-Hant` o `uk` (el manifiesto solo trae `name`/`description` en es/en/fr: en los demás idiomas se muestra el inglés) |
 | `HM_TOUCH` | nodo evdev de un táctil virtual, mismo protocolo que goodix-ts: multitáctil tipo A (`BTN_TOUCH`, `ABS_MT_POSITION_X/Y`, `SYN_MT_REPORT` por contacto, `SYN_REPORT` por trama; una trama sin contactos = dedo levantado). Coordenadas de pantalla 0–319 × 0–479 |
 | `HM_KEYS` | nodo evdev de las teclas físicas (`EV_KEY`, valor 1/0/2) |
 | `HM_FB` | `/dev/fb0`: 320x480 RGB565, doble búfer con panning (virtual 320x960) |

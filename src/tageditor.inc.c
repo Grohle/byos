@@ -57,7 +57,7 @@ static int line_edit_suggest(const char *title, const char *hint, char *buf, int
     le_title = title; le_hint = hint; le_buf = &e; sg_field = field; nsg = 0;
     kb_layer = 0; kb_shift = 0; kb_layout(tr("Aceptar"));
     char last[128] = "\x01"; double typed = 0;
-    sg_redraw(fr0, -1); present();
+    kb_begin(&e, fr0, sg_redraw);
     struct pkt p;
     for (;;) {
         /* sugerencias tras una pausa al escribir (no en cada tecla) */
@@ -71,7 +71,7 @@ static int line_edit_suggest(const char *title, const char *hint, char *buf, int
             int i = (y - 148) / 40;
             if (i >= 0 && i < nsg) { snprintf(buf, cap, "%s", sg[i]); return 1; }
         }
-        if (y >= 96 && y < 140) { e.cur = e.len; sg_redraw(fr0, -1); present(); }
+        if (y >= 96 && y < 140) { e.cur = e.len; if (kb_off) kb_reveal(fr0, sg_redraw); else { sg_redraw(fr0, -1); present(); } }
     }
 }
 

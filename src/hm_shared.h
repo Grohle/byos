@@ -49,7 +49,37 @@ struct hm_state {
      * presentarlo y cuenta home_hits; el shell entra en su launcher sin parpadeo */
     volatile uint32_t home_sub_on, home_hits, nsig;
     volatile int32_t sig[8][6];          /* x, y, r, g, b, tolerancia */
+
+    /* ---- v5: lo que suena (lo rellena la libreria; leer con np_get de nowplaying.inc.c).
+     * Campos anadidos AL FINAL: un shell viejo no los ve y una libreria vieja deja np_magic = 0.
+     * Ficheros de audio abiertos por el reproductor (cualquier hilo): ranura por apertura;
+     * al reutilizar se elige la mas antigua ya cerrada, asi el fichero del decodificador
+     * (abierto durante toda la cancion) no lo expulsan las lecturas rapidas de etiquetas. */
+    volatile uint32_t np_magic;          /* HM_NP_MAGIC si la libreria rellena lo de abajo */
+    volatile uint32_t np_seq;            /* cerrojo de secuencia de np_open[] (impar = escribiendo) */
+    volatile uint32_t np_gen;            /* contador de aperturas (gen de la ultima) */
+    struct hm_np_open {
+        char path[400];                  /* ruta tal cual la abrio ("/data/mnt/sd_0/...") */
+        int32_t fd;                      /* -1 = ya cerrado */
+        uint32_t gen, tid;               /* gen 0 = ranura vacia */
+        uint32_t open_ms, close_ms;      /* CLOCK_MONOTONIC en ms */
+        uint32_t frames_at_open;         /* pcm_frames al abrir */
+        uint32_t nseeks, seek_ms, seek_frames;
+        uint32_t seek_lo, seek_hi;       /* desplazamiento de la ultima lseek */
+    } np_open[8];
+    /* salida PCM (tinyalsa por ioctl en hw:0 o libasound: BT/DAC USB) */
+    volatile uint32_t pcm_open;          /* 1 con el PCM abierto (tambien en pausa) */
+    volatile uint32_t pcm_frames;        /* tramas escritas en total (da la vuelta) */
+    volatile uint32_t pcm_last_ms;       /* ultima escritura: si hace < ~400 ms, esta sonando */
+    volatile uint32_t pcm_rate, pcm_bits, pcm_channels;
+    volatile uint32_t pcm_drops, pcm_drop_ms;      /* vaciados (saltos, cambios de pista) */
+    volatile uint32_t pcm_prepares, pcm_paused;
+    /* hilo que escribe el PCM subido a SCHED_FIFO (0 = aun no / desactivado con
+     * /usr/data/hibymod/no_rt); rt_err = errno si fallo */
+    volatile uint32_t rt_tid, rt_prio, rt_err, rt_count;
 };
+#define HM_NP_MAGIC 0x3550504eu   /* "NPP5" */
+#define HM_NP_SLOTS 8
 #define HM_HOME "/dev/shm/hibymod_home"   /* imagen actual del launcher (RGB565 320x480) */
 
 #endif

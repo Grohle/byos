@@ -20,7 +20,8 @@
 #define HPK_NAME_MAX 48
 #define HPK_DESC_MAX 160
 
-enum { HPK_LANG_ES, HPK_LANG_EN, HPK_LANG_FR };
+/* mismo orden que LANG_* de i18n.inc.c; los manifiestos solo traen es/en/fr (name[0..2]) */
+enum { HPK_LANG_ES, HPK_LANG_EN, HPK_LANG_FR, HPK_NLANG = 13 };
 
 enum {
     HPK_OK = 0,
@@ -87,7 +88,7 @@ int hpk_icon(const struct hpk_info *pkg, int s, unsigned short *rgb, unsigned ch
 
 int hpk_vercmp(const char *a, const char *b);        /* <0, 0, >0 (semver) */
 const char *hpk_errkey(int code);                    /* -HPK_E_x o HPK_E_x -> "err.x" */
-const char *hpk_msg(const char *key, int lang);      /* clave -> texto (es/en/fr) */
+const char *hpk_msg(const char *key, int lang);      /* clave -> texto (13 idiomas; si falta, ingles) */
 extern char hpk_err_detail[160];                     /* entrada o campo que provoco el error */
 
 #endif

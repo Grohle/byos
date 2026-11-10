@@ -1,17 +1,18 @@
 /* widgets.inc.c - pagina de widgets a la izquierda del inicio (como "Hoy" en iOS).
  *
- * Desde la primera pagina del inicio, deslizar hacia la derecha. Fondo = fondo de pantalla
- * desenfocado (se calcula una vez por fondo); tarjetas de cristal con:
+ * Desde la primera pagina del inicio, deslizar hacia la derecha. Fondo = el del inicio;
+ * tarjetas de cristal oscuro con:
  *   Baterias  - el HiBy (%, cargando, Solo USB) y dispositivos Bluetooth conectados con su
  *               bateria (BlueZ: org.bluez.Battery1, por dbus-send)
- *   Reproduciendo, Fecha, Almacenamiento (SD e interna), Energia (modo y estado)
+ *   Reproduciendo, Fecha, Almacenamiento (SD e interna), Energia (modo y estado),
+ *   Biblioteca, Recien anadido y Escuchas (hibymix stats sobre la base de HiBy, solo lectura)
  * Configurables en Personalizar > Widgets (linea "widgets" de launcher.conf). Los datos se
  * leen al entrar y cada 10 s mientras la pagina esta visible; nunca en segundo plano. */
 
-enum { WG_BATT, WG_NOW, WG_DATE, WG_STORAGE, WG_POWER, WG_N };
-static const char *const wg_id[WG_N] = { "battery", "nowplaying", "date", "storage", "power" };
-static const char *const wg_name[WG_N] = { "Baterías", "Reproduciendo", "Fecha", "Almacenamiento", "Energía" };
-static int wg_list[WG_N] = { WG_BATT, WG_NOW, WG_DATE, WG_STORAGE, WG_POWER }, wg_n = WG_N;
+enum { WG_BATT, WG_NOW, WG_DATE, WG_STORAGE, WG_POWER, WG_LIB, WG_NEW, WG_LISTEN, WG_N };
+static const char *const wg_id[WG_N] = { "battery", "nowplaying", "date", "storage", "power", "library", "recent", "listening" };
+static const char *const wg_name[WG_N] = { "Baterías", "Reproduciendo", "Fecha", "Almacenamiento", "Energía", "Biblioteca", "Recién añadido", "Escuchas" };
+static int wg_list[WG_N] = { WG_BATT, WG_DATE, WG_NOW, WG_LISTEN, WG_NEW, WG_LIB, WG_STORAGE, WG_POWER }, wg_n = WG_N;
 static int widgets_on;                       /* la pagina de widgets esta en pantalla */
 
 static void wg_conf_line(char *rest)
@@ -24,7 +25,8 @@ static void wg_conf_save(FILE *f) { fprintf(f, "widgets"); for (int i = 0; i < w
 
 /* ---- datos ---- */
 struct wg_bt { char name[40]; int pct; };
-static struct { int batt, charging, usb; struct wg_bt bt[3]; int nbt; long long sd_free, sd_tot, in_free, in_tot; double t; } WD;
+static struct { int batt, charging, usb; struct wg_bt bt[3]; int nbt; long long sd_free, sd_tot, in_free, in_tot; double t;
+                int songs, albums, artists, favs; long long lib_bytes; char new_artist[64], new_album[96], top_artist[64], last_title[96], last_artist[64]; int top_n; } WD;
 static void wg_bt_scan(void)
 {
     WD.nbt = 0;
@@ -61,6 +63,18 @@ static void wg_refresh_now(void)
     if (!statvfs("/usr/data/mnt/sd_0", &v)) { WD.sd_free = (long long)v.f_bavail * v.f_frsize; WD.sd_tot = (long long)v.f_blocks * v.f_frsize; } else WD.sd_tot = 0;
     if (!statvfs("/usr/data", &v)) { WD.in_free = (long long)v.f_bavail * v.f_frsize; WD.in_tot = (long long)v.f_blocks * v.f_frsize; }
     wg_bt_scan();
+    {   /* biblioteca de HiBy (hibymix stats: solo lectura) */
+        char *argv[] = { "/usr/data/hibymod/shell/hibymix", "stats", 0 };
+        static char out[2048];
+        if (!access(argv[0], X_OK) && run_capture(argv, out, sizeof out) > 0)
+            for (char *sv = 0, *l = strtok_r(out, "\n", &sv); l; l = strtok_r(0, "\n", &sv)) {
+                char *f[6]; int n = split_tabs(l, f, 6);
+                if (!strcmp(f[0], "count") && n >= 6) { WD.songs = atoi(f[1]); WD.albums = atoi(f[2]); WD.artists = atoi(f[3]); WD.favs = atoi(f[4]); WD.lib_bytes = atoll(f[5]); }
+                else if (!strcmp(f[0], "recent") && n >= 3) { snprintf(WD.new_artist, sizeof WD.new_artist, "%s", f[1]); snprintf(WD.new_album, sizeof WD.new_album, "%s", f[2]); }
+                else if (!strcmp(f[0], "top") && n >= 3) { snprintf(WD.top_artist, sizeof WD.top_artist, "%s", f[1]); WD.top_n = atoi(f[2]); }
+                else if (!strcmp(f[0], "last") && n >= 3) { snprintf(WD.last_title, sizeof WD.last_title, "%s", f[1]); snprintf(WD.last_artist, sizeof WD.last_artist, "%s", f[2]); }
+            }
+    }
     WD.t = now_ms();
 }
 static void *wg_thread(void *a) { (void)a; wg_refresh_now(); wg_fresh = 1; wg_busy = 0; return 0; }
@@ -77,12 +91,18 @@ static void cc_blur(const uint16_t *src, uint16_t *dst);
 static void cc_rrect(uint16_t *d, int x0, int y0, int w, int h, float r, uint16_t col, int alpha);
 static const uint16_t *wg_background(void)
 {
+    return wall;                         /* el mismo fondo que el inicio */
     if (!wg_bg) wg_bg = malloc(HM_FRAME_BYTES);
     if (!wg_bg) return wall;
     if (!wg_bg_ok || strcmp(wg_bg_for, L.wall)) { cc_blur(wall, wg_bg); snprintf(wg_bg_for, sizeof wg_bg_for, "%s", L.wall); wg_bg_ok = 1; }
     return wg_bg;
 }
-static int wg_height(int w) { return w == WG_BATT ? 60 + 34 * (1 + WD.nbt) : w == WG_DATE ? 96 : w == WG_STORAGE ? 112 : 84; }
+static void wg_text(uint16_t *d, int x, int y, const char *t, int size, uint16_t col, int maxw)
+{
+    int sz = size; while (sz > 11 && tw_n(t, sz, -1) > maxw) sz--;
+    draw_text(d, x, y, t, sz, col, maxw, 30, H);
+}
+static int wg_height(int w) { return w == WG_BATT ? 58 + 40 * (1 + (WD.nbt ? WD.nbt : 0)) + (WD.nbt ? 0 : 20) : w == WG_DATE ? 96 : w == WG_STORAGE ? 126 : w == WG_LIB ? 104 : w == WG_LISTEN ? 116 : w == WG_NEW ? 92 : 84; }
 static void wg_ring(uint16_t *d, int cx, int cy, float r, float frac, uint16_t col)
 {
     /* anillo de progreso (como el widget de baterias de iOS): fondo tenue y arco del nivel */
@@ -111,60 +131,91 @@ static void wg_bar(uint16_t *d, int x, int y, int w, float frac, uint16_t col)
 }
 static int wg_draw_one(uint16_t *d, int ox, int y, int w)
 {
-    int x = ox + 14, cw = W - 28, h = wg_height(w);
+    int x = ox + 14, cw = W - 28, h = wg_height(w), tx = x + 16, tw = cw - 32;
     if (y > H || y + h < 30) return h;
-    cc_rrect(d, x, y, cw, h, 20, rgb(255, 255, 255), 44);
-    char b[96];
+    cc_rrect(d, x, y, cw, h, 20, rgb(16, 16, 20), 120);           /* cristal oscuro */
+    cc_rrect(d, x, y, cw, h, 20, rgb(255, 255, 255), 22);
+    char b[160], s1[24], s2[24];
+    uint16_t sub = rgb(200, 200, 206), head = rgb(235, 235, 240);
     switch (w) {
     case WG_BATT: {
-        draw_text(d, x + 16, y + 26, tr("Baterías"), 13, rgb(220, 220, 226), cw - 32, 30, H);
-        int ry = y + 46;
+        wg_text(d, tx, y + 26, tr("Baterías"), 13, head, tw);
+        int ry = y + 40;
         uint16_t col = WD.batt >= 0 && WD.batt <= 20 ? rgb(255, 69, 58) : (WD.charging ? rgb(48, 209, 88) : 0xFFFF);
-        wg_ring(d, x + 30, ry + 14, 12, WD.batt < 0 ? 0 : WD.batt / 100.f, col);
-        draw_text(d, x + 54, ry + 20, "HiBy R3 II", 15, 0xFFFF, cw - 130, 30, H);
-        snprintf(b, sizeof b, "%d %%", WD.batt < 0 ? 0 : WD.batt);
-        draw_text(d, x + cw - 16 - tw_n(b, 15, -1), ry + 20, b, 15, 0xFFFF, 0, 30, H);
-        const char *sub = pw_nocharge && WD.usb ? tr("Solo USB") : WD.charging ? tr("Cargando") : WD.usb ? tr("Conectado por USB") : 0;
-        if (sub) draw_text(d, x + 54, ry + 36, sub, 11, rgb(170, 170, 176), cw - 130, 30, H);
+        wg_ring(d, x + 32, ry + 18, 13, WD.batt < 0 ? 0 : WD.batt / 100.f, col);
+        snprintf(b, sizeof b, "%d %%", WD.batt < 0 ? 0 : WD.batt); int pw = tw_n(b, 17, -1);
+        draw_text(d, x + cw - 16 - pw, ry + 24, b, 17, 0xFFFF, 0, 30, H);
+        wg_text(d, x + 56, ry + 17, "HiBy R3 II", 15, 0xFFFF, cw - 56 - pw - 24);
+        const char *st = pw_nocharge && WD.usb ? tr("Solo USB: la batería no se carga") : WD.charging ? tr("Cargando") : WD.usb ? tr("Conectado por USB") : tr("Con batería");
+        wg_text(d, x + 56, ry + 34, st, 12, sub, cw - 56 - pw - 24);
         for (int i = 0; i < WD.nbt; i++) {
-            ry += 34;
-            wg_ring(d, x + 30, ry + 14, 12, WD.bt[i].pct < 0 ? 0 : WD.bt[i].pct / 100.f, 0xFFFF);
-            draw_text(d, x + 54, ry + 20, WD.bt[i].name, 15, 0xFFFF, cw - 130, 30, H);
-            if (WD.bt[i].pct >= 0) { snprintf(b, sizeof b, "%d %%", WD.bt[i].pct); draw_text(d, x + cw - 16 - tw_n(b, 15, -1), ry + 20, b, 15, 0xFFFF, 0, 30, H); }
-            else draw_text(d, x + cw - 16 - tw_n("—", 15, -1), ry + 20, "—", 15, rgb(170, 170, 176), 0, 30, H);
+            ry += 40;
+            wg_ring(d, x + 32, ry + 18, 13, WD.bt[i].pct < 0 ? 0 : WD.bt[i].pct / 100.f, 0xFFFF);
+            if (WD.bt[i].pct >= 0) snprintf(b, sizeof b, "%d %%", WD.bt[i].pct); else snprintf(b, sizeof b, "—");
+            pw = tw_n(b, 17, -1); draw_text(d, x + cw - 16 - pw, ry + 24, b, 17, 0xFFFF, 0, 30, H);
+            wg_text(d, x + 56, ry + 17, WD.bt[i].name, 15, 0xFFFF, cw - 56 - pw - 24);
+            wg_text(d, x + 56, ry + 34, tr("Bluetooth"), 12, sub, cw - 56 - pw - 24);
         }
-        if (!WD.nbt) draw_text(d, x + 54, ry + 54, tr("Sin dispositivos Bluetooth"), 12, rgb(170, 170, 176), cw - 70, 30, H);
+        if (!WD.nbt) wg_text(d, tx, ry + 66, tr("Sin dispositivos Bluetooth conectados"), 12, sub, tw);
         break; }
     case WG_NOW: {
-        int a = app_by_id("nowplaying");
-        if (a >= 0) blit_scaled(d, &apps[a].icon[2], x + 14, y + 16, 52, 52, 255);
-        draw_text(d, x + 80, y + 36, tr("Reproduciendo"), 15, 0xFFFF, cw - 96, 30, H);
-        draw_text(d, x + 80, y + 56, tr(music_on ? "Sonando" : "En pausa"), 13, rgb(190, 190, 196), cw - 96, 30, H);
+        static uint16_t cov[128 * 128]; struct np_info ni; int cok = 0;
+        npx_snapshot(&ni, cov, &cok);
+        if (cok) npx_blit_cover(d, cov, x + 14, y + 16, 52, 10);
+        else { int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(d, &apps[a].icon[2], x + 14, y + 16, 52, 52, 255); }
+        wg_text(d, x + 80, y + 30, tr(ni.playing ? "Sonando" : "En pausa"), 11, rgb(160, 160, 166), cw - 96);
+        wg_text(d, x + 80, y + 50, ni.source && ni.title[0] ? ni.title : tr("Reproduciendo"), 15, 0xFFFF, cw - 96);
+        wg_text(d, x + 80, y + 68, ni.source ? ni.artist : "", 13, sub, cw - 96);
         break; }
     case WG_DATE: {
         time_t now = time(0); struct tm tm; localtime_r(&now, &tm);
         static const char *const dn[7] = { "domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado" };
         static const char *const mn[12] = { "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre" };
-        draw_text(d, x + 16, y + 28, tr(dn[tm.tm_wday]), 14, rgb(255, 69, 58), cw - 32, 30, H);
-        snprintf(b, sizeof b, "%d", tm.tm_mday); draw_text(d, x + 16, y + 74, b, 40, 0xFFFF, 0, 30, H);
-        snprintf(b, sizeof b, "%s %d", tr(mn[tm.tm_mon]), 1900 + tm.tm_year); draw_text(d, x + 90, y + 70, b, 15, rgb(220, 220, 226), cw - 106, 30, H);
+        wg_text(d, tx, y + 28, tr(dn[tm.tm_wday]), 14, rgb(255, 99, 88), tw - 90);
+        snprintf(b, sizeof b, "%d", tm.tm_mday); int dw = tw_n(b, 40, -1); draw_text(d, tx, y + 76, b, 40, 0xFFFF, 0, 30, H);
+        snprintf(b, sizeof b, "%s %d", tr(mn[tm.tm_mon]), 1900 + tm.tm_year); wg_text(d, tx + dw + 12, y + 72, b, 15, head, tw - dw - 12);
         snprintf(b, sizeof b, "%02d:%02d", tm.tm_hour, tm.tm_min); draw_text(d, x + cw - 16 - tw_n(b, 22, -1), y + 40, b, 22, 0xFFFF, 0, 30, H);
         break; }
     case WG_STORAGE: {
-        char s1[24], s2[24];
-        draw_text(d, x + 16, y + 26, tr("Almacenamiento"), 13, rgb(220, 220, 226), cw - 32, 30, H);
-        if (WD.sd_tot) { snprintf(b, sizeof b, "%s  ·  %s %s %s", tr("Tarjeta SD"), wg_size(WD.sd_free, s1, 24), tr("libres de"), wg_size(WD.sd_tot, s2, 24));
-            draw_text(d, x + 16, y + 50, b, 13, 0xFFFF, cw - 32, 30, H); wg_bar(d, x + 16, y + 58, cw - 32, 1 - (float)WD.sd_free / WD.sd_tot, rgb(10, 132, 255)); }
-        else draw_text(d, x + 16, y + 50, tr("Sin tarjeta SD"), 13, rgb(170, 170, 176), cw - 32, 30, H);
-        snprintf(b, sizeof b, "%s  ·  %s %s %s", tr("En el HiBy"), wg_size(WD.in_free, s1, 24), tr("libres de"), wg_size(WD.in_tot, s2, 24));
-        draw_text(d, x + 16, y + 86, b, 13, 0xFFFF, cw - 32, 30, H);
-        if (WD.in_tot) wg_bar(d, x + 16, y + 94, cw - 32, 1 - (float)WD.in_free / WD.in_tot, rgb(191, 90, 242));
+        wg_text(d, tx, y + 26, tr("Almacenamiento"), 13, head, tw);
+        if (WD.sd_tot) {
+            wg_text(d, tx, y + 50, tr("Tarjeta SD"), 14, 0xFFFF, tw / 2);
+            snprintf(b, sizeof b, "%s / %s", wg_size(WD.sd_free, s1, 24), wg_size(WD.sd_tot, s2, 24)); int vw = tw_n(b, 12, -1);
+            draw_text(d, x + cw - 16 - vw, y + 50, b, 12, sub, 0, 30, H);
+            wg_bar(d, tx, y + 58, tw, 1 - (float)WD.sd_free / WD.sd_tot, rgb(10, 132, 255));
+        } else wg_text(d, tx, y + 50, tr("Sin tarjeta SD"), 14, sub, tw);
+        wg_text(d, tx, y + 92, tr("En el HiBy"), 14, 0xFFFF, tw / 2);
+        snprintf(b, sizeof b, "%s / %s", wg_size(WD.in_free, s1, 24), wg_size(WD.in_tot, s2, 24)); int vw = tw_n(b, 12, -1);
+        draw_text(d, x + cw - 16 - vw, y + 92, b, 12, sub, 0, 30, H);
+        if (WD.in_tot) wg_bar(d, tx, y + 100, tw, 1 - (float)WD.in_free / WD.in_tot, rgb(191, 90, 242));
+        wg_text(d, tx, y + 121, tr("libres / total"), 11, rgb(160, 160, 166), tw);
         break; }
     case WG_POWER: {
-        draw_text(d, x + 16, y + 26, tr("Energía"), 13, rgb(220, 220, 226), cw - 32, 30, H);
-        snprintf(b, sizeof b, "%s %s", tr("Modo"), tr(pw_name(pw_mode)));
-        draw_text(d, x + 16, y + 52, b, 17, pw_mode == PW_SAVE ? rgb(255, 204, 0) : pw_mode == PW_PERF ? rgb(255, 69, 58) : 0xFFFF, cw - 32, 30, H);
-        draw_text(d, x + 16, y + 72, tr(pw_nocharge ? "Solo USB: la batería no se carga" : "Carga normal"), 12, rgb(170, 170, 176), cw - 32, 30, H);
+        wg_text(d, tx, y + 26, tr("Energía"), 13, head, tw);
+        snprintf(b, sizeof b, "%s %s · %d Hz", tr("Modo"), tr(pw_name(pw_mode)), lcd_hz);
+        wg_text(d, tx, y + 52, b, 17, pw_mode == PW_SAVE ? rgb(255, 214, 10) : pw_mode == PW_PERF ? rgb(255, 99, 88) : 0xFFFF, tw);
+        wg_text(d, tx, y + 72, tr(pw_nocharge ? "Solo USB: la batería no se carga" : "Carga normal"), 12, sub, tw);
+        break; }
+    case WG_LIB: {
+        wg_text(d, tx, y + 26, tr("Biblioteca"), 13, head, tw);
+        snprintf(b, sizeof b, "%d", WD.songs); int nw = tw_n(b, 30, -1); draw_text(d, tx, y + 64, b, 30, 0xFFFF, 0, 30, H);
+        wg_text(d, tx + nw + 8, y + 62, tr("canciones"), 14, head, tw - nw - 8);
+        snprintf(b, sizeof b, "%d %s · %d %s · %s", WD.albums, tr("álbumes"), WD.artists, tr("artistas"), wg_size(WD.lib_bytes, s1, 24));
+        wg_text(d, tx, y + 88, b, 13, sub, tw);
+        break; }
+    case WG_NEW: {
+        wg_text(d, tx, y + 26, tr("Recién añadido"), 13, head, tw);
+        wg_text(d, tx, y + 52, WD.new_album[0] ? WD.new_album : "—", 16, 0xFFFF, tw);
+        wg_text(d, tx, y + 72, WD.new_artist, 13, sub, tw);
+        break; }
+    case WG_LISTEN: {
+        wg_text(d, tx, y + 26, tr("Escuchas"), 13, head, tw);
+        wg_text(d, tx, y + 48, tr("Lo último"), 11, rgb(160, 160, 166), tw);
+        snprintf(b, sizeof b, "%s — %s", WD.last_title[0] ? WD.last_title : "—", WD.last_artist);
+        wg_text(d, tx, y + 66, b, 14, 0xFFFF, tw);
+        wg_text(d, tx, y + 86, tr("Artista más escuchado"), 11, rgb(160, 160, 166), tw);
+        if (WD.top_n) snprintf(b, sizeof b, "%s · %d %s", WD.top_artist, WD.top_n, tr("escuchas")); else snprintf(b, sizeof b, "—");
+        wg_text(d, tx, y + 104, b, 14, 0xFFFF, tw);
         break; }
     }
     return h;
@@ -187,6 +238,7 @@ static void widgets_draw(uint16_t *d, int ox)
 {
     if (ox <= -W || ox >= W) return;
     if (!WD.t || now_ms() - WD.t > 10000) wg_refresh();
+    if (npx_changed && widgets_on) { npx_changed = 0; wg_fresh = 1; }
     if (!wg_cache_ok || wg_fresh || wg_cache_scroll != wg_scroll || (int)(time(0) / 60) != wg_cache_min) { wg_fresh = 0; wg_compose(); }
     if (!wg_cache) return;
     int x0 = ox < 0 ? 0 : ox, x1 = ox + W > W ? W : ox + W;
@@ -216,7 +268,8 @@ static void page_widgets(struct spage *p)
     p->secs[0] = (struct ssec){ "WIDGETS", "WIDGETS_HELP", {
         ROW("Baterías", R_TOGGLE, &wg_on[WG_BATT], 0, 0, apply_widgets, 0, 0), ROW("Reproduciendo", R_TOGGLE, &wg_on[WG_NOW], 0, 0, apply_widgets, 0, 0),
         ROW("Fecha", R_TOGGLE, &wg_on[WG_DATE], 0, 0, apply_widgets, 0, 0), ROW("Almacenamiento", R_TOGGLE, &wg_on[WG_STORAGE], 0, 0, apply_widgets, 0, 0),
-        ROW("Energía", R_TOGGLE, &wg_on[WG_POWER], 0, 0, apply_widgets, 0, 0) }, 5 };
+        ROW("Energía", R_TOGGLE, &wg_on[WG_POWER], 0, 0, apply_widgets, 0, 0), ROW("Biblioteca", R_TOGGLE, &wg_on[WG_LIB], 0, 0, apply_widgets, 0, 0),
+        ROW("Recién añadido", R_TOGGLE, &wg_on[WG_NEW], 0, 0, apply_widgets, 0, 0), ROW("Escuchas", R_TOGGLE, &wg_on[WG_LISTEN], 0, 0, apply_widgets, 0, 0) }, 8 };
     p->nsec = 1;
 }
 static void widgets_settings(const char *back)

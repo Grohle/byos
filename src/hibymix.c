@@ -562,10 +562,30 @@ int main(int argc, char **argv)
     if (!np) { fprintf(stderr, "uso: hibymix probe | make TIPO | radio RUTA | radio-artist NOMBRE | remove  [--list] [--out FICHERO] [--lang es|en|fr]\n"); return 1; }
     if (getenv("HIBYMIX_DB")) DB = getenv("HIBYMIX_DB");
     if (getenv("HIBYMIX_DIR")) MIXDIR = getenv("HIBYMIX_DIR");
-    int ro = listmode || outpath;
+    int ro = listmode || outpath || !strcmp(pos[0], "stats");
     sqlite3 *db;
     if (sqlite3_open_v2(DB, &db, ro ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE, 0)) { fprintf(stderr, "no se pudo abrir la base\n"); return 2; }
     sqlite3_busy_timeout(db, 4000);
+    if (!strcmp(pos[0], "stats")) {          /* para los widgets: una linea por dato, separada por tabuladores */
+        const char *q[][2] = {
+            { "count", "SELECT COUNT(*), COUNT(DISTINCT album), COUNT(DISTINCT artist), (SELECT COUNT(*) FROM COLLECT_TABLE), COALESCE(SUM(size),0) FROM MEDIA_TABLE WHERE has_child_file = 0 OR has_child_file IS NULL" },
+            { "recent", "SELECT REPLACE(artist,char(0),''), REPLACE(album,char(0),'') FROM MEDIA_TABLE GROUP BY album ORDER BY MAX(ctime) DESC LIMIT 1" },
+            { "top", "SELECT REPLACE(artist,char(0),''), COUNT(*) c FROM HISTORY_TABLE GROUP BY artist ORDER BY c DESC LIMIT 1" },
+            { "last", "SELECT REPLACE(name,char(0),''), REPLACE(artist,char(0),'') FROM HISTORY_TABLE ORDER BY rowid DESC LIMIT 1" },
+        };
+        for (unsigned k = 0; k < sizeof q / sizeof q[0]; k++) {
+            sqlite3_stmt *st;
+            if (sqlite3_prepare_v2(db, q[k][1], -1, &st, 0)) continue;
+            if (sqlite3_step(st) == SQLITE_ROW) {
+                printf("%s", q[k][0]);
+                for (int c = 0; c < sqlite3_column_count(st); c++) printf("\t%s", sqlite3_column_text(st, c) ? (const char *)sqlite3_column_text(st, c) : "");
+                printf("\n");
+            }
+            sqlite3_finalize(st);
+        }
+        sqlite3_close(db);
+        return 0;
+    }
     if (!strcmp(pos[0], "probe")) {
         sqlite3_stmt *st;
         if (!sqlite3_prepare_v2(db, "PRAGMA journal_mode", -1, &st, 0)) { if (sqlite3_step(st) == SQLITE_ROW) printf("journal: %s\n", sqlite3_column_text(st, 0)); sqlite3_finalize(st); }

@@ -76,12 +76,7 @@ static void human_size(long long s, char *o, int n)
     else if (s < 1024LL * 1024 * 1024) snprintf(o, n, "%.1f MB", s / 1048576.0);
     else snprintf(o, n, "%.2f GB", s / 1073741824.0);
 }
-static void human_date(time_t t, char *o, int n)
-{
-    static const char *mes[] = { "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic" };
-    struct tm tm; localtime_r(&t, &tm);
-    snprintf(o, n, "%d %s %d", tm.tm_mday, mes[tm.tm_mon], tm.tm_year + 1900);
-}
+static void human_date(time_t t, char *o, int n) { lang_date(t, o, n); }   /* en el idioma actual (i18n.inc.c) */
 
 /* ------------------------------------------------------------------ iconos dibujados */
 static void icon_folder(uint16_t *d, int x, int y)
@@ -433,7 +428,7 @@ static void text_editor(const char *path, const char *name)
             return;
         }
         if (sy < 86 && sx > W - 110 && !tx_ro) {
-            if (!tx_edit) { tx_edit = 1; tx.cur = tx.len; }
+            if (!tx_edit) { tx_edit = 1; tx.cur = tx.len; kb_begin(&tx, fr0, tx_redraw); }
             else {   /* guardar: fichero temporal y renombrado (nunca se queda a medias) */
                 char tmp[820]; snprintf(tmp, sizeof tmp, "%s.hibymod_tmp", path);
                 int o = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -451,7 +446,7 @@ static void text_editor(const char *path, const char *name)
                 int d = abs(12 + tw_n(tx.b + a, 14, i - a) - sx); if (d < bd) { bd = d; best = i; }
             }
             if (best > a && best == b && b < tx.len && tx.b[b - 1] == '\n') best = b - 1;
-            tx.cur = best; tx_redraw(fr0, -1); present();
+            tx.cur = best; if (kb_off) kb_reveal(fr0, tx_redraw); else { tx_redraw(fr0, -1); present(); }
         }
     }
 }

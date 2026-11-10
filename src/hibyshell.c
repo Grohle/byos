@@ -754,6 +754,9 @@ static void draw_toast(uint16_t *dst);
 #include "settings.inc.c"
 #include "keyboard.inc.c"
 #include "tageditor.inc.c"
+#include "nowplaying.inc.c"
+#include "playctl.inc.c"
+#include "nowplay.inc.c"
 #include "files.inc.c"
 #include "gestures.inc.c"
 #include "power.inc.c"
@@ -969,6 +972,7 @@ int main(int argc, char **argv)
     register_installed_apps();
     lconf_load();
     pw_load();
+    npx_start();
     audio_boot();
     load_wall();
     load_icons();
@@ -1014,7 +1018,7 @@ int main(int argc, char **argv)
                 if (!is_home(fr1)) { lg("el reproductor cambio de pantalla"); launcher_leave(); }
                 else launcher_statusbar();
             } else if (now_ms() < toast_until + 40 || V.edit) launcher_present();   /* aviso o temblor */
-            else if (widgets_on && (wg_fresh || now_ms() - WD.t > 10000 || (int)(time(0) / 60) != wg_cache_min)) launcher_present();
+            else if (widgets_on && (wg_fresh || npx_changed || now_ms() - WD.t > 10000 || (int)(time(0) / 60) != wg_cache_min)) launcher_present();
             else if (mirror_dirty && pr == 0 && !hud_active) mirror_save();      /* en reposo */
             else if (!wg_cache_ok && pr == 0 && !hud_active && !widgets_on) { if (!WD.t) wg_refresh(); wg_compose(); }   /* widgets listos de antemano */
         } else if (launcher_enabled && !st->capture && !st->held && st->home_hits != home_hits_seen) {

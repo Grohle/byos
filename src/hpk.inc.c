@@ -79,51 +79,52 @@ const char *hpk_errkey(int code)
     return code < HPK_E_COUNT ? hpk_keys[code] : "err.io";
 }
 
-static const struct { const char *key, *t[3]; } hpk_tr[] = {
-    { "ok",             { "Listo", "Done", "Terminé" } },
-    { "err.open",       { "No se puede abrir el paquete", "Cannot open the package", "Impossible d'ouvrir le paquet" } },
-    { "err.io",         { "Error de lectura o escritura", "Read or write error", "Erreur de lecture ou d'écriture" } },
-    { "err.format",     { "El paquete está dañado o incompleto", "The package is damaged or incomplete", "Le paquet est endommagé ou incomplet" } },
-    { "err.checksum",   { "El paquete está dañado (suma de control)", "The package is damaged (checksum)", "Le paquet est endommagé (somme de contrôle)" } },
-    { "err.traversal",  { "El paquete contiene rutas no permitidas", "The package contains forbidden paths", "Le paquet contient des chemins interdits" } },
-    { "err.type",       { "El paquete contiene enlaces o ficheros especiales", "The package contains links or special files", "Le paquet contient des liens ou des fichiers spéciaux" } },
-    { "err.toobig",     { "El paquete es demasiado grande", "The package is too large", "Le paquet est trop volumineux" } },
-    { "err.nomanifest", { "Falta manifest.ini", "manifest.ini is missing", "manifest.ini est absent" } },
-    { "err.manifest",   { "manifest.ini no es válido", "manifest.ini is not valid", "manifest.ini n'est pas valide" } },
-    { "err.id",         { "Identificador de app no válido", "Invalid app identifier", "Identifiant d'app invalide" } },
-    { "err.version",    { "Número de versión no válido", "Invalid version number", "Numéro de version invalide" } },
-    { "err.arch",       { "La app no es para este reproductor", "This app is not for this player", "Cette app n'est pas pour ce lecteur" } },
-    { "err.newer",      { "Necesita una versión más nueva de hibymod", "Requires a newer hibymod", "Nécessite une version plus récente de hibymod" } },
-    { "err.noexec",     { "Falta el ejecutable de la app", "The app executable is missing", "L'exécutable de l'app est absent" } },
-    { "err.elf",        { "El ejecutable no es compatible", "The executable is not compatible", "L'exécutable n'est pas compatible" } },
-    { "err.space",      { "No hay espacio suficiente", "Not enough free space", "Espace libre insuffisant" } },
-    { "err.icon",       { "El icono no es válido", "The icon is not valid", "L'icône n'est pas valide" } },
-    { "err.dup",        { "El paquete tiene ficheros repetidos", "The package has duplicate files", "Le paquet contient des fichiers en double" } },
-    { "err.swap",       { "No se pudo activar la nueva versión", "Could not activate the new version", "Impossible d'activer la nouvelle version" } },
-    { "err.notinst",    { "La app no está instalada", "The app is not installed", "L'app n'est pas installée" } },
-    { "err.nomem",      { "No hay memoria suficiente", "Not enough memory", "Mémoire insuffisante" } },
-    { "st.verifying",   { "Comprobando…", "Verifying…", "Vérification…" } },
-    { "st.installing",  { "Instalando…", "Installing…", "Installation…" } },
-    { "st.icons",       { "Preparando icono…", "Preparing icon…", "Préparation de l'icône…" } },
-    { "st.installed",   { "Instalada", "Installed", "Installée" } },
-    { "st.notinst",     { "No instalada", "Not installed", "Non installée" } },
-    { "st.update",      { "Actualizar", "Update", "Mettre à jour" } },
-    { "st.install",     { "Instalar", "Install", "Installer" } },
-    { "st.current",     { "Al día", "Up to date", "À jour" } },
-    { "st.older",       { "La instalada es más nueva", "Installed version is newer", "La version installée est plus récente" } },
-    { "st.uninstall",   { "Desinstalar", "Uninstall", "Désinstaller" } },
-    { "st.uninstalling",{ "Desinstalando…", "Uninstalling…", "Désinstallation…" } },
-    { "st.uninstalled", { "Desinstalada", "Uninstalled", "Désinstallée" } },
-    { "st.keepdata",    { "Conservar sus datos", "Keep its data", "Conserver ses données" } },
-    { "st.damaged",     { "Paquete dañado", "Damaged package", "Paquet endommagé" } },
-    { "st.stopplayer",  { "Esta app detiene la música mientras está abierta", "This app stops the music while open", "Cette app arrête la musique pendant son utilisation" } },
-    { "st.noapps",      { "No hay paquetes en la carpeta Apps de la tarjeta", "No packages in the card's Apps folder", "Aucun paquet dans le dossier Apps de la carte" } },
+/* columnas: es, en, fr, de, it, ja, ko, pl, ru, zh-Hans, th, zh-Hant, uk (orden de LANG_*) */
+static const struct { const char *key, *t[HPK_NLANG]; } hpk_tr[] = {
+    { "ok",             { "Listo", "Done", "Terminé", "Fertig", "Fine", "完了", "완료", "Gotowe", "Готово", "完成", "เสร็จสิ้น", "完成", "Готово" } },
+    { "err.open",       { "No se puede abrir el paquete", "Cannot open the package", "Impossible d'ouvrir le paquet", "Paket kann nicht geöffnet werden", "Impossibile aprire il pacchetto", "パッケージを開けません", "패키지를 열 수 없습니다", "Nie można otworzyć pakietu", "Не удается открыть пакет", "无法打开软件包", "เปิดแพ็กเกจไม่ได้", "無法打開套件", "Не вдається відкрити пакет" } },
+    { "err.io",         { "Error de lectura o escritura", "Read or write error", "Erreur de lecture ou d'écriture", "Lese- oder Schreibfehler", "Errore di lettura o scrittura", "読み書きエラー", "읽기 또는 쓰기 오류", "Błąd odczytu lub zapisu", "Ошибка чтения или записи", "读写错误", "ข้อผิดพลาดในการอ่านหรือเขียน", "讀寫錯誤", "Помилка читання або запису" } },
+    { "err.format",     { "El paquete está dañado o incompleto", "The package is damaged or incomplete", "Le paquet est endommagé ou incomplet", "Paket beschädigt oder unvollständig", "Pacchetto danneggiato o incompleto", "パッケージが破損しているか不完全です", "패키지가 손상되었거나 불완전합니다", "Pakiet jest uszkodzony lub niekompletny", "Пакет поврежден или неполон", "软件包已损坏或不完整", "แพ็กเกจเสียหายหรือไม่สมบูรณ์", "套件已損毀或不完整", "Пакет пошкоджений або неповний" } },
+    { "err.checksum",   { "El paquete está dañado (suma de control)", "The package is damaged (checksum)", "Le paquet est endommagé (somme de contrôle)", "Paket beschädigt (Prüfsumme)", "Pacchetto danneggiato (checksum)", "パッケージが破損しています（チェックサム）", "패키지가 손상되었습니다(체크섬)", "Pakiet jest uszkodzony (suma kontrolna)", "Пакет поврежден (контрольная сумма)", "软件包已损坏（校验和）", "แพ็กเกจเสียหาย (checksum)", "套件已損毀（校驗和）", "Пакет пошкоджений (контрольна сума)" } },
+    { "err.traversal",  { "El paquete contiene rutas no permitidas", "The package contains forbidden paths", "Le paquet contient des chemins interdits", "Paket enthält unzulässige Pfade", "Il pacchetto contiene percorsi non consentiti", "パッケージに不正なパスがあります", "패키지에 허용되지 않는 경로가 있습니다", "Pakiet zawiera niedozwolone ścieżki", "Пакет содержит запрещенные пути", "软件包含有不允许的路径", "แพ็กเกจมีเส้นทางที่ไม่อนุญาต", "套件含有不允許的路徑", "Пакет містить заборонені шляхи" } },
+    { "err.type",       { "El paquete contiene enlaces o ficheros especiales", "The package contains links or special files", "Le paquet contient des liens ou des fichiers spéciaux", "Paket enthält Links oder Spezialdateien", "Il pacchetto contiene link o file speciali", "パッケージにリンクや特殊ファイルがあります", "패키지에 링크나 특수 파일이 있습니다", "Pakiet zawiera dowiązania lub pliki specjalne", "Пакет содержит ссылки или особые файлы", "软件包含有链接或特殊文件", "แพ็กเกจมีลิงก์หรือไฟล์พิเศษ", "套件含有連結或特殊檔案", "Пакет містить посилання або спеціальні файли" } },
+    { "err.toobig",     { "El paquete es demasiado grande", "The package is too large", "Le paquet est trop volumineux", "Paket ist zu groß", "Il pacchetto è troppo grande", "パッケージが大きすぎます", "패키지가 너무 큽니다", "Pakiet jest za duży", "Пакет слишком большой", "软件包太大", "แพ็กเกจใหญ่เกินไป", "套件太大", "Пакет завеликий" } },
+    { "err.nomanifest", { "Falta manifest.ini", "manifest.ini is missing", "manifest.ini est absent", "manifest.ini fehlt", "Manca manifest.ini", "manifest.ini がありません", "manifest.ini가 없습니다", "Brak pliku manifest.ini", "Отсутствует manifest.ini", "缺少 manifest.ini", "ไม่มี manifest.ini", "缺少 manifest.ini", "Немає manifest.ini" } },
+    { "err.manifest",   { "manifest.ini no es válido", "manifest.ini is not valid", "manifest.ini n'est pas valide", "manifest.ini ist ungültig", "manifest.ini non è valido", "manifest.ini が無効です", "manifest.ini가 올바르지 않습니다", "Plik manifest.ini jest nieprawidłowy", "Недопустимый manifest.ini", "manifest.ini 无效", "manifest.ini ไม่ถูกต้อง", "manifest.ini 無效", "Недійсний manifest.ini" } },
+    { "err.id",         { "Identificador de app no válido", "Invalid app identifier", "Identifiant d'app invalide", "Ungültige App-Kennung", "Identificatore app non valido", "無効なアプリ ID", "잘못된 앱 식별자", "Nieprawidłowy identyfikator aplikacji", "Недопустимый идентификатор приложения", "无效的 App 标识符", "ตัวระบุแอปไม่ถูกต้อง", "無效的 App 識別碼", "Недійсний ідентифікатор програми" } },
+    { "err.version",    { "Número de versión no válido", "Invalid version number", "Numéro de version invalide", "Ungültige Versionsnummer", "Numero di versione non valido", "無効なバージョン番号", "잘못된 버전 번호", "Nieprawidłowy numer wersji", "Недопустимый номер версии", "无效的版本号", "หมายเลขเวอร์ชันไม่ถูกต้อง", "無效的版本號碼", "Недійсний номер версії" } },
+    { "err.arch",       { "La app no es para este reproductor", "This app is not for this player", "Cette app n'est pas pour ce lecteur", "Diese App ist nicht für diesen Player", "Questa app non è per questo lettore", "このプレーヤー用のアプリではありません", "이 플레이어용 앱이 아닙니다", "Ta aplikacja nie jest dla tego odtwarzacza", "Приложение не для этого плеера", "此 App 不适用于本播放器", "แอปนี้ไม่ใช่สำหรับเครื่องเล่นนี้", "此 App 不適用於本播放器", "Програма не для цього плеєра" } },
+    { "err.newer",      { "Necesita una versión más nueva de hibymod", "Requires a newer hibymod", "Nécessite une version plus récente de hibymod", "Erfordert ein neueres hibymod", "Richiede un hibymod più recente", "新しい hibymod が必要です", "최신 hibymod가 필요합니다", "Wymaga nowszego hibymod", "Нужна более новая версия hibymod", "需要更新版本的 hibymod", "ต้องใช้ hibymod เวอร์ชันใหม่กว่า", "需要較新版本的 hibymod", "Потрібна новіша версія hibymod" } },
+    { "err.noexec",     { "Falta el ejecutable de la app", "The app executable is missing", "L'exécutable de l'app est absent", "Programmdatei der App fehlt", "Manca l'eseguibile dell'app", "アプリの実行ファイルがありません", "앱 실행 파일이 없습니다", "Brak pliku wykonywalnego aplikacji", "Отсутствует исполняемый файл", "缺少 App 可执行文件", "ไม่มีไฟล์ปฏิบัติการของแอป", "缺少 App 執行檔", "Немає виконуваного файлу програми" } },
+    { "err.elf",        { "El ejecutable no es compatible", "The executable is not compatible", "L'exécutable n'est pas compatible", "Programmdatei ist nicht kompatibel", "L'eseguibile non è compatibile", "実行ファイルに互換性がありません", "실행 파일이 호환되지 않습니다", "Plik wykonywalny jest niezgodny", "Исполняемый файл несовместим", "可执行文件不兼容", "ไฟล์ปฏิบัติการไม่รองรับ", "執行檔不相容", "Виконуваний файл несумісний" } },
+    { "err.space",      { "No hay espacio suficiente", "Not enough free space", "Espace libre insuffisant", "Nicht genug freier Speicher", "Spazio libero insufficiente", "空き容量が足りません", "여유 공간이 부족합니다", "Za mało wolnego miejsca", "Недостаточно места", "可用空间不足", "พื้นที่ว่างไม่พอ", "可用空間不足", "Недостатньо місця" } },
+    { "err.icon",       { "El icono no es válido", "The icon is not valid", "L'icône n'est pas valide", "Symbol ist ungültig", "L'icona non è valida", "アイコンが無効です", "아이콘이 올바르지 않습니다", "Ikona jest nieprawidłowa", "Недопустимый значок", "图标无效", "ไอคอนไม่ถูกต้อง", "圖示無效", "Недійсна іконка" } },
+    { "err.dup",        { "El paquete tiene ficheros repetidos", "The package has duplicate files", "Le paquet contient des fichiers en double", "Paket enthält doppelte Dateien", "Il pacchetto ha file duplicati", "パッケージに重複ファイルがあります", "패키지에 중복 파일이 있습니다", "Pakiet zawiera zduplikowane pliki", "В пакете повторяются файлы", "软件包含有重复文件", "แพ็กเกจมีไฟล์ซ้ำ", "套件含有重複檔案", "У пакеті є повторювані файли" } },
+    { "err.swap",       { "No se pudo activar la nueva versión", "Could not activate the new version", "Impossible d'activer la nouvelle version", "Neue Version nicht aktivierbar", "Impossibile attivare la nuova versione", "新しいバージョンを有効にできません", "새 버전을 활성화할 수 없습니다", "Nie można włączyć nowej wersji", "Не удалось включить новую версию", "无法启用新版本", "เปิดใช้เวอร์ชันใหม่ไม่ได้", "無法啟用新版本", "Не вдалося ввімкнути нову версію" } },
+    { "err.notinst",    { "La app no está instalada", "The app is not installed", "L'app n'est pas installée", "App ist nicht installiert", "L'app non è installata", "アプリはインストールされていません", "앱이 설치되어 있지 않습니다", "Aplikacja nie jest zainstalowana", "Приложение не установлено", "App 未安装", "ไม่ได้ติดตั้งแอปนี้", "App 未安裝", "Програму не встановлено" } },
+    { "err.nomem",      { "No hay memoria suficiente", "Not enough memory", "Mémoire insuffisante", "Nicht genug Arbeitsspeicher", "Memoria insufficiente", "メモリが足りません", "메모리가 부족합니다", "Za mało pamięci", "Недостаточно памяти", "内存不足", "หน่วยความจำไม่พอ", "記憶體不足", "Недостатньо пам'яті" } },
+    { "st.verifying",   { "Comprobando…", "Verifying…", "Vérification…", "Wird geprüft …", "Verifica…", "確認中…", "확인 중…", "Sprawdzanie…", "Проверка…", "正在验证…", "กำลังตรวจสอบ…", "正在驗證⋯", "Перевірка…" } },
+    { "st.installing",  { "Instalando…", "Installing…", "Installation…", "Wird installiert …", "Installazione…", "インストール中…", "설치 중…", "Instalowanie…", "Установка…", "正在安装…", "กำลังติดตั้ง…", "正在安裝⋯", "Встановлення…" } },
+    { "st.icons",       { "Preparando icono…", "Preparing icon…", "Préparation de l'icône…", "Symbol wird erstellt …", "Preparazione icona…", "アイコンを準備中…", "아이콘 준비 중…", "Przygotowywanie ikony…", "Подготовка значка…", "正在准备图标…", "กำลังเตรียมไอคอน…", "正在準備圖示⋯", "Підготовка іконки…" } },
+    { "st.installed",   { "Instalada", "Installed", "Installée", "Installiert", "Installata", "インストール済み", "설치됨", "Zainstalowana", "Установлено", "已安装", "ติดตั้งแล้ว", "已安裝", "Встановлено" } },
+    { "st.notinst",     { "No instalada", "Not installed", "Non installée", "Nicht installiert", "Non installata", "未インストール", "설치되지 않음", "Niezainstalowana", "Не установлено", "未安装", "ยังไม่ได้ติดตั้ง", "未安裝", "Не встановлено" } },
+    { "st.update",      { "Actualizar", "Update", "Mettre à jour", "Aktualisieren", "Aggiorna", "アップデート", "업데이트", "Uaktualnij", "Обновить", "更新", "อัปเดต", "更新", "Оновити" } },
+    { "st.install",     { "Instalar", "Install", "Installer", "Installieren", "Installa", "インストール", "설치", "Zainstaluj", "Установить", "安装", "ติดตั้ง", "安裝", "Встановити" } },
+    { "st.current",     { "Al día", "Up to date", "À jour", "Aktuell", "Aggiornata", "最新", "최신", "Aktualna", "Актуально", "已是最新", "เป็นปัจจุบัน", "已是最新", "Актуально" } },
+    { "st.older",       { "La instalada es más nueva", "Installed version is newer", "La version installée est plus récente", "Installierte Version ist neuer", "La versione installata è più recente", "インストール済みの方が新しいです", "설치된 버전이 더 최신입니다", "Zainstalowana wersja jest nowsza", "Установленная версия новее", "已安装的版本更新", "เวอร์ชันที่ติดตั้งใหม่กว่า", "已安裝的版本較新", "Встановлена версія новіша" } },
+    { "st.uninstall",   { "Desinstalar", "Uninstall", "Désinstaller", "Deinstallieren", "Disinstalla", "アンインストール", "제거", "Odinstaluj", "Удалить", "卸载", "ถอนการติดตั้ง", "解除安裝", "Видалити" } },
+    { "st.uninstalling",{ "Desinstalando…", "Uninstalling…", "Désinstallation…", "Wird deinstalliert …", "Disinstallazione…", "アンインストール中…", "제거 중…", "Odinstalowywanie…", "Удаление…", "正在卸载…", "กำลังถอนการติดตั้ง…", "正在解除安裝⋯", "Видалення…" } },
+    { "st.uninstalled", { "Desinstalada", "Uninstalled", "Désinstallée", "Deinstalliert", "Disinstallata", "アンインストール済み", "제거됨", "Odinstalowana", "Удалено", "已卸载", "ถอนการติดตั้งแล้ว", "已解除安裝", "Видалено" } },
+    { "st.keepdata",    { "Conservar sus datos", "Keep its data", "Conserver ses données", "Daten behalten", "Conserva i dati", "データを残す", "데이터 유지", "Zachowaj dane", "Сохранить данные", "保留其数据", "เก็บข้อมูลไว้", "保留其資料", "Зберегти дані" } },
+    { "st.damaged",     { "Paquete dañado", "Damaged package", "Paquet endommagé", "Beschädigtes Paket", "Pacchetto danneggiato", "破損したパッケージ", "손상된 패키지", "Uszkodzony pakiet", "Поврежденный пакет", "软件包已损坏", "แพ็กเกจเสียหาย", "套件已損毀", "Пошкоджений пакет" } },
+    { "st.stopplayer",  { "Esta app detiene la música mientras está abierta", "This app stops the music while open", "Cette app arrête la musique pendant son utilisation", "Diese App stoppt die Musik, solange sie offen ist", "Questa app ferma la musica finché è aperta", "このアプリを開いている間は音楽が止まります", "이 앱이 열려 있는 동안 음악이 정지됩니다", "Ta aplikacja zatrzymuje muzykę, gdy jest otwarta", "Пока приложение открыто, музыка остановлена", "此 App 打开时音乐会停止", "แอปนี้จะหยุดเพลงขณะเปิดอยู่", "此 App 開啟時音樂會停止", "Поки програма відкрита, музика зупиняється" } },
+    { "st.noapps",      { "No hay paquetes en la carpeta Apps de la tarjeta", "No packages in the card's Apps folder", "Aucun paquet dans le dossier Apps de la carte", "Keine Pakete im Ordner Apps der Karte", "Nessun pacchetto nella cartella Apps della scheda", "カードの Apps フォルダにパッケージがありません", "카드의 Apps 폴더에 패키지가 없습니다", "Brak pakietów w folderze Apps na karcie", "В папке Apps на карте нет пакетов", "存储卡的 Apps 文件夹中没有软件包", "ไม่มีแพ็กเกจในโฟลเดอร์ Apps ของการ์ด", "記憶卡的 Apps 資料夾中沒有套件", "У папці Apps на картці немає пакетів" } },
 };
 const char *hpk_msg(const char *key, int lang)
 {
-    if (lang < 0 || lang > 2) lang = 0;
+    if (lang < 0 || lang >= HPK_NLANG) lang = HPK_LANG_EN;
     for (unsigned i = 0; i < sizeof hpk_tr / sizeof hpk_tr[0]; i++)
-        if (!strcmp(hpk_tr[i].key, key)) return hpk_tr[i].t[lang];
+        if (!strcmp(hpk_tr[i].key, key)) return hpk_tr[i].t[lang] && hpk_tr[i].t[lang][0] ? hpk_tr[i].t[lang] : hpk_tr[i].t[HPK_LANG_EN];
     return key;
 }
 
