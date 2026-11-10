@@ -9,16 +9,20 @@
 #include "buds_samsung.inc.c"
 #include "buds_nothing.inc.c"
 #include "buds_sony.inc.c"
+#include "buds_soundcore.inc.c"
+#include "buds_huawei.inc.c"
+#include "buds_oppo.inc.c"
 #include "buds_fastpair.inc.c"
 
 /* brand registry, in priority order: vendor modules first, Fast Pair (generic battery) last.
  * A new brand = one file with its struct buds_brand + one line here + its models below. */
-static const struct buds_brand *const BUDS_BRANDS[] = { &BRAND_APPLE, &BRAND_SAMSUNG, &BRAND_NOTHING, &BRAND_SONY, &BRAND_FASTPAIR };
+static const struct buds_brand *const BUDS_BRANDS[] = { &BRAND_APPLE, &BRAND_SAMSUNG, &BRAND_NOTHING, &BRAND_SONY, &BRAND_SOUNDCORE,
+                                                        &BRAND_HUAWEI, &BRAND_OPPO, &BRAND_FASTPAIR };
 #define BUDS_NBRANDS ((int)(sizeof BUDS_BRANDS / sizeof *BUDS_BRANDS))
 
 /* one catalog entry: the published capabilities a model gets when it connects */
 struct buds_cat { const struct buds_model *m; const struct buds_brand *br; struct buds_st s; };
-#define BUDS_CAT_MAX 64
+#define BUDS_CAT_MAX 128
 static void buds_cat_one(struct buds_cat *c, const struct buds_model *m, const struct buds_brand *br)
 {
     static struct bud b;
@@ -34,6 +38,10 @@ static int buds_catalog(struct buds_cat *out, int max)
     for (int i = (int)(sizeof SAMSUNG_MODELS / sizeof *SAMSUNG_MODELS) - 1; i >= 0 && n < max; i--) buds_cat_one(&out[n++], &SAMSUNG_MODELS[i], &BRAND_SAMSUNG);
     for (unsigned i = 0; i < sizeof NOTHING_MODELS / sizeof *NOTHING_MODELS && n < max; i++) buds_cat_one(&out[n++], &NOTHING_MODELS[i].m, &BRAND_NOTHING);
     for (unsigned i = 0; i < sizeof SONY_MODELS / sizeof *SONY_MODELS && n < max; i++) buds_cat_one(&out[n++], &SONY_MODELS[i], &BRAND_SONY);
+    for (unsigned i = 0; i < sizeof SOUNDCORE_MODELS / sizeof *SOUNDCORE_MODELS && n < max; i++) buds_cat_one(&out[n++], &SOUNDCORE_MODELS[i], &BRAND_SOUNDCORE);
+    for (unsigned i = 0; i < sizeof HUAWEI_MODELS / sizeof *HUAWEI_MODELS && n < max; i++) buds_cat_one(&out[n++], &HUAWEI_MODELS[i], &BRAND_HUAWEI);
+    for (unsigned i = 0; i < sizeof OPPO_MODELS / sizeof *OPPO_MODELS && n < max; i++) buds_cat_one(&out[n++], &OPPO_MODELS[i], &BRAND_OPPO);
+    for (unsigned i = 0; i < sizeof GOOGLE_MODELS / sizeof *GOOGLE_MODELS && n < max; i++) buds_cat_one(&out[n++], &GOOGLE_MODELS[i], &BRAND_FASTPAIR);
     if (n < max) buds_cat_one(&out[n++], &FP_BUDS, &BRAND_FASTPAIR);
     return n;
 }
@@ -55,7 +63,8 @@ static const char *buds_brand_name(int brand)
 {
     switch (brand) {
     case BB_APPLE: return "Apple / Beats"; case BB_SAMSUNG: return "Samsung"; case BB_NOTHING: return "Nothing / CMF";
-    case BB_SONY: return "Sony"; default: return "Fast Pair";
+    case BB_SONY: return "Sony"; case BB_SOUNDCORE: return "Anker Soundcore"; case BB_HUAWEI: return "Huawei / Honor";
+    case BB_OPPO: return "OPPO / realme"; case BB_GOOGLE: return "Google"; default: return "Fast Pair";
     }
 }
 static void buds_matrix_md(FILE *f)

@@ -16,9 +16,22 @@
 #define FP_UUID "df21fe2c-2515-4fdb-8886-f12c4d67927c"
 static const struct buds_model FP_BUDS = { BB_OTHER, 0, "", 0, BF_BUDS, BC_BATT_LR | BC_BATT_CASE | BC_FW, 0, 0, 0, 0, { 0 }, 0 };
 static const struct buds_model FP_HEAD = { BB_OTHER, 0, "", 0, BF_HEAD, BC_BATT_LR | BC_BATT_CASE | BC_FW, 0, 0, 0, 0, { 0 }, 0 };
+/* Google Pixel Buds: battery through this module (their own "Maestro" protocol - pigweed RPC
+ * over HDLC on RFCOMM 25e97ff7-24ce-4c4c-8951-f764a708f7b5, documented by pbpctrl - is not
+ * implemented yet: ANC / EQ pending, docs/HEADPHONES.md section 10.4) */
+#define FP_PB (BC_BATT_LR | BC_BATT_CASE | BC_FW)
+static const struct buds_model GOOGLE_MODELS[] = {
+    { BB_GOOGLE, 4, "Google Pixel Buds Pro 2", "Pixel Buds Pro 2", BF_BUDS, FP_PB, 0, 0, 0, 0, { 0 }, 0 },
+    { BB_GOOGLE, 3, "Google Pixel Buds Pro", "Pixel Buds Pro", BF_BUDS, FP_PB, 0, 0, 0, 0, { 0 }, 0 },
+    { BB_GOOGLE, 2, "Google Pixel Buds A-Series", "Pixel Buds A", BF_BUDS, FP_PB, 0, 0, 0, 0, { 0 }, 0 },
+    { BB_GOOGLE, 5, "Google Pixel Buds 2a", "Pixel Buds 2a", BF_BUDS, FP_PB, 0, 0, 0, 0, { 0 }, 0 },
+    { BB_GOOGLE, 1, "Google Pixel Buds", "Pixel Buds", BF_BUDS, FP_PB, 0, 0, 0, 0, { 0 }, 0 },
+};
 static const struct buds_model *fp_identify(const struct bd_dev *d)
 {
     if (!bd_has_uuid(d, FP_UUID)) return 0;
+    const char *nm = d->name[0] ? d->name : d->alias;
+    for (unsigned i = 0; i < sizeof GOOGLE_MODELS / sizeof *GOOGLE_MODELS; i++) if (strstr(nm, GOOGLE_MODELS[i].match)) return &GOOGLE_MODELS[i];
     return strstr(d->icon, "headphones") ? &FP_HEAD : &FP_BUDS;
 }
 static const char *fp_uuid(const struct bud *b) { (void)b; return FP_UUID; }
@@ -54,5 +67,5 @@ static void fp_rx(struct bud *b, const uint8_t *p, int n)
     if (i > 0) { memmove(b->rbuf, b->rbuf + i, (size_t)(b->rn - i)); b->rn -= i; }
 }
 static int fp_cmd(struct bud *b, const struct bcmd *c) { (void)b; (void)c; return BE_NOTSUP; }
-static const struct buds_brand BRAND_FASTPAIR = { BB_OTHER, "fastpair", fp_identify, BT_RFCOMM, 0, fp_uuid, fp_start, fp_rx, fp_cmd, 0, 0 };
+static const struct buds_brand BRAND_FASTPAIR = { BB_OTHER, "fastpair", fp_identify, BT_RFCOMM, 0, fp_uuid, fp_start, fp_rx, fp_cmd, 0, 0, 0, 0 };
 #endif

@@ -245,5 +245,5 @@ static int sony_cmd(struct bud *b, const struct bcmd *c)
     }
 }
 static void sony_fill(struct bud *b) { b->s.eq_set = ES_SONY; if (b->s.caps & BC_EQ) { b->s.caps |= BC_BASS; b->s.bass_max = 20; } if (sony_writes) b->s.caps &= ~BC_RO; }
-static const struct buds_brand BRAND_SONY = { BB_SONY, "sony", sony_identify, BT_RFCOMM, 0, sony_uuid, sony_start, sony_rx, sony_cmd, sony_tick, sony_fill };
+static const struct buds_brand BRAND_SONY = { BB_SONY, "sony", sony_identify, BT_RFCOMM, 0, sony_uuid, sony_start, sony_rx, sony_cmd, sony_tick, sony_fill, 0, 0 };
 #endif

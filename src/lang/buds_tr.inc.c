@@ -89,6 +89,8 @@ static const char *const BUDTR[][LANG_N + 1] = {
     { "Conectar", "Conectar", "Connect", "Se connecter", "Verbinden", "Connetti", "接続", "연결", "Połącz", "Подключить", "连接", "เชื่อมต่อ", "連線", "Під'єднати" },
     { "Conectando…", "Conectando…", "Connecting…", "Connexion…", "Verbinden …", "Connessione…", "接続中…", "연결 중…", "Łączenie…", "Подключение…", "正在连接…", "กำลังเชื่อมต่อ…", "正在連線…", "Під'єднання…" },
     { "Desconectar", "Desconectar", "Disconnect", "Se déconnecter", "Trennen", "Disconnetti", "接続解除", "연결 해제", "Rozłącz", "Отключить", "断开连接", "ยกเลิกการเชื่อมต่อ", "中斷連線", "Від'єднати" },
+    { "Solo batería", "Solo batería", "Battery only", "Batterie uniquement", "Nur Akku", "Solo batteria", "バッテリーのみ", "배터리만", "Tylko bateria", "Только заряд", "仅电量", "เฉพาะแบตเตอรี่", "僅電量", "Лише заряд" },
+    { "%d modelos", "%d modelos", "%d models", "%d modèles", "%d Modelle", "%d modelli", "%d モデル", "%d개 모델", "Modele: %d", "Моделей: %d", "%d 个型号", "%d รุ่น", "%d 個型號", "Моделей: %d" },
     { "Atrás", "Atrás", "Back", "Retour", "Zurück", "Indietro", "戻る", "뒤로", "Wstecz", "Назад", "返回", "กลับ", "返回", "Назад" },
     { "Un momento…", "Un momento…", "One moment…", "Un instant…", "Einen Moment …", "Un momento…", "お待ちください…", "잠시만 기다리십시오…", "Chwileczkę…", "Минутку…", "请稍候…", "สักครู่…", "請稍候…", "Хвилинку…" },
     { "Conectando con los controles…", "Conectando con los controles…", "Connecting to the controls…", "Connexion aux commandes…", "Verbindung zur Steuerung …", "Connessione ai controlli…",

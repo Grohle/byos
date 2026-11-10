@@ -32,7 +32,7 @@
 #define BUDS_MAXDEV 6
 
 /* ------------------------------------------------------------------ vocabulary */
-enum { BB_NONE, BB_APPLE, BB_SAMSUNG, BB_NOTHING, BB_SONY, BB_JBL, BB_OTHER = 15 };
+enum { BB_NONE, BB_APPLE, BB_SAMSUNG, BB_NOTHING, BB_SONY, BB_JBL, BB_SOUNDCORE, BB_HUAWEI, BB_OPPO, BB_GOOGLE, BB_OTHER = 15 };
 /* product family: decides the drawing (buds.inc.c) */
 enum { BF_NONE, BF_PODS, BF_PODS_PRO, BF_PODS_MAX, BF_BEATS_BUDS, BF_BEATS_EAR, BF_BEATS_HEAD,
        BF_GBUDS, BF_GBUDS_LIVE, BF_GBUDS_STEM, BF_BUDS, BF_HEAD, BF_NOTHING, BF_N };
@@ -416,6 +416,8 @@ struct buds_brand {
     int (*cmd)(struct bud *b, const struct bcmd *c);    /* BE_* */
     void (*tick)(struct bud *b, double now_ms);         /* every second while open (may be 0) */
     void (*fill)(struct bud *b);                         /* optional: derive capabilities after bud_set_model() */
+    const char *(*pick_uuid)(const struct bd_dev *d);   /* optional: the service UUID of this device (UUID families) */
+    int (*channel)(const struct bud *b);                 /* optional: fixed RFCOMM channel (> 0: no SDP) */
 };
 /* one device as seen by a brand module: protocol state + the published state */
 struct bud {
@@ -435,6 +437,7 @@ struct bud {
     unsigned unknown_ids[8];     /* message ids already logged as unknown */
     double t_open, find_t;
     double now;                  /* monotonic ms, set by the daemon before every rx/cmd/tick call */
+    char uuid[37];               /* service UUID chosen by pick_uuid() at identification */
     union { uint8_t raw[768]; double align; } priv;   /* brand module private state */
 };
 static void bud_log(struct bud *b, const char *fmt, ...) __attribute__((format(printf, 2, 3)));

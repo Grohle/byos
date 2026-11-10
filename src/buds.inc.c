@@ -731,9 +731,9 @@ static void bu_batt_line(const struct buds_st *s, char *o, int n)
 /* ------------------------------------------------------------------ page model */
 enum { BR_NAV, BR_TOGGLE, BR_INFO, BR_ACTION, BR_CHECK, BR_TEXT, BR_HERO, BR_SEG, BR_SLIDER, BR_DEV, BR_SUPP, BR_EQVIS, BR_FIND, BR_EMPTY };
 enum { BFL_RED = 1, BFL_DIM = 2, BFL_BUSY = 4 };
-enum { BP_LIST, BP_DEV, BP_GEST, BP_PICK, BP_EQ, BP_FINDP, BP_SUPP, BP_CYCLE };
+enum { BP_LIST, BP_DEV, BP_GEST, BP_PICK, BP_EQ, BP_FINDP, BP_SUPP, BP_CYCLE, BP_SUPPB };
 /* row ids */
-enum { BI_NONE, BI_DEV0 = 10, BI_SUPP = 30, BI_SEG, BI_ANCLVL, BI_AMBLVL, BI_ADAPTLVL, BI_CONV, BI_GEST, BI_EQ, BI_EARDET, BI_AUTOPAUSE,
+enum { BI_NONE, BI_DEV0 = 10, BI_SUPPB0 = 700, BI_SUPP = 30, BI_SEG, BI_ANCLVL, BI_AMBLVL, BI_ADAPTLVL, BI_CONV, BI_GEST, BI_EQ, BI_EARDET, BI_AUTOPAUSE,
        BI_LOCK, BI_GAME, BI_FIND, BI_NAME, BI_CONNECT, BI_DISCONNECT, BI_BASS, BI_FIT, BI_CYCLE, BI_PICK0 = 100, BI_GEST0 = 200, BI_EQ0 = 300,
        BI_BAND0 = 400, BI_CYC0 = 500, BI_FINDL = 600, BI_FINDR, BI_FINDSTOP };
 struct brow { int kind, id, h, on, flags, val, mn, mx, fam, part; char t[64], v[64]; };
@@ -776,7 +776,7 @@ static double bu_find_ok_t;                     /* the find warning was accepted
 static void bu_build(struct bpage *pg)
 {
     pg->ns = pg->nr = 0;
-    const struct buds_st *s = pg->kind == BP_LIST || pg->kind == BP_SUPP ? 0 : bu_dev(pg->addr);
+    const struct buds_st *s = pg->kind == BP_LIST || pg->kind == BP_SUPP || pg->kind == BP_SUPPB ? 0 : bu_dev(pg->addr);
     char b[240];
     if (pg->kind == BP_LIST) {
         buds_cpy(pg->title, sizeof pg->title, tr("Auriculares"));
@@ -802,24 +802,35 @@ static void bu_build(struct bpage *pg)
         bu_sec(pg, 0); bu_row(pg, BR_NAV, BI_SUPP, tr("Dispositivos compatibles"));
         return;
     }
-    if (pg->kind == BP_SUPP) {
-        buds_cpy(pg->title, sizeof pg->title, tr("Dispositivos compatibles"));
+    if (pg->kind == BP_SUPP || pg->kind == BP_SUPPB) {      /* brands, then the models of one brand */
         static struct buds_cat c[BUDS_CAT_MAX]; static int nc;
         if (!nc) nc = buds_catalog(c, BUDS_CAT_MAX);
-        int last = -1;
-        for (int i = 0; i < nc; i++) {
-            if (c[i].s.brand != last) {
-                last = c[i].s.brand; bu_sec(pg, buds_brand_name(last));
-                if (last == BB_SONY) bu_foot(pg, tr("BUDS_SONY_RO"));
-                if (last == BB_OTHER) bu_foot(pg, tr("BUDS_FASTPAIR_HELP"));
-                if (last == BB_APPLE) bu_foot(pg, tr("BUDS_SPOOF_NOTE"));
+        if (pg->kind == BP_SUPP) {
+            buds_cpy(pg->title, sizeof pg->title, tr("Dispositivos compatibles"));
+            bu_sec(pg, 0);
+            int last = -1;
+            for (int i = 0; i < nc; i++) if (c[i].s.brand != last) {
+                last = c[i].s.brand; int cnt = 0, fam = c[i].s.family;
+                for (int j = 0; j < nc; j++) cnt += c[j].s.brand == last;
+                struct brow *r = bu_row(pg, BR_DEV, BI_SUPPB0 + last, buds_brand_name(last)); r->h = 56; r->fam = fam; r->on = 1;
+                if (last == BB_OTHER) buds_cpy(r->v, sizeof r->v, tr("Solo batería"));
+                else snprintf(r->v, sizeof r->v, tr("%d modelos"), cnt);
             }
+            bu_foot(pg, tr("BUDS_SUPP_LEGEND"));
+            return;
+        }
+        buds_cpy(pg->title, sizeof pg->title, buds_brand_name(pg->p1));
+        bu_sec(pg, 0);
+        for (int i = 0; i < nc; i++) if (c[i].s.brand == pg->p1) {
             struct brow *r = bu_row(pg, BR_SUPP, 0, c[i].m->name[0] ? c[i].m->name : tr("Otros auriculares (Fast Pair)"));
             r->h = 52; r->fam = c[i].s.family;
             for (int f = 0; f < BX_N; f++) if (buds_has(&c[i].s, f)) r->val |= 1 << f;
             if (c[i].s.caps & BC_RO) r->flags |= BFL_DIM;
         }
-        bu_sec(pg, 0); bu_foot(pg, tr("BUDS_SUPP_LEGEND"));
+        if (pg->p1 == BB_SONY) bu_foot(pg, tr("BUDS_SONY_RO"));
+        else if (pg->p1 == BB_OTHER || pg->p1 == BB_GOOGLE) bu_foot(pg, tr("BUDS_FASTPAIR_HELP"));
+        else if (pg->p1 == BB_APPLE) bu_foot(pg, tr("BUDS_SPOOF_NOTE"));
+        else bu_foot(pg, tr("BUDS_SUPP_LEGEND"));
         return;
     }
     if (!s) { buds_cpy(pg->title, sizeof pg->title, tr("Auriculares")); bu_sec(pg, 0); bu_row(pg, BR_TEXT, 0, tr("Dispositivo no disponible")); return; }
@@ -1251,6 +1262,7 @@ static int bu_tap(struct bpage *pg, const struct brow *r, int x, int y, int rowy
         else if (id == BI_SUPP) bu_page(BP_SUPP, "", 0, 0, pg->title);
         return 0;
     }
+    if (pg->kind == BP_SUPP) { if (id >= BI_SUPPB0 && id < BI_SUPPB0 + 16) bu_page(BP_SUPPB, "", id - BI_SUPPB0, 0, pg->title); return 0; }
     if (!s) return 0;
     switch (id) {
     case BI_SEG: {
@@ -1343,7 +1355,7 @@ static void bu_page(int kind, const char *addr, int p1, int p2, const char *back
         int ch = bu_snap();
         if (ch) bu_build(pg);
         unsigned es = bu_err_seen; bu_events(); if (es != bu_err_seen) ch = 1;
-        if (pg->kind != BP_LIST && pg->kind != BP_SUPP && !bu_dev(pg->addr) && bvh.pid) break;    /* forgotten */
+        if (pg->kind != BP_LIST && pg->kind != BP_SUPP && pg->kind != BP_SUPPB && !bu_dev(pg->addr) && bvh.pid) break;    /* forgotten */
         float maxs = bu_content_h(pg) - (H - BU_TOP); if (maxs < 0) maxs = 0;
         if (bu_scroll > maxs) bu_scroll = maxs;
         int fast = bu_tog_id && now_ms() - bu_tog_t0 < 260, anim = bu_animating(pg), step = (int)(now_ms() / 83);

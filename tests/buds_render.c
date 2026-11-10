@@ -260,8 +260,9 @@ int main(void)
         snprintf(n, sizeof n, "%s_19_max", lc[li]); page(BP_DEV, M, 0, 0, "Auriculares", 0, n);
         snprintf(n, sizeof n, "%s_20_list_all", lc[li]); page(BP_LIST, "", 0, 0, 0, 0, n);
         snprintf(n, sizeof n, "%s_21_supported", lc[li]); page(BP_SUPP, "", 0, 0, "Auriculares", 0, n);
-        snprintf(n, sizeof n, "%s_22_supported_mid", lc[li]); page(BP_SUPP, "", 0, 0, "Auriculares", 1500, n);
-        snprintf(n, sizeof n, "%s_23_supported_end", lc[li]); page(BP_SUPP, "", 0, 0, "Auriculares", -1, n);
+        { static const int br[6] = { BB_APPLE, BB_SAMSUNG, BB_SOUNDCORE, BB_HUAWEI, BB_OPPO, BB_SONY };
+          for (int k = 0; k < 6; k++) { snprintf(n, sizeof n, "%s_22_supported_%d", lc[li], br[k]); page(BP_SUPPB, "", br[k], 0, "Dispositivos compatibles", 0, n); } }
+        snprintf(n, sizeof n, "%s_23_supported_apple_end", lc[li]); page(BP_SUPPB, "", BB_APPLE, 0, "Dispositivos compatibles", -1, n);
         /* popup: complete data, then the moment right after connecting (values fading in) */
         cmd("10 F0:5C:77:A1:02:14 connect 0 0 0\n"); msleep(1900); refresh();
         buds_cpy(bu_pop_addr, 18, A); bu_pop_t = now_ms() - 2000; bu_pop_on = 1; bu_pop_gen++;
@@ -286,6 +287,22 @@ int main(void)
     /* empty state */
     ui_lang = LANG_EN; bvn = 0; { static struct bpage pg; memset(&pg, 0, sizeof pg); pg.kind = BP_LIST; bvh.pid = 1; bu_build(&pg); bu_scroll = 0; bu_rec = 1; bu_nel = 0; bu_render(fr0, &pg, -1); bu_rec = 0; layout_check("en_00_empty", BU_TOP); save(fr0, "en_00_empty"); }
     printf("slowest page: %s %.2f ms (PC)\n", worst_name, worst);
+    /* the checker itself must catch bad layouts: overlapping products, a ring row on a product,
+     * a misplaced ring label */
+    {
+        int f0 = lfails, c0 = lchecks; struct buds_st x; buds_st_init(&x); x.caps = BC_BATT_LR | BC_BATT_CASE; x.batt[0] = 50; x.batt[1] = 60; x.batt[2] = 70; x.chg[2] = 1;
+        printf("checker self-test (the next LAYOUT lines are expected):\n");
+        bu_rec = 1; bu_nel = 0; bu_grp = 5;
+        bu_layout(fr0, 20, 100, 200, 200, BF_PODS_PRO, -1, BL_HERO, 0, 2);
+        bu_layout(fr0, 120, 100, 300, 200, BF_GBUDS, -1, BL_HERO, 0, 2);
+        bu_rings_row(fr0, W / 2.f, 190, &x, 0);
+        bu_els[bu_nel - 1].x0 += 9; bu_els[bu_nel - 1].x1 += 9;
+        bu_rec = 0; layout_check("self-test", 0);
+        int caught = lfails - f0;
+        lfails = f0; lchecks = c0;
+        printf("checker self-test: %d faults caught (%s)\n", caught, caught >= 3 ? "ok" : "FAILED");
+        if (caught < 3) lfails++;
+    }
     printf("layout: %d checks, %d failures\n", lchecks, lfails);
     return lfails != 0;
 }

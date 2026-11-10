@@ -234,5 +234,5 @@ static int aap_cmd(struct bud *b, const struct bcmd *c)
     default: return BE_NOTSUP;
     }
 }
-static const struct buds_brand BRAND_APPLE = { BB_APPLE, "apple", aap_identify, BT_L2CAP, AAP_PSM, 0, aap_start, aap_rx, aap_cmd, 0, 0 };
+static const struct buds_brand BRAND_APPLE = { BB_APPLE, "apple", aap_identify, BT_L2CAP, AAP_PSM, 0, aap_start, aap_rx, aap_cmd, 0, 0, 0, 0 };
 #endif

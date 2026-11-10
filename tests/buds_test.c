@@ -213,17 +213,112 @@ static void t_fastpair(void)
     CHECK(!strcmp(b.s.modelno, "ABCDEF") && b.s.batt[0] == 85 && b.s.chg[0] == 1 && b.s.batt[1] == 80 && b.s.batt[2] == -1 && !strcmp(b.s.fw, "1.2.3"), "fast pair");
     d.nuuid = 0; CHECK(!fp_identify(&d), "needs the UUID");
 }
+/* SYNTHETIC frames for the brands added from public notes (docs/HEADPHONES.md section 10):
+ * built from the documented layouts; the expected bytes are recomputed by hand (checksums) */
+static void t_soundcore(void)
+{
+    uint8_t f[64]; int n;
+    n = sc_packet(0, 0x01, 0x01, 0, 0, f, sizeof f);          /* request state: 08 EE 00 00 00 01 01 0A 00 + sum */
+    CHECK(same(f, n, "08 EE 00 00 00 01 01 0A 00 02"), "request state (sum 0x102 -> 02)");
+    n = sc_packet(0, 0x01, 0x03, 0, 0, f, sizeof f); CHECK(same(f, n, "08 EE 00 00 00 01 03 0A 00 04"), "request battery");
+    struct bd_dev d; memset(&d, 0, sizeof d); strcpy(d.name, "Soundcore Life Q30"); strcpy(d.uuid[0], "0CF12D31-FAC3-4553-BD80-D6832E7B3028"); d.nuuid = 1;
+    const struct buds_model *m = sc_identify(&d);
+    CHECK(m && m->id == 0x3028 && sc_pick_uuid(&d) == d.uuid[0], "Q30 by name, uuid family");
+    strcpy(d.name, "My headphones"); CHECK(sc_identify(&d) == &SOUNDCORE_GENERIC, "uuid only");
+    d.nuuid = 0; CHECK(!sc_identify(&d), "nothing");
+    struct bud b; mkbud(&b, m, &BRAND_SOUNDCORE); sc_start(&b);
+    CHECK(ncap == 4 && cap[1][5] == 0x01 && cap[1][6] == 0x03, "start: state, battery, charging, firmware");
+    uint8_t s[200]; int sn = 0, k;
+    k = sc_packet(1, 0x01, 0x03, (const uint8_t *)"\x04", 1, s + sn, 60); sn += k;
+    k = sc_packet(1, 0x01, 0x04, (const uint8_t *)"\x01", 1, s + sn, 60); sn += k;
+    k = sc_packet(1, 0x06, 0x01, (const uint8_t *)"\x00\x01\x01\x00", 4, s + sn, 60); sn += k;
+    feed_split(&b, s, sn, 9);
+    CHECK(b.s.batt[0] == 80 && b.s.chg[0] == 1, "battery 4/5 = 80 %%, charging");
+    CHECK(b.s.noise == BN_ANC && b.s.anc_lvl == 1, "ANC outdoor = middle level");
+    s[sn - 1] ^= 1; b.s.noise = BN_OFF; b.br->rx(&b, s + sn - k, k); CHECK(b.s.noise == BN_OFF, "bad checksum ignored");
+    struct bcmd c = { 1, "", BCMD_NOISE, BN_AMBIENT, 0, 0, "" }; ncap = 0;
+    CHECK(sc_cmd(&b, &c) == BE_OK && same(cap[0], capn[0], "08 EE 00 00 00 06 81 0E 00 01 01 01 00 8E"), "transparency (sum 0x18E)");
+    c.op = BCMD_ANCLVL; c.a = 2; ncap = 0;
+    CHECK(sc_cmd(&b, &c) == BE_OK && cap[0][9] == 0x00 && cap[0][10] == 0x00, "ANC transport (strongest)");
+    mkbud(&b, &SOUNDCORE_MODELS[0], &BRAND_SOUNDCORE);       /* Liberty 4 Pro: not verified */
+    c.op = BCMD_NOISE; c.a = BN_ANC; CHECK((b.s.caps & BC_RO) && sc_cmd(&b, &c) == BE_NOTSUP, "unverified model read-only");
+    mkbud(&b, &SOUNDCORE_MODELS[5], &BRAND_SOUNDCORE);       /* Liberty Air 2 Pro: dual battery */
+    k = sc_packet(1, 0x01, 0x03, (const uint8_t *)"\x05\x02", 2, s, 60); b.br->rx(&b, s, k);
+    CHECK(b.s.batt[0] == 100 && b.s.batt[1] == 40, "dual battery");
+}
+static void t_huawei(void)
+{
+    uint8_t f[64]; int n; struct hw_tlv tl[3] = { { 1, 0, 0 }, { 2, 0, 0 }, { 3, 0, 0 } };
+    n = hw_frame(0x01, 0x08, tl, 3, f, sizeof f);
+    uint16_t c = buds_crc16(f, n - 2);
+    CHECK(n == 14 && f[0] == 0x5A && f[1] == 0 && f[2] == 9 && f[3] == 0 && f[4] == 1 && f[5] == 8 && f[6] == 1 && f[7] == 0 && f[n - 2] == c >> 8 && f[n - 1] == (c & 0xFF), "battery read frame");
+    struct bd_dev d; memset(&d, 0, sizeof d); strcpy(d.name, "HUAWEI FreeBuds Pro 2");
+    const struct buds_model *m = hw_identify(&d); CHECK(m && m->id == 13, "FreeBuds Pro 2");
+    strcpy(d.name, "HUAWEI FreeBuds 5i"); CHECK(hw_identify(&d)->id == 9, "5i");
+    struct bud b; mkbud(&b, hw_identify(&d), &BRAND_HUAWEI);
+    CHECK(hw_channel(&b) == 16, "5i on channel 16"); mkbud(&b, m, &BRAND_HUAWEI); CHECK(hw_channel(&b) == 1, "Pro 2 on channel 1");
+    hw_start(&b); CHECK(ncap == 3, "info, battery, ANC reads");
+    uint8_t s[200]; int sn = 0, k;
+    struct hw_tlv bt[3] = { { 1, 1, (const uint8_t *)"\x50" }, { 2, 3, (const uint8_t *)"\x5a\x46\x32" }, { 3, 3, (const uint8_t *)"\x00\x00\x01" } };
+    k = hw_frame(0x01, 0x08, bt, 3, s + sn, 80); sn += k;
+    struct hw_tlv an[1] = { { 1, 2, (const uint8_t *)"\x02\x01" } };         /* level ultra (2), mode cancellation (1) */
+    k = hw_frame(0x2B, 0x2A, an, 1, s + sn, 80); sn += k;
+    struct hw_tlv info[2] = { { 7, 9, (const uint8_t *)"1.0.0.210" }, { 15, 5, (const uint8_t *)"T0006" } };
+    k = hw_frame(0x01, 0x07, info, 2, s + sn, 80); sn += k;
+    feed_split(&b, s, sn, 13);
+    CHECK(b.s.batt[0] == 90 && b.s.batt[1] == 70 && b.s.batt[2] == 50 && b.s.chg[2] == 1, "battery L/R/case %d %d %d", b.s.batt[0], b.s.batt[1], b.s.batt[2]);
+    CHECK(b.s.noise == BN_ANC && b.s.anc_lvl == 2, "ANC ultra");
+    CHECK(!strcmp(b.s.fw, "1.0.0.210") && !strcmp(b.s.modelno, "T0006"), "device info");
+    struct hw_tlv ev[1] = { { 8, 1, (const uint8_t *)"\x00" } };
+    k = hw_frame(0x2B, 0x03, ev, 1, s, 80); b.br->rx(&b, s, k); CHECK(b.s.wear[0] == BW_OUT, "in-ear event");
+    struct bcmd cm = { 1, "", BCMD_NOISE, BN_AMBIENT, 0, 0, "" }; ncap = 0;
+    CHECK(hw_cmd(&b, &cm) == BE_OK && cap[0][4] == 0x2B && cap[0][5] == 0x04 && cap[0][6] == 1 && cap[0][7] == 2 && cap[0][8] == 2 && cap[0][9] == 0xFF && ncap == 2, "awareness + read back");
+    cm.op = BCMD_ANCLVL; cm.a = 0; ncap = 0; CHECK(hw_cmd(&b, &cm) == BE_OK && cap[0][8] == 1 && cap[0][9] == 1, "comfort level");
+    cm.op = BCMD_NOISE; cm.a = BN_ADAPTIVE; CHECK(hw_cmd(&b, &cm) == BE_RANGE, "no dynamic on Pro 2");
+    k = hw_frame(0x2B, 0x2A, an, 1, s, 80); s[k - 1] ^= 1; b.s.noise = BN_OFF; b.br->rx(&b, s, k); CHECK(b.s.noise == BN_OFF, "bad CRC ignored");
+}
+static void t_oppo(void)
+{
+    uint8_t f[32]; int n = op_frame(0x0106, 0, 0, 0, f, sizeof f);
+    CHECK(same(f, n, "AA 07 00 00 06 01 00 00 00"), "battery request");
+    n = op_frame(0x0400, 5, (const uint8_t *)"\x01", 1, f, sizeof f); CHECK(same(f, n, "AA 08 00 00 00 04 05 01 00 01"), "find on");
+    struct bd_dev d; memset(&d, 0, sizeof d); strcpy(d.name, "OPPO Enco Air2");
+    struct bud b; mkbud(&b, op_identify(&d), &BRAND_OPPO); CHECK(b.m->id == 2, "Enco Air2");
+    strcpy(d.name, "OnePlus Buds"); CHECK(!op_identify(&d), "not without the UUID"); strcpy(d.uuid[0], OP_UUID); d.nuuid = 1; CHECK(op_identify(&d) == &OPPO_GENERIC, "uuid: generic");
+    op_start(&b); CHECK(ncap == 3, "battery, firmware, touch requests");
+    uint8_t s[160]; int sn = 0;
+    sn += op_frame(0x8106, 0, (const uint8_t *)"\x00\x03\x01\x55\x02\xd0\x03\x28", 8, s + sn, 40);
+    static const char fw[] = "\x00\x00" "1,2,1.0.25,2,2,3,3,1,9";
+    sn += op_frame(0x8105, 1, (const uint8_t *)fw, (int)sizeof fw - 1, s + sn, 60);
+    sn += op_frame(0x8108, 2, (const uint8_t *)"\x00\x02\x01\x01\x02\x06\x02\x01\x04\x03", 10, s + sn, 40);
+    feed_split(&b, s, sn, 21);
+    CHECK(b.s.batt[0] == 85 && b.s.batt[1] == 80 && b.s.chg[1] == 1 && b.s.batt[2] == 40, "battery");
+    CHECK(!strcmp(b.s.fw, "1.0.25"), "firmware '%s'", b.s.fw);
+    CHECK(b.s.gest[0][BG_DOUBLE] == BA_NEXT && b.s.gest[1][BG_HOLD] == BA_VOICE, "touch config");
+    struct bcmd c = { 1, "", BCMD_GEST, 1, BG_TRIPLE, BA_PREV, "" }; ncap = 0;
+    CHECK(op_cmd(&b, &c) == BE_OK && same(cap[0], capn[0], "AA 0C 00 00 01 04 03 05 00 01 02 01 03 05"), "touch set");
+    c.op = BCMD_NOISE; CHECK(op_cmd(&b, &c) == BE_NOTSUP, "no noise control");
+}
+static void t_google(void)
+{
+    struct bd_dev d; memset(&d, 0, sizeof d); strcpy(d.name, "Pixel Buds Pro"); strcpy(d.uuid[0], FP_UUID); d.nuuid = 1;
+    const struct buds_model *m = 0;
+    for (int k = 0; k < NBRANDS && !m; k++) m = BRANDS[k]->identify(&d);
+    CHECK(m && m->brand == BB_GOOGLE && m->id == 3, "Pixel Buds Pro through Fast Pair");
+}
 static void t_fuzz(void)
 {
     struct bud b; unsigned seed = 1; uint8_t r[300];
-    const struct buds_model *ms[5] = { aap_model_by_id(0x2014), sam_model_by_id(7), &NOTHING_MODELS[0].m, &SONY_MODELS[0], &FP_BUDS };
-    const struct buds_brand *bs[5] = { &BRAND_APPLE, &BRAND_SAMSUNG, &BRAND_NOTHING, &BRAND_SONY, &BRAND_FASTPAIR };
-    for (int k = 0; k < 5; k++) {
+    const struct buds_model *ms[8] = { aap_model_by_id(0x2014), sam_model_by_id(7), &NOTHING_MODELS[0].m, &SONY_MODELS[0], &FP_BUDS,
+                                       &SOUNDCORE_MODELS[6], &HUAWEI_MODELS[0], &OPPO_MODELS[0] };
+    const struct buds_brand *bs[8] = { &BRAND_APPLE, &BRAND_SAMSUNG, &BRAND_NOTHING, &BRAND_SONY, &BRAND_FASTPAIR, &BRAND_SOUNDCORE, &BRAND_HUAWEI, &BRAND_OPPO };
+    static const uint8_t sync[8] = { 0x04, 0xFD, 0x55, 0x3E, 0x03, 0x09, 0x5A, 0xAA };
+    for (int k = 0; k < 8; k++) {
         mkbud(&b, ms[k], bs[k]); b.br->start(&b);
         for (int it = 0; it < 3000; it++) {
             int n = 1 + (int)((seed = seed * 1103515245u + 12345u) >> 16) % 299;
             for (int i = 0; i < n; i++) r[i] = (uint8_t)((seed = seed * 1103515245u + 12345u) >> 16);
-            if (it % 3 == 0) r[0] = k == 0 ? 0x04 : k == 1 ? 0xFD : k == 2 ? 0x55 : k == 3 ? 0x3E : 0x03;
+            if (it % 3 == 0) r[0] = sync[k];
             if (k == 0 && n > 4) { r[1] = 0; r[2] = 4; r[3] = 0; }
             b.br->rx(&b, r, n); ncap = 0;
             if (b.br->tick) b.br->tick(&b, it * 700.0);
@@ -310,7 +405,7 @@ static void t_sdp(void)
 }
 int main(void)
 {
-    t_crc(); t_apple(); t_samsung(); t_nothing(); t_sony(); t_fastpair(); t_fuzz(); t_tables(); t_state(); t_bluez(); t_sdp();
+    t_crc(); t_apple(); t_samsung(); t_nothing(); t_sony(); t_fastpair(); t_soundcore(); t_huawei(); t_oppo(); t_google(); t_fuzz(); t_tables(); t_state(); t_bluez(); t_sdp();
     printf("%d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

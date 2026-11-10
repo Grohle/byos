@@ -336,5 +336,5 @@ static void sam_tick(struct bud *b, double now)
     if (!on) b->find_t = 0;
     if (on && now - b->find_t > 120000) { struct bcmd c; memset(&c, 0, sizeof c); c.op = BCMD_FIND; c.a = 2; c.b = 0; sam_cmd(b, &c); b->find_t = 0; }
 }
-static const struct buds_brand BRAND_SAMSUNG = { BB_SAMSUNG, "samsung", sam_identify, BT_RFCOMM, 0, sam_uuid, sam_start, sam_rx, sam_cmd, sam_tick, 0 };
+static const struct buds_brand BRAND_SAMSUNG = { BB_SAMSUNG, "samsung", sam_identify, BT_RFCOMM, 0, sam_uuid, sam_start, sam_rx, sam_cmd, sam_tick, 0, 0, 0 };
 #endif

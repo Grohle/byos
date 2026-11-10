@@ -1,6 +1,6 @@
 # Headphones app ("Auriculares") and the hibybudsd daemon
 
-Native control of Bluetooth headphones on the HiBy R3 II: battery (left / right / case), wear state with auto-pause, noise control, EQ, gestures, touch lock, find, rename, firmware, for AirPods / Beats, Galaxy Buds, Nothing / CMF, Sony (read-only for now) and any Google Fast Pair headset (battery).
+Native control of Bluetooth headphones on the HiBy R3 II: battery (left / right / case), wear state with auto-pause, noise control, EQ, gestures, touch lock, find, rename, firmware, for AirPods / Beats, Galaxy Buds, Nothing / CMF, Anker Soundcore, Huawei / Honor, OPPO / realme, Sony (read-only for now), Google Pixel Buds and any Google Fast Pair headset (battery). Section 10 covers the brands added from public documentation.
 
 Status: **builds with zero warnings (MIPS and PC), PC tests pass, runs in the QEMU harness against simulated headphones. Never run against real headphones yet.** Everything marked [I] below is our reading of public protocol notes and has to be confirmed by captures (section 8).
 
@@ -16,6 +16,7 @@ Evidence tags: **[V]** verified (rootfs, our tests against the documented layout
 | `src/buds_samsung.inc.c` | Samsung module (legacy and new framing over RFCOMM) |
 | `src/buds_nothing.inc.c` | Nothing / CMF module (RFCOMM, CRC-16/MODBUS) |
 | `src/buds_sony.inc.c` | Sony MDR V1/V2 module, **read-only** unless `HIBYBUDS_SONY_WRITES=1` |
+| `src/buds_soundcore.inc.c`, `src/buds_huawei.inc.c`, `src/buds_oppo.inc.c` | Anker Soundcore, Huawei / Honor, OPPO / realme modules (section 10) |
 | `src/buds_fastpair.inc.c` | generic fallback: Google Fast Pair Message Stream (battery, model id, firmware) |
 | `src/buds_all.inc.c` | brand registry (priority order) + model catalog + matrix generator (single source of truth) |
 | `src/buds_sim.inc.c` | simulated headphones (Apple, Samsung, Nothing) for `--fake` and the tests |
@@ -214,6 +215,48 @@ The same tables drive the daemon, the app's "Supported Devices" page and this ma
 | Sony | Sony WF-1000XM5 | L/R/case | off/ANC/ambient | yes | - | - | - | read-only until captured; bass |
 | Sony | Sony LinkBuds S | L/R/case | off/ANC/ambient | yes | - | - | - | read-only until captured; bass |
 | Sony | Sony LinkBuds | L/R/case | - | yes | - | - | - | read-only until captured; bass |
+| Anker Soundcore | Soundcore Liberty 4 Pro | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Liberty 4 NC | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Liberty 4 | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Liberty 5 | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Liberty 3 Pro | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Liberty Air 2 Pro | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Liberty 2 Pro+ | L/R | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Liberty 2 Pro | L/R | - | - | - | - | - |  |
+| Anker Soundcore | Soundcore Space A40 | L/R | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Life P3 | L/R | off/ANC/ambient + level | - | - | - | - | read-only until captured |
+| Anker Soundcore | Soundcore Life Note 3 | L/R | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Life Dot 2 NC | L/R | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Space Q45 | single | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Space One Pro | single | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Space One | single | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Life Q35 | single | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Life Q30 | single | off/ANC/ambient + level | - | - | - | - |  |
+| Anker Soundcore | Soundcore Q20i | single | off/ANC/ambient + level | - | - | - | - |  |
+| Huawei / Honor | HUAWEI FreeBuds Pro 4 | L/R/case | off/ANC/ambient/adaptive + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds Pro 3 | L/R/case | off/ANC/ambient/adaptive + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds Pro 2 | L/R/case | off/ANC/ambient + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds Pro | L/R/case | off/ANC/ambient/adaptive + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds Studio | single | off/ANC/ambient/adaptive + level | - | - | - | - |  |
+| Huawei / Honor | HUAWEI FreeBuds 6i | L/R/case | off/ANC/ambient/adaptive + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds 5i | L/R/case | off/ANC/ambient/adaptive + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds 4i | L/R/case | off/ANC/ambient | - | - | yes | - |  |
+| Huawei / Honor | HONOR Earbuds 2 | L/R/case | off/ANC/ambient | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds SE 4 ANC | L/R/case | off/ANC/ambient/adaptive + level | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds SE 2 | L/R/case | - | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds SE | L/R/case | - | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeBuds 3 | L/R/case | - | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeClip 2 | L/R/case | - | - | - | yes | - |  |
+| Huawei / Honor | HUAWEI FreeLace Pro 2 | single | off/ANC/ambient/adaptive + level | - | - | - | - |  |
+| Huawei / Honor | HUAWEI FreeLace Pro | single | off/ANC/ambient + level | - | - | - | - |  |
+| OPPO / realme | OPPO Enco Air2 | L/R/case | - | - | yes | - | yes |  |
+| OPPO / realme | OPPO Enco Air | L/R/case | - | - | yes | - | yes |  |
+| OPPO / realme | realme Buds T110 | L/R/case | - | - | yes | - | yes |  |
+| Google | Google Pixel Buds Pro 2 | L/R/case | - | - | - | - | - |  |
+| Google | Google Pixel Buds Pro | L/R/case | - | - | - | - | - |  |
+| Google | Google Pixel Buds A-Series | L/R/case | - | - | - | - | - |  |
+| Google | Google Pixel Buds 2a | L/R/case | - | - | - | - | - |  |
+| Google | Google Pixel Buds | L/R/case | - | - | - | - | - |  |
 | Fast Pair | any other (battery only) | L/R/case | - | - | - | - | - |  |
 <!-- matrix:end -->
 
@@ -245,3 +288,63 @@ Install `out/agent_buds/hibybudsd` as `/usr/data/hibymod/shell/hibybudsd`. All s
 | Daemon death | the shell thread restarts it (≤ every 30 s); commands fail fast with a toast |
 | Audio routing after our `Device1.Connect` | same open question as the Wireless app (`docs/WIRELESS.md` §6) |
 | Licences | LibrePods, GalaxyBudsClient (GPL-3.0), Gadgetbridge, ear (web) (AGPL): facts only, no code; all vectors are ours |
+
+## 10. More brands from public documentation (Soundcore, Huawei, OPPO, Pixel Buds, others)
+
+Clean room as for the other brands: the projects below were read for **facts** (byte layouts, command numbers, enum values, model lists); no code was copied; all test vectors in `tests/buds_test.c` (`t_soundcore`, `t_huawei`, `t_oppo`, `t_google`) are **synthetic**, built from the documented layouts with checksums recomputed by hand. Writes are enabled only where the source documents them consistently across models; otherwise the model is read-only (`BC_RO`, like Sony). The matrix in section 7 includes these models (same tables).
+
+### 10.1 Anker Soundcore — `src/buds_soundcore.inc.c`
+Source: OpenSCQ30, https://github.com/Oppzippy/OpenSCQ30 (GPL-3.0).
+- RFCOMM, vendor UUID of the family `0cf12d31-fac3-4553-bd80-d6832e7xxxxx` (low 20 bits per model). The module picks the one BlueZ lists (`pick_uuid` hook), then SDP as usual.
+- Host frame `08 EE 00 00 00 | cmd(2) | total length LE16 | body | sum8`; buds frame `09 FF 00 00 01 | …`. The total length includes the checksum byte; the checksum is the 8-bit sum of all previous bytes. Example: request state = `08 EE 00 00 00 01 01 0A 00 02` (0x102 → 02).
+- Read at connect: `01 01` state (layout differs per model: logged for captures), `01 03` battery (one byte, or L R; 0–5 steps → ×20 %), `01 04` charging, `01 05` firmware + serial.
+- Sound modes `06 01` (notify) / `06 81` (set): {ambient: 0 ANC, 1 transparency, 2 normal; ANC mode: 0 transport, 1 outdoor, 2 indoor, 3 custom; transparency: 0 full, 1 vocal; custom level}. Our ANC level 0/1/2 = indoor / outdoor / transport.
+- **Writes enabled** (common sound-mode block in OpenSCQ30) on: Life Q30, Life Q35, Q20i, Space One, Space One Pro, Space Q45, Space A40, Life Note 3, Life Dot 2 NC, Liberty 2 Pro+.
+- **Read-only** (different or unconfirmed sound-mode handling): Liberty 4 / 4 NC / 4 Pro / 5, Liberty 3 Pro, Liberty Air 2 Pro, Life P3.
+- Not implemented: EQ presets and custom 8/10-band EQ (`02 81`: preset id LE16 + 8 bytes per channel, value = 120 + tenths of dB), HearID (read-only in the source too), button actions, per-model state parsing (case battery, wear). All are pending captures.
+
+### 10.2 Huawei FreeBuds / FreeLace / FreeClip, Honor Earbuds — `src/buds_huawei.inc.c`
+Source: OpenFreebuds, https://github.com/melianmiko/OpenFreebuds (GPL-3.0); FreeBuddy (Android, GPL-3.0) uses the same protocol.
+- RFCOMM on a **fixed channel per model** (1, or 16 for FreeBuds 4i / 5i / SE / SE 4 ANC / FreeLace Pro / Honor Earbuds 2): no SDP (`channel` hook).
+- Frame `5A | length BE16 (= 1 + body) | 00 | cmd(2) | TLVs {type, len, value} | CRC-16/XMODEM BE` over everything before. A read sends the wanted TLV types with empty values.
+- `01 07` device info (7 firmware, 9 serial, 15 model); `01 08` battery read and `01 27` notify (1 global, 2 = L R case, 3 charging); `2B 2A` ANC read, TLV 1 = {level, mode}; `2B 03` events (in-ear TLV 8/9; ANC changed on the buds → we read again).
+- ANC mode 0 off, 1 cancellation, 2 awareness. Cancellation level 1 comfort, 0 normal, 2 ultra, 3 dynamic (our level 0/1/2 and "adaptive").
+- **Writes enabled** for noise control (`2B 04`, TLV 1 = {mode, FF} or {0, 0} for off; a level change = {current mode, level}); every write is read back with `2B 2A`.
+- Not implemented: gestures (`01 1F`/`01 20` double tap, `01 25`/`01 26` triple, `2B 16`–`2B 19` long tap, `2B 1E`/`2B 1F` swipe), auto-pause setting (`2B 10`/`2B 11`), low latency (`2B 6C`), dual connect. The ids are documented; pending a capture of the value tables per model.
+
+### 10.3 OPPO / realme (HeyMelody family) — `src/buds_oppo.inc.c`
+Source: Gadgetbridge OPPO support, https://codeberg.org/Freeyourgadget/Gadgetbridge (AGPL-3.0), tested there on OPPO Enco Air, Enco Air2 and realme Buds T110.
+- RFCOMM UUID `0000079a-d102-11e1-9b23-00025b00a5a5`.
+- Frame `AA | length after these 2 | 00 00 | cmd LE16 | seq | payload length LE16 | payload`, no checksum.
+- Commands:
+  - `0106` → `8106` battery {0, count, n × {1 L / 2 R / 3 case, level \| 0x80 charging}}; `0204` push {1 = battery}.
+  - `0105` → `8105` firmware ("part,type,version" triples, type 2 = firmware).
+  - `0108 {02 03 01}` → `8108` touch config {side, type LE16 (`0201` double, `0301` triple, `0401` hold), value}.
+  - `0401` set; `0400` find {1/0}.
+- **Writes enabled** for gestures and find on the three verified models; other devices with the UUID get battery and firmware only.
+- OnePlus Buds use the HeyMelody app too, but nothing confirms the same protocol: capture needed. Noise control is not documented for this family.
+
+### 10.4 Google Pixel Buds — via the Fast Pair module
+Source: pbpctrl, https://github.com/qzed/pbpctrl (MIT / Apache-2.0).
+- Battery L/R/case, model and firmware come through the Fast Pair Message Stream (section 5), already implemented. Pixel Buds Pro / Pro 2 / A-Series / 2a are named in the catalog.
+- ANC, EQ and settings use Google's "Maestro" service: pigweed RPC (protobuf) over HDLC framing on RFCOMM UUID `25e97ff7-24ce-4c4c-8951-f764a708f7b5`. pbpctrl documents it well, but it needs an HDLC + protobuf RPC client: **pending** (next candidate, permissive licence).
+
+### 10.5 Other brands: status
+
+| Brand | Public documentation | Transport / framing | Status |
+|---|---|---|---|
+| Xiaomi / Redmi Buds | Gadgetbridge (Redmi Buds 5 Pro) | RFCOMM, Xiaomi framing | partial: capture needed, not implemented |
+| Bose (QC35, NC700, QC Earbuds…) | based-connect (BMAP), GPL | RFCOMM, BMAP `function block / function / operator / length` | documented for older models; not implemented (no owner hardware) |
+| Sennheiser Momentum | none found | — | capture needed |
+| Marshall | none found (some use Airoha) | — | capture needed |
+| Beyerdynamic | none found (some Airoha) | — | capture needed; never use Airoha RACE (factory interface, CVEs) |
+| Jabra | Jabra SDKs need a developer account and target their apps; no open protocol notes | — | not feasible now |
+| Skullcandy | none found | — | capture needed |
+| EarFun | none found (Bluetrum / Airoha chips) | — | capture needed; battery via Fast Pair if they have it |
+| JBL | see `docs/research_headphones_nothing_sony_jbl.md` §4 | BLE GATT "Protocol4" etc. | capture first; battery via Fast Pair |
+
+### 10.6 Device test plan additions
+Use the same steps as section 8.2 (`hibybudsd --list`, then `--probe MAC -v`).
+- **Soundcore:** send us the `01 01` state hex and the battery/sound-mode lines. On a read-only model, switch modes with the buds' own button and send the `06 01` lines; that confirms the block, and its writes can then be enabled.
+- **Huawei:** if the probe cannot connect, the channel table entry is wrong; send `sdptool browse MAC`.
+- **OPPO / OnePlus:** confirm the UUID with `sdptool browse MAC`.

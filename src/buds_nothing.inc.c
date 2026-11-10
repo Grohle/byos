@@ -371,5 +371,5 @@ static int nt_cmd(struct bud *b, const struct bcmd *c)
     default: return BE_NOTSUP;
     }
 }
-static const struct buds_brand BRAND_NOTHING = { BB_NOTHING, "nothing", nt_identify, BT_RFCOMM, 0, nt_uuid, nt_start, nt_rx, nt_cmd, nt_tick, nt_fill };
+static const struct buds_brand BRAND_NOTHING = { BB_NOTHING, "nothing", nt_identify, BT_RFCOMM, 0, nt_uuid, nt_start, nt_rx, nt_cmd, nt_tick, nt_fill, 0, 0 };
 #endif

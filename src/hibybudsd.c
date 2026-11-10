@@ -412,6 +412,7 @@ static void bluez_refresh(void)
         if (m && (!d->b.m || (d->b.br != br) || (!d->b.m->id && m->id) || (d->b.m->id == 0 && !m->id && d->b.m != m))) {
             if (!(d->b.m && d->b.br == br && d->b.m->id && !m->id)) { bud_set_model(&d->b, m); d->b.br = br; if (br->fill) br->fill(&d->b); known_save(); }
         }
+        if (m && br->pick_uuid) { const char *u = br->pick_uuid(x); if (u) buds_cpy(d->b.uuid, sizeof d->b.uuid, u); }
         if (!m && !d->b.br) {
             s->brand = BB_OTHER; s->family = strstr(x->icon, "headphones") ? BF_HEAD : BF_BUDS; s->caps = 0;
             buds_cpy(s->model, sizeof s->model, "");
@@ -514,7 +515,9 @@ static void dev_open(struct dev *d)
     if (b->br->transport == BT_L2CAP) fd = l2cap_open(b->s.addr, b->br->psm, 8000);
     else {
         const char *u = b->br->uuid(b);
-        if (d->rfch <= 0 || d->sdp_tried) {
+        int fixed = b->br->channel ? b->br->channel(b) : 0;
+        if (fixed > 0) d->rfch = fixed;
+        else if (d->rfch <= 0 || d->sdp_tried) {
             int ch = sdp_channel(b->s.addr, u);
             if (ch <= 0) ch = sdptool_channel(b->s.addr, u);
             lg("%s: SDP %s -> channel %d (%.0f ms)", b->s.addr, u, ch, now_ms() - t0);
