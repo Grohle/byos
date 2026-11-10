@@ -327,7 +327,10 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
         for (int i = 0; i < 9; i++) { fill_rrect(d, 12 + i, 62 - i, 3, 3, 1.2f, rgb(10, 132, 255), 255); fill_rrect(d, 12 + i, 62 + i, 3, 3, 1.2f, rgb(10, 132, 255), 255); }
         int tw = tw_n(tr(pg->title), 17, -1); if (tw > 150) tw = 150;
         int bmax = (W - tw) / 2 - 28 - 8; if (bmax < 24) bmax = 24;      /* la etiqueta de atras no pisa el titulo */
-        draw_text(d, 28, 68, tr(back), 16, rgb(10, 132, 255), bmax, 0, H);
+        /* como iOS: si el titulo anterior no cabe entero se pone "Atras", y si tampoco, solo la flecha */
+        const char *bl = tr(back);
+        if (tw_n(bl, 16, -1) > bmax) { bl = tr("Atrás"); if (tw_n(bl, 16, -1) > bmax) bl = 0; }
+        if (bl) draw_text(d, 28, 68, bl, 16, rgb(10, 132, 255), bmax, 0, H);
         draw_text(d, (W - tw) / 2, 68, tr(pg->title), 17, 0xFFFF, 150, 0, H);
     } else draw_text(d, 16, 80, tr(pg->title), 26, 0xFFFF, 0, 0, H);
     draw_toast(d);
