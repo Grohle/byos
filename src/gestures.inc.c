@@ -125,6 +125,8 @@ static void card_label(uint16_t *dst, int x, int y, const struct sprite *ic, con
     draw_text(dst, x0 + (ic ? iw + 6 : 0), y - 10, name, 13, 0xFFFF, 0, 0, H);
 }
 static int sw_player_first;   /* la tarjeta 0 es el reproductor (no hay app reciente) */
+#define SW_HOLD_MS 1000   /* mantener el gesto de inicio este tiempo: multitarea */
+static int sw_lift_card;      /* tarjeta que se levanta con "lift" (0 = la de la app) */
 static void switcher_frame(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, double off, float s0, double lift, int show1, int labels)
 {
     memcpy(fr0, bg, HM_FRAME_BYTES);
@@ -132,8 +134,8 @@ static void switcher_frame(const uint16_t *bg, const uint16_t *c0, const uint16_
     for (int i = 1; i >= 0; i--) {
         if (i == 1 && !show1) continue;
         float s = i == 0 ? s0 : CARD_S;
-        int x, y, w, h; card_geom(i, off, s, i == 0 ? lift : 0, &x, &y, &w, &h);
-        if (x > W || x + w < 0) continue;
+        int x, y, w, h; card_geom(i, off, s, i == sw_lift_card ? lift : 0, &x, &y, &w, &h);
+        if (x > W || x + w < 0 || y + h < 0) continue;
         /* sombra barata: solo una franja difusa bajo y a los lados de la tarjeta */
         for (int k = 1; k <= 8; k++) {
             int yy = y + h + k - 2, a = 22 + k + (k * k) / 8; if (a > 32) a = 32;
@@ -192,6 +194,7 @@ static void card_to_home(const uint16_t *home, const uint16_t *img, int x0, int 
 
 static void player_card(uint16_t *d)
 {
+    if (np_card(d)) return;                 /* la pagina real de Reproduciendo (nowui) */
     static uint16_t cov[128 * 128]; struct np_info ni; int cok = 0;
     npx_snapshot(&ni, cov, &cok);
     for (int i = 0; i < W * H; i++) d[i] = rgb(22, 22, 24);
@@ -201,6 +204,76 @@ static void player_card(uint16_t *d)
     int sz = 22; while (sz > 14 && tw_n(ti, sz, -1) > W - 60) sz--;
     draw_text(d, 30, 352, ti, sz, 0xFFFF, W - 60, 0, H);
     if (ni.source && ni.artist[0]) draw_text(d, 30, 384, ni.artist, 18, rgb(200, 200, 206), W - 60, 0, H);
+}
+
+/* ------------------------------------------------------------------ multitarea comun */
+/* Carrusel con la app (tarjeta 0, en el centro) y el reproductor a su izquierda (tarjeta 1).
+ * Deslizar de lado cambia de tarjeta; arrastrar la de la app hacia arriba la cierra (solo hay
+ * una app abierta a la vez); tocar una tarjeta la abre (con su zoom); tocar fuera o subir desde
+ * la barra: inicio. Devuelve SW_*; off: tarjeta centrada al salir. */
+enum { SW_HOME, SW_APP, SW_PLAYER, SW_CLOSED };
+static int sw_loop(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, int has_app, double *poff)
+{
+    double off = *poff; struct pkt p; int ncard = c1 ? 2 : 1, res = -1;
+    while (res < 0) {
+        sw_lift_card = 0;
+        switcher_frame(bg, c0, c1, off, CARD_S, 0, c1 != 0, 1);
+        if (!read_pkt(&p, 300) || !p.down) continue;
+        int tx = p.x, ty = p.y, mode = 0, lx = tx, ly = ty, hit = -1;
+        double o0 = off, vx = 0, vy = 0, lt = now_ms(), lift = 0;
+        if (ty >= 456) { while (cur_down && read_pkt(&p, 1000)) {} res = SW_HOME; break; }
+        for (int i = 0; i < ncard; i++) { int x, y, w, h; card_geom(i, off, CARD_S, 0, &x, &y, &w, &h); if (tx >= x && tx < x + w && ty >= y - 30 && ty < y + h) hit = i; }
+        int closable = hit == 0 && has_app;
+        while (cur_down && read_pkt(&p, 30)) {
+            int dx = cur_x - tx, dy = cur_y - ty;
+            if (!mode && (abs(dx) > 10 || abs(dy) > 10)) mode = abs(dx) >= abs(dy) ? 1 : (dy < 0 && hit >= 0 ? 2 : 3);
+            double t = now_ms(); if (t > lt) { vx = 0.6 * vx + 0.4 * (cur_x - lx) / (t - lt); vy = 0.6 * vy + 0.4 * (cur_y - ly) / (t - lt); lx = cur_x; ly = cur_y; lt = t; }
+            if (mode == 1 && ncard > 1) {
+                off = o0 + dx / (W * CARD_S + 18.0); if (off < -0.25) off = -0.25; if (off > 1.25) off = 1.25;
+                switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1);
+            } else if (mode == 2) {          /* la tarjeta sube con el dedo (la del reproductor, con goma) */
+                lift = -dy; if (lift < 0) lift = 0; if (!closable) lift = 40 * (1 - exp(-lift / 80.0));
+                sw_lift_card = hit; switcher_frame(bg, c0, c1, off, CARD_S, lift, c1 != 0, 1);
+            }
+        }
+        if (now_ms() - lt > 80) { vx = 0; vy = 0; }
+        if (mode == 2) {
+            sw_lift_card = hit;
+            int gone = closable && (lift > 110 || vy < -0.6);
+            double from = lift, to = gone ? H : 0, t0 = now_ms(), dur = gone ? 200 : 220;
+            for (;;) {
+                double t = (now_ms() - t0) / dur; if (t > 1) t = 1;
+                double e = gone ? t * t : ease_out(t);
+                switcher_frame(bg, c0, c1, off, CARD_S, from + (to - from) * e, c1 != 0, 1);
+                if (t >= 1) break;
+            }
+            sw_lift_card = 0;
+            if (gone) { lg("multitarea: app cerrada"); res = SW_CLOSED; }
+            continue;
+        }
+        if (mode == 1 && ncard > 1) {
+            double target = (off > 0.5 || vx > 0.3) && !(vx < -0.3) ? 1 : 0, f = off, t1 = now_ms();
+            for (;;) { double t = (now_ms() - t1) / 200.0; if (t > 1) t = 1; off = f + (target - f) * ease_out(t); switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1); if (t >= 1) break; }
+            continue;
+        }
+        if (mode) continue;
+        if (hit < 0) { res = SW_HOME; break; }
+        card_zoom_in(bg, hit == 0 ? c0 : c1, hit, off);
+        res = hit == 0 && has_app ? SW_APP : SW_PLAYER;
+    }
+    sw_lift_card = 0; *poff = off;
+    return res;
+}
+/* sin la tarjeta cerrada: el inicio aparece (el fondo oscurecido se aclara) */
+static void sw_reveal_home(const uint16_t *home, int k0)
+{
+    double t0 = now_ms();
+    for (;;) {
+        double t = (now_ms() - t0) / 200.0; if (t > 1) t = 1;
+        int k = k0 + (int)((32 - k0) * ease_out(t));
+        for (int i = 0; i < W * H; i++) fr0[i] = k >= 32 ? home[i] : dim565(home[i], k);
+        present(); if (t >= 1) break;
+    }
 }
 
 static void app_switch_gesture(int sy, int sx)
@@ -238,14 +311,15 @@ static void app_switch_gesture(int sy, int sx)
         double spd = 0;
         for (int i = 1; i < 16 && i < hn; i++) { int j = (hn - 1 - i) % 16; if (t - ht[j] >= 80) { spd = abs(cur_y - hy[j]) / (t - ht[j]); break; } }
         prog = (sy - cur_y) / 300.0; if (prog < 0) prog = 0; if (prog > 1.2) prog = 1.2;
-        /* mantener quieto a media altura = multitarea */
-        if (!armed && prog > 0.16 && hn > 3 && spd < 0.15) { if (!still_t) still_t = t; else if (t - still_t > 120) { armed = 1; arm_t = t; lg("multitarea armada"); } }
+        /* mantener la tarjeta quieta 1 s = multitarea (antes se asoma el reproductor) */
+        if (!armed && prog > 0.12 && hn > 3 && spd < 0.15) { if (!still_t) still_t = t; else if (t - still_t > SW_HOLD_MS) { armed = 1; arm_t = t; lg("multitarea armada"); } }
         else if (spd >= 0.15) still_t = 0;
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         double a = armed ? (t - arm_t) / 200.0 : 0; if (a > 1) a = 1;
+        int peek = armed || (still_t && t - still_t > 300);
         /* la tarjeta sigue al dedo (tambien de lado) */
         double off = (lx - sx) / (W * CARD_S + 18.0);
-        switcher_frame(armed && a > 0.5 ? bg2 : bg, app, ph, off, s, (sy - cur_y) * 0.35, armed, armed && a >= 1);
+        switcher_frame(armed && a > 0.5 ? bg2 : bg, app, ph, off, s, (sy - cur_y) * 0.35, peek, armed && a >= 1);
         if (!cur_down) break;
     }
     if (armed) {
@@ -255,43 +329,24 @@ static void app_switch_gesture(int sy, int sx)
             float s = (float)((1 - 0.40 * (prog > 1 ? 1 : prog)) + (CARD_S - (1 - 0.40 * (prog > 1 ? 1 : prog))) * e);
             switcher_frame(bg2, app, ph, off, s, ly0 * 0.35 * (1 - e), 1, 1); if (t >= 1) break; } }
         lg("multitarea");
-        for (;;) {
-            switcher_frame(bg2, app, ph, off, CARD_S, 0, 1, 1);
-            if (!read_pkt(&p, 300) || !p.down) continue;
-            int tx = p.x, ty = p.y; double o0 = off, v2 = 0, l2 = now_ms(); int lx2 = tx, moved = 0;
-            if (ty >= 456) {   /* desde abajo otra vez: inicio */
-                while (cur_down && read_pkt(&p, 1000)) {}
-                int x, y, w, h; card_geom(0, off, CARD_S, 0, &x, &y, &w, &h);
-                nav_start(NAV_HOME); card_to_home(home, off < 0.5 ? app : ph, x, y, w, h);
-                nav_wait(3000); if (!launcher_resume()) cmd('R'); return;
-            }
-            while (cur_down && read_pkt(&p, 30)) {
-                if (abs(cur_x - tx) > 8) moved = 1;
-                double t = now_ms(); if (t > l2) { v2 = 0.6 * v2 + 0.4 * (cur_x - lx2) / (t - l2); lx2 = cur_x; l2 = t; }
-                if (moved) { off = o0 + (cur_x - tx) / (W * CARD_S + 18.0); if (off < -0.25) off = -0.25; if (off > 1.25) off = 1.25; switcher_frame(bg2, app, ph, off, CARD_S, 0, 1, 1); }
-            }
-            if (moved) {   /* encajar en una tarjeta */
-                double target = (off > 0.5 || v2 > 0.3) && !(v2 < -0.3) ? 1 : 0;
-                double f = off, t0 = now_ms();
-                for (;;) { double t = (now_ms() - t0) / 200.0; if (t > 1) t = 1; off = f + (target - f) * ease_out(t); switcher_frame(bg2, app, ph, off, CARD_S, 0, 1, 1); if (t >= 1) break; }
-                continue;
-            }
-            /* toque: en una tarjeta = abrirla; fuera = inicio */
-            int hit = -1;
-            for (int i = 0; i < 2; i++) { int x, y, w, h; card_geom(i, off, CARD_S, 0, &x, &y, &w, &h); if (tx >= x && tx < x + w && ty >= y - 30 && ty < y + h) hit = i; }
-            if (hit < 0) {
-                int x, y, w, h; card_geom(0, off, CARD_S, 0, &x, &y, &w, &h);
-                nav_start(NAV_HOME); card_to_home(home, app, x, y, w, h);
-                nav_wait(3000); if (!launcher_resume()) cmd('R'); return;
-            }
-            if (hit == 0) { card_zoom_in(bg2, app, 0, off); cmd('R'); lg("multitarea: donde estabas"); return; }
-            nav_start(NAV_TO_PLANE);
-            card_zoom_in(bg2, ph, 1, off);
-            int ok = nav_wait(3000);
-            if (ok == 1) { memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1; }
-            cmd('R'); lg("multitarea: reproductor (%s)", ok == 1 ? "ok" : "fallo");
-            return;
+        int r = sw_loop(bg2, app, ph, 1, &off);
+        if (r == SW_APP) { cmd('R'); lg("multitarea: donde estabas"); return; }
+        if (r == SW_HOME) {
+            int x, y, w, h; card_geom(off < 0.5 ? 0 : 1, off, CARD_S, 0, &x, &y, &w, &h);
+            nav_start(NAV_HOME); card_to_home(home, off < 0.5 ? app : ph, x, y, w, h);
+            nav_wait(3000); if (!launcher_resume()) cmd('R'); return;
         }
+        if (r == SW_CLOSED) {   /* cerrar la app de HiBy: el reproductor vuelve a su inicio */
+            nav_start(NAV_HOME); sw_reveal_home(home, 11); last_app = -1;
+            nav_wait(3000); if (!launcher_resume()) cmd('R'); return;
+        }
+        /* reproductor: el propio (la app de HiBy se cierra: solo una a la vez) */
+        nav_start(NAV_HOME);
+        int rr = np_app_run(home, -1, -1);
+        nav_wait(3000);
+        (void)rr;
+        if (!launcher_resume()) cmd('R');
+        return;
     }
     if (prog > 0.28 || vel < -0.5) {
         lg("gesto: inicio");
@@ -423,6 +478,64 @@ static void back_gesture(int right, int sx, int sy)
 }
 
 
+/* ------------------------------------------------------------------ atras en las apps propias */
+/* Zona comun de "atras" (apps de HiBy y apps propias, los dos bordes): el dedo tiene que poder
+ * empezar algo dentro de la pantalla (la tactil apenas da x < 6 o x > 313), y un deslizamiento
+ * claramente horizontal hacia dentro tambien vale desde mas lejos. */
+#define BK_EDGE 34
+#define BK_WIDE 72
+/* 0 nada; 1/2 borde izquierdo/derecho; 3/4 zona ancha izquierda/derecha */
+static int back_zone(int sx, int sy)
+{
+    if (sy < 30 || sy >= 456) return 0;
+    if (sx < BK_WIDE) return sx < BK_EDGE ? 1 : 3;
+    if (sx >= W - BK_WIDE) return sx >= W - BK_EDGE ? 2 : 4;
+    return 0;
+}
+/* Llamar al bajar el dedo en una app propia, con fr0 = lo que hay en pantalla. Decide si es el
+ * gesto de atras (deslizar hacia dentro desde un borde), dibuja la burbuja siguiendo al dedo y
+ * devuelve 1 si se solto armada (la app hace su "volver" con su transicion), -1 si era el gesto
+ * pero se cancelo (toque consumido) y 0 si no era el gesto: la app sigue con el toque (cur_x,
+ * cur_y, cur_down siguen al dia; si ya se solto, era un toque). */
+static int app_back_gesture(int sx, int sy)
+{
+    int z = back_zone(sx, sy); if (!z) return 0;
+    int right = z == 2 || z == 4, wide = z >= 3;
+    struct pkt p; double t0 = now_ms(); int decided = 0;
+    while (!decided) {
+        if (!cur_down) return 0;
+        int dx = cur_x - sx, dy = cur_y - sy, along = right ? -dx : dx;
+        if (along > (wide ? 16 : 10) && along > abs(dy) * (wide ? 2 : 1.2f)) { decided = 1; break; }
+        if (abs(dy) > 14 || along < -8) return 0;
+        if (now_ms() - t0 > 600) return 0;                   /* quieto: pulsacion normal */
+        read_pkt(&p, 30);
+    }
+    static uint16_t *old; if (!old) old = malloc(HM_FRAME_BYTES);
+    if (!old) { drain_until_up(); return 1; }
+    memcpy(old, fr0, HM_FRAME_BYTES);
+    int py0 = H, py1 = 0, armed = 0, cy = sy; float w = 0, ar = 0;
+    while (cur_down) {
+        int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        float dist = right ? sx - cur_x : cur_x - sx; if (dist < 0) dist = 0;
+        if (wide) dist -= 8;                                   /* el arranque ya conto */
+        if (dist < 0) dist = 0;
+        cy = cur_y < 30 + BK_HH / 2 ? 30 + BK_HH / 2 : cur_y > H - BK_HH / 2 ? H - BK_HH / 2 : cur_y;
+        armed = dist > BK_ARM; w = back_w(dist); ar = dist / BK_ARM; if (ar > 1) ar = 1;
+        back_frame(old, right, cy, w, ar, armed, &py0, &py1);
+        if (got && !p.down) break;
+        if (!got) msleep(3);
+    }
+    double tc = now_ms(); float w0 = w;                       /* la burbuja se recoge */
+    for (;;) {
+        double t = (now_ms() - tc) / 120.0; if (t > 1) t = 1;
+        back_frame(old, right, cy, w0 * (1 - (float)ease_out(t)), ar * (float)(1 - t), armed, &py0, &py1);
+        if (t >= 1) break;
+    }
+    memcpy(fr0, old, HM_FRAME_BYTES);
+    lg("atras (app): %s", armed ? "si" : "no");
+    return armed ? 1 : -1;
+}
+
 /* ------------------------------------------------------------------ multitarea desde el inicio */
 /* Deslizar hacia arriba desde la barra en el inicio (iOS): las tarjetas de la ultima app y del
  * reproductor suben desde abajo siguiendo al dedo; al soltar a media altura quedan en el
@@ -434,8 +547,9 @@ static void home_switcher(int sy)
     static uint16_t *appc; if (!appc) appc = malloc(HM_FRAME_BYTES);
     if (!appc) return;
     render_launcher(home, now_ms());
-    int have_app = last_app >= 0 && app_cache(last_app, 0);
-    if (have_app) memcpy(appc, img_app, HM_FRAME_BYTES);
+    int have_app = 0;
+    if (last_app >= 0 && last_app == own_card_app && own_card) { memcpy(appc, own_card, HM_FRAME_BYTES); have_app = 1; }   /* app propia */
+    else if (last_app >= 0 && app_cache(last_app, 0)) { memcpy(appc, img_app, HM_FRAME_BYTES); have_app = 1; }
     const uint16_t *ph = have_cache_plane ? img_cache_plane : 0;
     static uint16_t *ph_card;
     if (!ph) {
@@ -471,39 +585,12 @@ static void home_switcher(int sy)
     }
     if (!open) { sw_player_first = 0; launcher_present(); return; }
     lg("multitarea (inicio)");
-    double off = 0; int ncard = c1 ? 2 : 1;
-    for (;;) {
-        switcher_frame(bg, c0, c1, off, CARD_S, 0, c1 != 0, 1);
-        if (!read_pkt(&p, 300) || !p.down) continue;
-        int tx = p.x, ty = p.y; double o0 = off, v2 = 0, l2 = now_ms(); int lx2 = tx, moved = 0;
-        while (cur_down && read_pkt(&p, 30)) {
-            if (abs(cur_x - tx) > 10 || abs(cur_y - ty) > 10) moved = 1;
-            double t = now_ms(); if (t > l2) { v2 = 0.6 * v2 + 0.4 * (cur_x - lx2) / (t - l2); lx2 = cur_x; l2 = t; }
-            if (moved && ncard > 1) { off = o0 + (cur_x - tx) / (W * CARD_S + 18.0); if (off < -0.25) off = -0.25; if (off > 1.25) off = 1.25; switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1); }
-        }
-        if (moved && abs(cur_y - ty) > abs(cur_x - tx) && cur_y < ty) break;     /* hacia arriba: cerrar */
-        if (moved && ncard > 1) {
-            double target = (off > 0.5 || v2 > 0.3) && !(v2 < -0.3) ? 1 : 0, f = off, t1 = now_ms();
-            for (;;) { double t = (now_ms() - t1) / 200.0; if (t > 1) t = 1; off = f + (target - f) * ease_out(t); switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1); if (t >= 1) break; }
-            continue;
-        }
-        if (moved) continue;
-        int hit = -1;
-        for (int i = 0; i < ncard; i++) { int x, y, w, h; card_geom(i, off, CARD_S, 0, &x, &y, &w, &h); if (tx >= x && tx < x + w && ty >= y - 30 && ty < y + h) hit = i; }
-        if (hit < 0) break;
-        int is_player = (hit == 1) || !have_app;
-        card_zoom_in(bg, hit == 0 ? c0 : c1, hit, off);
-        if (is_player) {
-            nav_start(NAV_TO_PLANE);
-            int ok = nav_wait(3000);
-            if (ok == 1) { memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1; memcpy(fr0, fr1, HM_FRAME_BYTES); present(); }
-            launcher_on = 0; home_publish(); cmd('R');
-            return;
-        }
-        int ix = W / 2 - L.icon / 2, iy = H / 2 - L.icon / 2;
-        launch_app(last_app, ix, iy);
-        return;
-    }
+    double off = 0;
+    int r = sw_loop(bg, c0, c1, have_app, &off);
+    sw_player_first = 0;
+    if (r == SW_APP) { launch_app(last_app, W / 2 - L.icon / 2, H / 2 - L.icon / 2); return; }
+    if (r == SW_PLAYER) { np_app_run(home, -1, -1); launcher_present(); return; }
+    if (r == SW_CLOSED) { last_app = -1; own_card_app = -1; sw_reveal_home(home, 11); launcher_present(); return; }
     /* volver al inicio: las tarjetas bajan */
     double t1 = now_ms();
     for (;;) {
@@ -524,8 +611,9 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
     /* bordes de 24 px; atras tambien desde cerca del borde izquierdo (60 px) si el gesto es
      * claramente hacia la derecha: asi el "atras" antiguo de HiBy nunca llega a dispararse */
     int wide = 0;
-    if (sy >= 456) zone = 1; else if (sy < 30) zone = 3; else if (sx < 24) zone = 4; else if (sx > W - 24) zone = 5;
-    else if (sx < 60 && G.left == GA_BACK) { zone = 4; wide = 1; }
+    if (sy >= 456) zone = 1; else if (sy < 30) zone = 3; else if (sx < BK_EDGE) zone = 4; else if (sx >= W - BK_EDGE) zone = 5;
+    else if (sx < BK_WIDE && G.left == GA_BACK) { zone = 4; wide = 1; }
+    else if (sx >= W - BK_WIDE && G.right == GA_BACK) { zone = 5; wide = 1; }
     if (!zone) return 0;
     int act = zone == 1 ? (plane ? GA_HOME : G.bottom_app) : zone == 3 ? (sx < W / 2 ? G.top : G.top_r) : zone == 4 ? G.left : G.right;
     if (zone == 1 && is_cc(v)) return 0;                     /* cerrar el centro de control: es de HiBy */

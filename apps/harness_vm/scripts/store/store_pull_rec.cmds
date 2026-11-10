@@ -1,0 +1,15 @@
+# Records every presented frame of a pull-to-refresh (share/hs/rec/pull2.bin -> tools/recsheet.py)
+sh rm -f /mnt/share/hs/rec/pull2.bin
+mark open store
+tap 265 165
+sleep 1500
+rec 48 pull2
+mark pull-to-refresh
+drag 160 110 160 330 600
+sleep 300
+up
+sleep 3000
+sh ls -la /mnt/share/hs/rec/pull2.bin
+mark home swipe exit
+swipe 160 476 160 300 200
+sleep 1200

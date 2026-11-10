@@ -418,6 +418,7 @@ static const struct trp TR_KO[] = {
     { "Editar etiquetas", "태그 편집" },
     { "Ir al álbum", "앨범으로 이동" },
     { "Ir al artista", "아티스트로 이동" },
+    { "Esta canción no tiene letra", "이 노래에는 가사가 없습니다" },
     { "DISEÑO", "레이아웃" },
     { "FONDO", "배경화면" },
     { "DOCK Y GESTOS", "Dock 및 제스처" },

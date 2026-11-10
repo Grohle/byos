@@ -955,7 +955,7 @@ static void wg_edit(int press, int embedded)
     float pa = embedded ? 1 : 0, sh0 = embedded ? WG_ESH : 0;
     wg_shift = sh0;
     int down = cur_down, tst = 0, target = -1, sx = cur_x, sy = cur_y, drag = -1, slot = -1, exiting = 0, scroll_to0 = 0;
-    float gdx = 0, gdy = 0, s0 = 0, vel = 0; double lt = t0; int ly = sy;
+    float gdx = 0, gdy = 0, s0 = 0, vel = 0; double lt = t0, dn_t = t0 - 1000; int ly = sy;   /* dn_t: el toque que abrio la edicion ya es largo */
     if (press >= 0 && down) { tst = 1; target = press; }
     static double prof_t; static int prof_n; static double prof_acc;
     for (;;) {
@@ -966,10 +966,15 @@ static void wg_edit(int press, int embedded)
         int topc = WG_TOP + (int)wg_shift - (int)wg_scroll;
         float maxs = tot + WG_TOP + WG_ESH + 10 - H; if (maxs < 0) maxs = 0;
         if (!exiting) {
-            if (down && !prev) { sx = fx; sy = fy; tst = 1; target = wg_edit_hit(fx, fy, -1); vel = 0; s0 = wg_scroll; ly = fy; lt = t; }
+            if (down && !prev) { sx = fx; sy = fy; tst = 1; target = wg_edit_hit(fx, fy, -1); vel = 0; s0 = wg_scroll; ly = fy; lt = t; dn_t = t; }
+            /* como en iOS: el widget se levanta al mantenerlo pulsado (350 ms); deslizar antes desplaza la pagina */
+            if (down && tst == 1 && target >= 0 && t - dn_t >= 350 && abs(fx - sx) <= 8 && abs(fy - sy) <= 8) {
+                drag = target; slot = target; tst = 2;
+                gdx = sx - wg_it[drag].ax; gdy = sy - (topc + wg_it[drag].ay);
+            }
             if (down && tst == 1 && (abs(fx - sx) > 8 || abs(fy - sy) > 8)) {
                 if (sy >= 452 && sy - fy > 6) { exiting = 1; exit_t = t; }   /* gesto de inicio: salir */
-                else if (target >= 0) {     /* arrastrar el widget */
+                else if (target >= 0 && t - dn_t >= 350) {     /* arrastrar el widget */
                     drag = target; slot = target; tst = 2;
                     gdx = sx - wg_it[drag].ax; gdy = sy - (topc + wg_it[drag].ay);
                 } else { tst = 3; s0 = wg_scroll; }
@@ -1190,7 +1195,7 @@ static int wg_gallery(int *otype, int *osize)
             if (g.view == 0) {
                 double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }
                 g.ls = s0 - dy; if (g.ls < 0) g.ls = 0; if (g.ls > maxs) g.ls = maxs; wg_gal_frame(&g, 1);
-            } else if (sx < 24 && dx > 0) { g.push = 1 - dx / (float)W; if (g.push < 0) g.push = 0; wg_gal_frame(&g, 1); }
+            } else if (sx < BK_EDGE && dx > 0) { g.push = 1 - dx / (float)W; if (g.push < 0) g.push = 0; wg_gal_frame(&g, 1); }
         }
         int dx = cur_x - sx, dy = cur_y - sy;
         if (drag_down) {
@@ -1211,7 +1216,7 @@ static int wg_gallery(int *otype, int *osize)
                     struct pkt q; if (read_pkt(&q, 0) && q.down) { vel = 0; break; }
                 }
                 vel = 0;
-            } else if (sx < 24) {   /* atras deslizando desde el borde */
+            } else if (sx < BK_EDGE) {   /* atras deslizando desde el borde */
                 float from = g.push, to = dx > 60 ? 0 : 1; double tb = now_ms();
                 for (;;) { double e = ease_out((now_ms() - tb) / 220.0 > 1 ? 1 : (now_ms() - tb) / 220.0); g.push = from + (to - from) * (float)e; wg_gal_frame(&g, 1); if (e >= 1) break; }
                 if (to == 0) g.view = 0;

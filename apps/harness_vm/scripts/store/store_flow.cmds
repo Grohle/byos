@@ -1,0 +1,69 @@
+# Store (Apps) walkthrough for vmdrive.py: open, every tab back and forth (tab bar body and its
+# bottom strip), scroll, pull-to-refresh, app page + edge back, home-bar exit.
+# Expects the launcher on page 1 (Apps icon at 265,165) and a warm store cache.
+restart
+sleep 3000
+mark open store
+tap 265 165
+sleep 1500
+shot f01_today
+mark tab Apps
+tap 120 440
+sleep 700
+shot f02_apps
+mark tab Search
+tap 200 440
+sleep 700
+mark tab Installed
+tap 280 440
+sleep 700
+shot f03_installed
+mark tab Today
+tap 40 440
+sleep 700
+mark tab Apps (2)
+tap 120 440
+sleep 700
+mark tab Today (bottom strip)
+tap 40 466
+sleep 700
+mark tab Apps (bottom strip)
+tap 120 466
+sleep 700
+shot f04_apps2
+mark scroll fling up
+swipe 160 380 160 140 250
+sleep 1500
+mark scroll fling down
+swipe 160 140 160 380 250
+sleep 1500
+mark scroll slow drag
+swipe 160 380 160 200 1000
+sleep 1200
+mark scroll back
+swipe 160 200 160 400 300
+sleep 1500
+mark tap row (press feedback)
+tap 100 190 250
+sleep 1200
+shot f05_detail
+mark edge back
+swipe 4 250 250 250 300
+sleep 1200
+shot f06_back
+sh S=$(pidof hibyshell); cut -d" " -f14-15 /proc/$S/stat > /tmp/cpu0; cat /proc/uptime > /tmp/up0
+rec 90 pull
+mark pull-to-refresh
+drag 160 110 160 330 600
+sleep 300
+shot f07_pull
+up
+sleep 250
+shot f08_refreshing
+sleep 4000
+shot f09_refreshed
+sh S=$(pidof hibyshell); echo "CPU shell ticks (utime stime) before/after, uptime:" $(cat /tmp/cpu0) $(cut -d" " -f14-15 /proc/$S/stat) $(cut -d" " -f1 /tmp/up0) $(cut -d" " -f1 /proc/uptime)
+mark home swipe exit
+swipe 160 476 160 300 200
+sleep 1500
+shot f10_exit

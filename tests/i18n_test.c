@@ -85,6 +85,32 @@ int main(void)
         int w = text_width(v, 12.5f);
         if (w > 90) { nwarn++; printf("icono [%s] %3d px > 90 px: \"%s\"\n", LANG_CODES[l], w, v); }
     }
+    /* Ajustes del sistema (lang/settings_tr.inc.c): 13 idiomas en una fila */
+    for (unsigned i = 0; i < sizeof TRS / sizeof TRS[0]; i++) {
+        const char *k = TRS[i][0]; char f0[16], f1[16];
+        for (unsigned j = 0; j < i; j++) if (!strcmp(TRS[j][0], k)) FAIL("[TRS] clave repetida: \"%s\"", k);
+        if (in_tr(k)) printf("aviso: \"%s\" esta en TR y en TRS (gana TRS)\n", k);
+        fmt_seq(TRS[i][1], f0, sizeof f0);
+        int wref = text_width(TRS[i][1], 15), wen = text_width(TRS[i][2], 15); if (wen > wref) wref = wen;
+        for (int l = 0; l < LANG_N; l++) {
+            const char *v = TRS[i][1 + l];
+            if (!v || !*v) { FAIL("[%s] TRS sin traduccion: \"%s\"", LANG_CODES[l], k); continue; }
+            if (strcmp(tr_lang(k, l), v)) FAIL("[%s] tr_lang no usa TRS para \"%s\"", LANG_CODES[l], k);
+            fmt_seq(v, f1, sizeof f1);
+            if (strcmp(f0, f1)) FAIL("[%s] formato distinto (%s / %s): \"%s\" -> \"%s\"", LANG_CODES[l], f0, f1, k, v);
+            const char *s = v; int c;
+            while ((c = utf8_next(&s))) {
+                if (c <= ' ' || c == 0xA0 || c == 0x202F) continue;
+                int gi; font_glyph(c, &gi);
+                if (!gi) { FAIL("[%s] sin glifo U+%04X en \"%s\"", LANG_CODES[l], c, v); nmiss_gl++; }
+            }
+            if (!is_long_id(k) && wref < 250 && l > LANG_EN) {
+                int w = text_width(v, 15);
+                if (w > wref * 1.25 && w > wref + 6) { nwarn++; printf("ancho [%s] %3d px vs ref %3d px (x%.2f): \"%s\"\n", LANG_CODES[l], w, wref, (double)w / wref, v); }
+            }
+        }
+        nkeys++;
+    }
     /* tablas por idioma: claves que no existen o repetidas */
     for (int l = 0; l < LANG_N; l++) {
         if (!TRX[l]) continue;

@@ -1,20 +1,28 @@
-/* settings_app.inc.c - "Personalizar": ajustes de hibymod con listas agrupadas estilo iOS.
- * Paginas: General (idioma), Inicio, Gestos (con animacion de ejemplo), Teclado,
- * Desarrollador (ADB) y Acerca de. Navegacion con transicion de iOS y "atras" deslizando
- * desde el borde. Todo el texto pasa por tr() (13 idiomas, ver i18n.inc.c). */
+/* settings_app.inc.c - "Ajustes": la app de ajustes de HiByOS con listas agrupadas estilo iOS.
+ * Sustituye a los Ajustes de sistema y al "DAC USB" de HiBy (las paginas del sistema estan en
+ * sysset.inc.c, incluido al final). Paginas propias: General (idioma), Inicio, Gestos (con
+ * animacion de ejemplo), Teclado, Desarrollador (ADB) y Acerca de. Navegacion con transicion
+ * de iOS y "atras" deslizando desde el borde. Todo el texto pasa por tr() (13 idiomas). */
 
 static int cc_tiles[8], cc_ntiles;   /* definidos en cc.inc.c */
-enum { R_NAV, R_TOGGLE, R_CHOICE, R_ACTION, R_INFO, R_CHECK };   /* R_CHECK: opcion con marca; nopts = su valor */
+enum { R_NAV, R_TOGGLE, R_CHOICE, R_ACTION, R_INFO, R_CHECK,   /* R_CHECK: opcion con marca; nopts = su valor */
+       R_SLIDER,                       /* deslizador: *ival entre lo y hi; nopts = estilo (SL_*) */
+       R_BAR };                        /* barra de ocupacion (almacenamiento): *ival en milesimas */
+enum { SL_PLAIN, SL_BALANCE, SL_BRIGHT };
 struct srow {
     const char *title; int type;
-    int *ival;                         /* TOGGLE / CHOICE */
+    int *ival;                         /* TOGGLE / CHOICE / SLIDER / BAR */
     const char *const *opts; int nopts;
-    void (*fn)(void);                  /* NAV: abre pagina; ACTION: ejecuta; CHOICE/TOGGLE: al cambiar */
+    void (*fn)(void);                  /* NAV: abre pagina; ACTION: ejecuta; CHOICE/TOGGLE/SLIDER: al cambiar */
     const char *(*val)(void);          /* INFO / valor a la derecha */
     int gesture;                       /* CHOICE de gesto: borde (para la animacion) */
+    int lo, hi;                        /* SLIDER: rango */
+    int dis;                           /* atenuada: no responde (aviso breve) */
+    int icon;                          /* icono de color a la izquierda (IC_*), 0 = sin icono */
 };
 struct ssec { const char *header, *footer; struct srow rows[8]; int n; };
-struct spage { const char *title; struct ssec secs[5]; int nsec; int hero; void (*hero_fn)(uint16_t *d, int y, int h); };   /* hero: alto de la cabecera (logo, o hero_fn la dibuja) */
+struct spage { const char *title; struct ssec secs[6]; int nsec; int hero; void (*hero_fn)(uint16_t *d, int y, int h); };   /* hero: alto de la cabecera (logo, o hero_fn la dibuja) */
+static int wrap_cw;                   /* > 0: draw_wrapped centra cada linea en ese ancho (alertas) */
 
 #define NAVH 64           /* barra de navegacion (bajo la barra de estado) */
 #define ROWH 44
@@ -36,6 +44,7 @@ static void wrap_emit(uint16_t *dst, int x, int *yy, const char *a, const char *
         char line[512]; int n = (int)(b - a); if (n > (int)sizeof line - 1) n = sizeof line - 1;
         while (n > 0 && a[n - 1] == ' ') n--;
         memcpy(line, a, n); line[n] = 0;
+        if (wrap_cw > 0) x += (wrap_cw - tw_n(line, size, -1)) / 2;
         draw_text(dst, x, *yy + size, line, size, col, 0, 0, H);
     }
     *yy += lh;
@@ -72,10 +81,162 @@ static int draw_wrapped(uint16_t *dst, int x, int y, int w, const char *s, int s
     return yy - y;
 }
 
-static void sp_switch(uint16_t *d, int x, int y, int on)
+/* ------------------------------------------------------------------ interruptor con muelle (iOS)
+ * Cada interruptor tiene su estado de animacion, identificado por la variable que muestra: al
+ * cambiar el valor (toque, o el reproductor lo revierte) el boton se desliza con un muelle.
+ * Un estado sin dibujar 1,5 s se descarta (al volver a una pagina no se anima lo viejo). */
+struct swanim { const int *iv; float x, v, tg; double t; };
+static struct swanim sw_a[24];
+static float sw_pos(const int *iv)
 {
-    fill_rrect(d, x, y, 51, 31, 15.5f, on ? rgb(52, 199, 89) : rgb(57, 57, 61), 255);
-    fill_circle(d, on ? x + 35.5f : x + 15.5f, y + 15.5f, 13.5f, 0xFFFF, 255);
+    double now = now_ms(); float tg = *iv ? 1.f : 0.f;
+    struct swanim *e = 0, *lru = &sw_a[0];
+    for (int i = 0; i < 24; i++) { if (sw_a[i].iv == iv) { e = &sw_a[i]; break; } if (sw_a[i].t < lru->t) lru = &sw_a[i]; }
+    if (!e || now - e->t > 1500) { if (!e) { e = lru; e->iv = iv; } e->x = e->tg = tg; e->v = 0; e->t = now; return tg; }
+    float dt = (float)(now - e->t) / 1000.f; e->t = now; e->tg = tg; if (dt > 0.05f) dt = 0.05f;
+    /* respuesta 0,28 s, amortiguamiento 0,82: llega en ~250 ms con un rebote apenas visible */
+    const float k = 503.6f, c = 36.8f;
+    for (float s = 0; s < dt; s += 0.004f) { float h = dt - s < 0.004f ? dt - s : 0.004f; e->v += (k * (tg - e->x) - c * e->v) * h; e->x += e->v * h; }
+    if (fabsf(tg - e->x) < 0.002f && fabsf(e->v) < 0.02f) { e->x = tg; e->v = 0; }
+    return e->x;
+}
+static int sw_busy(void)
+{
+    double now = now_ms();
+    for (int i = 0; i < 24; i++) if (sw_a[i].iv && now - sw_a[i].t < 1500 && (sw_a[i].x != sw_a[i].tg || sw_a[i].v != 0)) return 1;
+    return 0;
+}
+static uint16_t sp_mix(uint16_t a, uint16_t b, float k)    /* k 0 = a, 1 = b */
+{
+    if (k <= 0) return a; if (k >= 1) return b;
+    int r = (int)((a >> 11) + ((b >> 11) - (a >> 11)) * k), g = (int)(((a >> 5) & 63) + (((b >> 5) & 63) - ((a >> 5) & 63)) * k), bl = (int)((a & 31) + ((b & 31) - (a & 31)) * k);
+    return (uint16_t)(r << 11 | g << 5 | bl);
+}
+static void sp_switch(uint16_t *d, int x, int y, float k, int dim)
+{
+    float kk = k < -0.03f ? -0.03f : k > 1.03f ? 1.03f : k, kc = k < 0 ? 0 : k > 1 ? 1 : k;
+    int al = dim ? 110 : 255;
+    fill_rrect(d, x, y, 51, 31, 15.5f, sp_mix(rgb(57, 57, 61), rgb(52, 199, 89), kc), al);
+    float cx = x + 15.5f + 20.f * kk;
+    fill_circle(d, cx, y + 16.5f, 13.5f, 0, dim ? 20 : 60);           /* sombra */
+    fill_circle(d, cx, y + 15.5f, 13.5f, dim ? rgb(150, 150, 154) : 0xFFFF, 255);
+}
+
+/* ------------------------------------------------------------------ deslizador y barra */
+#define SL_X0 58
+#define SL_X1 (W - 58)
+static void sp_sun(uint16_t *d, float cx, float cy, float r, uint16_t c)
+{
+    fill_circle(d, cx, cy, r, c, 255);
+    for (int i = 0; i < 8; i++) { float a = i * 0.785398f; fill_circle(d, cx + cosf(a) * (r + 3.2f), cy + sinf(a) * (r + 3.2f), r > 4 ? 1.2f : 0.9f, c, 255); }
+}
+static void sp_slider(uint16_t *d, const struct srow *rw, int ry)
+{
+    int lo = rw->lo, hi = rw->hi > rw->lo ? rw->hi : rw->lo + 1, v = *rw->ival; if (v < lo) v = lo; if (v > hi) v = hi;
+    float f = (v - lo) / (float)(hi - lo), kx = SL_X0 + f * (SL_X1 - SL_X0), cy = ry + 22;
+    uint16_t blue = rw->dis ? rgb(60, 80, 110) : rgb(10, 132, 255), grey = rgb(142, 142, 147);
+    fill_rrect(d, SL_X0, (int)cy - 2, SL_X1 - SL_X0, 4, 2, rgb(72, 72, 76), 255);
+    if (rw->nopts == SL_BALANCE) {
+        int mx = (SL_X0 + SL_X1) / 2;
+        fill_rrect(d, mx - 1, (int)cy - 7, 2, 14, 1, rgb(99, 99, 102), 255);          /* centro */
+        int a = (int)kx < mx ? (int)kx : mx, b = (int)kx < mx ? mx : (int)kx;
+        if (b > a) fill_rrect(d, a, (int)cy - 2, b - a, 4, 2, blue, 255);
+        const char *l = tr("BAL_L"), *r = tr("BAL_R");
+        draw_text(d, 37 - tw_n(l, 13, -1) / 2, ry + 27, l, 13, grey, 0, NAVH + 30, H);
+        draw_text(d, W - 37 - tw_n(r, 13, -1) / 2, ry + 27, r, 13, grey, 0, NAVH + 30, H);
+    } else {
+        if (kx > SL_X0) fill_rrect(d, SL_X0, (int)cy - 2, (int)kx - SL_X0 + 2, 4, 2, blue, 255);
+        if (rw->nopts == SL_BRIGHT) { sp_sun(d, 37, cy, 2.5f, grey); sp_sun(d, W - 37, cy, 4.5f, grey); }
+    }
+    fill_circle(d, kx, cy + 1.5f, 14, 0, 70);
+    fill_circle(d, kx, cy, 13.5f, rw->dis ? rgb(150, 150, 154) : 0xFFFF, 255);
+}
+static int sl_value(const struct srow *rw, int v0, int dx)      /* arrastre relativo (como iOS) */
+{
+    int hi = rw->hi > rw->lo ? rw->hi : rw->lo + 1;
+    float v = v0 + dx * (float)(hi - rw->lo) / (SL_X1 - SL_X0);
+    int iv = (int)floorf(v + 0.5f); return iv < rw->lo ? rw->lo : iv > hi ? hi : iv;
+}
+
+/* ------------------------------------------------------------------ iconos de las filas (iOS) */
+enum { IC_NONE, IC_WIFI, IC_BT, IC_STREAM, IC_USB, IC_GENERAL, IC_DISPLAY, IC_SOUND, IC_BATTERY, IC_LIBRARY,
+       IC_HOME, IC_GESTURE, IC_CC, IC_KB, IC_DEV, IC_N };
+static struct sprite ic_spr[IC_N]; static int ic_loaded;
+static void ic_load(void)
+{
+    static const struct { int ic; const char *n; } m[] = { { IC_WIFI, "wifi" }, { IC_USB, "usb" }, { IC_GENERAL, "gear" },
+        { IC_DISPLAY, "sun" }, { IC_BATTERY, "bolt" }, { IC_CC, "sliders" } };
+    ic_loaded = 1;
+    for (unsigned i = 0; i < sizeof m / sizeof m[0]; i++) {
+        char n[32]; snprintf(n, sizeof n, "cc_%s", m[i].n);
+        struct sprite s = { 0 };
+        if (!load_sprite(n, &s) || s.w < 4) { free(s.rgb); free(s.a); continue; }
+        /* 26 px -> 19 px con media por area (se ve fino, no a saltos) */
+        const int o = 19; struct sprite *t = &ic_spr[m[i].ic];
+        t->rgb = malloc(o * o * 2); t->a = malloc(o * o);
+        if (t->rgb && t->a) {
+            t->w = t->h = o;
+            for (int y = 0; y < o; y++) for (int x = 0; x < o; x++) {
+                int y0 = y * s.h / o, y1 = (y + 1) * s.h / o, x0 = x * s.w / o, x1 = (x + 1) * s.w / o, acc = 0, n2 = 0;
+                if (y1 <= y0) y1 = y0 + 1; if (x1 <= x0) x1 = x0 + 1;
+                for (int yy = y0; yy < y1 && yy < s.h; yy++) for (int xx = x0; xx < x1 && xx < s.w; xx++) { acc += s.a[yy * s.w + xx]; n2++; }
+                t->rgb[y * o + x] = 0xFFFF; t->a[y * o + x] = (uint8_t)(n2 ? acc / n2 : 0);
+            }
+        } else { free(t->rgb); free(t->a); memset(t, 0, sizeof *t); }
+        free(s.rgb); free(s.a);
+    }
+}
+static void sp_line(uint16_t *d, float x0, float y0, float x1, float y1, float r, uint16_t c)
+{
+    float dx = x1 - x0, dy = y1 - y0; int n = (int)(sqrtf(dx * dx + dy * dy) / 0.9f) + 1;
+    for (int i = 0; i <= n; i++) fill_circle(d, x0 + dx * i / n, y0 + dy * i / n, r, c, 255);
+}
+static void sp_icon(uint16_t *d, int x, int y, int ic)
+{
+    static const uint8_t col[IC_N][3] = { { 0, 0, 0 }, { 10, 132, 255 }, { 10, 132, 255 }, { 52, 199, 89 }, { 88, 86, 214 }, { 142, 142, 147 },
+        { 10, 132, 255 }, { 255, 45, 85 }, { 52, 199, 89 }, { 252, 61, 57 }, { 88, 86, 214 }, { 255, 149, 0 }, { 142, 142, 147 },
+        { 120, 120, 126 }, { 99, 99, 102 } };
+    if (ic <= 0 || ic >= IC_N) return;
+    if (!ic_loaded) ic_load();
+    uint16_t bg = rgb(col[ic][0], col[ic][1], col[ic][2]), w = 0xFFFF;
+    fill_rrect(d, x, y, 29, 29, 7, bg, 255);
+    float cx = x + 14.5f, cy = y + 14.5f;
+    if (ic_spr[ic].w) { blit(d, &ic_spr[ic], x + 5, y + 5, 32, 255); return; }
+    switch (ic) {
+    case IC_BT:
+        sp_line(d, cx - 4, cy - 4, cx + 4, cy + 4, 0.9f, w); sp_line(d, cx + 4, cy + 4, cx, cy + 8, 0.9f, w);
+        sp_line(d, cx, cy + 8, cx, cy - 8, 0.9f, w); sp_line(d, cx, cy - 8, cx + 4, cy - 4, 0.9f, w);
+        sp_line(d, cx + 4, cy - 4, cx - 4, cy + 4, 0.9f, w); break;
+    case IC_STREAM:                                            /* pantalla con triangulo (AirPlay) */
+        sp_line(d, cx - 4, cy + 3, cx - 8, cy + 3, 0.9f, w); sp_line(d, cx - 8, cy + 3, cx - 8, cy - 7, 0.9f, w);
+        sp_line(d, cx - 8, cy - 7, cx + 8, cy - 7, 0.9f, w); sp_line(d, cx + 8, cy - 7, cx + 8, cy + 3, 0.9f, w);
+        sp_line(d, cx + 8, cy + 3, cx + 4, cy + 3, 0.9f, w);
+        for (int k = 0; k < 7; k++) fill_rrect(d, (int)cx - k, (int)cy + 1 + k, 2 * k + 1, 1, 0, w, 255);
+        break;
+    case IC_SOUND:                                             /* altavoz con ondas */
+        fill_rrect(d, (int)cx - 8, (int)cy - 3, 4, 7, 1, w, 255);
+        for (int i = 0; i < 5; i++) fill_rrect(d, (int)cx - 4 + i, (int)cy - 3 - i, 1, 7 + 2 * i, 0, w, 255);
+        for (int a = -40; a <= 40; a += 8) { float r = a * 0.01745f; fill_circle(d, cx + 3 + cosf(r) * 3.5f, cy + 0.5f + sinf(r) * 3.5f, 0.8f, w, 255);
+                                             fill_circle(d, cx + 3 + cosf(r) * 7.f, cy + 0.5f + sinf(r) * 7.f, 0.8f, w, 255); }
+        break;
+    case IC_LIBRARY:                                           /* nota musical */
+        sp_line(d, cx + 2.5f, cy - 8, cx + 2.5f, cy + 4, 0.9f, w); sp_line(d, cx + 2.5f, cy - 8, cx + 7, cy - 5, 0.9f, w);
+        fill_circle(d, cx - 1, cy + 5, 3.4f, w, 255); break;
+    case IC_HOME:
+        for (int i = 0; i < 4; i++) fill_rrect(d, (int)cx - 7 + (i & 1) * 8, (int)cy - 7 + (i >> 1) * 8, 6, 6, 1.6f, w, 255);
+        break;
+    case IC_GESTURE:
+        fill_circle(d, cx, cy, 7.6f, w, 255); fill_circle(d, cx, cy, 6.2f, bg, 255); fill_circle(d, cx, cy, 3.6f, w, 255); break;
+    case IC_KB:
+        fill_rrect(d, (int)cx - 10, (int)cy - 6, 20, 13, 2.5f, w, 255); fill_rrect(d, (int)cx - 9, (int)cy - 5, 18, 11, 2, bg, 255);
+        for (int r = 0; r < 2; r++) for (int k = 0; k < 5; k++) fill_rrect(d, (int)cx - 8 + k * 3 + r, (int)cy - 3 + r * 3, 2, 2, 0, w, 255);
+        fill_rrect(d, (int)cx - 5, (int)cy + 3, 10, 2, 0, w, 255); break;
+    case IC_DEV:                                               /* </> */
+        sp_line(d, cx - 4, cy - 5, cx - 8.5f, cy, 0.95f, w); sp_line(d, cx - 8.5f, cy, cx - 4, cy + 5, 0.95f, w);
+        sp_line(d, cx + 4, cy - 5, cx + 8.5f, cy, 0.95f, w); sp_line(d, cx + 8.5f, cy, cx + 4, cy + 5, 0.95f, w);
+        sp_line(d, cx + 1.8f, cy - 6, cx - 1.8f, cy + 6, 0.95f, w); break;
+    default: break;
+    }
 }
 
 static const char *row_value(const struct srow *r)
@@ -116,17 +277,30 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
         for (int r = 0; r < sc->n; r++, gi++) {
             const struct srow *rw = &sc->rows[r];
             int ry = top + r * ROWH;
-            if (gi == sel) fill_rrect(d, 16, ry, W - 32, ROWH, (r == 0 || r == sc->n - 1) ? 10 : 0, rgb(58, 58, 60), 255);
-            if (r) for (int x = 32; x < W - 16; x++) if (ry >= NAVH + 30 && ry < H) d[ry * W + x] = rgb(56, 56, 58);
-            uint16_t tc = rw->type == R_ACTION && rw->fn && !rw->val ? rgb(10, 132, 255) : 0xFFFF;
+            if (ry > H || ry + ROWH < NAVH + 30) { if (rw->type == R_TOGGLE && rw->ival) sw_pos(rw->ival); continue; }   /* fuera de la vista */
+            int tx = rw->icon ? 70 : 32;
+            if (gi == sel && rw->type != R_SLIDER) fill_rrect(d, 16, ry, W - 32, ROWH, (r == 0 || r == sc->n - 1) ? 10 : 0, rgb(58, 58, 60), 255);
+            if (r) for (int x = tx; x < W - 16; x++) if (ry >= NAVH + 30 && ry < H) d[ry * W + x] = rgb(56, 56, 58);
+            if (rw->icon) sp_icon(d, 28, ry + 7, rw->icon);
+            if (rw->type == R_SLIDER && rw->ival) { sp_slider(d, rw, ry); continue; }
+            if (rw->type == R_BAR) {                         /* almacenamiento: titulo, valor y barra */
+                const char *v = row_value(rw); int vw = v ? tw_n(v, 13, -1) : 0; if (vw > 170) vw = 170;
+                draw_text(d, tx, ry + 20, tr(rw->title), 15, 0xFFFF, W - 32 - tx - vw - 12, NAVH + 30, H);
+                if (v) draw_text(d, W - 32 - vw, ry + 20, v, 13, rgb(142, 142, 147), 170, NAVH + 30, H);
+                int pm = rw->ival ? *rw->ival : 0; if (pm < 0) pm = 0; if (pm > 1000) pm = 1000;
+                fill_rrect(d, tx, ry + 29, W - 32 - tx, 6, 3, rgb(58, 58, 60), 255);
+                int fw = (W - 32 - tx) * pm / 1000; if (fw > 0) fill_rrect(d, tx, ry + 29, fw < 6 ? 6 : fw, 6, 3, pm > 900 ? rgb(255, 159, 10) : rgb(10, 132, 255), 255);
+                continue;
+            }
+            uint16_t tc = rw->dis ? rgb(99, 99, 102) : rw->type == R_ACTION && rw->fn && !rw->val ? rgb(10, 132, 255) : 0xFFFF;
             /* el valor (derecha) manda; el titulo usa el resto y se recorta con "…" */
             const char *v = rw->type == R_TOGGLE ? 0 : row_value(rw);
             int chev = rw->type == R_NAV || rw->type == R_CHOICE;
             int vx = W - 16 - 12 - (chev ? 14 : 0);
             int vw = v ? tw_n(v, 15, -1) : 0; if (vw > 128) vw = 128;
-            int tmax = (rw->type == R_TOGGLE ? W - 32 - 24 - 60 : vx - 32 - (v ? vw + 12 : 0));
-            draw_text(d, 32, ry + 28, tr(rw->title), 15, tc, tmax, NAVH + 30, H);
-            if (rw->type == R_TOGGLE && rw->ival) { if (ry + 6 >= NAVH + 30) sp_switch(d, W - 16 - 12 - 51, ry + 6, *rw->ival); }
+            int tmax = (rw->type == R_TOGGLE ? W - 16 - 12 - 51 - 10 - tx : vx - tx - (v ? vw + 12 : 0));
+            draw_text(d, tx, ry + 28, tr(rw->title), 15, tc, tmax, NAVH + 30, H);
+            if (rw->type == R_TOGGLE && rw->ival) { float k = sw_pos(rw->ival); if (ry + 6 >= NAVH + 30) sp_switch(d, W - 16 - 12 - 51, ry + 6, k, rw->dis); }
             else if (rw->type == R_CHECK) {                 /* marca azul de iOS en la opcion elegida */
                 if (rw->ival && *rw->ival == rw->nopts && ry + 14 >= NAVH + 30) {
                     for (int i = 0; i < 7; i++) fill_rrect(d, W - 46 + i, ry + 22 + i / 2, 2, 2, 1, rgb(10, 132, 255), 255);
@@ -337,33 +511,19 @@ static const char *v_mem(void)
 static void page_general(struct spage *p), page_home(struct spage *p), page_gestures(struct spage *p),
             page_kb(struct spage *p), page_dev(struct spage *p), page_about(struct spage *p);
 static void open_page(void (*build)(struct spage *), const char *back);
-static void nav_general(void) { open_page(page_general, "Personalizar"); }
+static void nav_general(void) { open_page(page_general, "Ajustes"); }
 static void page_lang(struct spage *p);
-static void nav_lang(void) { open_page(page_lang, "General"); }
-static void nav_home(void) { home_prev_ok = 0; open_page(page_home, "Personalizar"); }
-static void nav_gestures(void) { open_page(page_gestures, "Personalizar"); }
-static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; set_kb_layout = kb_cfg_layout; open_page(page_kb, "Personalizar"); }
-static void nav_dev(void) { open_page(page_dev, "Personalizar"); }
-static void nav_about(void) { open_page(page_about, "Personalizar"); }
+static void nav_lang(void) { open_page(page_lang, "General"); }   /* desde General */
+static void nav_home(void) { home_prev_ok = 0; open_page(page_home, "Ajustes"); }
+static void nav_gestures(void) { open_page(page_gestures, "Ajustes"); }
+static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; set_kb_layout = kb_cfg_layout; open_page(page_kb, "Ajustes"); }
+static void nav_dev(void) { open_page(page_dev, "Ajustes"); }
+static void nav_about(void);   /* sysset.inc.c (General > Informacion) */
 static void nav_audio(void);
 static void nav_cc(void), nav_power(void), nav_ota(void);
 
 #define ROW(t, ty, iv, op, no, f, v, g) (struct srow){ t, ty, iv, op, no, f, v, g }
-static void page_root(struct spage *p)
-{
-    *p = (struct spage){ "Personalizar" };
-    p->secs[0] = (struct ssec){ 0, 0, { ROW("General", R_NAV, 0, 0, 0, nav_general, 0, 0), ROW("Inicio", R_NAV, 0, 0, 0, nav_home, 0, 0),
-                                        ROW("Gestos", R_NAV, 0, 0, 0, nav_gestures, 0, 0), ROW("Centro de control", R_NAV, 0, 0, 0, nav_cc, 0, 0),
-                                        ROW("Teclado", R_NAV, 0, 0, 0, nav_kb, 0, 0) }, 5 };
-    p->secs[1] = (struct ssec){ 0, 0, { ROW("Batería y energía", R_NAV, 0, 0, 0, nav_power, 0, 0), ROW("Audio y sistema", R_NAV, 0, 0, 0, nav_audio, 0, 0), ROW("Desarrollador", R_NAV, 0, 0, 0, nav_dev, 0, 0), ROW("Actualización de software", R_NAV, 0, 0, 0, nav_ota, 0, 0), ROW("Acerca de", R_NAV, 0, 0, 0, nav_about, 0, 0) }, 5 };
-    p->nsec = 2;
-}
-static void page_general(struct spage *p)
-{
-    *p = (struct spage){ "General" };
-    p->secs[0] = (struct ssec){ 0, 0, { ROW("Idioma", R_NAV, 0, 0, 0, nav_lang, v_lang, 0) }, 1 };
-    p->nsec = 1;
-}
+static void page_root(struct spage *p);   /* raiz y General: sysset.inc.c */
 /* idiomas por su propio nombre (como iOS); los 13 del firmware de HiBy */
 static void page_lang(struct spage *p)
 {
@@ -521,33 +681,7 @@ static void act_reboot(void)
     if (!confirm(tr("¿Reiniciar ahora? La música se detendrá."), tr("Reiniciar"))) return;
     sync(); char *argv[] = { "/sbin/reboot", 0 }; pid_t pid; posix_spawn(&pid, argv[0], 0, 0, argv, environ);
 }
-/* cuantas funciones ocultas de set_functions.json estan visibles en Ajustes de HiBy */
-static const char *v_hidden_n(void)
-{
-    static const char *k[] = { "car_mode", "car_mode_auto_play", "standby", "double_touch_wakeup", "dac_charge_disable" };
-    char buf[4096]; FILE *f = fopen("/usr/resource/set_functions.json", "r"); size_t n = 0;
-    if (f) { n = fread(buf, 1, sizeof buf - 1, f); fclose(f); } buf[n] = 0;
-    int c = 0; for (int i = 0; i < 5; i++) { char pat[48]; snprintf(pat, sizeof pat, "\"%s\":1", k[i]); if (strstr(buf, pat)) c++; }
-    snprintf(sv_buf[4], 64, "%d / 5", c); return sv_buf[4];
-}
-static void page_audio(struct spage *p)
-{
-    *p = (struct spage){ "Audio y sistema" };
-    int n; filt_vals(&n);
-    p->secs[0] = (struct ssec){ "DAC ES9219", au_filt_max >= 7 ? "FILT_HELP" : "FILT_HELP_OLD", {
-        ROW("Filtro digital", R_CHOICE, &au_filt_i, n == 7 ? O_FILT8 : O_FILT2, n, apply_filter, 0, 0) }, 1 };
-    p->secs[1] = (struct ssec){ "VOLUMEN", "VOLWARN_HELP", { ROW("Aviso de volumen alto (UE)", R_TOGGLE, &au_volwarn, 0, 0, apply_volwarn, 0, 0) }, 1 };
-    p->secs[2] = (struct ssec){ "TARJETA SD", "TF_HELP", { ROW("Biblioteca en la tarjeta SD", R_TOGGLE, &au_tfdb, 0, 0, apply_tfdb, 0, 0),
-                                                         ROW("Carátulas en caché en la SD", R_TOGGLE, &au_tfimg, 0, 0, apply_tfimg, 0, 0) }, 2 };
-    p->secs[3] = (struct ssec){ "AJUSTES DE HIBY", "HIDDEN_HELP", { ROW("Funciones activadas", R_INFO, 0, 0, 0, 0, v_hidden_n, 0) }, 1 };
-    p->nsec = 4;
-    if (au_reboot) {   /* cambios de config.json pendientes: arriba del todo */
-        memmove(&p->secs[1], &p->secs[0], 4 * sizeof p->secs[0]);
-        p->secs[0] = (struct ssec){ 0, "REBOOT_HELP", { ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0) }, 1 };
-        p->nsec = 5;
-    }
-}
-static void nav_audio(void) { audio_sync(); open_page(page_audio, "Personalizar"); }
+/* las paginas Sonido y Biblioteca (sysset.inc.c) usan lo de arriba */
 
 /* ------------------------------------------------------------------ Centro de control (configurable) */
 static int cc_on[8];
@@ -585,21 +719,13 @@ static void page_power(struct spage *p)
     p->nsec = 2;
     (void)set_hz_i; (void)O_HZ; (void)apply_hz;
 }
-static void nav_cc(void) { cc_sync(); open_page(page_cc, "Personalizar"); }
-static void nav_power(void) { set_nocharge = pw_nocharge; set_hz_i = lcd_hz == 60; open_page(page_power, "Personalizar"); }
+static void nav_cc(void) { cc_sync(); open_page(page_cc, "Ajustes"); }
+static void nav_power(void) { set_nocharge = pw_nocharge; set_hz_i = lcd_hz == 60; open_page(page_power, "Ajustes"); }
 
 static const char *v_apps(void) { int n = 0; DIR *d = opendir("/usr/data/hibymod/apps"); struct dirent *e; while (d && (e = readdir(d))) if (e->d_name[0] != '.') n++; if (d) closedir(d); snprintf(sv_buf[3], 64, "%d", n); return sv_buf[3]; }
-static const char *v_repo(void) { return "Grohle/hibyos"; }
-static void page_about(struct spage *p)
-{
-    *p = (struct spage){ "Acerca de" };
-    p->hero = 96;
-    p->secs[0] = (struct ssec){ 0, 0, { ROW("Versión", R_INFO, 0, 0, 0, 0, v_version, 0), ROW("Memoria libre", R_INFO, 0, 0, 0, 0, v_mem, 0),
-                                        ROW("Apps instaladas", R_INFO, 0, 0, 0, 0, v_apps, 0) }, 3 };
-    p->secs[1] = (struct ssec){ "PROYECTO", "ABOUT_HELP", { ROW("GitHub", R_INFO, 0, 0, 0, 0, v_repo, 0) }, 1 };
-    p->nsec = 2;
-}
-
+/* sp_gone: se salio al inicio con el gesto de la barra; sp_self: app (launcher) que somos */
+static int sp_gone, sp_self = -1;
+static void ps_tick(void); static int ps_busy(void); static void ps_refresh(void);
 /* pagina de eleccion (lista con marca) con animacion de ejemplo si es un gesto */
 static void choice_page(const struct srow *rw, const char *back)
 {
@@ -623,10 +749,20 @@ static void choice_page(const struct srow *rw, const char *back)
             gesture_demo(fr0, W / 2, NAVH + 30 + 16, ed, act, now_ms() - t0);
         }
         present();
+        ps_tick();
         struct pkt p;
-        if (!read_pkt(&p, demo ? 0 : 300)) continue;
+        if (!read_pkt(&p, demo ? 0 : (ps_busy() || now_ms() < toast_until + 40) ? 30 : 300)) continue;
         if (!p.down) continue;
-        int x = p.x, yy = p.y; while (cur_down && read_pkt(&p, 3000)) {}
+        int x = p.x, yy = p.y;
+        if (yy >= 456 && sp_self >= 0) {                  /* desde abajo: inicio */
+            int up = 0; double tw = now_ms();
+            while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (yy - cur_y > 12) up = 1; }
+            if (up && own_home_gesture(x, yy, sp_self)) { sp_gone = 1; break; }
+            while (cur_down && read_pkt(&p, 1000)) {}
+            continue;
+        }
+        { int bk = app_back_gesture(x, yy); if (bk > 0) break; if (bk < 0) continue; }
+        while (cur_down && read_pkt(&p, 3000)) {}
         if (yy < NAVH + 30 && x < 110) break;
         const struct srow *hr; int i = sp_hit(&pg, x, yy, &hr);
         if (i >= 0) { *rw->ival = i; if (rw->fn) rw->fn(); t0 = now_ms(); }
@@ -634,9 +770,12 @@ static void choice_page(const struct srow *rw, const char *back)
     sp_scroll = saved;
 }
 
-/* bucle de una pagina; vuelve al pulsar "atras" o deslizar desde el borde */
+/* bucle de una pagina; vuelve al pulsar "atras" o deslizar desde el borde.
+ * sp_gone: se salio al inicio con el gesto de la barra (desde cualquier pagina): todas las
+ * paginas abiertas vuelven sin transicion y la app no hace su animacion de cierre. */
 static void open_page(void (*build)(struct spage *), const char *back)
 {
+    if (sp_gone) return;
     struct spage pg; build(&pg);
     float saved = sp_scroll; sp_scroll = 0;
     if (back) {   /* fs_transition no puede leer de fr0 mientras escribe en el: copia antes */
@@ -645,25 +784,45 @@ static void open_page(void (*build)(struct spage *), const char *back)
     }
     float vel = 0;
     for (;;) {
+        ps_tick();
         build(&pg);
         sp_render(fr0, &pg, -1, back); present();
         struct pkt p;
-        if (!read_pkt(&p, now_ms() < toast_until + 40 ? 30 : 400)) continue;
+        int tmo = sw_busy() ? 0 : (ps_busy() || now_ms() < toast_until + 40) ? 30 : 400;
+        if (!read_pkt(&p, tmo)) continue;
         if (!p.down) continue;
         int sx = p.x, sy = p.y; double ts = now_ms(); float s0 = sp_scroll; int moved = 0, ly = sy; double lt = ts;
         const struct srow *rw = 0; int hi = sp_hit(&pg, sx, sy, &rw);
-        if (back && sx < 18) {   /* atras deslizando desde el borde */
-            while (cur_down && read_pkt(&p, 40)) {}
-            if (cur_x - sx > 60) break;
-            continue;
-        }
-        if (sy >= 456 && !back) {   /* barra de inicio: salir */
+        /* desde abajo: inicio (la ventana sigue al dedo; mantener 1 s: multitarea) */
+        if (sy >= 456 && sp_self >= 0) {   /* (sp_self < 0: abierta desde el modo edicion del inicio) */
+            int up = 0; double tw = now_ms();
+            while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
+            if (up) {
+                sp_render(fr0, &pg, -1, back);
+                if (own_home_gesture(sx, sy, sp_self)) { sp_gone = 1; break; }
+                continue;
+            }
             while (cur_down && read_pkt(&p, 1000)) {}
-            if (sy - cur_y > 20) { sp_scroll = saved; return; }
             continue;
         }
-        if (hi >= 0) { sp_render(fr0, &pg, hi, back); present(); }
+        /* un deslizador recibe el arrastre horizontal; el "atras" solo desde el filo de la pantalla */
+        int on_slider = hi >= 0 && rw && rw->type == R_SLIDER && rw->ival && !rw->dis && sx > 20 && sx < W - 20;
+        if (back && !on_slider) {   /* atras deslizando desde cualquiera de los dos bordes (burbuja) */
+            int bk = app_back_gesture(sx, sy);
+            if (bk > 0) break;
+            if (bk < 0) continue;
+            if (!cur_down) { sx = cur_x; sy = cur_y; hi = sp_hit(&pg, sx, sy, &rw); on_slider = 0; }
+        }
+        if (hi >= 0 && !on_slider) { sp_render(fr0, &pg, hi, back); present(); }
+        int sliding = 0, v0 = on_slider ? *rw->ival : 0;
         while (cur_down && read_pkt(&p, 30)) {
+            if (on_slider && !moved && !sliding && abs(cur_x - sx) > 6 && abs(cur_x - sx) > abs(cur_y - sy)) sliding = 1;
+            if (sliding) {
+                int nv = sl_value(rw, v0, cur_x - sx);
+                if (nv != *rw->ival) { *rw->ival = nv; if (rw->fn) rw->fn(); }
+                ps_tick(); sp_render(fr0, &pg, -1, back); present();
+                continue;
+            }
             if (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 10) moved = 1;
             if (moved) {
                 double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }
@@ -672,6 +831,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
                 sp_render(fr0, &pg, -1, back); present();
             }
         }
+        if (sliding) continue;
         if (moved) {
             /* inercia de iOS: decelera ~0.998/ms; se para al tocar o en los extremos */
             float maxs = sp_content_h(&pg) - (H - NAVH - 30); if (maxs < 0) maxs = 0;
@@ -689,17 +849,28 @@ static void open_page(void (*build)(struct spage *), const char *back)
         }
         if (back && sy < NAVH + 30 && sx < 110) break;
         if (hi < 0 || !rw || now_ms() - ts > 700) continue;           /* pulsacion corta y quieta */
-        if (rw->type == R_NAV && rw->fn) rw->fn();
+        if (rw->dis) { toast(tr("No disponible ahora")); continue; }
+        if (rw->type == R_SLIDER && rw->ival) {                      /* toque en los extremos: un paso */
+            int st = rw->nopts == SL_BRIGHT ? 10 : 1, nv = *rw->ival;
+            if (sx < SL_X0 - 6) nv -= st; else if (sx > SL_X1 + 6) nv += st; else continue;
+            if (nv < rw->lo) nv = rw->lo; if (nv > rw->hi) nv = rw->hi;
+            if (nv != *rw->ival) { *rw->ival = nv; if (rw->fn) rw->fn(); }
+            continue;
+        }
+        if (rw->type == R_NAV && rw->fn) { rw->fn(); if (sp_gone) break; ps_refresh(); }
         else if (rw->type == R_TOGGLE && rw->ival) { *rw->ival = !*rw->ival; if (rw->fn) rw->fn(); }
         else if (rw->type == R_CHECK && rw->ival) { if (*rw->ival != rw->nopts) { *rw->ival = rw->nopts; if (rw->fn) rw->fn(); } }
         else if (rw->type == R_CHOICE && rw->ival) {
             struct spage cur; build(&cur); sp_render(img_under, &cur, -1, back); have_under = 0;
             choice_page(rw, pg.title);
+            if (sp_gone) break;
         } else if (rw->type == R_ACTION && rw->fn) rw->fn();
+        if (sp_gone) break;
     }
+    sp_scroll = saved;
+    if (sp_gone) return;
     /* volver: transicion inversa */
     sp_render(img_under, &pg, -1, back); have_under = 0;
-    sp_scroll = saved;
     (void)vel;
 }
 
@@ -725,10 +896,19 @@ static void store_page(struct spage *p)
 static void store_app_ui(int ix, int iy);
 static void store_app(int ix, int iy) { (void)store_page; store_app_ui(ix, iy); }
 
-static void settings_app(int ix, int iy)
+/* ------------------------------------------------------------------ paginas del sistema */
+#include "sysset.inc.c"
+
+/* abre la app con zoom desde (ix, iy) en la pagina raiz o, con usb, directamente en USB
+ * (la app "DAC USB" del inicio: una pagina raiz propia, sin "atras") */
+static void settings_run(int ix, int iy, int usb)
 {
-    sync_from_state();
-    struct spage root; page_root(&root);
+    sync_from_state(); ss_open();
+    /* la tarjeta de multitarea es la del icono que nos abrio (launch_app pone last_app) */
+    int a = last_app >= 0 && last_app < NAPPS ? last_app : app_by_id(usb ? "dac" : "personalize");
+    sp_self = a; sp_gone = 0;
+    void (*root_fn)(struct spage *) = usb ? page_usb_root : page_root;
+    struct spage root; root_fn(&root);
     sp_scroll = 0;
     sp_render(img_app, &root, -1, 0);
     render_launcher(img_base, now_ms());
@@ -740,18 +920,25 @@ static void settings_app(int ix, int iy)
         draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
-    open_page(page_root, 0);
-    /* salir: encoger hacia el icono */
-    struct spage pg; page_root(&pg); sp_render(img_app, &pg, -1, 0);
-    render_launcher(img_base, now_ms());
-    t0 = now_ms();
-    for (;;) {
-        double t = (now_ms() - t0) / 280; if (t > 1) t = 1; double e = 1 - ease_out(t);
-        int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
-        present(); if (t >= 1) break;
+    open_page(root_fn, 0);
+    if (!sp_gone) {   /* salir: encoger hacia el icono (el gesto de inicio ya lo hizo si sp_gone) */
+        struct spage pg; root_fn(&pg); sp_render(img_app, &pg, -1, 0);
+        render_launcher(img_base, now_ms());
+        t0 = now_ms();
+        for (;;) {
+            double t = (now_ms() - t0) / 280; if (t > 1) t = 1; double e = 1 - ease_out(t);
+            int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
+            for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
+            draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+            present(); if (t >= 1) break;
+        }
     }
+    sp_gone = 0; sp_self = -1;
     drain_until_up();
     launcher_present();
 }
+/* Ajustes (iconos "Ajustes" y "Personalizar" del inicio) */
+static void settings_app(int ix, int iy) { settings_run(ix, iy, 0); }
+/* DAC USB: abre directamente la pagina USB (sustituye a la app DAC USB de HiBy) */
+static void usbdac_app_at(int ix, int iy) { settings_run(ix, iy, 1); }
+static void usbdac_app(void) { usbdac_app_at((W - L.icon) / 2, (H - L.icon) / 2); }

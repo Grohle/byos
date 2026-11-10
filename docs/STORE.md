@@ -38,7 +38,13 @@ To go back, tap "‹ Today" or drag from the left edge; the page follows the fin
 Gestures:
 
 - **Scrolling**: iOS inertia (deceleration 0.998/ms) and bounce at the ends.
-- **Pull down**: refreshes the repositories (except in Search).
+- **Pull down**: refreshes the repositories (except in Search). As in iOS, the activity indicator's
+  spokes appear one by one while pulling; past the threshold it starts spinning, and on release the
+  list stays open by the indicator's height until the indexes arrive, then springs back.
+- **Refresh button** (circular arrow, top right of the large title): the same refresh; the button
+  turns into the spinning indicator while it runs.
+- **Tab bar**: the tab changes on touch-down (iOS). From its bottom strip, swiping up is the home
+  gesture (`own_home_gesture`: the window follows the finger; holding still opens multitasking).
 - **Tap the active tab**: scrolls back to the top.
 - **Home bar**: exits. The store shrinks back into its icon.
 
@@ -142,8 +148,10 @@ regenerated `index.json`. Devices see UPDATE the next time they refresh.
 
   If it is being installed on the SD card, the package is downloaded to `SD/HiByOS/dl/`. In both cases it is deleted
   after installing.
-- When the store opens, whatever is in the cache is drawn immediately. Indexes are refreshed if they have not been
-  refreshed for more than 10 minutes in this session, or on pull-down.
+- When the store opens, everything comes from memory/cache: the indexes are re-read only if their cache files
+  changed, decoded icons are kept between sessions, and the SD/installed state is computed once. The network is
+  used **only** on pull-down or the refresh button, plus once automatically when there is no cache at all (first
+  run: loading indicator). Switching tabs or scrolling never touches the disk or the network.
 - **Verification**: the sha256 is computed in the shell itself (C, FIPS 180-4) over the downloaded
   file, and the size is checked too. The installer validates everything again (tar, paths,
   hard-float ELF, space) before writing anything (`APP_FORMAT.md` §5).
@@ -210,7 +218,10 @@ without the card, an orphan folder `HiByOS/apps/<id>` remains on the SD card, wh
 - Uses the shared buffers `img_under` and `img_sheet` for transitions; on exit it sets
   `have_under = 0`.
 - Each `hibynet` takes 1–2 MB of RSS while it runs.
-- It only redraws when something changes or animates: progress, loading ring, inertia or notice.
+- It only redraws when something changes or animates: progress, inertia or notice. While only an activity
+  indicator spins (refresh), just its rows are repainted (`present_rows`), so `hibynet` keeps the CPU.
+- Measured in the QEMU harness (`docs/VM_SHELL.md`): touch-to-feedback 11–32 ms (one panel frame), full page
+  render ~2 ms (max ~7 ms), tab switch render 2–10 ms.
 
 ## 6. Browser (NetSurf): "IN TESTING" status (blocked)
 

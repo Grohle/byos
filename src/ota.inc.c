@@ -67,4 +67,4 @@ static void page_ota(struct spage *p)
     for (int i = 0; i < nfw && i < 5; i++) p->secs[1].rows[p->secs[1].n++] = ROW(fws[i].label, R_ACTION, 0, 0, 0, fw_act[i], 0, 0);
     p->nsec = 2;
 }
-static void nav_ota(void) { fw_scan(); open_page(page_ota, "Personalizar"); }
+static void nav_ota(void) { fw_scan(); open_page(page_ota, "General"); }

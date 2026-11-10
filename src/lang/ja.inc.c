@@ -418,6 +418,7 @@ static const struct trp TR_JA[] = {
     { "Editar etiquetas", "タグを編集" },
     { "Ir al álbum", "アルバムへ移動" },
     { "Ir al artista", "アーティストへ移動" },
+    { "Esta canción no tiene letra", "この曲には歌詞がありません" },
     { "DISEÑO", "レイアウト" },
     { "FONDO", "壁紙" },
     { "DOCK Y GESTOS", "Dockとジェスチャ" },

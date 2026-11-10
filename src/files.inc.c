@@ -463,6 +463,7 @@ static void file_info(const char *path, const struct fent *e)
     action_sheet(e->name, o, 1, -1);
 }
 
+static int fs_gone;          /* salio con el gesto de inicio: el inicio ya esta en pantalla */
 static void files_app(int ix, int iy)
 {
     have_under = 0;   /* Archivos reutiliza img_under */
@@ -496,14 +497,21 @@ static void files_app(int ix, int iy)
         } else if (!read_pkt(&p, now_ms() < toast_until + 40 ? 30 : 300)) { if (now_ms() < toast_until + 40) fs_present(-1); continue; }
         if (!p.down) continue;
         int sx = p.x, sy = p.y; double ts = now_ms();
-        /* desde abajo: salir al inicio */
+        /* desde abajo: inicio (la ventana sigue al dedo; mantener 1 s: multitarea) */
         if (sy >= 456) {
+            int up = 0; double tw = now_ms();
+            while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
+            if (up) { fs_render(fr0, -1); if (own_home_gesture(sx, sy, app_by_id("files"))) { fs_gone = 1; break; } fs_present(-1); continue; }
             while (cur_down && read_pkt(&p, 1000)) {}
-            if (sy - cur_y > 20) break;
             if (!bar_h()) continue;          /* con barra de acciones, un toque es para sus botones */
         }
-        /* desde el borde izquierdo: volver (sigue al dedo) */
-        if (sx < 18 && !fs_root()) {
+        /* desde un borde: volver (burbuja, como en el resto del sistema) */
+        if (!fs_root() && back_zone(sx, sy)) {
+            int bk = app_back_gesture(sx, sy);
+            if (bk > 0) { sel_mode = 0; nsel = 0; memset(selmask, 0, sizeof selmask); fs_go(0, -1); continue; }
+            if (bk < 0) continue;
+        }
+        if (0) {
             uint16_t *cur_img = img_under, *prev_img = img_sheet;   /* reutilizados */
             fs_render(cur_img, -1);
             char saved[512]; snprintf(saved, sizeof saved, "%s", cwd);
@@ -674,11 +682,10 @@ static void files_app(int ix, int iy)
         else if (ty == 1) { toast(tr("Para reproducir, usa Música › Carpetas")); fs_present(-1); }
         else { file_info(path, e); fs_present(-1); }
     }
-    /* salir: la ventana se encoge hacia su icono */
-    fs_render(img_app, -1);
-    render_launcher(img_base, now_ms());
+    /* salir: la ventana se encoge hacia su icono (si no lo hizo ya el gesto de inicio) */
+    if (!fs_gone) { fs_render(img_app, -1); render_launcher(img_base, now_ms()); }
     t0 = now_ms();
-    for (;;) {
+    if (!fs_gone) for (;;) {
         double t = (now_ms() - t0) / 280; if (t > 1) t = 1;
         double e = 1 - ease_out(t);
         for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
@@ -686,6 +693,7 @@ static void files_app(int ix, int iy)
         present();
         if (t >= 1) break;
     }
+    fs_gone = 0;
     fs_free();
     drain_until_up();
     launcher_present();

@@ -418,6 +418,7 @@ static const struct trp TR_RU[] = {
     { "Editar etiquetas", "Изменить теги" },
     { "Ir al álbum", "Перейти к альбому" },
     { "Ir al artista", "Перейти к артисту" },
+    { "Esta canción no tiene letra", "У этой песни нет текста" },
     { "DISEÑO", "МАКЕТ" },
     { "FONDO", "ОБОИ" },
     { "DOCK Y GESTOS", "DOCK И ЖЕСТЫ" },

@@ -1,9 +1,12 @@
 /* launcher_touch.inc.c - apertura de apps (zoom), avisos y gestos del launcher. */
 static void files_app(int ix, int iy);
 static void settings_app(int ix, int iy);
+static void usbdac_app_at(int ix, int iy);
+static void wireless_app_at(int ix, int iy);
 static void store_app(int ix, int iy);
 static void run_ext_app(int a, int ix, int iy);
 static void music_app(int ix, int iy);
+static int mu_autonp;
 
 /* ------------------------------------------------------------------ aviso breve (toast) */
 static struct sprite toast_lbl; static double toast_until;
@@ -143,10 +146,17 @@ static void blit_scaled(uint16_t *dst, const struct sprite *s, int rx, int ry, i
 static void launch_app(int a, int ix, int iy)
 {
     struct lapp *ap = &apps[a];
-    if (ap->act == ACT_MUSIC) { V.pressed_app = -1; music_app(ix, iy); return; }
-    if (ap->act == ACT_FILES) { V.pressed_app = -1; files_app(ix, iy); return; }
-    if (ap->act == ACT_SETTINGS) { V.pressed_app = -1; settings_app(ix, iy); return; }
-    if (ap->act == ACT_STORE) { V.pressed_app = -1; store_app(ix, iy); return; }
+    /* apps propias: solo una abierta a la vez (la ultima queda como tarjeta de la multitarea) */
+    if (ap->act == ACT_MUSIC && !strcmp(ap->id, "nowplaying")) {
+        V.pressed_app = -1; render_launcher(img_base, now_ms());
+        np_app_run(img_base, ix, iy); launcher_present(); return;
+    }
+    if (ap->act == ACT_MUSIC) { V.pressed_app = -1; last_app = a; music_app(ix, iy); return; }
+    if (ap->act == ACT_FILES) { V.pressed_app = -1; last_app = a; files_app(ix, iy); return; }
+    if (ap->act == ACT_SETTINGS) { V.pressed_app = -1; last_app = a; settings_app(ix, iy); return; }
+    if (ap->act == ACT_USBDAC) { V.pressed_app = -1; last_app = a; usbdac_app_at(ix, iy); return; }
+    if (ap->act == ACT_WIRELESS) { V.pressed_app = -1; last_app = a; wireless_app_at(ix, iy); return; }
+    if (ap->act == ACT_STORE) { V.pressed_app = -1; last_app = a; store_app(ix, iy); return; }
     if (ap->act == ACT_EXT) { V.pressed_app = -1; run_ext_app(a, ix, iy); return; }
     if (ap->act == ACT_SOON) {
         toast(tr("Radio llega en la próxima versión"));

@@ -418,6 +418,7 @@ static const struct trp TR_DE[] = {
     { "Editar etiquetas", "Tags bearbeiten" },
     { "Ir al álbum", "Zum Album" },
     { "Ir al artista", "Zum Künstler" },
+    { "Esta canción no tiene letra", "Dieses Lied hat keinen Liedtext" },
     { "DISEÑO", "LAYOUT" },
     { "FONDO", "HINTERGRUND" },
     { "DOCK Y GESTOS", "DOCK & GESTEN" },

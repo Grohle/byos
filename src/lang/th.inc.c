@@ -420,6 +420,7 @@ static const struct trp TR_TH[] = {
     { "Editar etiquetas", "แก้ไขแท็ก" },
     { "Ir al álbum", "ไปที่อัลบั้ม" },
     { "Ir al artista", "ไปที่ศิลปิน" },
+    { "Esta canción no tiene letra", "เพลงนี้ไม่มีเนื้อเพลง" },
     { "DISEÑO", "รูปแบบ" },
     { "FONDO", "ภาพพื้นหลัง" },
     { "DOCK Y GESTOS", "Dock และคำสั่งนิ้ว" },

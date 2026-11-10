@@ -750,6 +750,12 @@ static void update_overlay(void)
 
 /* ------------------------------------------------------------------ launcher */
 static void draw_toast(uint16_t *dst);
+static int back_zone(int sx, int sy);
+static int np_card(uint16_t *d);
+static int np_app_run(const uint16_t *home, int ix, int iy);
+static int own_home_gesture(int sx, int sy, int self);
+static uint16_t *own_card; static int own_card_app;   /* captura de la ultima app propia (nowui.inc.c) */
+static int app_back_gesture(int sx, int sy);
 #include "i18n.inc.c"
 #include "text.inc.c"
 #include "launcher.inc.c"
@@ -768,10 +774,13 @@ static void draw_toast(uint16_t *dst);
 #include "ota.inc.c"
 #include "lyrics.inc.c"
 #include "music.inc.c"
+#include "nowui.inc.c"
 #include "widgets.inc.c"
 #include "hpk.h"
 #include "hpk.inc.c"
 #include "store.inc.c"
+#include "books.inc.c"
+#include "wireless.inc.c"
 
 /* ------------------------------------------------------------------ volumen de la barra */
 /* Lee la cifra del volumen de la barra de estado del reproductor (fondo negro): cada

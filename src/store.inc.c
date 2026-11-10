@@ -8,6 +8,7 @@
  * sigue), la app dibuja en /dev/fb0 y lee la tactil de un dispositivo virtual que alimenta
  * el shell; deslizar desde la barra de inicio la cierra (SIGTERM; SIGKILL al segundo). */
 #include <linux/uinput.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #define SD_ROOT "/usr/data/mnt/sd_0"
@@ -17,8 +18,10 @@ static void app_real_dir(const struct hpk_info *in, char *out, int cap);
 
 /* ------------------------------------------------------------------ registro de apps instaladas */
 static struct hpk_info inst[24]; static int ninst;
+static int inst_gen;               /* sube con cada registro: la tienda recalcula lo que cachea */
 static void register_installed_apps(void)
 {
+    inst_gen++;
     static int nbuiltin = -1; if (nbuiltin < 0) { nbuiltin = 0; while (apps[nbuiltin].id) nbuiltin++; }
     napps = nbuiltin;
     hpk_recover();
@@ -166,9 +169,39 @@ static void run_ext_app(int a, int ix, int iy)
 /* ------------------------------------------------------------------ paquetes de la tarjeta SD */
 static struct hpk_info pkgs[32]; static int npkgs;
 static struct sprite pkg_icon[32];
-static void store_scan(void)
+static unsigned pkgs_sig; static int pkgs_scanned;
+/* firma de /Apps (nombres, tamanos y fechas de los .hpk): solo stat, nada de leer paquetes */
+static unsigned store_scan_sig(void)
+{
+    unsigned h = 2166136261u; DIR *d = opendir(SD_APPS); struct dirent *e;
+    while (d && (e = readdir(d))) {
+        size_t n = strlen(e->d_name); if (n < 5 || strcasecmp(e->d_name + n - 4, ".hpk")) continue;
+        char p[400]; struct stat sb; snprintf(p, sizeof p, SD_APPS "/%s", e->d_name);
+        if (stat(p, &sb)) continue;
+        unsigned v[3] = { (unsigned)sb.st_size, (unsigned)sb.st_mtime, (unsigned)n };
+        for (const char *c = e->d_name; *c; c++) { h ^= (unsigned char)*c; h *= 16777619u; }
+        for (int k = 0; k < 3; k++) { h ^= v[k]; h *= 16777619u; }
+    }
+    if (d) closedir(d); else h = 1;
+    return h;
+}
+/* version instalada de cada paquete de la SD, desde inst[] (en memoria) */
+static void store_pkgs_sync(void)
+{
+    for (int i = 0; i < npkgs; i++) {
+        pkgs[i].installed[0] = 0;
+        for (int k = 0; k < ninst; k++) if (!strcmp(inst[k].id, pkgs[i].id))
+            snprintf(pkgs[i].installed, sizeof pkgs[i].installed, "%s", inst[k].installed[0] ? inst[k].installed : inst[k].version);
+    }
+}
+static void store_scan_ex(int force);
+static void store_scan(void) { store_scan_ex(1); }
+static void store_scan_ex(int force)
 {
     mkdir(SD_APPS, 0755);
+    unsigned sig = store_scan_sig();
+    if (!force && pkgs_scanned && sig == pkgs_sig) { store_pkgs_sync(); return; }
+    pkgs_sig = sig; pkgs_scanned = 1;
     npkgs = hpk_scan(SD_APPS, pkgs, 32); if (npkgs < 0) npkgs = 0;
     for (int i = 0; i < npkgs; i++) {
         sprite_free(&pkg_icon[i]);
@@ -447,7 +480,6 @@ static void installed_detail(int i)
 #define ST_MAXREPO 8
 #define ST_MAXAPP 64
 #define ST_INDEX_CAP (256 * 1024)
-#define ST_REFRESH_MS (10 * 60 * 1000.0)
 
 struct st_repo { char url[256], name[48]; int napps, err, busy; double fetched; };
 struct st_app {
@@ -461,6 +493,7 @@ struct st_app {
 };
 static struct st_repo st_repos[ST_MAXREPO]; static int st_nrepo;
 static struct st_app *st_apps; static int st_napp;
+static int st_icons_pending;          /* hay iconos en cache sin decodificar (uno por fotograma) */
 
 /* ------------------------------------------------------------------ sha256 (FIPS 180-4) */
 struct sha256 { uint32_t h[8]; uint64_t len; uint8_t buf[64]; int n; };
@@ -716,11 +749,45 @@ static void st_parse_repo(int r)
     }
     free(buf);
 }
+/* vuelve a leer los indices de la cache; los iconos ya decodificados se conservan (mismo id e
+ * icono), asi que una actualizacion no obliga a decodificar nada que no haya cambiado */
+static unsigned st_parsed_sig; static int st_parsed_lang = -1, st_parsed;
+static unsigned st_cache_sig(void)
+{
+    unsigned h = 2166136261u;
+    for (int r = 0; r < st_nrepo; r++) {
+        char path[160]; struct stat sb; st_cache_path(st_repos[r].url, "", ".json", path, sizeof path);
+        unsigned v[3] = { st_hash(st_repos[r].url), 0, 0 };
+        if (!stat(path, &sb)) { v[1] = (unsigned)sb.st_size; v[2] = (unsigned)sb.st_mtime; }
+        for (int k = 0; k < 3; k++) { h ^= v[k]; h *= 16777619u; }
+    }
+    return h;
+}
 static void st_apps_reload(void)
 {
-    for (int i = 0; i < st_napp; i++) sprite_free(&st_apps[i].ic);
+    struct st_app *old = malloc(ST_MAXAPP * sizeof *old); int nold = st_napp;
+    if (old) memcpy(old, st_apps, nold * sizeof *old);
+    else for (int i = 0; i < st_napp; i++) sprite_free(&st_apps[i].ic);
     st_napp = 0;
     for (int r = 0; r < st_nrepo; r++) st_parse_repo(r);
+    st_icons_pending = 0;
+    for (int i = 0; i < st_napp; i++) {
+        struct st_app *a = &st_apps[i];
+        for (int k = 0; old && k < nold; k++)
+            if (old[k].ic.w && !strcmp(old[k].id, a->id) && !strcmp(old[k].icon_url, a->icon_url)) {
+                a->ic = old[k].ic; a->tint = old[k].tint; a->ic_state = 1; memset(&old[k].ic, 0, sizeof old[k].ic); break;
+            }
+        if (!a->ic.w && a->icon_url[0]) st_icons_pending = 1;
+    }
+    for (int k = 0; old && k < nold; k++) sprite_free(&old[k].ic);
+    free(old);
+    st_parsed_sig = st_cache_sig(); st_parsed_lang = ui_lang; st_parsed = 1;
+}
+/* al abrir: solo se vuelve a leer si los ficheros de la cache o el idioma cambiaron */
+static void st_apps_sync(void)
+{
+    if (st_parsed && st_parsed_lang == ui_lang && st_parsed_sig == st_cache_sig()) return;
+    st_apps_reload();
 }
 
 /* ------------------------------------------------------------------ trabajos de red (hibynet) */
@@ -754,7 +821,6 @@ static void st_job_kill(struct st_job *j)
     j->pid = 0; j->kind = J_NONE;
 }
 /* siguiente trabajo de segundo plano: indices pendientes y despues iconos */
-static double st_session_fetch[ST_MAXREPO]; static char st_session_url[ST_MAXREPO][256];
 static void st_bg_next(void)
 {
     if (st_bg.pid || access(NETBIN, X_OK)) return;
@@ -778,14 +844,17 @@ static void st_bg_next(void)
         return;
     }
 }
-static void st_refresh(int force)
+/* actualizar los indices: solo al pedirlo (boton o tirar hacia abajo) o la primera vez, sin
+ * cache. Los iconos que falten se descargan despues, en el mismo trabajo de segundo plano. */
+static void st_refresh(void)
 {
-    for (int r = 0; r < st_nrepo; r++) {
-        int known = !strcmp(st_session_url[r], st_repos[r].url);
-        if (!force && known && st_session_fetch[r] && now_ms() - st_session_fetch[r] < ST_REFRESH_MS) continue;
-        if (!st_repos[r].busy) st_repos[r].busy = 1;
-    }
+    for (int r = 0; r < st_nrepo; r++) if (!st_repos[r].busy) st_repos[r].busy = 1;
     st_bg_next();
+}
+static int st_have_cache(void)
+{
+    for (int r = 0; r < st_nrepo; r++) { char path[160]; st_cache_path(st_repos[r].url, "", ".json", path, sizeof path); if (!access(path, R_OK)) return 1; }
+    return 0;
 }
 static int st_busy(void) { for (int r = 0; r < st_nrepo; r++) if (st_repos[r].busy) return 1; return 0; }
 
@@ -810,12 +879,25 @@ static int st_icon_load(const char *url, int s, struct sprite *sp, uint16_t *tin
     free(img);
     return 0;
 }
-static void st_app_icon(struct st_app *a)
+/* decodifica hasta "max" iconos que ya esten en la cache (nunca al dibujar); devuelve cuantos */
+static int st_icons_step_ex(int max, int only_featured)
 {
-    if (a->ic.w || a->ic_state == 2 || !a->icon_url[0]) return;
-    if (st_bg.pid && st_bg.kind == J_ICON && &st_apps[st_bg.idx] == a) return;
-    if (st_icon_load(a->icon_url, 48, &a->ic, &a->tint) == 0) a->ic_state = 1;
+    int n = 0, left = 0;
+    for (int i = 0; i < st_napp; i++) {
+        struct st_app *a = &st_apps[i];
+        if (a->ic.w || a->ic_state == 2 || !a->icon_url[0]) continue;
+        if (only_featured && !a->featured) { left = 1; continue; }
+        if (st_bg.pid && st_bg.kind == J_ICON && st_bg.idx == i) { left = 1; continue; }
+        if (n >= max) { left = 1; break; }
+        char path[160]; st_cache_path(a->icon_url, "/icons", ".png", path, sizeof path);
+        if (access(path, R_OK)) continue;                     /* sin descargar: llegara con la proxima actualizacion */
+        if (st_icon_load(a->icon_url, 48, &a->ic, &a->tint) == 0) a->ic_state = 1; else a->ic_state = 2;
+        n++;
+    }
+    st_icons_pending = left;
+    return n;
 }
+static int st_icons_step(int max) { return st_icons_step_ex(max, 0); }
 
 static void st_install_downloaded(int i);
 /* revisa los trabajos; devuelve 1 si hay que repintar */
@@ -828,7 +910,6 @@ static int st_jobs_poll(void)
             struct st_repo *R = &st_repos[st_bg.idx];
             R->busy = 0; R->err = ok ? 0 : WIFEXITED(s) ? WEXITSTATUS(s) : 2;
             if (ok) { R->fetched = now_ms(); }
-            st_session_fetch[st_bg.idx] = now_ms(); snprintf(st_session_url[st_bg.idx], 256, "%s", R->url);
             if (!st_busy()) {
                 /* conserva la app que se esta descargando por id */
                 char keep[HPK_ID_MAX + 1] = ""; if (st_dl_app >= 0) snprintf(keep, sizeof keep, "%s", st_apps[st_dl_app].id);
@@ -944,23 +1025,45 @@ static void st_start_download(int i, int to_sd)
     lg("tienda: descargando %s %s", a->id, a->hpk_url);
 }
 
-/* ================================================================== interfaz */
+/* ================================================================== interfaz
+ * Todo lo que se dibuja sale de memoria: los indices se leen de la cache una vez al abrir (y al
+ * terminar una actualizacion), los iconos se decodifican al abrir o al llegar de la red, y lo
+ * de la tarjeta SD / apps instaladas se calcula al abrir y tras instalar o mover. Cambiar de
+ * pestana o desplazar es solo volver a pintar (sin E/S ni red). La red solo se usa al tocar el
+ * boton de actualizar, al tirar hacia abajo o la primera vez, sin cache (docs/STORE.md). */
 #define ST_TOP 94           /* bajo la cabecera */
 #define ST_TABY 424         /* barra de pestanas */
 #define ST_ROW 64
+#define ST_VIEW (ST_TABY - ST_TOP)
+#define ST_PTR_ARM 64       /* tirar mas de esto (px visibles) arranca la actualizacion */
+#define ST_PTR_GAP 52       /* hueco que queda bajo la cabecera mientras se actualiza */
+#define ST_UPD_MIN_MS 700   /* el indicador gira al menos esto, aunque la red conteste antes */
 enum { T_TODAY, T_APPS, T_SEARCH, T_INST, T_N };
-enum { HT_APP = 1, HT_PILL, HT_SD, HT_INST, HT_INSTPILL, HT_REPO, HT_ADDREPO, HT_SEARCH, HT_BACK, HT_TAB };
+enum { HT_APP = 1, HT_PILL, HT_SD, HT_INST, HT_INSTPILL, HT_REPO, HT_ADDREPO, HT_SEARCH, HT_BACK, HT_TAB, HT_REFRESH };
 struct st_hit { short x0, y0, x1, y1; int kind, idx; };
 static struct st_hit st_hits[96]; static int st_nhit, st_rec;
 static int st_tab = T_TODAY, st_detail = -1, st_press_kind, st_press_idx = -1;
 static float st_pos[T_N + 1], st_vel; static int st_content_h[T_N + 1];
 static char st_q[64], st_lq[64];
 static uint16_t *st_pageA, *st_pageB;
+static int st_upd_on; static double st_upd_t0, st_upd_end;  /* actualizacion pedida (boton, tirar o primera vez) */
+static int st_ptr_tab = -1;                                  /* pestana que mantiene el hueco con el indicador */
+
+/* apps instaladas: lo que mira la tarjeta SD se calcula una vez por registro, no al pintar */
+static int st_inst_gen_seen = -1;
+static unsigned char st_inst_sd[24], st_inst_miss[24];
+static void st_inst_sync(void)
+{
+    if (st_inst_gen_seen == inst_gen) return;
+    st_inst_gen_seen = inst_gen;
+    for (int i = 0; i < ninst && i < 24; i++) { st_inst_sd[i] = (unsigned char)app_sd_path(&inst[i], 0, 0); st_inst_miss[i] = st_inst_sd[i] && app_sd_missing(&inst[i]); }
+    store_pkgs_sync();
+}
 
 static void st_hit_add(int x0, int y0, int x1, int y1, int kind, int idx)
 {
     if (!st_rec || st_nhit >= 96) return;
-    if (y0 < ST_TOP && kind != HT_BACK && kind != HT_TAB) y0 = ST_TOP;
+    if (y0 < ST_TOP && kind != HT_BACK && kind != HT_TAB && kind != HT_REFRESH) y0 = ST_TOP;
     if (y1 > ST_TABY && kind != HT_TAB) y1 = ST_TABY;
     if (y1 <= y0) return;
     st_hits[st_nhit++] = (struct st_hit){ (short)x0, (short)y0, (short)x1, (short)y1, kind, idx };
@@ -974,6 +1077,117 @@ static int st_hit_at(int x, int y, int *idx)
     return 0;
 }
 static void st_hline(uint16_t *d, int x0, int x1, int y, uint16_t c) { if (y < ST_TOP || y >= ST_TABY) return; for (int x = x0; x < x1 && x < W; x++) d[y * W + x] = c; }
+
+/* ------------------------------------------------------------------ indicador de actividad (iOS)
+ * 8 radios redondeados; al tirar aparecen uno a uno en el sentido de las agujas del reloj y,
+ * al actualizar, giran a pasos con estela. Mascara precalculada (4x4 muestras por pixel). */
+#define SPN 26
+static uint8_t spn_cov[SPN * SPN], spn_k[SPN * SPN]; static int spn_ok;
+static void spn_init(void)
+{
+    if (spn_ok) return;
+    for (int y = 0; y < SPN; y++) for (int x = 0; x < SPN; x++) {
+        int cnt = 0, best = 0;
+        for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+            float px = x + (sx + .5f) / 4 - SPN / 2.f, py = y + (sy + .5f) / 4 - SPN / 2.f;
+            float ang = atan2f(px, -py); if (ang < 0) ang += 2 * (float)M_PI;
+            int k = (int)floorf(ang / ((float)M_PI / 4) + .5f) & 7;
+            float th = k * (float)M_PI / 4, ux = sinf(th), uy = -cosf(th);
+            float t = px * ux + py * uy; if (t < 5.5f) t = 5.5f; if (t > 10.5f) t = 10.5f;
+            float dx = px - t * ux, dy = py - t * uy;
+            if (dx * dx + dy * dy <= 1.45f * 1.45f) { cnt++; best = k; }
+        }
+        spn_cov[y * SPN + x] = (uint8_t)(cnt * 255 / 16); spn_k[y * SPN + x] = (uint8_t)best;
+    }
+    spn_ok = 1;
+}
+static int spn_phase(double t) { return (int)(t / 95.0) & 7; }
+/* dibuja el indicador centrado en (cx, cy) recortado a [c0, c1); phase < 0: "n" radios fijos */
+static int spn_fade = 256;          /* 0..256: opacidad global (el hueco se cierra) */
+static void spn_draw(uint16_t *d, int cx, int cy, int phase, int n, int c0, int c1)
+{
+    spn_init();
+    if (spn_fade <= 0) return;
+    int x0 = cx - SPN / 2, y0 = cy - SPN / 2;
+    uint16_t col = rgb(160, 160, 166);
+    for (int y = 0; y < SPN; y++) {
+        int yy = y0 + y; if (yy < c0 || yy >= c1 || yy < 0 || yy >= H) continue;
+        for (int x = 0; x < SPN; x++) {
+            unsigned c = spn_cov[y * SPN + x]; if (!c) continue;
+            int xx = x0 + x; if (xx < 0 || xx >= W) continue;
+            int k = spn_k[y * SPN + x]; unsigned op;
+            if (phase < 0) { if (k >= n) continue; op = 200; }
+            else { int age = (phase - k) & 7; op = 255 - age * 27; }
+            d[yy * W + xx] = mix565(col, d[yy * W + xx], c * op / 255 * (unsigned)spn_fade / 256);
+        }
+    }
+}
+/* indicadores que giran en la ultima imagen completa de fr0: se repintan solos (filas sueltas)
+ * cuando no cambia nada mas, asi la red (hibynet) no compite con repintados completos */
+struct st_spin { int cx, cy, c0, c1; uint16_t bg[SPN * SPN]; };
+static struct st_spin st_spins[3]; static int st_nspin, st_spin_rec, st_spin_drawn = -1;
+static void st_spinner(uint16_t *d, int cx, int cy, int phase, int n, int c0, int c1)
+{
+    if (st_spin_rec && d == fr0 && phase >= 0 && st_nspin < 3) {
+        struct st_spin *s = &st_spins[st_nspin++];
+        s->cx = cx; s->cy = cy; s->c0 = c0; s->c1 = c1;
+        for (int y = 0; y < SPN; y++) { int yy = cy - SPN / 2 + y; if (yy < 0 || yy >= H) continue; for (int x = 0; x < SPN; x++) { int xx = cx - SPN / 2 + x; if (xx >= 0 && xx < W) s->bg[y * SPN + x] = d[yy * W + xx]; } }
+        st_spin_drawn = phase;
+    }
+    spn_draw(d, cx, cy, phase, n, c0, c1);
+}
+static int st_spin_patch(double t)
+{
+    int ph = spn_phase(t);
+    if (!st_nspin || ph == st_spin_drawn) return 0;
+    int y0 = H, y1 = 0;
+    for (int k = 0; k < st_nspin; k++) {
+        struct st_spin *s = &st_spins[k];
+        for (int y = 0; y < SPN; y++) { int yy = s->cy - SPN / 2 + y; if (yy < 0 || yy >= H) continue; for (int x = 0; x < SPN; x++) { int xx = s->cx - SPN / 2 + x; if (xx >= 0 && xx < W) fr0[yy * W + xx] = s->bg[y * SPN + x]; } }
+        spn_draw(fr0, s->cx, s->cy, ph, 8, s->c0, s->c1);
+        if (s->cy - SPN / 2 < y0) y0 = s->cy - SPN / 2;
+        if (s->cy + SPN / 2 > y1) y1 = s->cy + SPN / 2;
+    }
+    st_spin_drawn = ph;
+    present_rows(y0, y1);
+    return 1;
+}
+
+/* boton de actualizar de la cabecera (flecha circular, como arrow.clockwise) */
+#define RFN 24
+static uint8_t rf_cov[RFN * RFN]; static int rf_ok;
+static void rf_init(void)
+{
+    if (rf_ok) return;
+    const float c = RFN / 2.f, R = 7.6f, hw = 1.05f, a1 = 0.86f;      /* arco de 0.10 a a1 de vuelta */
+    float th = a1 * 2 * (float)M_PI, Px = c + R * sinf(th), Py = c - R * cosf(th);
+    float Tx = cosf(th), Ty = sinf(th), Nx = sinf(th), Ny = -cosf(th);  /* tangente (horario) y radial */
+    float A[2] = { Px + Tx * 4.6f, Py + Ty * 4.6f }, B[2] = { Px - Tx * 1.2f + Nx * 4.4f, Py - Ty * 1.2f + Ny * 4.4f }, C[2] = { Px - Tx * 1.2f - Nx * 4.4f, Py - Ty * 1.2f - Ny * 4.4f };
+    for (int y = 0; y < RFN; y++) for (int x = 0; x < RFN; x++) {
+        int cnt = 0;
+        for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+            float px = x + (sx + .5f) / 4, py = y + (sy + .5f) / 4, dx = px - c, dy = py - c;
+            float r = sqrtf(dx * dx + dy * dy), ang = atan2f(dx, -dy); if (ang < 0) ang += 2 * (float)M_PI;
+            float u = ang / (2 * (float)M_PI);
+            int in = fabsf(r - R) <= hw && u >= 0.10f && u <= a1;
+            if (!in) {   /* punta de flecha: dentro del triangulo ABC */
+                float d1 = (px - B[0]) * (A[1] - B[1]) - (A[0] - B[0]) * (py - B[1]);
+                float d2 = (px - C[0]) * (B[1] - C[1]) - (B[0] - C[0]) * (py - C[1]);
+                float d3 = (px - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (py - A[1]);
+                in = !(((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0)));
+            }
+            cnt += in;
+        }
+        rf_cov[y * RFN + x] = (uint8_t)(cnt * 255 / 16);
+    }
+    rf_ok = 1;
+}
+static void rf_draw(uint16_t *d, int cx, int cy, uint16_t col)
+{
+    rf_init();
+    for (int y = 0; y < RFN; y++) { int yy = cy - RFN / 2 + y; if (yy < 30 || yy >= ST_TOP) continue;
+        for (int x = 0; x < RFN; x++) { unsigned a = rf_cov[y * RFN + x]; int xx = cx - RFN / 2 + x; if (a && xx >= 0 && xx < W) d[yy * W + xx] = mix565(col, d[yy * W + xx], a); } }
+}
 
 /* anillo de progreso de iOS (pista gris, arco azul y cuadradito de parar) */
 static void st_ring(uint16_t *d, int cx, int cy, float frac, double t, int spin)
@@ -992,18 +1206,19 @@ static void st_ring(uint16_t *d, int cx, int cy, float frac, double t, int spin)
     }
     if (!spin) fill_rrect(d, cx - 4, cy - 4, 8, 8, 1.5f, rgb(10, 132, 255), 255);
 }
-/* boton de la fila: pildora gris con texto azul (o el anillo si se descarga) */
-static int st_pill(uint16_t *d, int xr, int y, int state, double frac, int filled)
+/* boton de la fila: pildora gris con texto azul (o el anillo si se descarga); pulsada, mas oscura */
+static int st_pill(uint16_t *d, int xr, int y, int state, double frac, int filled, int press)
 {
     if (state == S_LOADING || state == S_INSTALLING) { st_ring(d, xr - 16, y + 14, (float)frac, now_ms(), state == S_INSTALLING && frac <= 0.01); return 32; }
     const char *t = state == S_TESTING ? tr("EN PRUEBAS") : state == S_GET || state == S_NEWER ? tr("OBTENER") : state == S_UPDATE ? tr("ACTUALIZAR") : tr("ABRIR");
     int pw = tw_n(t, 13, -1) + 30; if (pw < 74) pw = 74;
     int blue = filled == 1 && state != S_OPEN, glass = filled == 2;   /* 2: sobre tarjeta de color */
-    if (glass) fill_rrect(d, xr - pw, y, pw, 28, 14, 0xFFFF, 64);
-    else fill_rrect(d, xr - pw, y, pw, 28, 14, blue ? rgb(10, 132, 255) : rgb(44, 44, 48), 255);
-    draw_text(d, xr - pw + (pw - tw_n(t, 13, -1)) / 2, y + 19, t, 13, blue || glass ? 0xFFFF : state == S_NEWER || state == S_TESTING ? rgb(99, 99, 102) : rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
+    if (glass) fill_rrect(d, xr - pw, y, pw, 28, 14, 0xFFFF, press ? 110 : 64);
+    else fill_rrect(d, xr - pw, y, pw, 28, 14, blue ? rgb(10, 132, 255) : press ? rgb(70, 70, 76) : rgb(44, 44, 48), 255);
+    draw_text(d, xr - pw + (pw - tw_n(t, 13, -1)) / 2, y + 19, t, 13, blue || glass ? 0xFFFF : state == S_NEWER || state == S_TESTING ? rgb(99, 99, 102) : press ? rgb(90, 170, 255) : rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
     return pw;
 }
+static int st_pill_pressed(int kind, int i) { return (st_press_kind == HT_PILL || st_press_kind == HT_INSTPILL) && st_press_kind == kind && st_press_idx == i; }
 static void st_icon_box(uint16_t *d, const struct sprite *ic, int x, int y, int s)
 {
     if (ic && ic->w == s) blit(d, ic, x, y, 32, 255);
@@ -1039,11 +1254,10 @@ static void st_app_row(uint16_t *d, int y, int i, int last)
 {
     struct st_app *a = &st_apps[i];
     if (y + ST_ROW < ST_TOP || y > ST_TABY) return;
-    st_app_icon(a);
-    if (st_press_kind == HT_APP && st_press_idx == i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(28, 28, 30), 255);
+    if (st_press_kind == HT_APP && st_press_idx == i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(44, 44, 46), 255);
     st_icon_box(d, &a->ic, 16, y + 8, 48);
     int s = st_state(i);
-    int pw = st_pill(d, W - 16, y + 18, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 0);
+    int pw = st_pill(d, W - 16, y + 18, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 0, st_pill_pressed(HT_PILL, i));
     draw_text(d, 76, y + 28, a->name, 15, 0xFFFF, W - 76 - pw - 26, ST_TOP, ST_TABY);
     draw_text(d, 76, y + 46, a->desc, 12, rgb(142, 142, 147), W - 76 - pw - 26, ST_TOP, ST_TABY);
     st_hit_add(0, y, W - 16 - pw - 6, y + ST_ROW, HT_APP, i);
@@ -1051,13 +1265,19 @@ static void st_app_row(uint16_t *d, int y, int i, int last)
     if (!last) st_hline(d, 76, W, y + ST_ROW - 1, rgb(38, 38, 40));
 }
 static int st_match(int i) { return !st_lq[0] || strstr(st_apps[i].lname, st_lq) || strstr(st_apps[i].ldesc, st_lq); }
+static int st_updating(void) { return st_busy() || (st_bg.pid && st_bg.kind == J_INDEX); }
 
-/* mensaje de estado (sin conexion, cargando, vacio) */
+/* mensaje de estado (sin conexion, cargando, vacio); cargando: el indicador de iOS encima */
 static int st_status_msg(uint16_t *d, int y)
 {
     const char *m = 0;
-    if (!st_napp && st_busy()) m = tr("Cargando…");
-    else if (!st_napp) {
+    if (!st_napp && (st_updating() || st_upd_on)) {
+        st_spinner(d, W / 2, y + 40, spn_phase(now_ms()), 8, ST_TOP, ST_TABY);
+        int tw = tw_n(tr("Cargando…"), 14, -1);
+        draw_text(d, (W - tw) / 2, y + 80, tr("Cargando…"), 14, rgb(142, 142, 147), 0, ST_TOP, ST_TABY);
+        return 100;
+    }
+    if (!st_napp) {
         int err = 0; for (int r = 0; r < st_nrepo; r++) if (st_repos[r].err) err = 1;
         m = access(NETBIN, X_OK) ? tr("Falta el componente de red (hibynet)") : err ? tr("No se pudo conectar. Comprueba la WiFi y desliza hacia abajo para reintentar.") : tr("No hay apps en los repositorios");
     }
@@ -1081,7 +1301,6 @@ static int st_render_today(uint16_t *d, int y0)
         if (nfeat && !a->featured) continue;
         int ch = 212;
         if (y + ch > ST_TOP && y < ST_TABY) {
-            st_app_icon(a);
             uint16_t base = a->ic.w ? a->tint : rgb(40, 40, 46);
             int press = st_press_kind == HT_APP && st_press_idx == i;
             /* tarjeta: degradado del color del icono hacia negro, esquinas de 16 px */
@@ -1091,7 +1310,8 @@ static int st_render_today(uint16_t *d, int y0)
                 uint16_t c = dim565(base, k);
                 int inset = 0;
                 if (yy < 16 || yy >= ch - 16) { float dy = yy < 16 ? 16 - yy - .5f : yy - (ch - 16) + .5f; inset = (int)(16 - sqrtf(fmaxf(0, 256 - dy * dy))); }
-                for (int x = 16 + inset; x < W - 16 - inset; x++) d[yy2 * W + x] = c;
+                uint16_t *row = d + yy2 * W;
+                for (int x = 16 + inset; x < W - 16 - inset; x++) row[x] = c;
             }
             const char *cap = a->category[0] ? a->category : "app";
             char up[32]; int n = 0; for (const char *p = cap; *p && n < 30; p++) up[n++] = (char)toupper((unsigned char)*p); up[n] = 0;
@@ -1099,10 +1319,10 @@ static int st_render_today(uint16_t *d, int y0)
             draw_text(d, 32, y + 60, a->name, 24, 0xFFFF, W - 64, ST_TOP, ST_TABY);
             st_wrap(d, 32, y + 88, W - 64, a->desc, 14, rgb(235, 235, 245), 19, 2);
             /* pie: icono, nombre, autor y boton */
-            for (int x = 16; x < W - 16; x++) if (y + 140 >= ST_TOP && y + 140 < ST_TABY) d[(y + 140) * W + x] = dim565(base, 10);
+            if (y + 140 >= ST_TOP && y + 140 < ST_TABY) for (int x = 16; x < W - 16; x++) d[(y + 140) * W + x] = dim565(base, 10);
             st_icon_box(d, &a->ic, 32, y + 152, 48);
             int s = st_state(i);
-            int pw = st_pill(d, W - 32, y + 162, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 2);
+            int pw = st_pill(d, W - 32, y + 162, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 2, st_pill_pressed(HT_PILL, i));
             draw_text(d, 90, y + 172, a->name, 14, 0xFFFF, W - 90 - pw - 40, ST_TOP, ST_TABY);
             draw_text(d, 90, y + 190, a->author[0] ? a->author : st_repos[a->repo].name, 12, rgb(200, 200, 210), W - 90 - pw - 40, ST_TOP, ST_TABY);
             st_hit_add(16, y, W - 16, y + ch, HT_APP, i);
@@ -1124,12 +1344,12 @@ static int st_render_apps(uint16_t *d, int y0)
     if (!npkgs) y += st_wrap(d, 16, y + 18, W - 32, tr("HPK_HELP"), 13, rgb(142, 142, 147), 18, 6) + 14;
     for (int i = 0; i < npkgs; i++, y += ST_ROW) {
         if (y + ST_ROW < ST_TOP || y > ST_TABY) continue;
-        if (st_press_kind == HT_SD && st_press_idx == i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(28, 28, 30), 255);
+        if (st_press_kind == HT_SD && st_press_idx == i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(44, 44, 46), 255);
         st_icon_box(d, &pkg_icon[i], 16, y + 8, 48);
         char sub[64];
         if (pkgs[i].status) snprintf(sub, sizeof sub, "%s", hpk_msg(hpk_errkey(pkgs[i].status), ui_lang));
         else snprintf(sub, sizeof sub, "%s · %.0f KB", pkgs[i].version, pkgs[i].size / 1024.0);
-        int pw = pkgs[i].status ? 0 : st_pill(d, W - 16, y + 18, pkg_state(&pkgs[i]), 0, 0);
+        int pw = pkgs[i].status ? 0 : st_pill(d, W - 16, y + 18, pkg_state(&pkgs[i]), 0, 0, st_press_kind == HT_SD && st_press_idx == i);
         draw_text(d, 76, y + 28, pkg_name(&pkgs[i]), 15, 0xFFFF, W - 76 - pw - 26, ST_TOP, ST_TABY);
         draw_text(d, 76, y + 46, sub, 12, pkgs[i].status ? rgb(255, 69, 58) : rgb(142, 142, 147), W - 76 - pw - 26, ST_TOP, ST_TABY);
         if (!pkgs[i].status) st_hit_add(0, y, W, y + ST_ROW, HT_SD, i);
@@ -1167,22 +1387,23 @@ static int st_render_inst(uint16_t *d, int y0)
     if (!ninst) { draw_text(d, 16, y + 24, tr("Ninguna app instalada"), 14, rgb(142, 142, 147), 0, ST_TOP, ST_TABY); y += 44; }
     for (int i = 0; i < ninst; i++, y += ST_ROW) {
         if (y + ST_ROW < ST_TOP || y > ST_TABY) continue;
-        if (st_press_kind == HT_INST && st_press_idx == i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(28, 28, 30), 255);
+        if (st_press_kind == HT_INST && st_press_idx == i) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(44, 44, 46), 255);
         char id[HPK_ID_MAX + 4]; snprintf(id, sizeof id, "x.%s", inst[i].id);
         int ai = app_by_id(id);
         st_icon_box(d, ai >= 0 ? &apps[ai].icon[0] : 0, 16, y + 8, 48);
         int ri = st_app_find(inst[i].id), s = ri >= 0 ? st_state(ri) : S_OPEN, pw = 0;
         if (ri >= 0 && (s == S_UPDATE || s == S_LOADING || s == S_INSTALLING)) {
-            pw = st_pill(d, W - 16, y + 18, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 0);
+            pw = st_pill(d, W - 16, y + 18, s, s == S_INSTALLING ? st_inst_frac : st_dl_frac(), 0, st_pill_pressed(HT_INSTPILL, ri));
             st_hit_add(W - 16 - pw - 6, y, W, y + ST_ROW, HT_INSTPILL, ri);
         } else for (int k = 0; k < 6; k++) { int cx = W - 24 + k / 2 - 1; if (y + 26 + k < ST_TABY && y + 26 + k > ST_TOP) { d[(y + 26 + k) * W + cx] = rgb(90, 90, 96); d[(y + 37 - k) * W + cx] = rgb(90, 90, 96); } }
         draw_text(d, 76, y + 28, pkg_name(&inst[i]), 15, 0xFFFF, W - 76 - pw - 30, ST_TOP, ST_TABY);
+        int sdapp = i < 24 && st_inst_sd[i], miss = i < 24 && st_inst_miss[i];
         char sub[96];
         if (s == S_UPDATE) snprintf(sub, sizeof sub, tr("Versión %s disponible"), st_apps[ri].version);
-        else if (app_sd_missing(&inst[i])) snprintf(sub, sizeof sub, "%s", tr("Falta la tarjeta SD"));
-        else if (app_sd_path(&inst[i], 0, 0)) snprintf(sub, sizeof sub, "%s · %s", inst[i].installed[0] ? inst[i].installed : inst[i].version, tr("Tarjeta SD"));
+        else if (miss) snprintf(sub, sizeof sub, "%s", tr("Falta la tarjeta SD"));
+        else if (sdapp) snprintf(sub, sizeof sub, "%s · %s", inst[i].installed[0] ? inst[i].installed : inst[i].version, tr("Tarjeta SD"));
         else snprintf(sub, sizeof sub, "%s · %.0f KB", inst[i].installed[0] ? inst[i].installed : inst[i].version, inst[i].size / 1024.0);
-        draw_text(d, 76, y + 46, sub, 12, app_sd_missing(&inst[i]) ? rgb(255, 159, 10) : rgb(142, 142, 147), W - 76 - pw - 30, ST_TOP, ST_TABY);
+        draw_text(d, 76, y + 46, sub, 12, miss ? rgb(255, 159, 10) : rgb(142, 142, 147), W - 76 - pw - 30, ST_TOP, ST_TABY);
         st_hit_add(0, y, W - 16 - pw - 6, y + ST_ROW, HT_INST, i);
         if (i < ninst - 1) st_hline(d, 76, W, y + ST_ROW - 1, rgb(38, 38, 40));
     }
@@ -1191,7 +1412,7 @@ static int st_render_inst(uint16_t *d, int y0)
     for (int r = 0; r < st_nrepo; r++, y += 56) {
         if (y + 56 < ST_TOP || y > ST_TABY) continue;
         struct st_repo *R = &st_repos[r];
-        if (st_press_kind == HT_REPO && st_press_idx == r) fill_rrect(d, 0, y, W, 56, 0, rgb(28, 28, 30), 255);
+        if (st_press_kind == HT_REPO && st_press_idx == r) fill_rrect(d, 0, y, W, 56, 0, rgb(44, 44, 46), 255);
         char host[48]; st_host(R->url, host, sizeof host);
         draw_text(d, 16, y + 24, R->name[0] ? R->name : host, 15, 0xFFFF, W - 60, ST_TOP, ST_TABY);
         char sub[96];
@@ -1199,12 +1420,12 @@ static int st_render_inst(uint16_t *d, int y0)
         else if (R->err) snprintf(sub, sizeof sub, "%s · %s", host, tr("Sin conexión"));
         else snprintf(sub, sizeof sub, tr("%s · %d apps"), host, R->napps);
         draw_text(d, 16, y + 43, sub, 12, R->err && !R->busy ? rgb(255, 159, 10) : rgb(142, 142, 147), W - 60, ST_TOP, ST_TABY);
-        if (R->busy) st_ring(d, W - 30, y + 28, 0, now_ms(), 1);
+        if (R->busy) st_spinner(d, W - 30, y + 28, spn_phase(now_ms()), 8, ST_TOP, ST_TABY);
         st_hit_add(0, y, W, y + 56, HT_REPO, r);
         st_hline(d, 16, W, y + 55, rgb(38, 38, 40));
     }
     if (st_nrepo < ST_MAXREPO) {
-        if (st_press_kind == HT_ADDREPO) fill_rrect(d, 0, y, W, 48, 0, rgb(28, 28, 30), 255);
+        if (st_press_kind == HT_ADDREPO) fill_rrect(d, 0, y, W, 48, 0, rgb(44, 44, 46), 255);
         draw_text(d, 16, y + 30, tr("Añadir repositorio…"), 15, rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
         st_hit_add(0, y, W, y + 48, HT_ADDREPO, 0);
         y += 48;
@@ -1225,10 +1446,34 @@ static void st_tab_glyph(uint16_t *d, int t, int cx, int cy, uint16_t col)
         for (int r = 0; r < 5; r++) for (int x = cx - 5 + r; x <= cx + 5 - r + 1; x++) { int yy = cy + 1 + r; if (x >= 0 && x < W) d[yy * W + x] = col; }
     }
 }
+/* barra de pestanas: se pinta una vez por estado (pestana, insignia) y despues solo se copia */
+static uint16_t st_tabbar[(H - ST_TABY) * W]; static int st_tabbar_key = -1;
+static void st_draw_tabbar(uint16_t *d)
+{
+    int nup = 0; for (int i = 0; i < ninst; i++) { int ri = st_app_find(inst[i].id); if (ri >= 0 && st_state(ri) == S_UPDATE) nup++; }
+    int key = st_tab * 1000 + nup + (ui_lang << 16);
+    if (key != st_tabbar_key) {
+        uint16_t *t = d;   /* se dibuja en d y se guarda */
+        for (int yy = ST_TABY; yy < H; yy++) for (int x = 0; x < W; x++) t[yy * W + x] = rgb(20, 20, 22);
+        for (int x = 0; x < W; x++) t[ST_TABY * W + x] = rgb(48, 48, 52);
+        static const char *tl[T_N] = { "Hoy", "Apps", "Buscar", "Instaladas" };
+        for (int k = 0; k < T_N; k++) {
+            int cx = W * k / T_N + W / T_N / 2;
+            uint16_t col = k == st_tab ? rgb(10, 132, 255) : rgb(142, 142, 147);
+            st_tab_glyph(t, k, cx, ST_TABY + 18, col);
+            const char *l = tr(tl[k]); int lw = tw_n(l, 10, -1);
+            draw_text(t, cx - lw / 2, ST_TABY + 44, l, 10, col, W / T_N - 4, 0, H);
+        }
+        if (nup) { int cx = W * 3 / T_N + W / T_N / 2 + 12; char b[8]; snprintf(b, sizeof b, "%d", nup); fill_circle(t, cx, ST_TABY + 8, 8, rgb(255, 59, 48), 255); draw_text(t, cx - tw_n(b, 11, -1) / 2, ST_TABY + 12, b, 11, 0xFFFF, 0, 0, H); }
+        memcpy(st_tabbar, t + ST_TABY * W, sizeof st_tabbar);
+        st_tabbar_key = key;
+    } else memcpy(d + ST_TABY * W, st_tabbar, sizeof st_tabbar);
+    for (int k = 0; k < T_N; k++) st_hit_add(W * k / T_N, ST_TABY, W * (k + 1) / T_N, H, HT_TAB, k);
+}
 static void st_chrome(uint16_t *d, const char *title, int back)
 {
     memcpy(d, fr1, 30 * W * 2);
-    for (int yy = 30; yy < ST_TOP; yy++) for (int x = 0; x < W; x++) d[yy * W + x] = 0;
+    memset(d + 30 * W, 0, (ST_TOP - 30) * W * 2);
     if (back) {
         const char *bt = tr(st_tab == T_TODAY ? "Hoy" : st_tab == T_APPS ? "Apps" : st_tab == T_SEARCH ? "Buscar" : "Instaladas");
         int c = st_press_kind == HT_BACK ? rgb(5, 66, 128) : rgb(10, 132, 255);
@@ -1237,33 +1482,36 @@ static void st_chrome(uint16_t *d, const char *title, int back)
         st_hit_add(0, 30, 140, ST_TOP, HT_BACK, 0);
     } else {
         draw_text(d, 16, 80, title, 28, 0xFFFF, W - 70, 0, H);
-        if (st_busy() || st_bg.kind == J_INDEX) st_ring(d, W - 30, 72, 0, now_ms(), 1);
+        if (st_tab != T_SEARCH) {
+            /* actualizar: el boton gira mientras dure (salvo si ya lo muestra el hueco de tirar) */
+            if (st_upd_on && st_ptr_tab != st_tab) st_spinner(d, W - 28, 66, spn_phase(now_ms()), 8, 30, ST_TOP);
+            else {
+                uint16_t c = st_upd_on ? rgb(72, 72, 76) : st_press_kind == HT_REFRESH ? rgb(5, 66, 128) : rgb(10, 132, 255);
+                rf_draw(d, W - 28, 66, c);
+                if (!st_upd_on) st_hit_add(W - 56, 36, W, ST_TOP, HT_REFRESH, 0);
+            }
+        }
     }
     for (int x = 0; x < W; x++) d[(ST_TOP - 1) * W + x] = rgb(38, 38, 40);
-    /* barra de pestanas */
-    for (int yy = ST_TABY; yy < H; yy++) for (int x = 0; x < W; x++) d[yy * W + x] = rgb(20, 20, 22);
-    for (int x = 0; x < W; x++) d[ST_TABY * W + x] = rgb(48, 48, 52);
-    static const char *tl[T_N] = { "Hoy", "Apps", "Buscar", "Instaladas" };
-    for (int t = 0; t < T_N; t++) {
-        int cx = W * t / T_N + W / T_N / 2;
-        uint16_t col = t == st_tab ? rgb(10, 132, 255) : rgb(142, 142, 147);
-        st_tab_glyph(d, t, cx, ST_TABY + 18, col);
-        const char *l = tr(tl[t]); int lw = tw_n(l, 10, -1);
-        draw_text(d, cx - lw / 2, ST_TABY + 44, l, 10, col, W / T_N - 4, 0, H);
-        st_hit_add(W * t / T_N, ST_TABY, W * (t + 1) / T_N, H, HT_TAB, t);
-    }
-    /* insignia de actualizaciones en "Instaladas" */
-    int nup = 0; for (int i = 0; i < ninst; i++) { int ri = st_app_find(inst[i].id); if (ri >= 0 && st_state(ri) == S_UPDATE) nup++; }
-    if (nup) { int cx = W * 3 / T_N + W / T_N / 2 + 12; char b[8]; snprintf(b, sizeof b, "%d", nup); fill_circle(d, cx, ST_TABY + 8, 8, rgb(255, 59, 48), 255); draw_text(d, cx - tw_n(b, 11, -1) / 2, ST_TABY + 12, b, 11, 0xFFFF, 0, 0, H); }
+    st_draw_tabbar(d);
     draw_toast(d);
 }
+static float st_minpos(int page) { return page < T_N && page == st_ptr_tab ? -(float)ST_PTR_GAP : 0; }
 static void st_render_tab(uint16_t *d, int rec)
 {
     st_rec = rec; if (rec) st_nhit = 0;
-    for (int i = ST_TOP * W; i < ST_TABY * W; i++) d[i] = 0;
-    int y0 = ST_TOP - (int)st_pos[st_tab], h = 0;
-    /* tirar para actualizar: hueco con el anillo girando */
-    if (st_pos[st_tab] < -8 && st_tab != T_SEARCH) st_ring(d, W / 2, ST_TOP + (int)(-st_pos[st_tab]) / 2, 0, now_ms(), 1);
+    memset(d + ST_TOP * W, 0, (ST_TABY - ST_TOP) * W * 2);
+    float pos = st_pos[st_tab];
+    int y0 = ST_TOP - (int)pos, h = 0;
+    /* tirar para actualizar: el indicador aparece en el hueco (radios uno a uno; gira al actualizar) */
+    if (pos < -2 && st_tab != T_SEARCH) {
+        int gap = (int)-pos, cy = ST_TOP + (gap < ST_PTR_GAP ? gap : ST_PTR_GAP) / 2 + (gap > ST_PTR_GAP ? (gap - ST_PTR_GAP) / 3 : 0);
+        int spin = (st_upd_on && st_ptr_tab == st_tab) || now_ms() - st_upd_end < 400;
+        int n = (int)(gap * 8.0f / ST_PTR_ARM); if (n > 8) n = 8;
+        spn_fade = gap >= 34 ? 256 : gap * 256 / 34;
+        st_spinner(d, W / 2, cy, spin ? spn_phase(now_ms()) : -1, n, ST_TOP, ST_TOP + gap);
+        spn_fade = 256;
+    }
     switch (st_tab) {
     case T_TODAY: h = st_render_today(d, y0); break;
     case T_APPS: h = st_render_apps(d, y0); break;
@@ -1278,16 +1526,22 @@ static void st_render_tab(uint16_t *d, int rec)
 
 /* ------------------------------------------------------------------ ficha de una app */
 static struct sprite st_big; static char st_big_for[256];
+/* icono de 96 px de la ficha: se prepara al pulsar la fila (antes de soltar), no al empujar */
+static void st_big_prep(int i)
+{
+    if (i < 0 || i >= st_napp) return;
+    struct st_app *a = &st_apps[i];
+    if (!strcmp(st_big_for, a->icon_url) && st_big.w) return;
+    sprite_free(&st_big); st_big_for[0] = 0;
+    if (a->icon_url[0] && !st_icon_load(a->icon_url, 96, &st_big, 0)) snprintf(st_big_for, sizeof st_big_for, "%s", a->icon_url);
+}
 static void st_render_detail(uint16_t *d, int rec)
 {
     st_rec = rec; if (rec) st_nhit = 0;
-    for (int i = ST_TOP * W; i < ST_TABY * W; i++) d[i] = 0;
+    memset(d + ST_TOP * W, 0, (ST_TABY - ST_TOP) * W * 2);
     if (st_detail < 0 || st_detail >= st_napp) { st_chrome(d, "", 1); st_rec = 0; return; }
     struct st_app *a = &st_apps[st_detail];
-    if (strcmp(st_big_for, a->icon_url) || !st_big.w) {
-        sprite_free(&st_big); st_big_for[0] = 0;
-        if (a->icon_url[0] && !st_icon_load(a->icon_url, 96, &st_big, 0)) snprintf(st_big_for, sizeof st_big_for, "%s", a->icon_url);
-    }
+    st_big_prep(st_detail);
     int y = ST_TOP + 14 - (int)st_pos[T_N];
     st_icon_box(d, st_big.w ? &st_big : 0, 16, y, 96);
     draw_text(d, 126, y + 26, a->name, 21, 0xFFFF, W - 140, ST_TOP, ST_TABY);
@@ -1337,7 +1591,15 @@ static void st_render_detail(uint16_t *d, int rec)
     st_chrome(d, a->name, 1);
     st_rec = 0;
 }
-static void st_render_current(void) { if (st_detail >= 0) st_render_detail(fr0, 1); else st_render_tab(fr0, 1); }
+static double st_last_render;
+static void st_render_current(void)
+{
+    double t0 = now_ms();
+    st_nspin = 0; st_spin_rec = 1; st_spin_drawn = -1;
+    if (st_detail >= 0) st_render_detail(fr0, 1); else st_render_tab(fr0, 1);
+    st_spin_rec = 0;
+    st_last_render = now_ms() - t0;
+}
 
 /* ------------------------------------------------------------------ transiciones */
 /* empujar/sacar la ficha: la de arriba entra desde la derecha con sombra, la de abajo se
@@ -1358,9 +1620,11 @@ static void st_compose(const uint16_t *under, const uint16_t *top, int x)
 }
 static void st_push(int i)
 {
+    double ts = now_ms();
     st_render_tab(st_pageA, 0);
-    st_detail = i; st_pos[T_N] = 0; st_press_kind = 0;
+    st_detail = i; st_pos[T_N] = 0; st_press_kind = 0; st_press_idx = -1;
     st_render_detail(st_pageB, 0);
+    lg("tienda: ficha preparada en %.1f ms", now_ms() - ts);
     double t0 = now_ms();
     for (;;) {
         double t = (now_ms() - t0) / 320.0; if (t > 1) t = 1;
@@ -1371,6 +1635,7 @@ static void st_push(int i)
 /* sacar la ficha desde x0 (arrastre del borde) */
 static void st_pop_from(int x0, int done)
 {
+    st_press_kind = 0; st_press_idx = -1;
     st_render_detail(st_pageB, 0);
     int keep = st_detail; st_detail = -1; st_render_tab(st_pageA, 0); st_detail = keep;
     double t0 = now_ms(), ms = done ? 260.0 * (W - x0) / W + 60 : 220.0 * x0 / W + 60;
@@ -1384,6 +1649,10 @@ static void st_pop_from(int x0, int done)
 }
 
 /* ------------------------------------------------------------------ acciones */
+static void st_upd_start(const char *why)
+{
+    if (!st_upd_on) { st_upd_on = 1; st_upd_t0 = now_ms(); lg("tienda: actualizar (%s)", why); }
+}
 static void st_action_pill(int i, int *quit)
 {
     int s = st_state(i);
@@ -1429,9 +1698,8 @@ static void st_add_repo(void)
     for (int r = 0; r < st_nrepo; r++) if (!strcmp(st_repos[r].url, u)) { toast(tr("Ese repositorio ya está")); return; }
     if (st_nrepo >= ST_MAXREPO) return;
     struct st_repo *R = &st_repos[st_nrepo]; memset(R, 0, sizeof *R); snprintf(R->url, sizeof R->url, "%s", u);
-    st_session_url[st_nrepo][0] = 0; st_session_fetch[st_nrepo] = 0;
     st_nrepo++; st_repos_save();
-    R->busy = 1; st_bg_next();
+    R->busy = 1; st_bg_next(); st_upd_start("repositorio nuevo");
     toast(tr("Repositorio añadido"));
 }
 static void st_repo_menu(int r)
@@ -1439,12 +1707,12 @@ static void st_repo_menu(int r)
     char host[48]; st_host(st_repos[r].url, host, sizeof host);
     const char *o[2] = { tr("Actualizar ahora"), tr("Eliminar repositorio") };
     int a = action_sheet(st_repos[r].url, o, r ? 2 : 1, r ? 1 : -1);
-    if (a == 0) { st_repos[r].busy = 1; st_bg_next(); }
+    if (a == 0) { st_repos[r].busy = 1; st_bg_next(); st_upd_start("repositorio"); }
     else if (a == 1 && r > 0 && confirm(tr("¿Eliminar el repositorio? Las apps instaladas se conservan."), tr("Eliminar"))) {
         if (st_bg.pid && st_bg.kind == J_INDEX) st_job_kill(&st_bg);
         if (st_dl_app >= 0 && st_apps[st_dl_app].repo == r) { st_job_kill(&st_dl); st_dl_app = -1; }
         char path[160]; st_cache_path(st_repos[r].url, "", ".json", path, sizeof path); unlink(path);
-        for (int k = r; k < st_nrepo - 1; k++) { st_repos[k] = st_repos[k + 1]; st_session_fetch[k] = st_session_fetch[k + 1]; memcpy(st_session_url[k], st_session_url[k + 1], 256); }
+        for (int k = r; k < st_nrepo - 1; k++) st_repos[k] = st_repos[k + 1];
         st_nrepo--; st_repos_save();
         for (int k = 0; k < st_nrepo; k++) if (st_repos[k].busy == 2) st_repos[k].busy = 1;
         st_dl_app = -1; st_apps_reload(); st_bg_next();
@@ -1470,7 +1738,9 @@ static void store_detail(int i, int *quit)
     } else if (a == 0) {
         char err[160] = "";
         progress_card(0, 0, -1); progress_card(tr("Instalando…"), 0, 0);
+        double t0 = now_ms();
         int r = hpk_install(p->path, install_progress, 0, err, sizeof err);
+        lg("tienda: instalar %s desde la SD: %d en %.0f ms", p->id, r, now_ms() - t0);
         if (r) toast(hpk_msg(hpk_errkey(r), ui_lang));
         else { char id[HPK_ID_MAX + 1]; snprintf(id, sizeof id, "%s", p->id); toast(tr("Instalada")); register_installed_apps(); load_icons(); relabel_apps(); st_place_on_home(id); }
     } else if (a == 1) {
@@ -1484,22 +1754,89 @@ static void store_detail(int i, int *quit)
             register_installed_apps(); load_icons(); relabel_apps(); lconf_save();
         }
     }
-    store_scan();
+    st_inst_sync();
+}
+
+/* ------------------------------------------------------------------ desplazamiento (iOS)
+ * Goma de iOS fuera de los limites: f(d) = (1 - 1 / (d * 0.55 / D + 1)) * D; la posicion "cruda"
+ * del dedo se guarda para que retomar un rebote no salte. */
+static float st_rb(float x, float lo, float hi)
+{
+    const float D = ST_VIEW, c = .55f;
+    if (x < lo) { float d = lo - x; return lo - (1 - 1 / (d * c / D + 1)) * D; }
+    if (x > hi) { float d = x - hi; return hi + (1 - 1 / (d * c / D + 1)) * D; }
+    return x;
+}
+static float st_unrb(float v, float lo, float hi)
+{
+    const float D = ST_VIEW, c = .55f;
+    if (v < lo) { float e = (lo - v) / D; if (e > .95f) e = .95f; return lo - (1 / (1 - e) - 1) * D / c; }
+    if (v > hi) { float e = (v - hi) / D; if (e > .95f) e = .95f; return hi + (1 / (1 - e) - 1) * D / c; }
+    return v;
+}
+static float st_maxpos(void) { int pg = st_detail >= 0 ? T_N : st_tab; float m = (float)(st_content_h[pg] - ST_VIEW); return m < 0 ? 0 : m; }
+
+/* ------------------------------------------------------------------ medidas (shell.log) */
+static struct { int n; double r, rmax, p, t; } st_prof;
+static double st_resp_t, st_resp_ev; static const char *st_resp_what;
+static void st_frame_present(int full)
+{
+    double t0 = now_ms();
+    if (full) st_render_current();
+    double t1 = now_ms(); present(); double t2 = now_ms();
+    if (full) {
+        st_prof.n++; st_prof.r += t1 - t0; st_prof.p += t2 - t1; if (t1 - t0 > st_prof.rmax) st_prof.rmax = t1 - t0;
+        if (t2 - st_prof.t > 3000) {
+            if (st_prof.n >= 10) lg("perfil tienda: %d fot, dibujo %.1f ms (max %.1f), presentar %.1f ms", st_prof.n, st_prof.r / st_prof.n, st_prof.rmax, st_prof.p / st_prof.n);
+            memset(&st_prof, 0, sizeof st_prof); st_prof.t = t2;
+        }
+    }
+    if (st_resp_what) {
+        struct timeval tv; gettimeofday(&tv, 0);
+        double ev = st_resp_ev > 0 ? tv.tv_sec * 1e3 + tv.tv_usec / 1e3 - st_resp_ev : -1;
+        lg("tienda: respuesta (%s): %.1f ms desde el evento, %.1f desde leerlo, dibujo %.1f", st_resp_what, ev, t2 - st_resp_t, t1 - t0);
+        st_resp_what = 0;
+    }
+}
+static void st_resp_mark(const struct pkt *p, const char *what)
+{
+    st_resp_t = now_ms(); st_resp_what = what;
+    st_resp_ev = p && p->n ? p->ev[0].input_event_sec * 1e3 + p->ev[0].input_event_usec / 1e3 : -1;
 }
 
 /* ------------------------------------------------------------------ bucle */
-static float st_maxpos(void) { int vis = ST_TABY - ST_TOP; float m = (float)(st_content_h[st_detail >= 0 ? T_N : st_tab] - vis); return m < 0 ? 0 : m; }
+enum { TS_IDLE, TS_PRESS, TS_DRAG, TS_TAB, TS_BOTTOM };
+static int st_gone;                 /* salio con el gesto de inicio: el inicio ya esta en pantalla */
+static int st_totop;                /* animando hacia arriba (pestana activa tocada) */
+static void st_select_tab(int t)
+{
+    if (st_detail >= 0) {
+        if (t == st_tab) { st_pop_from(0, 1); return; }       /* la pestana activa: vuelve a su raiz */
+        st_detail = -1;
+    } else if (t == st_tab) { st_vel = 0; st_totop = 1; return; }
+    st_tab = t; st_vel = 0;
+}
 static void store_app_ui(int ix, int iy)
 {
+    double to = now_ms();
     st_mkdirs();
     if (!st_apps) st_apps = calloc(ST_MAXAPP, sizeof *st_apps);
     if (!st_apps) { toast(tr("No se pudo abrir")); return; }
     st_pageA = img_under; st_pageB = img_sheet; have_under = 0;     /* bufers compartidos */
-    sd_recover(); st_repos_load(); st_apps_reload(); store_scan(); register_installed_apps();
-    st_detail = -1; st_press_kind = 0; st_press_idx = -1; st_open_after = -1;
-    for (int k = 0; k <= T_N; k++) st_pos[k] = 0;
-    st_vel = 0;
-    st_refresh(0);
+    /* datos: todo de memoria / cache; los indices solo se releen si la cache cambio */
+    sd_recover(); st_repos_load(); st_apps_sync();
+    double td = now_ms();
+    int nic = st_icons_step_ex(4, 1); nic += st_icons_step(6);    /* lo de la primera pantalla; el resto, uno por fotograma */
+    double ti = now_ms();
+    store_scan_ex(0);
+    st_inst_gen_seen = -1; st_inst_sync();     /* la tarjeta pudo cambiar desde la ultima vez */
+    st_detail = -1; st_press_kind = 0; st_press_idx = -1; st_open_after = -1; st_gone = 0;
+    st_ptr_tab = -1; st_upd_on = 0; st_vel = 0; st_tabbar_key = -1; st_totop = 0;
+    for (int k = 0; k <= T_N; k++) if (st_pos[k] < 0) st_pos[k] = 0;
+    st_pos[T_N] = 0;
+    /* red: solo la primera vez (sin nada en la cache); despues, al pedirlo */
+    if (!st_have_cache() && !access(NETBIN, X_OK)) { st_refresh(); st_upd_start("primera vez, sin cache"); }
+    lg("tienda: abrir: datos %.1f ms, %d iconos en %.1f ms, SD %.1f ms, %d apps", td - to, nic, ti - td, now_ms() - ti, st_napp);
     /* abrir: la tienda crece desde su icono */
     render_launcher(img_base, now_ms());
     st_render_tab(st_pageB, 1);
@@ -1510,110 +1847,162 @@ static void store_app_ui(int ix, int iy)
         for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
         draw_scaled(fr0, st_pageB, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
+        if (st_icons_pending) st_icons_step(1);
     }
-    struct pkt p; int quit = 0, moving = 0; double tlast = now_ms();
-    st_render_current(); present();
+    struct pkt p; int quit = 0, dirty = 1, ts = TS_IDLE, was_down = cur_down, moving = 0;
+    int sx = 0, sy = 0, kind = 0, idx = -1, prev_tab = 0, prev_detail = -1;
+    float raw0 = 0, vy = 0; double tdown = 0, tmove = 0, tlast = now_ms(); int ly = 0;
+    if (cur_down) ts = TS_TAB;                                  /* el dedo del toque que abrio: ignorar */
     while (!quit) {
-        int ch = st_jobs_poll();
-        int anim = moving || st_dl_app >= 0 || st_busy() || st_bg.kind == J_INDEX || now_ms() < toast_until + 40;
-        /* inercia y rebote */
-        double tn = now_ms(), dt = tn - tlast; if (dt > 50) dt = 50; tlast = tn;
-        float *pos = &st_pos[st_detail >= 0 ? T_N : st_tab], mx = st_maxpos();
-        if (moving) {
-            if (*pos < 0 || *pos > mx) { float tgt = *pos < 0 ? 0 : mx; *pos += (float)((tgt - *pos) * (1 - exp(-dt / 70.0))); st_vel *= 0.5f; if (fabsf(*pos - tgt) < 0.5f) { *pos = tgt; st_vel = 0; } }
-            else { *pos += st_vel * (float)dt; st_vel *= (float)pow(0.998, dt); }
-            if (fabsf(st_vel) < 0.02f && *pos >= 0 && *pos <= mx) moving = 0;
-            ch = 1;
+        /* ---- trabajos de red y datos (no bloquean) */
+        if (st_jobs_poll()) dirty = 1;
+        if (st_icons_pending && st_icons_step(1)) dirty = 1;
+        if (st_inst_gen_seen != inst_gen) { st_inst_sync(); dirty = 1; }
+        double tn = now_ms();
+        if (st_upd_on && !st_updating() && tn - st_upd_t0 > ST_UPD_MIN_MS) {
+            int err = 0, ok = 0; for (int r = 0; r < st_nrepo; r++) { if (st_repos[r].err) err++; else ok++; }
+            lg("tienda: actualizacion terminada en %.0f ms (%d apps, %d repos con error)", tn - st_upd_t0, st_napp, err);
+            if (err && !ok && st_napp) toast(tr("Sin conexión"));
+            st_upd_on = 0; st_upd_end = tn; st_ptr_tab = -1; dirty = 1;
+            if (ts != TS_DRAG) moving = 1;                       /* el hueco se cierra con un muelle */
         }
-        if (ch || anim) { st_render_current(); present(); }
-        if (!read_pkt(&p, (ch || anim) ? 1 : 400)) continue;
-        if (!p.down) continue;
-        moving = 0; st_vel = 0;
-        int sx = p.x, sy = p.y;
-        if (sy >= 456) {                                         /* barra de inicio: salir (o pestana) */
-            while (cur_down && read_pkt(&p, 1000)) {}
-            if (sy - cur_y > 20) break;
-            if (st_detail < 0) { st_tab = sx * T_N / W; }
-            continue;
+        /* ---- fisica: inercia, rebote y volver arriba */
+        double dt = tn - tlast; if (dt > 50) dt = 50; tlast = tn;
+        int pg = st_detail >= 0 ? T_N : st_tab;
+        float *pos = &st_pos[pg], lo = st_minpos(pg), hi = st_maxpos();
+        if (ts != TS_DRAG && ts != TS_PRESS && !moving && (*pos < lo - .5f || *pos > hi + .5f)) moving = 1;
+        if (st_totop) {                                     /* tocar la pestana activa: arriba */
+            if (ts == TS_DRAG || st_detail >= 0) st_totop = 0;
+            else { *pos += (float)((lo - *pos) * (1 - exp(-dt / 55.0))); if (fabsf(*pos - lo) < 0.5f) { *pos = lo; st_totop = 0; } dirty = 1; }
         }
-        /* borde izquierdo en la ficha: volver arrastrando */
-        if (st_detail >= 0 && sx < 22) {
-            st_render_detail(st_pageB, 0);
-            int keep = st_detail; st_detail = -1; st_render_tab(st_pageA, 0); st_detail = keep;
-            int x = 0; double lt = now_ms(); float vx = 0; int lx = sx;
-            while (cur_down && read_pkt(&p, 1000)) {
-                x = cur_x - sx; if (x < 0) x = 0;
-                double t = now_ms(); if (t > lt) { vx = 0.6f * vx + 0.4f * (float)((cur_x - lx) / (t - lt)); lt = t; lx = cur_x; }
-                st_compose(st_pageA, st_pageB, x); present();
+        if (moving && ts != TS_DRAG && !st_totop) {
+            if (*pos < lo || *pos > hi) {
+                float tgt = *pos < lo ? lo : hi;
+                *pos += (float)((tgt - *pos) * (1 - exp(-dt / 70.0))); st_vel *= 0.5f;
+                if (fabsf(*pos - tgt) < 0.5f) { *pos = tgt; st_vel = 0; }
+            } else { *pos += st_vel * (float)dt; st_vel *= (float)pow(0.998, dt); }
+            if (fabsf(st_vel) < 0.02f && *pos >= lo && *pos <= hi) { moving = 0; st_vel = 0; }
+            dirty = 1;
+        }
+        int anim = moving || st_totop || now_ms() < toast_until + 40 || now_ms() - st_upd_end < 450;
+        /* ---- pintar: completo si algo cambio; si solo gira un indicador, solo sus filas */
+        if (dirty || anim) { st_frame_present(1); dirty = 0; }
+        else if (st_spin_patch(now_ms())) {}
+        /* ---- entrada: sin esperar si hay animacion; si no, hasta el proximo paso del indicador */
+        int wait = anim ? 0 : st_nspin ? 30 : (st_bg.pid || st_dl.pid) ? 50 : 250;
+        while (!quit && read_pkt(&p, wait)) {
+            wait = 0;
+            int down_edge = p.down && !was_down, up_edge = !p.down && was_down;
+            was_down = p.down;
+            if (down_edge) {
+                sx = p.x; sy = p.y; tdown = tmove = now_ms(); ly = sy; vy = 0; moving = 0; st_vel = 0;
+                pg = st_detail >= 0 ? T_N : st_tab; pos = &st_pos[pg];
+                kind = st_hit_at(sx, sy, &idx);
+                if (sy >= ST_TABY) {
+                    /* barra de pestanas: la pestana cambia al bajar el dedo (iOS); en su franja
+                     * inferior, subir el dedo es el gesto de inicio (se deshace el cambio) */
+                    prev_tab = st_tab; prev_detail = st_detail;
+                    if (kind == HT_TAB) { st_select_tab(idx); st_resp_mark(&p, "pestana"); }
+                    ts = sy >= 456 ? TS_BOTTOM : TS_TAB; dirty = 1;
+                    break;
+                }
+                if (st_detail >= 0 && back_zone(sx, sy)) {
+                    /* borde en la ficha: respuesta inmediata del boton o fila, y despues decide
+                     * app_back_gesture si es "atras" (fr0 = la ficha sin pulsar) */
+                    st_press_kind = kind; st_press_idx = idx;
+                    if (kind) { st_resp_mark(&p, "pulsar (borde)"); st_frame_present(1); }
+                    st_press_kind = 0; st_press_idx = -1; st_render_current();
+                    int bk = app_back_gesture(sx, sy);
+                    was_down = cur_down;
+                    if (bk > 0) { st_pop_from(0, 1); ts = TS_IDLE; dirty = 1; break; }
+                    if (bk < 0) { ts = TS_IDLE; dirty = 1; break; }
+                    st_press_kind = kind; st_press_idx = idx;
+                }
+                st_press_kind = kind; st_press_idx = idx; ts = TS_PRESS;
+                if (kind) { st_resp_mark(&p, "pulsar"); dirty = 1; }
+                if (kind == HT_APP) { st_frame_present(1); dirty = 0; st_big_prep(idx); }   /* la ficha, lista antes de soltar */
+                if (!cur_down) up_edge = 1;                      /* ya se solto (decision del borde) */
+                else break;
             }
-            st_pop_from(x, x > W / 3 || vx > 0.35f);
-            if (st_detail < 0) st_press_kind = 0;
-            continue;
-        }
-        int idx = -1, kind = st_hit_at(sx, sy, &idx);
-        st_press_kind = kind; st_press_idx = idx;
-        if (kind && kind != HT_TAB) { st_render_current(); present(); }
-        float p0 = *pos; int drag = 0; double t1 = now_ms(); float vy = 0; int ly = sy;
-        double hold0 = now_ms();
-        while (cur_down && read_pkt(&p, 30)) {
-            if (!drag && (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 12)) { drag = 1; st_press_kind = 0; st_press_idx = -1; p0 = *pos + (float)(cur_y - sy); }
-            if (drag) {
-                float np = p0 - (float)(cur_y - sy);
-                mx = st_maxpos();
-                if (np < 0) np = np * 0.5f; else if (np > mx) np = mx + (np - mx) * 0.5f;    /* resistencia */
-                *pos = np;
-                double t = now_ms(); if (t > t1) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - t1)); t1 = t; ly = cur_y; }
-                st_jobs_poll();
-                st_render_current(); present();
+            if (p.down && !down_edge) {
+                if (ts == TS_BOTTOM && sy - cur_y > 12 && now_ms() - tdown < 400) {
+                    /* inicio: la ventana sigue al dedo (multitarea si se mantiene) */
+                    st_tab = prev_tab; st_detail = prev_detail;
+                    st_render_current();
+                    if (own_home_gesture(sx, sy, app_by_id("appstore"))) { st_gone = 1; quit = 1; break; }
+                    was_down = cur_down; ts = TS_IDLE; dirty = 1; break;
+                }
+                if (ts == TS_PRESS || ts == TS_DRAG) {
+                    if (ts == TS_PRESS && (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 12)) {
+                        ts = TS_DRAG; st_press_kind = 0; st_press_idx = -1;
+                        lo = st_minpos(pg); hi = st_maxpos();
+                        raw0 = st_unrb(*pos, lo, hi) + (float)(cur_y - sy);
+                    }
+                    if (ts == TS_DRAG) {
+                        lo = st_minpos(pg); hi = st_maxpos();
+                        *pos = st_rb(raw0 - (float)(cur_y - sy), lo, hi);
+                        double t = now_ms(); if (t > tmove) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; }
+                        /* tirar para actualizar: al pasar el umbral empieza (sin esperar a soltar) */
+                        if (pg < T_N && pg != T_SEARCH && *pos <= -ST_PTR_ARM && st_ptr_tab != pg) {
+                            if (!st_upd_on) { st_refresh(); st_upd_start("tirar"); }
+                            st_ptr_tab = pg; raw0 = st_unrb(*pos, st_minpos(pg), hi) + (float)(cur_y - sy);
+                        }
+                        dirty = 1;
+                    }
+                }
             }
-        }
-        (void)hold0;
-        if (drag) {
-            if (now_ms() - t1 > 80) vy = 0;
-            st_vel = vy; moving = 1; tlast = now_ms();
-            if (st_detail < 0 && st_tab != T_SEARCH && *pos < -60) {    /* tirar para actualizar */
-                st_refresh(1);
+            if (up_edge) {
+                int t0s = ts; ts = TS_IDLE;
+                if (t0s == TS_DRAG) {
+                    if (now_ms() - tmove > 80) vy = 0;
+                    st_vel = vy; moving = 1; tlast = now_ms(); dirty = 1;
+                    continue;
+                }
+                if (t0s != TS_PRESS) { dirty = 1; continue; }
+                int k = st_press_kind, i = st_press_idx;
+                st_press_kind = 0; st_press_idx = -1; dirty = 1;
+                switch (k) {
+                case HT_BACK: if (st_detail >= 0) st_pop_from(0, 1); break;
+                case HT_APP: st_push(i); break;
+                case HT_PILL: case HT_INSTPILL: st_action_pill(i, &quit); break;
+                case HT_SD: store_detail(i, &quit); break;
+                case HT_INST: installed_detail(i); if (st_open_after >= 0) quit = 1; st_inst_sync(); break;
+                case HT_REPO: st_repo_menu(i); break;
+                case HT_ADDREPO: st_add_repo(); break;
+                case HT_REFRESH: if (!st_upd_on) { st_refresh(); st_upd_start("boton"); } break;
+                case HT_SEARCH: {
+                    char q[64]; snprintf(q, sizeof q, "%s", st_q);
+                    if (line_edit(tr("Buscar"), tr("Nombre o descripción"), q, sizeof q) || !q[0]) {
+                        snprintf(st_q, sizeof st_q, "%s", q); st_lower(st_q, st_lq, sizeof st_lq); st_pos[T_SEARCH] = 0;
+                    }
+                    break;
+                }
+                default: break;
+                }
+                was_down = cur_down;
+                st_resp_what = 0;
+                break;                                       /* tras una accion, pintar ya */
             }
-            continue;
-        }
-        st_press_kind = 0; st_press_idx = -1;
-        switch (kind) {
-        case HT_TAB:
-            if (st_detail >= 0) { st_pop_from(0, 1); }
-            if (idx == st_tab) st_pos[idx] = 0;              /* tocar la pestana activa: arriba */
-            st_tab = idx;
-            if (st_tab == T_INST) register_installed_apps();
-            break;
-        case HT_BACK: if (st_detail >= 0) st_pop_from(0, 1); break;
-        case HT_APP: st_push(idx); break;
-        case HT_PILL: case HT_INSTPILL: st_action_pill(idx, &quit); break;
-        case HT_SD: store_detail(idx, &quit); break;
-        case HT_INST: installed_detail(idx); if (st_open_after >= 0) quit = 1; store_scan(); break;
-        case HT_REPO: st_repo_menu(idx); break;
-        case HT_ADDREPO: st_add_repo(); break;
-        case HT_SEARCH: {
-            char q[64]; snprintf(q, sizeof q, "%s", st_q);
-            if (line_edit(tr("Buscar"), tr("Nombre o descripción"), q, sizeof q) || !q[0]) {
-                snprintf(st_q, sizeof st_q, "%s", q); st_lower(st_q, st_lq, sizeof st_lq); st_pos[T_SEARCH] = 0;
-            }
-            break;
-        }
-        default: break;
         }
     }
     drain_until_up();
     if (st_dl.pid) { st_job_kill(&st_dl); st_dl_app = -1; }        /* salir cancela la descarga */
-    if (st_bg.pid) { st_job_kill(&st_bg); for (int r = 0; r < st_nrepo; r++) st_repos[r].busy = 0; }
+    if (st_bg.pid) { st_job_kill(&st_bg); }
+    for (int r = 0; r < st_nrepo; r++) st_repos[r].busy = 0;
     for (int i = 0; i < st_napp; i++) if (st_apps[i].ic_state == 1 && !st_apps[i].ic.w) st_apps[i].ic_state = 0;
+    st_upd_on = 0; st_ptr_tab = -1;
+    for (int k = 0; k <= T_N; k++) if (st_pos[k] < 0) st_pos[k] = 0;
     sprite_free(&st_big); st_big_for[0] = 0;
     have_under = 0;
     if (st_open_after >= 0) {                                     /* ABRIR: la app sale del centro */
+        st_detail = -1;
         run_ext_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);
         return;
     }
-    /* cerrar: la tienda se encoge hasta su icono */
-    st_detail = -1; st_render_tab(st_pageB, 0);
-    memcpy(st_pageB, fr0, sizeof img_sheet);
+    if (st_gone) { st_detail = -1; launcher_present(); return; }  /* el gesto de inicio ya lo animo */
+    /* cerrar: la tienda se encoge hasta su icono (desde lo que hay en pantalla) */
+    memcpy(st_pageB, fr0, HM_FRAME_BYTES);
+    st_detail = -1;
     render_launcher(img_base, now_ms());
     double t0b = now_ms();
     for (;;) {

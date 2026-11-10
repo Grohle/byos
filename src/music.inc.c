@@ -3,9 +3,12 @@
  *    (la de fabrica, de reserva); debajo, "Anadido recientemente" en cuadricula.
  *  - Album: caratula grande, titulo, artista, genero y ano, Reproducir / Aleatorio y pistas.
  *  - Artista: sus albumes; Buscar: teclado con resultados mientras se escribe.
- *  - Pulsacion larga en una cancion: Reproducir, Crear radio, Editar etiquetas, Buscar letra,
- *    Buscar caratula ("solo esta cancion / todo el album"), Ir al album, Ir al artista.
- *  - Mini reproductor abajo (npx_snapshot + pc_*): tocarlo abre el Now Playing de HiBy.
+ *  - Pulsacion larga en una cancion: menu contextual de iOS (nowui.inc.c: fondo desenfocado,
+ *    tarjeta de la fila y lista con iconos): Reproducir, Crear radio, Ir al album, Ir al artista,
+ *    Editar etiquetas, Buscar letra y Buscar caratula (lo mismo que Archivos: "solo esta cancion
+ *    / todo el album"). En un album: Reproducir, Aleatorio, Ir al artista, Editar, Buscar caratula.
+ *  - Mini reproductor abajo (npx_snapshot + pc_*): tocarlo o arrastrarlo hacia arriba abre el
+ *    Reproduciendo propio (nowui.inc.c), no el de HiBy.
  * Datos: `hibymix lib|playlists|playlist|make|radio` (SQLite en otro proceso, solo lectura);
  * la biblioteca se guarda en MU_CACHE/lib.tsv y se rehace cuando cambia la base.
  * Caratulas: un hilo (nice 10) las saca de cada album con hibywall a 140x140 (cuadricula) y
@@ -1288,38 +1291,7 @@ static int mu_play_poll(void)
     return 1;
 }
 
-/* --------- abrir lo de fabrica: Now Playing y la biblioteca de HiBy */
-static int mu_open_np(void)
-{
-    memcpy(img_under, fr0, HM_FRAME_BYTES);
-    const uint16_t *ph = have_cache_plane ? img_cache_plane : 0;
-    if (!ph) { memset(img_sheet, 0, HM_FRAME_BYTES); ph = img_sheet; }
-    nav_start(NAV_TO_PLANE);
-    int from = H - MU_MINI_H; double t0 = now_ms();
-    mu_busy = 1;
-    for (;;) {
-        double t = (now_ms() - t0) / 340; if (t > 1) t = 1;
-        int top = from - (int)(from * ease_out(t));
-        int ready = nav_done && nav_ok;
-        compose_sheet(fr0, img_under, ready ? fr1 : ph, top, 32 - (11 * (H - top)) / H);
-        present();
-        if (t >= 1) break;
-    }
-    int ok = nav_wait(2500);
-    mu_busy = 0;
-    if (ok == 1) {
-        memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1;
-        have_under = 0; launcher_on = 0; V.edit = 0; home_publish();
-        cmd('R');
-        lg("musica -> Now Playing");
-        return 1;
-    }
-    animate_sheet(img_under, ph, 0, H, 260, 0);
-    if (ok == -1) nav_wait(3000);
-    if (!is_home(fr1)) { uint32_t c = st->cap_frames; inj_tap(22, 48); settle(c, 500, 100); }
-    toast(tr("No se pudo abrir"));
-    return 0;
-}
+/* --------- abrir lo de fabrica: la biblioteca de HiBy */
 static int mu_open_stock(void)
 {
     int a = app_by_id("music"); if (a < 0) return 0;
@@ -1349,7 +1321,14 @@ static int mu_open_stock(void)
     return 1;
 }
 
-/* --------- menus contextuales */
+/* --------- menus contextuales (dibujo y Reproduciendo en nowui.inc.c, incluido despues) */
+struct nu_mi { const char *t; int ic, grp; };    /* texto, icono (NI_*), empieza un grupo (separador ancho) */
+enum { NI_PLAY, NI_SHUF, NI_RADIO, NI_ALB, NI_ART, NI_TAGS, NI_LYR, NI_COV };
+enum { NU_NONE, NU_CLOSED, NU_HOME, NU_ALBUM, NU_ARTIST, NU_RADIO };
+static int nu_menu(const struct nu_mi *it, int n, const char *t1, const char *t2, int alb, const uint16_t *cov128, int ry, int rh);
+static int nu_open(int sx, int sy, int *arg);
+static int mu_exit_np;                            /* se salio al inicio desde Reproduciendo */
+static int mu_gone;                               /* salio con el gesto de inicio: el inicio ya esta en pantalla */
 static int mu_artist_of_album(int alb) { return ML ? ML->A[alb].art : -1; }
 static struct mpg *mu_album_page(int alb) { return mu_page_new(PG_ALBUM, alb, ML ? ML->A[alb].title : ""); }
 static struct mpg *mu_artist_page(int r) { return mu_page_new(PG_ARTIST, r, ML ? ML->R[r].name : ""); }
@@ -1368,39 +1347,47 @@ static void mu_radio(int trk)
     mu_job_start(p, 3, "radio", ML->T[trk].path, "--list", 0);
     mu_build(p); mu_push(p);
 }
-static void mu_song_menu(int trk, struct mpg *pg, int idx)
+static void mu_song_menu(int trk, struct mpg *pg, int idx, int ry, int rh)
 {
     const struct mu_trk *t = &ML->T[trk];
-    const char *o[7] = { tr("Reproducir"), tr("Crear radio"), tr("Editar etiquetas"), tr("Buscar letra"), tr("Buscar carátula"), tr("Ir al álbum"), tr("Ir al artista") };
-    int n = pg->kind == PG_ALBUM ? 5 : 7;
-    if (pg->kind == PG_ALBUM) o[5] = 0;
-    int a = action_sheet(t->title, o, pg->kind == PG_ALBUM ? 5 : n, -1);
-    if (pg->kind == PG_ALBUM && a >= 5) a = -1;
-    char path[700]; mu_syspath(t->path, path, sizeof path);
     const struct mu_alb *al = &ML->A[t->alb];
-    if (a == 0) mu_play(pg->tl, pg->ntl, idx, 0, pg->title);
-    else if (a == 1) { mu_radio(trk); return; }
-    else if (a == 2) { char *v[1] = { path }; tag_editor(v, 1); }
-    else if (a == 3) lyrics_search(path, t->artist, t->title, al->title);
-    else if (a == 4) { char *v[1] = { path }; cover_search(v, 1, al->artist, al->title); mu_cover_forget(t->alb); }
-    else if (a == 5) { mu_present(); mu_push(mu_album_page(t->alb)); return; }
-    else if (a == 6) { int r = mu_artist_of_album(t->alb); if (r >= 0) { mu_present(); mu_push(mu_artist_page(r)); return; } }
+    struct nu_mi it[8]; int n = 0, g = 0;
+    it[n++] = (struct nu_mi){ tr("Reproducir"), NI_PLAY, 0 };
+    it[n++] = (struct nu_mi){ tr("Crear radio"), NI_RADIO, 0 };
+    if (pg->kind != PG_ALBUM) { it[n++] = (struct nu_mi){ tr("Ir al álbum"), NI_ALB, 1 }; g = 1; }
+    it[n++] = (struct nu_mi){ tr("Ir al artista"), NI_ART, !g };
+    it[n++] = (struct nu_mi){ tr("Editar etiquetas"), NI_TAGS, 1 };
+    it[n++] = (struct nu_mi){ tr("Buscar letra"), NI_LYR, 0 };
+    it[n++] = (struct nu_mi){ tr("Buscar carátula"), NI_COV, 0 };
+    char sub[300]; snprintf(sub, sizeof sub, "%s · %s", t->artist, al->title);
+    int a = nu_menu(it, n, t->title, sub, t->alb, 0, ry, rh);
+    int act = a >= 0 ? it[a].ic : -1;
+    char path[700]; mu_syspath(t->path, path, sizeof path);
+    if (act == NI_PLAY) mu_play(pg->tl, pg->ntl, idx, 0, pg->title);
+    else if (act == NI_RADIO) { mu_present(); mu_radio(trk); return; }
+    else if (act == NI_TAGS) { char *v[1] = { path }; tag_editor(v, 1); }
+    else if (act == NI_LYR) lyrics_search(path, t->artist, t->title, al->title);
+    else if (act == NI_COV) { char *v[1] = { path }; cover_search(v, 1, al->artist, al->title); mu_cover_forget(t->alb); }
+    else if (act == NI_ALB) { mu_present(); mu_push(mu_album_page(t->alb)); return; }
+    else if (act == NI_ART) { int r = mu_artist_of_album(t->alb); if (r >= 0) { mu_present(); mu_push(mu_artist_page(r)); return; } }
     mu_page_t = now_ms();
     mu_present();
 }
-static void mu_album_menu(int alb)
+static void mu_album_menu(int alb, int ry, int rh)
 {
     const struct mu_alb *al = &ML->A[alb];
-    const char *o[5] = { tr("Reproducir"), tr("Aleatorio"), tr("Editar etiquetas"), tr("Buscar carátula"), tr("Ir al artista") };
-    int a = action_sheet(al->title, o, 5, -1);
-    int tl[1]; (void)tl;
-    if (a == 0 || a == 1) {
-        int *v = malloc(al->n * sizeof(int)); if (v) { for (int k = 0; k < al->n; k++) v[k] = al->first + k; mu_play(v, al->n, 0, a == 1, al->title); free(v); }
-    } else if (a == 2 || a == 3) {
+    struct nu_mi it[5] = { { tr("Reproducir"), NI_PLAY, 0 }, { tr("Aleatorio"), NI_SHUF, 0 }, { tr("Ir al artista"), NI_ART, 1 },
+                           { tr("Editar etiquetas"), NI_TAGS, 1 }, { tr("Buscar carátula"), NI_COV, 0 } };
+    char sub[200]; if (al->year) snprintf(sub, sizeof sub, "%s · %d", al->artist, al->year); else snprintf(sub, sizeof sub, "%s", al->artist);
+    int a = nu_menu(it, 5, al->title, sub, alb, 0, ry, rh);
+    int act = a >= 0 ? it[a].ic : -1;
+    if (act == NI_PLAY || act == NI_SHUF) {
+        int *v = malloc(al->n * sizeof(int)); if (v) { for (int k = 0; k < al->n; k++) v[k] = al->first + k; mu_play(v, al->n, 0, act == NI_SHUF, al->title); free(v); }
+    } else if (act == NI_TAGS || act == NI_COV) {
         int n; char **v = mu_album_paths(alb, &n);
-        if (v && n) { if (a == 2) tag_editor(v, n); else { cover_search(v, n, al->artist, al->title); mu_cover_forget(alb); } }
+        if (v && n) { if (act == NI_TAGS) tag_editor(v, n); else { cover_search(v, n, al->artist, al->title); mu_cover_forget(alb); } }
         for (int i = 0; i < n; i++) free(v[i]); free(v);
-    } else if (a == 4) { mu_present(); mu_push(mu_artist_page(al->art)); return; }
+    } else if (act == NI_ART) { mu_present(); mu_push(mu_artist_page(al->art)); return; }
     mu_page_t = now_ms();
     mu_present();
 }
@@ -1410,6 +1397,7 @@ static void mu_tap(struct mpg *p, int idx, int x, int longp)
 {
     const struct mit *m = &p->it[idx];
     struct mu_lib *L = ML;
+    int ry = MU_NAV - (int)p->scroll + m->y;         /* la fila en pantalla (tarjeta del menu) */
     switch (m->type) {
     case IT_MENU:
         if (longp) return;
@@ -1423,11 +1411,11 @@ static void mu_tap(struct mpg *p, int idx, int x, int longp)
         break;
     case IT_GRID: {
         int a = x >= W / 2 ? m->b : m->a; if (a < 0 || !L) return;
-        if (longp) mu_album_menu(a); else mu_push(mu_album_page(a));
+        if (longp) mu_album_menu(a, ry, m->h); else mu_push(mu_album_page(a));
         break; }
-    case IT_ALBUMROW: if (longp) mu_album_menu(m->a); else mu_push(mu_album_page(m->a)); break;
+    case IT_ALBUMROW: if (longp) mu_album_menu(m->a, ry, m->h); else mu_push(mu_album_page(m->a)); break;
     case IT_ARTIST: if (!longp) mu_push(mu_artist_page(m->a)); break;
-    case IT_SONG: case IT_TRACK: if (longp) mu_song_menu(m->a, p, m->b); else { mu_play(p->tl, p->ntl, m->b, 0, p->title); mu_present(); } break;
+    case IT_SONG: case IT_TRACK: if (longp) mu_song_menu(m->a, p, m->b, ry, m->h); else { mu_play(p->tl, p->ntl, m->b, 0, p->title); mu_present(); } break;
     case IT_BUTTONS: if (!longp) { mu_play(p->tl, p->ntl, 0, x >= W / 2, p->title); mu_present(); } break;
     case IT_TEXT: if (!longp && p->kind == PG_GENRES && L) mu_push(mu_page_new(PG_LIST, m->a, L->gen[m->a])); break;
     case IT_PLAYLIST: {
@@ -1539,6 +1527,7 @@ static void music_free_all(void)
     free(mu_up); mu_up = 0; mu_up_alb = -1;
     for (int k = 0; k < 4; k++) { free(mu_ph[k].px); mu_ph[k].px = 0; mu_ph[k].s = 0; }
 }
+static int mu_autonp;      /* abrir directamente Reproduciendo (icono "Reproduciendo" del inicio) */
 static void music_app(int ix, int iy)
 {
     have_under = 0;                                    /* img_under / img_sheet se reutilizan */
@@ -1566,8 +1555,21 @@ static void music_app(int ix, int iy)
     mu_present();
     float vel = 0; int bounce = 0; double lt = 0, spin_t = 0;
     struct pkt p;
+    int pend_np = mu_autonp; mu_autonp = 0;
     for (;;) {
         struct mpg *pg = mu_st[mu_sp];
+        if (pend_np) {   /* entrar directamente en Reproduciendo */
+            pend_np = 0;
+            int arg = -1, r = nu_open(W / 2, H - 20, &arg);
+            drain_until_up();
+            if (r == NU_HOME) { mu_exit_np = 1; break; }
+            npx_changed = 1; mu_poll();
+            if (r == NU_ALBUM && arg >= 0) { mu_present(); mu_push(mu_album_page(arg)); }
+            else if (r == NU_ARTIST && arg >= 0) { mu_present(); mu_push(mu_artist_page(arg)); }
+            else if (r == NU_RADIO && arg >= 0) { mu_present(); mu_radio(arg); }
+            else mu_present();
+            continue;
+        }
         if (mu_poll()) mu_present();
         float maxs = mu_maxscroll(pg);
         /* inercia (deceleracion de iOS) y rebote en los extremos */
@@ -1597,36 +1599,37 @@ static void music_app(int ix, int iy)
         mu_last_input = now_ms();
         pg = mu_st[mu_sp]; maxs = mu_maxscroll(pg);
         int sx = p.x, sy = p.y; double ts = now_ms();
-        /* desde abajo: salir al inicio */
+        /* desde abajo: inicio (la ventana sigue al dedo; mantener 1 s: multitarea) */
         if (sy >= 456) {
-            int up = 0; while (cur_down && read_pkt(&p, 1000)) if (sy - cur_y > 20) up = 1;
-            if (up || sy - cur_y > 20) break;
+            int up = 0; double tw = now_ms();
+            while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
+            if (up) { mu_render(fr0, pg, 1); if (own_home_gesture(sx, sy, app_by_id("music"))) { mu_gone = 1; break; } mu_present(); continue; }
         }
         /* mini reproductor */
         if (mu_mini_on() && sy >= H - MU_MINI_H) {
+            if (sx < W - 100) {                       /* Reproduciendo propio: sube desde aqui (toque o dedo) */
+                int arg = -1, r = nu_open(sx, sy, &arg);
+                drain_until_up();
+                if (r == NU_HOME) { mu_exit_np = 1; break; }
+                npx_changed = 1; mu_poll();
+                if (r == NU_ALBUM && arg >= 0) { mu_present(); mu_push(mu_album_page(arg)); }
+                else if (r == NU_ARTIST && arg >= 0) { mu_present(); mu_push(mu_artist_page(arg)); }
+                else if (r == NU_RADIO && arg >= 0) { mu_present(); mu_radio(arg); }
+                else mu_present();
+                continue;
+            }
             while (cur_down && read_pkt(&p, 3000)) {}
             if (abs(cur_x - sx) > 30) continue;
             if (sx >= W - 54) { pc_next(); continue; }
             if (sx >= W - 100) { pc_toggle(); mu_np.playing = !mu_np.playing; mu_present(); continue; }
-            if (mu_open_np()) { mu_open = -1; break; }
             mu_present(); continue;
         }
         if (sy >= 456) continue;
-        /* desde el borde izquierdo: atras, siguiendo al dedo */
-        if (sx < 18 && mu_sp > 0) {
-            mu_render(img_under, pg, 0); mu_render(img_sheet, mu_st[mu_sp - 1], 0);
-            int lastx = sx; double tl0 = now_ms(); float v = 0; mu_busy = 1;
-            while (cur_down) {
-                if (read_pkt(&p, 20) && !p.down) break;
-                double tn = now_ms(); if (tn > tl0) v = 0.6f * v + 0.4f * (cur_x - lastx) / (float)(tn - tl0); lastx = cur_x; tl0 = tn;
-                int off = cur_x - sx; if (off < 0) off = 0;
-                mu_slide_frame(img_under, img_sheet, off); present();
-            }
-            int off = cur_x - sx; if (off < 0) off = 0;
-            if (off > 90 || v > 0.4f) { mu_slide(img_under, img_sheet, off, W, 220); mu_page_free(mu_st[mu_sp--]); }
-            else mu_slide(img_under, img_sheet, off, 0, 200);
-            mu_busy = 0; mu_present();
-            continue;
+        /* desde cualquiera de los dos bordes: atras (gesto comun, con la burbuja) */
+        if (mu_sp > 0 && back_zone(sx, sy)) {
+            int bk = app_back_gesture(sx, sy);
+            if (bk > 0) { mu_pop(); continue; }
+            if (bk < 0) { mu_present(); continue; }
         }
         /* barra de navegacion */
         if (sy < MU_NAV) {
@@ -1674,7 +1677,11 @@ static void music_app(int ix, int iy)
         if (moved) { mu_press = -1; if (pg->scroll < 0 || pg->scroll > maxs) { vel = 0; bounce = 1; } if (fabsf(vel) < 0.05f) vel = 0; continue; }
         vel = 0;
         if (!tappable) { if (pressed_shown) { mu_press = -1; mu_present(); } continue; }
-        if (longp) { mu_press = row; mu_present(); while (cur_down && read_pkt(&p, 3000)) {} }
+        if (longp) {
+            mu_press = row; mu_present();
+            int t_ = pg->it[row].type;                /* menu contextual: se puede elegir sin soltar (iOS) */
+            if (t_ != IT_SONG && t_ != IT_TRACK && t_ != IT_GRID && t_ != IT_ALBUMROW) while (cur_down && read_pkt(&p, 3000)) {}
+        }
         else if (!pressed_shown) { mu_press = row; mu_present(); msleep(40); }
         int type = pg->it[row].type;
         if (type == IT_SEARCH) {
@@ -1693,10 +1700,12 @@ static void music_app(int ix, int iy)
     if (mu_open < 0) { music_free_all(); drain_until_up(); return; }   /* se fue a la pantalla de HiBy */
     /* salir: la ventana se encoge hacia su icono */
     mu_press = -1;
-    mu_render(img_app, mu_st[mu_sp], 1);
-    render_launcher(img_base, now_ms());
+    if (mu_exit_np) memcpy(img_app, fr0, HM_FRAME_BYTES);   /* desde Reproduciendo: se encoge ella */
+    else if (!mu_gone) mu_render(img_app, mu_st[mu_sp], 1);
+    mu_exit_np = 0;
+    if (!mu_gone) render_launcher(img_base, now_ms());
     t0 = now_ms();
-    for (;;) {
+    if (!mu_gone) for (;;) {
         double t = (now_ms() - t0) / 280; if (t > 1) t = 1;
         double e = 1 - ease_out(t);
         for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
@@ -1704,6 +1713,7 @@ static void music_app(int ix, int iy)
         present();
         if (t >= 1) break;
     }
+    mu_gone = 0;
     music_free_all();
     drain_until_up();
     launcher_present();

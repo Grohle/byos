@@ -418,6 +418,7 @@ static const struct trp TR_IT[] = {
     { "Editar etiquetas", "Modifica tag" },
     { "Ir al álbum", "Vai all'album" },
     { "Ir al artista", "Vai all'artista" },
+    { "Esta canción no tiene letra", "Questo brano non ha testo" },
     { "DISEÑO", "LAYOUT" },
     { "FONDO", "SFONDO" },
     { "DOCK Y GESTOS", "DOCK E GESTI" },

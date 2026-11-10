@@ -92,10 +92,22 @@ static int mkdev(int idx) {
     return fd;
 }
 
+/* --- registro de eventos tactiles (CLOCK_MONOTONIC, el mismo reloj que hm_vmplayer):
+ * /tmp/hibyinput.log "D|M|U ms x y" para medir toque -> respuesta (docs/VM_SHELL.md) --- */
+static int touching;
+static void evlog_put(char k, int x, int y) {
+    int fd = open("/tmp/hibyinput.log", O_WRONLY | O_APPEND | O_CREAT, 0644);   /* reabierto: se puede vaciar o borrar */
+    if (fd < 0) return;
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    char b[64]; int n = snprintf(b, sizeof b, "%c %.1f %d %d\n", k, t.tv_sec * 1e3 + t.tv_nsec / 1e6, x, y);
+    if (write(fd, b, n) < 0) {}
+    close(fd);
+}
 /* --- touch, protocolo A identico al goodix-ts del HiBy --- */
 static void touch_report(int x, int y) {
     int fd = fds[1];
     if (x < 0) x = 0; if (x > 319) x = 319; if (y < 0) y = 0; if (y > 479) y = 479;
+    evlog_put(touching ? 'M' : 'D', x, y); touching = 1;
     emit(fd, EV_KEY, BTN_TOUCH, 1);
     emit(fd, EV_ABS, ABS_MT_POSITION_X, x);
     emit(fd, EV_ABS, ABS_MT_POSITION_Y, y);
@@ -107,6 +119,7 @@ static void touch_report(int x, int y) {
 }
 static void touch_up(void) {
     int fd = fds[1];
+    evlog_put('U', -1, -1); touching = 0;
     emit(fd, EV_KEY, BTN_TOUCH, 0);
     if (release_mt_report) emit(fd, EV_SYN, SYN_MT_REPORT, 0);
     emit(fd, EV_SYN, SYN_REPORT, 0);

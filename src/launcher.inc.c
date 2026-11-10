@@ -18,7 +18,7 @@
 #define GRID_TOP 46
 #define DOTS_Y (DOCK_Y - 13)
 
-enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC };
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -32,13 +32,13 @@ struct lapp {
 };
 static struct lapp apps[40] = {
     { "music",      "Música",        ACT_MUSIC,  116, 425 },   /* app propia; (ax, ay) = la de fabrica */
-    { "settings",   "Ajustes",       ACT_TAP,    202, 425 },
-    { "wireless",   "Inalámbrico",   ACT_TAP,     46,  74 },
+    { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },   /* Ajustes propios (sustituyen a los de HiBy) */
+    { "wireless",   "Inalámbrico",   ACT_WIRELESS, 46, 74 },   /* Wi-Fi y Bluetooth propios */
     { "books",      "Libros",        ACT_TAP,    117,  74 },
-    { "dac",        "DAC USB",       ACT_TAP,    188,  74 },
+    { "dac",        "DAC USB",       ACT_USBDAC, 188,  74 },   /* pagina USB de los Ajustes propios */
     { "tidal",      "Tidal",         ACT_STREAM,   0,   0 },
     { "qobuz",      "Qobuz",         ACT_STREAM,   1,   0 },
-    { "nowplaying", "Reproduciendo", ACT_PLANE,    0,   0 },
+    { "nowplaying", "Reproduciendo", ACT_MUSIC,    0,   0 },   /* Reproduciendo propio (nowui) */
     { "files",      "Archivos",      ACT_FILES,    0,   0 },
     { "radio",      "Radio",         ACT_SOON,     0,   0 },
     { "personalize", "Personalizar", ACT_SETTINGS, 0,   0 },
@@ -420,7 +420,7 @@ static void draw_app_at(uint16_t *dst, int a, int x, int y, int show_label, doub
     int alpha = (a == V.drag_app) ? 64 : 255;
     if (V.edit && a != V.drag_app) {
         /* temblor de iOS: giro senoidal de +-1,5 grados (periodo ~0,26 s), desfasado por icono */
-        float ang = 0.026f * sinf((float)(t / 260.0 * 6.2831853) + a * 1.9f);
+        float ang = (1.5f / (L.icon / 2.f)) * sinf((float)(t / 260.0 * 6.2831853) + a * 1.9f);   /* +-1,5 px en el borde, como los widgets */
         blit_rotated(dst, ic, x, y, ang, alpha);
     } else blit(dst, ic, x, y, k, alpha);
     if (rl_mode != 2 && show_label && L.labels && apps[a].lbl.w && alpha == 255) {

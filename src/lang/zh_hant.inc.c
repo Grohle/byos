@@ -418,6 +418,7 @@ static const struct trp TR_ZHT[] = {
     { "Editar etiquetas", "編輯標籤" },
     { "Ir al álbum", "前往專輯" },
     { "Ir al artista", "前往演出者" },
+    { "Esta canción no tiene letra", "這首歌沒有歌詞" },
     { "DISEÑO", "版面配置" },
     { "FONDO", "背景圖片" },
     { "DOCK Y GESTOS", "Dock 與手勢" },

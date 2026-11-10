@@ -28,6 +28,10 @@
  *
  * REPRODUCIR UNA LISTA (v6, orden 'L'): ver la seccion final y docs/research_play_list.md.
  * Inerte mientras nadie mande 'L'.
+ *
+ * AJUSTES DEL REPRODUCTOR (v7, orden 'S'): leer/cambiar BT, Wi-Fi, DLNA, AirPlay, ganancia,
+ * MSEB, volumen... con la misma secuencia que su centro de control. Ver la ultima seccion y
+ * docs/research_settings_api.md. Inerte mientras nadie mande 'S'.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -250,6 +254,7 @@ static void copy_then_ov(unsigned char *d, const unsigned char *src)
 
 /* ---------------------------------------------------------------- ordenes */
 static void pl_kick(void);     /* v6, al final del fichero */
+static void st_kick(void);     /* v7 ajustes, al final del fichero */
 static void *control(void *arg)
 {
     (void)arg;
@@ -259,6 +264,7 @@ static void *control(void *arg)
         char c;
         while (read(f, &c, 1) == 1) {
             if (c == 'L') { pl_kick(); continue; }   /* v6: sin el mutex de la pantalla */
+            if (c == 'S') { st_kick(); continue; }   /* v7: ajustes del reproductor, idem */
             pthread_mutex_lock(&mu);
             if (c == 'C') {
                 if (!st->held && !st->capture && map_frames()) {
@@ -1211,5 +1217,232 @@ static void pl_kick(void)
     pthread_attr_setstacksize(&a, 512 * 1024);    /* las funciones del reproductor usan marcos de 3-12 KB */
     pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&t, &a, pl_thread, 0)) { pl_busy = 0; pl_result(-1, -EAGAIN, 0, 0, 0, 0, "pthread_create"); }
+    pthread_attr_destroy(&a);
+}
+
+/* ================================================================ v7: ajustes del reproductor ('S')
+ * Lee y cambia opciones del reproductor (BT, Wi-Fi, DLNA, AirPlay, HiBy Link, ganancia, MSEB,
+ * line out, modo USB, balance, gapless, fundido, filtro digital, temporizador, modo de
+ * reproduccion y volumen) SIN mostrar su interfaz, con la misma secuencia de llamadas que su
+ * centro de control (0x54d0a0..0x54dd40) o, para el volumen, que HiBy Link (0x4578a0).
+ * Detalles, evidencia y riesgos: docs/research_settings_api.md.
+ *
+ *   setting_get(id) 0x42a500: lectura pura de un campo de la estructura de ajustes.
+ *   setting_set(id, v) 0x42baa0: guarda el campo, APLICA el cambio (BT:ON a sys_server, control
+ *     del mezclador, parametro del motor de audio...) y escribe el fichero de ajustes.
+ *   No se toma el cerrojo del reproductor: setting_set(0x1a) llama a set_param, que lo toma, y
+ *   HiBy Link / DLNA ya llaman a setting_set desde sus propios hilos sin el.
+ *
+ * Todo se comprueba antes de llamar a nada (firmas de 16 bytes, tablas de saltos de
+ * setting_get/setting_set para cada id usado, /proc/self/maps): con otro binario la orden
+ * responde rc=-ENOEXEC y no llama a nada. Un hilo propio atiende las peticiones de una en una.
+ *
+ * Peticion (ST_REQ, escrita con rename atomico):  HMSET1 / id=N / op=get|set|list|check /
+ *            key=NOMBRE / val=V / [force=1]
+ * Respuesta (ST_RES): "id=N rc=R key=K val=V ms=T mensaje" y, para list, una linea "k=v" por
+ * opcion. Una linea por peticion en disp.log ("st: ..."). */
+#define ST_REQ "/tmp/hibymod_setreq"
+#define ST_RES "/tmp/hibymod_setres"
+#define HP_SETTINGS  0x969590u            /* void* -> estructura de ajustes (0xad0 bytes) */
+#define HP_SGET_TBL  0x7f09c0u            /* tabla de saltos de setting_get (0x8f entradas) */
+#define HP_SSET_TBL  0x7f0bfcu            /* tabla de saltos de setting_set (0x8f entradas) */
+#define HP_NSET      0x8f
+static const struct { uint32_t addr, w[4]; } st_sig[] = {
+    { 0x42a500, { 0x3c020097, 0x8c429590, 0x27bdffe0, 0x1040013b } },   /* 0 setting_get(id) */
+    { 0x42baa0, { 0x27bdfdd0, 0xafb10224, 0x3c110097, 0xafb20228 } },   /* 1 setting_set(id, v) */
+    { 0x47d0c0, { 0x3c020097, 0x8c42cc2c, 0x27bdff60, 0xafb00098 } },   /* 2 volume_apply(v) */
+    { 0x48a900, { 0x3c020097, 0x8c42e020, 0x10400003, 0x00000000 } },   /* 3 ui_post(msg) */
+    { 0x4f62e0, { 0x27bdff60, 0xafb00098, 0xafbf009c, 0x0c11f3d8 } },   /* 4 item_locked(id) */
+    { 0x439ea0, { 0x27bdffd8, 0xafbf0024, 0x0c10dc98, 0x00000000 } },   /* 5 mqa_playing() */
+};
+typedef intptr_t (*st_get_t)(int);
+typedef void (*st_set_t)(int, intptr_t);
+typedef int (*st_i1_t)(int);
+typedef int (*st_i0_t)(void);
+typedef void (*st_v1_t)(int);
+#define STF(i, t) ((t)(uintptr_t)st_sig[i].addr)
+
+enum {
+    SF_LOCK   = 1,     /* se rechaza si item_locked(id) (la interfaz lo muestra en gris) */
+    SF_CONF1  = 2,     /* ponerlo a 1 requiere force=1 (la interfaz pide confirmacion) */
+    SF_CONFX  = 4,     /* cualquier cambio requiere force=1 */
+    SF_MSEB   = 8,     /* condiciones del CC: velocidad 100 %, sin MQA sonando */
+    SF_VOLUME = 16,    /* secuencia de setVolume de HiBy Link */
+    SF_RO     = 32,    /* solo lectura */
+    SF_POST   = 64,    /* tras setting_set, mensaje msg_on/msg_off a la cola de la interfaz (como el CC) */
+};
+static const struct st_opt {
+    const char *name; int id, lo, hi, flags, msg_on, msg_off;
+    uint32_t get_case, set_case;          /* destinos esperados en las tablas de saltos */
+} st_opt[] = {
+    { "bt",        0x23,   0,   1, 0,           0,     0,     0x42a8d4, 0x42c24c },
+    { "wifi",      0x33,   0,   1, 0,           0,     0,     0x42a854, 0x42c49c },
+    { "dlna",      0x35,   0,   1, SF_POST,     0x12e, 0x12f, 0x42a844, 0x42c4c0 },
+    { "airplay",   0x34,   0,   1, SF_POST,     0x130, 0x131, 0x42a84c, 0x42c488 },
+    { "hibylink",  0x2f,   0,   1, 0,           0,     0,     0x42a874, 0x42c418 },
+    { "gain",      0x15,   0,   1, SF_LOCK,     0,     0,     0x42a934, 0x42c058 },
+    { "mseb",      0x3f,   0,   1, SF_MSEB,     0,     0,     0x42a7f4, 0x42bdfc },
+    { "lineout",   0x2d,   0,   1, SF_LOCK | SF_CONF1, 0, 0,  0x42a884, 0x42c3a4 },
+    { "usbmode",   0x08,   0,   1, SF_CONFX,    0,     0,     0x42a99c, 0x42c520 },
+    { "balance",   0x14, -10,  10, SF_LOCK,     0,     0,     0x42a93c, 0x42c078 },
+    { "gapless",   0x1b,   0,   1, 0,           0,     0,     0x42a90c, 0x42c2b0 },
+    { "fade",      0x32,   0,   1, 0,           0,     0,     0x42a85c, 0x42c354 },
+    { "filter",    0x21,   0,   1, SF_LOCK,     0,     0,     0x42a8e4, 0x42c330 },
+    { "sleep",     0x09,   0,   1, 0,           0,     0,     0x42a994, 0x42c708 },
+    { "sleepmin",  0x0a,   5, 120, 0,           0,     0,     0x42a98c, 0x42c6e8 },
+    { "playmode",  0x1a,   0,   3, 0,           0,     0,     0x42a914, 0x42c2f8 },
+    { "volume",    0x11,   0, 255, SF_VOLUME,   0,     0,     0x42a954, 0x42c0c0 },
+    { "volmax",    0x10,   0, 255, SF_RO,       0,     0,     0x42a95c, 0 },
+    { "speed",     0x65,   0, 255, SF_RO,       0,     0,     0x42a698, 0 },   /* % (MSEB necesita 100) */
+};
+#define ST_NOPT ((int)(sizeof st_opt / sizeof st_opt[0]))
+#define ST_ID_LINEOUT 0x2d
+#define ST_ID_VOLMAX  0x10
+#define ST_ID_SPEED   0x65
+
+static volatile int st_busy, st_again;
+static struct stat st_last;               /* fichero de la ultima peticion atendida (ino + mtime) */
+
+static int st_check(void)
+{
+    for (size_t i = 0; i < sizeof st_sig / sizeof st_sig[0]; i++)
+        if (!pl_mapped(st_sig[i].addr, 16, 1) || memcmp((const void *)(uintptr_t)st_sig[i].addr, st_sig[i].w, 16)) return -ENOEXEC;
+    if (!pl_mapped(HP_SGET_TBL, HP_NSET * 4, 0) || !pl_mapped(HP_SSET_TBL, HP_NSET * 4, 0)) return -ENOEXEC;
+    const uint32_t *gt = (const uint32_t *)(uintptr_t)HP_SGET_TBL, *ss = (const uint32_t *)(uintptr_t)HP_SSET_TBL;
+    for (int i = 0; i < ST_NOPT; i++) {
+        if (gt[st_opt[i].id] != st_opt[i].get_case) return -ENOEXEC;
+        if (st_opt[i].set_case && ss[st_opt[i].id] != st_opt[i].set_case) return -ENOEXEC;
+    }
+    if (!pl_mapped(HP_SETTINGS, 4, 0)) return -ENOEXEC;
+    uint32_t s = *(const uint32_t *)(uintptr_t)HP_SETTINGS;
+    if (!s || !pl_mapped(s, 0xad0, 0)) return -EAGAIN;              /* ajustes aun sin cargar */
+    return 0;
+}
+
+static const struct st_opt *st_find(const char *k)
+{
+    for (int i = 0; i < ST_NOPT; i++) if (!strcmp(k, st_opt[i].name)) return &st_opt[i];
+    return 0;
+}
+
+static int st_get(int id) { return (int)STF(0, st_get_t)(id); }
+
+/* aplica v con la secuencia de la interfaz de fabrica; devuelve 0 o <0 y deja el valor en *now */
+static int st_set(const struct st_opt *o, int v, int force, int *now, const char **msg)
+{
+    int cur = st_get(o->id);
+    *now = cur;
+    if (o->flags & SF_RO) { *msg = "solo lectura"; return -EROFS; }
+    if (v < o->lo || v > o->hi) { *msg = "fuera de rango"; return -ERANGE; }
+    if (o->flags & SF_VOLUME) {
+        if (v > st_get(ST_ID_VOLMAX)) { *msg = "mayor que volmax"; return -ERANGE; }
+        if (st_get(ST_ID_LINEOUT) == 1) { *msg = "line out activo: volumen fijo"; return -EPERM; }
+    }
+    if (cur == v) { *msg = "sin cambios"; return 0; }
+    if ((o->flags & SF_LOCK) && STF(4, st_i1_t)(o->id)) { *msg = "bloqueado por la salida actual (gris en la interfaz)"; return -EPERM; }
+    if (((o->flags & SF_CONFX) || ((o->flags & SF_CONF1) && v == 1)) && !force) { *msg = "requiere force=1 (la interfaz pide confirmacion)"; return -EACCES; }
+    if (o->flags & SF_MSEB) {
+        if (st_get(ST_ID_SPEED) != 100) { *msg = "MSEB: velocidad de reproduccion distinta de 100%"; return -EPERM; }
+        if (STF(5, st_i0_t)()) { *msg = "MSEB: suena MQA"; return -EPERM; }
+    }
+    if (o->flags & SF_VOLUME) {                       /* = setVolume de HiBy Link (0x4578a0) */
+        STF(2, st_i1_t)(v & 0xff);
+        STF(1, st_set_t)(o->id, v);
+    } else {
+        STF(1, st_set_t)(o->id, v);                   /* guarda + aplica + escribe el fichero */
+        if (o->flags & SF_POST) STF(3, st_v1_t)(v ? o->msg_on : o->msg_off);   /* como el CC */
+    }
+    *now = st_get(o->id);
+    if (*now != v) { *msg = "no aplicado (ocupado o rechazado por el reproductor)"; return -EAGAIN; }
+    *msg = "ok";
+    return 0;
+}
+
+static void st_result(const char *head, const char *extra)
+{
+    int f = r_open(ST_RES ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (f >= 0) {
+        if (write(f, head, strlen(head)) < 0 || (extra && write(f, extra, strlen(extra)) < 0)) {}
+        r_close(f); rename(ST_RES ".tmp", ST_RES);
+    }
+    f = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (f >= 0) { if (write(f, "st: ", 4) < 0 || write(f, head, strlen(head)) < 0) {} r_close(f); }
+}
+
+static void st_serve(void)
+{
+    uint32_t t0 = np_now();
+    int id = -1, rc = 0, val = 0, force = 0, now = 0;
+    char buf[1024], op[16] = "", key[24] = "";
+    static char extra[1024];
+    const char *msg = "";
+    extra[0] = 0;
+    int f = r_open(ST_REQ, O_RDONLY);
+    if (f < 0) { rc = -ENOENT; msg = ST_REQ; goto out; }
+    struct stat sb;
+    if (fstat(f, &sb)) memset(&sb, 0, sizeof sb);
+    ssize_t got = read(f, buf, sizeof buf - 1); r_close(f);
+    if (got <= 0) { rc = -EINVAL; msg = "peticion vacia"; goto out; }
+    buf[got] = 0;
+    if (strncmp(buf, "HMSET1\n", 7)) { rc = -EINVAL; msg = "falta HMSET1"; goto out; }
+    for (char *l = buf + 7, *nx; l && *l; l = nx) {
+        nx = strchr(l, '\n'); if (nx) *nx++ = 0;
+        size_t L = strlen(l); if (L && l[L - 1] == '\r') l[--L] = 0;
+        if (!strncmp(l, "id=", 3)) id = atoi(l + 3);
+        else if (!strncmp(l, "op=", 3)) snprintf(op, sizeof op, "%s", l + 3);
+        else if (!strncmp(l, "key=", 4)) snprintf(key, sizeof key, "%s", l + 4);
+        else if (!strncmp(l, "val=", 4)) val = atoi(l + 4);
+        else if (!strcmp(l, "force=1")) force = 1;
+    }
+    /* ya atendida (otra 'S' sin peticion nueva): el cliente escribe cada una con rename, asi que
+     * una peticion nueva es siempre otro inodo */
+    if (sb.st_ino && sb.st_ino == st_last.st_ino && sb.st_mtim.tv_sec == st_last.st_mtim.tv_sec &&
+        sb.st_mtim.tv_nsec == st_last.st_mtim.tv_nsec && sb.st_size == st_last.st_size) return;
+    st_last = sb;
+    if ((rc = st_check())) { msg = rc == -ENOEXEC ? "firmware distinto: no se llama a nada" : "ajustes del reproductor sin cargar"; goto out; }
+    if (!strcmp(op, "check")) { msg = "firmas ok"; goto out; }
+    if (!strcmp(op, "list") || (!strcmp(op, "get") && !strcmp(key, "all"))) {
+        size_t k = 0;
+        for (int i = 0; i < ST_NOPT && k + 40 < sizeof extra; i++)
+            k += (size_t)snprintf(extra + k, sizeof extra - k, "%s=%d\n", st_opt[i].name, st_get(st_opt[i].id));
+        val = ST_NOPT; msg = "ok"; goto out;
+    }
+    const struct st_opt *o = st_find(key);
+    if (!o) { rc = -ENOENT; msg = "opcion desconocida"; goto out; }
+    if (!strcmp(op, "get")) { val = st_get(o->id); msg = "ok"; goto out; }
+    if (!strcmp(op, "set")) { rc = st_set(o, val, force, &now, &msg); val = now; goto out; }
+    rc = -EINVAL; msg = "op desconocida";
+out:;
+    char head[256];
+    snprintf(head, sizeof head, "id=%d rc=%d key=%s val=%d ms=%u %s\n", id, rc, key[0] ? key : "-", val, np_now() - t0, msg);
+    st_result(head, extra);
+}
+
+static void *st_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        while (__sync_lock_test_and_set(&st_again, 0)) st_serve();
+        __sync_lock_release(&st_busy);
+        __sync_synchronize();
+        /* una 'S' que llego justo mientras se soltaba st_busy: atenderla aqui */
+        if (!st_again || __sync_lock_test_and_set(&st_busy, 1)) break;
+    }
+    return 0;
+}
+
+static void st_kick(void)
+{
+    st_again = 1;
+    __sync_synchronize();
+    if (__sync_lock_test_and_set(&st_busy, 1)) return;    /* el hilo en curso la atendera */
+    pthread_attr_t a; pthread_t t;
+    pthread_attr_init(&a);
+    pthread_attr_setstacksize(&a, 512 * 1024);    /* marcos de hasta ~2 KB + system() del modo USB */
+    pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&t, &a, st_thread, 0)) {
+        st_again = 0; __sync_lock_release(&st_busy);
+        st_result("id=-1 rc=-11 key=- val=0 ms=0 pthread_create\n", 0);
+    }
     pthread_attr_destroy(&a);
 }

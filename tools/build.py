@@ -14,6 +14,10 @@ import pycdlib
 
 CHUNK = 524288          # tamano de trozo del firmware oficial
 ALIGN = 4096            # img_size del oficial va alineado a 4 KiB
+# particion rootfs del R3 II 2025 (/proc/mtd): 0x2D00000 bytes. Se deja un 5 %
+# de margen para bloques defectuosos de la NAND.
+ROOTFS_LIMIT = int(0x2D00000 * 0.95)
+BUILD_ID_PATH = "etc/hibymod_build"
 
 # Parches de texto sobre ficheros existentes: (ruta, texto_original, texto_nuevo).
 # Si el texto original no aparece exactamente, la construccion se aborta.
@@ -48,6 +52,15 @@ BIN_PATCHES = [
       (0x260c, "06000000", "07000000"),
       (0x2610, "06000000", "07000000")]),
 ]
+
+
+def overlay_file(rel, data):
+    """Contenido final de un fichero de la capa y su modo si es nuevo (compartido con
+    tools/hibyos_patcher.py)."""
+    if data.startswith(b"#!") or rel.endswith((".sh", ".json", ".ini", ".view")):
+        data = data.replace(b"\r\n", b"\n")
+    mode = 0o755 if data.startswith((b"#!", b"\x7fELF")) else 0o644
+    return data, mode
 
 
 def run(cmd, **kw):
@@ -177,10 +190,7 @@ def build_rootfs(stock_sqfs, overlay, work):
                 rel = os.path.relpath(src, overlay)
                 dst = os.path.join(root, rel)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                data = open(src, "rb").read()
-                if data.startswith(b"#!") or rel.endswith((".sh", ".json", ".ini", ".view")):
-                    data = data.replace(b"\r\n", b"\n")
-                mode = 0o755 if data.startswith((b"#!", b"ELF")) else 0o644
+                data, mode = overlay_file(rel, open(src, "rb").read())
                 if os.path.lexists(dst):
                     mode = stat.S_IMODE(os.lstat(dst).st_mode)  # conservar modo original
                     os.remove(dst)
@@ -191,7 +201,7 @@ def build_rootfs(stock_sqfs, overlay, work):
     # identificador unico de esta construccion (invalida la "ruta rapida" de /usr/data)
     import uuid
     bid = uuid.uuid4().hex
-    with open(os.path.join(root, "etc/hibymod_build"), "w") as f:
+    with open(os.path.join(root, BUILD_ID_PATH), "w") as f:
         f.write(bid + chr(10))
     print("  build id:", bid)
 
@@ -304,9 +314,7 @@ def main():
         compare_listings(orig, listing(sq))
         pad = (-len(new_rdata)) % ALIGN
         new_rdata += b"\0" * pad
-        # particion rootfs del R3 II 2025 (/proc/mtd): 0x2D00000 bytes. Se deja un 5 %
-        # de margen para bloques defectuosos de la NAND.
-        limit = int(0x2D00000 * 0.95)
+        limit = ROOTFS_LIMIT
         print(f"rootfs: {len(new_rdata)} of {limit} bytes allowed ({len(new_rdata) * 100 // limit} %)")
         if len(new_rdata) > limit:
             raise SystemExit("rootfs too big for the partition; aborted")

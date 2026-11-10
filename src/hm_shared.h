@@ -24,6 +24,8 @@
  *  'O' redibujar la capa superpuesta sobre lo visible
  *  'L' (v6) reproducir la lista pedida en /tmp/hibymod_playreq; respuesta en /tmp/hibymod_playres
  *      (la atiende un hilo aparte; ver playctl.inc.c pc_play_list y docs/research_play_list.md)
+ *  'S' (v7) leer/cambiar un ajuste del reproductor pedido en /tmp/hibymod_setreq; respuesta en
+ *      /tmp/hibymod_setres (hilo aparte; ver hibyset.inc.c y docs/research_settings_api.md)
  */
 struct hm_state {
     volatile uint32_t magic;

@@ -1,0 +1,15 @@
+# First open with an empty store cache: the only automatic network refresh (loading animation).
+# Leaves the cache warm for store_flow.cmds.
+restart nocache
+sleep 3000
+mark open store (no cache)
+tap 265 165
+sleep 400
+shot g01_loading
+sleep 1200
+shot g02_loading2
+sleep 8000
+shot g03_loaded
+mark home swipe exit
+swipe 160 476 160 300 200
+sleep 1500

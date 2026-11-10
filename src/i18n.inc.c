@@ -468,6 +468,7 @@ static const char *const TR[][3] = {
     { "Editar etiquetas", "Edit Tags", "Modifier les tags" },
     { "Ir al álbum", "Go to Album", "Afficher l'album" },
     { "Ir al artista", "Go to Artist", "Afficher l'artiste" },
+    { "Esta canción no tiene letra", "This song has no lyrics", "Ce morceau n'a pas de paroles" },
     { "DISEÑO", "LAYOUT", "DISPOSITION" },
     { "FONDO", "WALLPAPER", "FOND D'ÉCRAN" },
     { "DOCK Y GESTOS", "DOCK & GESTURES", "DOCK ET GESTES" },
@@ -541,10 +542,16 @@ struct trp { const char *k, *v; };
 #include "lang/zh_hant.inc.c"
 #include "lang/uk.inc.c"
 static const struct trp *const TRX[LANG_N] = { 0, 0, 0, TR_DE, TR_IT, TR_JA, TR_KO, TR_PL, TR_RU, TR_ZHS, TR_TH, TR_ZHT, TR_UK };
+#include "lang/settings_tr.inc.c"        /* Ajustes del sistema: { clave, es, en, ... uk } (13 idiomas en una fila) */
+#include "lang/wireless_tr.inc.c"        /* app Inalambrico: { clave, es, en, ... uk } */
+#include "lang/books_tr.inc.c"           /* app Libros: { clave, es, en, ... uk } */
 
 /* traduccion de s al idioma l sin reservas (0 si no hay); en espanol, el texto largo o s */
 static const char *tr_lang(const char *s, int l)
 {
+    { const char *x = trs_lookup(s, l); if (x) return x; }
+    { const char *x = wtr_lookup(s, l); if (x) return x; }     /* app Inalambrico */
+    { const char *x = btr_lookup(s, l); if (x) return x; }     /* app Libros */
     if (l == LANG_ES) { const char *x = tr_es_long(s); return x ? x : s; }
     if (l == LANG_EN || l == LANG_FR) {
         for (unsigned i = 0; i < sizeof TR / sizeof TR[0]; i++) if (!strcmp(TR[i][0], s)) return TR[i][l];
