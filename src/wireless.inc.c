@@ -1246,6 +1246,7 @@ static int wl_tap(struct wpage *pg, const struct wrow *r, int x)
             if (wv.wpend) break;
             int v = !r->on;
             if (!v && wl_adb_wifi() && !confirm(tr("WL_ADB_WARN"), tr("Desactivar Wi-Fi"))) break;
+            if (v) cc_air_radio_on();
             pthread_mutex_lock(&wl_mu); WS.wpend = v + 1; WS.gen++; pthread_mutex_unlock(&wl_mu);
             wl_toggle_anim(id, v);
             wl_push(&wl_qw, J_WTOGGLE, v, 0, 0);
@@ -1283,6 +1284,7 @@ static int wl_tap(struct wpage *pg, const struct wrow *r, int x)
         if (id == RID_BT_TOG) {
             if (wv.bpend) break;
             int v = !r->on;
+            if (v) cc_air_radio_on();
             pthread_mutex_lock(&wl_mu); WS.bpend = v + 1; WS.gen++; pthread_mutex_unlock(&wl_mu);
             wl_toggle_anim(id, v);
             wl_push(&wl_qb, J_BTOGGLE, v, 0, 0);

@@ -845,6 +845,7 @@ static int app_back_gesture(int sx, int sy);
 #include "freemusic.inc.c"
 #include "buds.inc.c"                  /* app Auriculares (headphones; daemon hibybudsd) */
 #include "ccbt.inc.c"                  /* modulo de Bluetooth del centro de control */
+#include "ccair.inc.c"                 /* modo avion y control de ruido del centro de control */
 #include "syspop.inc.c"                /* avisos del sistema sobre cualquier pantalla */
 
 /* ------------------------------------------------------------------ volumen de la barra */

@@ -4,26 +4,35 @@
  * la pantalla de debajo se desenfoca y oscurece y los controles aparecen con ella.
  *   - Reproduciendo (2x2): abre el reproductor.
  *   - Brillo (1x2): deslizador vertical (sysfs del backlight).
- *   - Botones configurables (Ajustes > Centro de control): Solo USB, modo de energia,
- *     DAC USB (Ajustes > USB), Bluetooth, Wi-Fi, filtro del DAC, Archivos, Ajustes.
+ *   - Botones configurables (Ajustes > Centro de control): modo avion, control de ruido de
+ *     los auriculares conectados, Solo USB, modo de energia, DAC USB (Ajustes > USB), Bluetooth,
+ *     Wi-Fi, filtro del DAC, Archivos, Ajustes. (Modo avion y control de ruido: ccair.inc.c)
  * Se cierra deslizando hacia arriba, tocando fuera o con la barra de inicio.
  * Rendimiento: el panel completo (fondo desenfocado + controles) se compone UNA vez en
  * img_base y cada fotograma es solo una mezcla lineal con la pantalla de debajo. */
 
-enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_BT, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_N };
-static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "bt", "wireless", "filter", "files", "settings" };
-static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Wi-Fi", "Filtro digital", "Archivos", "Ajustes" };
-static int cc_tiles[CT_N] = { CT_NOCHARGE, CT_POWER, CT_BT, CT_DAC, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS };
+enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_BT, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_AIRPLANE, CT_NOISE, CT_N };
+static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "bt", "wireless", "filter", "files", "settings", "airplane", "noise" };
+static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Wi-Fi", "Filtro digital", "Archivos", "Ajustes", "Modo avión", "Control de ruido" };
+/* por defecto: modo avion y control de ruido en la columna derecha, junto a los modulos grandes */
+static int cc_tiles[CT_N] = { CT_AIRPLANE, CT_NOISE, CT_BT, CT_NOCHARGE, CT_POWER, CT_DAC, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS };
 static int cc_ntiles = CT_N;
 
 static void cc_conf_line(char *rest)      /* "cc id id id..." de launcher.conf */
 {
-    cc_ntiles = 0; char *t;
+    cc_ntiles = 0; char *t; int v2 = 0;
     while ((t = strtok(rest, " \t\r\n"))) { rest = 0;
+        if (!strcmp(t, "v2")) { v2 = 1; continue; }
         if (!strcmp(t, "hiby")) t = "bt";        /* el boton del panel antiguo de HiBy ya no existe */
         for (int i = 0; i < CT_N; i++) if (!strcmp(t, ct_id[i])) { int dup = 0; for (int k = 0; k < cc_ntiles; k++) dup |= cc_tiles[k] == i; if (!dup) cc_tiles[cc_ntiles++] = i; } }
+    /* una configuracion anterior a "v2" no conocia el modo avion ni el control de ruido: entran
+     * los primeros (una sola vez; despues se pueden quitar en Ajustes > Centro de control) */
+    if (!v2) for (int n = CT_NOISE; n >= CT_AIRPLANE; n--) {
+        int have = 0; for (int k = 0; k < cc_ntiles; k++) have |= cc_tiles[k] == n;
+        if (!have && cc_ntiles < CT_N) { memmove(cc_tiles + 1, cc_tiles, sizeof(int) * (size_t)cc_ntiles); cc_tiles[0] = n; cc_ntiles++; }
+    }
 }
-static void cc_conf_save(FILE *f) { fprintf(f, "cc"); for (int i = 0; i < cc_ntiles; i++) fprintf(f, " %s", ct_id[cc_tiles[i]]); fprintf(f, "\n"); }
+static void cc_conf_save(FILE *f) { fprintf(f, "cc v2"); for (int i = 0; i < cc_ntiles; i++) fprintf(f, " %s", ct_id[cc_tiles[i]]); fprintf(f, "\n"); }
 
 /* ---- geometria ---- */
 #define CC_M 14
@@ -52,13 +61,20 @@ static void cc_tile_rect(int slot, int *x, int *y) { int w; cc_tile_geom(slot, x
 #define BR_X (CC_M + 2 * (CC_T + CC_G))
 #define BR_H (2 * CC_T + CC_G)
 
-static struct sprite cc_ic[14]; static int cc_ic_ok;
-static const char *const cc_ic_name[14] = { "plug", "leaf", "gauge", "bolt", "usb", "sliders", "wifi", "wave", "folder", "gear", "sun", "bt", "buds", 0 };
+static struct sprite cc_ic[16]; static int cc_ic_ok;
+static const char *const cc_ic_name[16] = { "plug", "leaf", "gauge", "bolt", "usb", "sliders", "wifi", "wave", "folder", "gear", "sun", "bt", "buds", "plane", 0 };
 static const struct sprite *cc_icon(const char *n) { for (int i = 0; cc_ic_name[i]; i++) if (!strcmp(n, cc_ic_name[i])) return &cc_ic[i]; return 0; }
 
 static void cc_bt_module(uint16_t *d, int x, int y, int w, int h, int pressed);   /* ccbt.inc.c */
 static int cc_bt_toggle(void);
 static int cc_bt_connected(void);
+/* ccair.inc.c: modo avion y control de ruido de los auriculares */
+static int cc_air_state(void);
+static int cc_air_toggle(const char **why);       /* 1 activado, 0 desactivado, -1 no se hizo (why: motivo o 0) */
+static void cc_air_radio_on(void);                /* el usuario enciende Wi-Fi o Bluetooth a mano: fuera el modo avion */
+static void cc_noise_tile(uint16_t *d, int x, int y);
+static const char *cc_noise_tap(void);            /* cambia de modo; devuelve el rotulo (modo nuevo o el error) */
+static int cc_ext_poll(void);                     /* 1: algo cambio (auriculares, error de un cambio): repintar */
 static int cc_filter_short(void) { return au_filt_cur; }
 static const char *cc_caption; static double cc_caption_t;
 
@@ -132,7 +148,9 @@ static void cc_rrect(uint16_t *d, int x0, int y0, int w, int h, float r, uint16_
 static void cc_tile(uint16_t *d, int x, int y, int tile)
 {
     int on = 0; uint16_t acc = rgb(10, 132, 255); const char *ic = "gear";
+    if (tile == CT_NOISE) { cc_noise_tile(d, x, y); return; }
     switch (tile) {
+    case CT_AIRPLANE: on = cc_air_state(); acc = rgb(255, 149, 0); ic = "plane"; break;
     case CT_NOCHARGE: on = pw_nocharge; acc = rgb(48, 209, 88); ic = "plug"; break;
     case CT_POWER: on = pw_mode != PW_NORMAL; acc = pw_mode == PW_SAVE ? rgb(255, 204, 0) : rgb(255, 69, 58); ic = pw_mode == PW_SAVE ? "leaf" : pw_mode == PW_PERF ? "bolt" : "gauge"; break;
     case CT_DAC: ic = "usb"; break;
@@ -596,7 +614,8 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
     if (start_y != -2) cc_animate(under, panel, e, 1, start_y >= 0 ? 200 : 260);
     for (;;) {
         if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 500)) {
-            if ((cc_caption && now_ms() - cc_caption_t >= 1800) || npx_changed) { npx_changed = 0; cc_caption = 0; cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
+            int ext = cc_ext_poll();              /* puede dejar un rotulo (error de los auriculares) */
+            if (ext || (cc_caption && now_ms() - cc_caption_t >= 1800) || npx_changed) { npx_changed = 0; if (cc_caption && now_ms() - cc_caption_t >= 1800) cc_caption = 0; cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
             continue;
         }
         if (!p.down) continue;
@@ -631,12 +650,19 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
         }
         if (hit >= 200) {                                      /* Bluetooth: encender / apagar */
             int on = cc_bt_toggle();
+            if (on) cc_air_radio_on();
             cc_set_caption(tr(on ? "Bluetooth activado" : "Bluetooth desactivado"));
             cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
             continue;
         }
         int tile = cc_tiles[hit];
         switch (tile) {
+        case CT_AIRPLANE: {
+            const char *why = 0; int r = cc_air_toggle(&why);
+            if (r >= 0) cc_set_caption(tr(r ? "Modo avión activado" : "Modo avión desactivado"));
+            else if (why) cc_set_caption(why);
+            break; }
+        case CT_NOISE: cc_set_caption(cc_noise_tap()); break;
         case CT_NOCHARGE:
             pw_set_nocharge(!pw_nocharge);
             cc_set_caption(tr(pw_nocharge ? "Solo USB: la batería no se carga" : "Carga de la batería activada")); break;

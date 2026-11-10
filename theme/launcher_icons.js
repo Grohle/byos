@@ -377,6 +377,8 @@ const CC = {
   wifi: `<path d="M13 21.6l-3.3-3.6a4.8 4.8 0 0 1 6.6 0z" fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>`
     + st(`M${P(13, 21.4, 8.8, -135 * D)}A8.8 8.8 0 0 1 ${P(13, 21.4, 8.8, -45 * D)}M${P(13, 21.4, 13.6, -135 * D)}A13.6 13.6 0 0 1 ${P(13, 21.4, 13.6, -45 * D)}`, 2.3),
   bt: st('M8.2 8.4l9.4 9-4.6 4.4V4.2l4.6 4.4-9.4 9', 2.35),
+  // modo avion: avion visto desde arriba, hacia arriba a la derecha (como el de iOS)
+  plane: `<g transform="rotate(45 13 13)">` + fl('M13 2.2c1.1 0 1.9 1.3 1.9 3v4.4l8.3 5.3v2.5l-8.3-2.6v4.7l2.7 2v1.9l-4.6-1.3-4.6 1.3v-1.9l2.7-2v-4.7l-8.3 2.6v-2.5l8.3-5.3V5.2c0-1.7.8-3 1.9-3z') + `</g>`,
   buds: st('M5 17.4v-3a8 8 0 0 1 16 0v3', 2.1)
     + `<rect x="3.4" y="14.6" width="5.4" height="8.6" rx="2.3" fill="#fff"/><rect x="17.2" y="14.6" width="5.4" height="8.6" rx="2.3" fill="#fff"/>`,
 };

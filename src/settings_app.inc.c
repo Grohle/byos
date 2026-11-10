@@ -4,7 +4,7 @@
  * animacion de ejemplo), Teclado, Desarrollador (ADB) y Acerca de. Navegacion con transicion
  * de iOS y "atras" deslizando desde el borde. Todo el texto pasa por tr() (13 idiomas). */
 
-static int cc_tiles[8], cc_ntiles;   /* definidos en cc.inc.c */
+static int cc_tiles[10], cc_ntiles;   /* definidos en cc.inc.c */
 enum { R_NAV, R_TOGGLE, R_CHOICE, R_ACTION, R_INFO, R_CHECK,   /* R_CHECK: opcion con marca; nopts = su valor */
        R_SLIDER,                       /* deslizador: *ival entre lo y hi; nopts = estilo (SL_*) */
        R_BAR };                        /* barra de ocupacion (almacenamiento): *ival en milesimas */
@@ -706,14 +706,14 @@ static void act_reboot(void)
 /* las paginas Sonido y Biblioteca (sysset.inc.c) usan lo de arriba */
 
 /* ------------------------------------------------------------------ Centro de control (configurable) */
-static int cc_on[8];
+static int cc_on[10];
 static void cc_sync(void) { memset(cc_on, 0, sizeof cc_on); for (int i = 0; i < cc_ntiles; i++) cc_on[cc_tiles[i]] = 1; }
 static void apply_cc(void)
 {
     /* conserva el orden actual y anade los nuevos al final */
-    int keep[8], n = 0;
+    int keep[10], n = 0;
     for (int i = 0; i < cc_ntiles; i++) if (cc_on[cc_tiles[i]]) keep[n++] = cc_tiles[i];
-    for (int t = 0; t < 8; t++) if (cc_on[t]) { int have = 0; for (int i = 0; i < n; i++) have |= keep[i] == t; if (!have) keep[n++] = t; }
+    for (int t = 0; t < 10; t++) if (cc_on[t]) { int have = 0; for (int i = 0; i < n; i++) have |= keep[i] == t; if (!have) keep[n++] = t; }
     memcpy(cc_tiles, keep, sizeof keep); cc_ntiles = n; lconf_save();
 }
 static void apply_power(void) { pw_apply(); }
@@ -723,12 +723,14 @@ static const char *const O_POWER[] = { "Ahorro", "Normal", "Rendimiento" };
 static void page_cc(struct spage *p)
 {
     *p = (struct spage){ "Centro de control" };
-    p->secs[0] = (struct ssec){ "CONTROLES", "CC_HELP", {
-        ROW("Solo USB", R_TOGGLE, &cc_on[0], 0, 0, apply_cc, 0, 0), ROW("Modo de energía", R_TOGGLE, &cc_on[1], 0, 0, apply_cc, 0, 0),
-        ROW("DAC USB", R_TOGGLE, &cc_on[2], 0, 0, apply_cc, 0, 0), ROW("Bluetooth", R_TOGGLE, &cc_on[3], 0, 0, apply_cc, 0, 0),
-        ROW("Wi-Fi", R_TOGGLE, &cc_on[4], 0, 0, apply_cc, 0, 0), ROW("Filtro digital", R_TOGGLE, &cc_on[5], 0, 0, apply_cc, 0, 0),
-        ROW("Archivos", R_TOGGLE, &cc_on[6], 0, 0, apply_cc, 0, 0), ROW("Ajustes", R_TOGGLE, &cc_on[7], 0, 0, apply_cc, 0, 0) }, 8 };
-    p->nsec = 1;
+    p->secs[0] = (struct ssec){ "CONTROLES", 0, {
+        ROW("Modo avión", R_TOGGLE, &cc_on[8], 0, 0, apply_cc, 0, 0), ROW("Control de ruido", R_TOGGLE, &cc_on[9], 0, 0, apply_cc, 0, 0),
+        ROW("Bluetooth", R_TOGGLE, &cc_on[3], 0, 0, apply_cc, 0, 0), ROW("Wi-Fi", R_TOGGLE, &cc_on[4], 0, 0, apply_cc, 0, 0),
+        ROW("Solo USB", R_TOGGLE, &cc_on[0], 0, 0, apply_cc, 0, 0), ROW("Modo de energía", R_TOGGLE, &cc_on[1], 0, 0, apply_cc, 0, 0) }, 6 };
+    p->secs[1] = (struct ssec){ 0, "CC_HELP", {
+        ROW("DAC USB", R_TOGGLE, &cc_on[2], 0, 0, apply_cc, 0, 0), ROW("Filtro digital", R_TOGGLE, &cc_on[5], 0, 0, apply_cc, 0, 0),
+        ROW("Archivos", R_TOGGLE, &cc_on[6], 0, 0, apply_cc, 0, 0), ROW("Ajustes", R_TOGGLE, &cc_on[7], 0, 0, apply_cc, 0, 0) }, 4 };
+    p->nsec = 2;
 }
 static const char *const O_HZ[] = { "45 Hz (de serie)", "60 Hz" };
 static int set_hz_i;
