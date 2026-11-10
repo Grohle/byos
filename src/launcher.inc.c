@@ -18,7 +18,7 @@
 #define GRID_TOP 46
 #define DOTS_Y (DOCK_Y - 13)
 
-enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS, ACT_BOOKS, ACT_FREEMUSIC };
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS, ACT_BOOKS, ACT_FREEMUSIC, ACT_BUDS };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -44,8 +44,9 @@ static struct lapp apps[40] = {
     { "personalize", "Personalizar", ACT_SETTINGS, 0,   0 },
     { "appstore",   "Apps",          ACT_STORE,    0,   0 },
     { "freemusic",  "Música libre",  ACT_FREEMUSIC, 0,  0 },   /* Internet Archive + Jamendo */
+    { "headphones", "Auriculares",   ACT_BUDS,     0,   0 },   /* AirPods, Galaxy Buds, Nothing... */
 };
-static int napps = 13;              /* internas + instaladas (register_installed_apps) */
+static int napps = 14;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
 static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
@@ -83,7 +84,7 @@ static void lconf_default(void)
     memset(&L, 0, sizeof L);
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
-    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "freemusic", "tidal", "qobuz" };
+    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "freemusic", "headphones", "tidal", "qobuz" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_by_id(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
     L.dock[L.dn++] = app_by_id("music");
     L.dock[L.dn++] = app_by_id("settings");
@@ -251,34 +252,68 @@ static void blit(uint16_t *dst, const struct sprite *s, int x, int y, int k, int
         }
     }
 }
+/* Primitivas suavizadas. La cobertura de cada pixel es la de siempre (distancia con signo,
+ * centro del pixel), pero solo se calcula en los bordes: la distancia es convexa y simetrica
+ * en cada fila, asi que desde el primer pixel lleno por la izquierda hasta su simetrico todo
+ * esta lleno y se rellena sin coma flotante (alpha 255: se escribe el color tal cual). Mismo
+ * resultado que el pixel a pixel, ~10x menos trabajo en las tarjetas grandes de las listas. */
+#define AA_BLEND(dp, a) do { unsigned a_ = (a), na_ = 255 - a_, d0_ = *(dp); \
+    *(dp) = (uint16_t)((((col >> 11) * a_ + (d0_ >> 11) * na_) / 255) << 11 | (((((col >> 5) & 63) * a_ + ((d0_ >> 5) & 63) * na_) / 255) << 5) | (((col & 31) * a_ + (d0_ & 31) * na_) / 255)); } while (0)
+static void aa_span(uint16_t *row, int xa, int xb, uint16_t col, int alpha)
+{
+    if (xa >= xb) return;
+    if (alpha >= 255) { for (int x = xa; x < xb; x++) row[x] = col; return; }
+    for (int x = xa; x < xb; x++) AA_BLEND(row + x, (unsigned)alpha);
+}
 static void fill_circle(uint16_t *dst, float cx, float cy, float r, uint16_t col, int alpha)
 {
+    const int x0 = (int)(cx - r - 1), x1 = (int)(cx + r + 1);
     for (int y = (int)(cy - r - 1); y <= (int)(cy + r + 1); y++) {
         if (y < 0 || y >= H) continue;
-        for (int x = (int)(cx - r - 1); x <= (int)(cx + r + 1); x++) {
-            if (x < 0 || x >= W) continue;
-            float d = sqrtf((x + .5f - cx) * (x + .5f - cx) + (y + .5f - cy) * (y + .5f - cy));
-            float cov = r + .5f - d; if (cov <= 0) continue; if (cov > 1) cov = 1;
-            unsigned a = (unsigned)(alpha * cov), na = 255 - a, d0 = dst[y * W + x];
-            dst[y * W + x] = (uint16_t)((((col >> 11) * a + (d0 >> 11) * na) / 255) << 11 | (((((col >> 5) & 63) * a + ((d0 >> 5) & 63) * na) / 255) << 5) | (((col & 31) * a + (d0 & 31) * na) / 255));
+        uint16_t *row = dst + y * W;
+        const float dy2 = (y + .5f - cy) * (y + .5f - cy);
+        #define CI_COV(x) (r + .5f - sqrtf(((x) + .5f - cx) * ((x) + .5f - cx) + dy2))
+        int fl = x1 + 1, fr = x1;
+        for (int x = x0; x <= x1; x++) {
+            float cov = CI_COV(x); if (cov <= 0) continue;
+            if (cov >= 1) { fl = x; break; }
+            if (x >= 0 && x < W) AA_BLEND(row + x, (unsigned)(alpha * cov));
         }
+        if (fl > x1) continue;
+        for (; fr > fl; fr--) {
+            float cov = CI_COV(fr); if (cov >= 1) break;
+            if (cov > 0 && fr >= 0 && fr < W) AA_BLEND(row + fr, (unsigned)(alpha * cov));
+        }
+        #undef CI_COV
+        aa_span(row, fl < 0 ? 0 : fl, fr + 1 > W ? W : fr + 1, col, alpha);
     }
 }
 /* rectangulo redondeado relleno (con suavizado) */
 static void fill_rrect(uint16_t *dst, int x0, int y0, int w, int h, float r, uint16_t col, int alpha)
 {
-    for (int y = y0; y < y0 + h; y++) {
-        if (y < 0 || y >= H) continue;
-        for (int x = x0; x < x0 + w; x++) {
-            if (x < 0 || x >= W) continue;
-            float px = x + .5f - x0, py = y + .5f - y0;
-            float qx = fabsf(px - w / 2.f) - (w / 2.f - r), qy = fabsf(py - h / 2.f) - (h / 2.f - r);
-            float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
-            float d = sqrtf(ox * ox + oy * oy) + (qx > qy ? (qx < 0 ? qx : 0) : (qy < 0 ? qy : 0)) - r;
-            float cov = .5f - d; if (cov <= 0) continue; if (cov > 1) cov = 1;
-            unsigned a = (unsigned)(alpha * cov), na = 255 - a, d0 = dst[y * W + x];
-            dst[y * W + x] = (uint16_t)((((col >> 11) * a + (d0 >> 11) * na) / 255) << 11 | (((((col >> 5) & 63) * a + ((d0 >> 5) & 63) * na) / 255) << 5) | (((col & 31) * a + (d0 & 31) * na) / 255));
+    if (w <= 0 || h <= 0) return;
+    const float hw = w / 2.f, hh = h / 2.f;
+    const int xa = x0 < 0 ? 0 : x0, xb = x0 + w > W ? W : x0 + w;
+    if (xa >= xb) return;
+    for (int y = y0 < 0 ? 0 : y0; y < y0 + h && y < H; y++) {
+        uint16_t *row = dst + y * W;
+        const float py = y + .5f - y0;
+        const float qy = fabsf(py - hh) - (hh - r), oy = qy > 0 ? qy : 0;
+        #define RR_COV(x) ({ float qx_ = fabsf((x) + .5f - x0 - hw) - (hw - r), ox_ = qx_ > 0 ? qx_ : 0; \
+            .5f - (sqrtf(ox_ * ox_ + oy * oy) + (qx_ > qy ? (qx_ < 0 ? qx_ : 0) : (qy < 0 ? qy : 0)) - r); })
+        int fl = x0 + w, fr = x0 + w - 1;
+        for (int x = x0; x < x0 + w; x++) {           /* primer pixel lleno por la izquierda */
+            float cov = RR_COV(x); if (cov <= 0) continue;
+            if (cov >= 1) { fl = x; break; }
+            if (x >= xa && x < xb) AA_BLEND(row + x, (unsigned)(alpha * cov));
         }
+        if (fl >= x0 + w) continue;                   /* fila de borde sin pixeles llenos: ya esta */
+        for (; fr > fl; fr--) {                       /* ultimo lleno por la derecha */
+            float cov = RR_COV(fr); if (cov >= 1) break;
+            if (cov > 0 && fr >= xa && fr < xb) AA_BLEND(row + fr, (unsigned)(alpha * cov));
+        }
+        #undef RR_COV
+        aa_span(row, fl < xa ? xa : fl, fr + 1 > xb ? xb : fr + 1, col, alpha);
     }
 }
 
@@ -333,7 +368,7 @@ static int load_wall(void)
     if (f < 0) f = open(ASSETS "/wall.raw", O_RDONLY);
     if (f < 0) { for (int i = 0; i < W * H; i++) wall[i] = rgb(40, 30, 90); build_dock_glass(); return 0; }
     ssize_t n = read(f, wall, sizeof wall); close(f);
-    if (L.dim) for (int i = 0; i < W * H; i++) wall[i] = dim565(wall[i], 21);   /* "Oscurecer fondo" (~65 %) */
+    if (L.dim) dim_buf(wall, wall, W * H, 21);   /* "Oscurecer fondo" (~65 %) */
     build_dock_glass();
     mirror_dirty = 1; edit_bg_ok = 0;
     return n == (ssize_t)sizeof wall;

@@ -5,6 +5,7 @@ static void usbdac_app_at(int ix, int iy);
 static void wireless_app_at(int ix, int iy);
 static void books_app_at(int ix, int iy);
 static void freemusic_app_at(int ix, int iy);
+static void buds_app_at(int ix, int iy);
 static void store_app(int ix, int iy);
 static void run_ext_app(int a, int ix, int iy);
 static void music_app(int ix, int iy);
@@ -106,7 +107,8 @@ static void draw_scaled(uint16_t *dst, const uint16_t *src, int rx, int ry, int 
             if (dy > 0) edge = r - sqrtf(r * r - dy * dy > 0 ? r * r - dy * dy : 0);
         }
         int full = (int)ceilf(edge);
-        for (int x = full; x < rw - full; x++) { int xx = rx + x; if (xx >= 0 && xx < W) d[xx] = s[xm[x]]; }
+        int xs = full > -rx ? full : -rx, xe = rw - full < W - rx ? rw - full : W - rx;   /* recortado a la pantalla */
+        for (int x = xs; x < xe; x++) d[rx + x] = s[xm[x]];
         if (edge > 0) {                                /* pixeles del borde: cobertura parcial */
             int e0 = (int)edge; unsigned a = (unsigned)((1.f - (edge - e0)) * 255);
             int xl = rx + e0, xr = rx + rw - 1 - e0;
@@ -128,6 +130,25 @@ static float win_radius(int w, int h, double e)
     return (float)(r0 * k + 18.0 * (1 - k) * (1 - e));
 }
 
+/* Un fotograma del zoom de una app (abrir/cerrar desde su icono): el fondo "bg" oscurecido
+ * (k 0..32) y encima "src" escalado al rectangulo. Solo se oscurece lo que la ventana no
+ * tapa (las filas de las esquinas redondeadas, enteras): al final del zoom la ventana cubre
+ * casi toda la pantalla y el fondo apenas cuesta. Mismo resultado que oscurecer todo. */
+static void zoom_frame(uint16_t *d, const uint16_t *bg, int k, const uint16_t *src, int rx, int ry, int rw, int rh, float r)
+{
+    if (rw < 2 || rh < 2) { dim_buf(d, bg, W * H, k); return; }
+    float rr = r; if (rr > rw / 2.f) rr = rw / 2.f; if (rr > rh / 2.f) rr = rh / 2.f;
+    int rc = rr > 0.5f ? (int)ceilf(rr) + 1 : 0;
+    int y0 = ry + rc, y1 = ry + rh - rc;
+    int xa = rx < 0 ? 0 : rx, xb = rx + rw > W ? W : rx + rw;
+    for (int y = 0; y < H; y++) {
+        uint16_t *dr = d + y * W; const uint16_t *s = bg + y * W;
+        if (y < y0 || y >= y1 || xa >= xb) dim_buf(dr, s, W, k);
+        else { dim_buf(dr, s, xa, k); dim_buf(dr + xb, s + xb, W - xb, k); }
+    }
+    draw_scaled(d, src, rx, ry, rw, rh, r);
+}
+
 /* sprite escalado (vecino mas cercano) con opacidad global; para el icono que crece */
 static void blit_scaled(uint16_t *dst, const struct sprite *s, int rx, int ry, int rw, int rh, int alpha)
 {
@@ -145,6 +166,18 @@ static void blit_scaled(uint16_t *dst, const struct sprite *s, int rx, int ry, i
     }
 }
 
+/* zoom de una app propia: como zoom_frame y, mientras la ventana es pequena, su icono encima
+ * fundiendose (igual que al abrir las apps de HiBy y al volver al inicio con el gesto).
+ * El icono es el de last_app (launch_app lo pone antes de abrir la app). */
+static void zoom_frame_app(uint16_t *d, const uint16_t *bg, int k, const uint16_t *src, int rx, int ry, int rw, int rh, float r)
+{
+    zoom_frame(d, bg, k, src, rx, ry, rw, rh, r);
+    if (last_app < 0 || last_app >= NAPPS || W <= L.icon) return;
+    double e = (double)(rw - L.icon) / (W - L.icon);
+    int ia = (int)(255 * (1 - e * 3.2)); if (ia > 255) ia = 255;
+    if (ia > 0) blit_scaled(d, &apps[last_app].icon[sz_idx()], rx, ry, rw, rh, ia);
+}
+
 static void launch_app(int a, int ix, int iy)
 {
     struct lapp *ap = &apps[a];
@@ -160,6 +193,7 @@ static void launch_app(int a, int ix, int iy)
     if (ap->act == ACT_WIRELESS) { V.pressed_app = -1; last_app = a; wireless_app_at(ix, iy); return; }
     if (ap->act == ACT_BOOKS) { V.pressed_app = -1; last_app = a; books_app_at(ix, iy); return; }
     if (ap->act == ACT_FREEMUSIC) { V.pressed_app = -1; last_app = a; freemusic_app_at(ix, iy); return; }
+    if (ap->act == ACT_BUDS) { V.pressed_app = -1; last_app = a; buds_app_at(ix, iy); return; }
     if (ap->act == ACT_STORE) { V.pressed_app = -1; last_app = a; store_app(ix, iy); return; }
     if (ap->act == ACT_EXT) { V.pressed_app = -1; run_ext_app(a, ix, iy); return; }
     if (ap->act == ACT_SOON) {
@@ -184,7 +218,7 @@ static void launch_app(int a, int ix, int iy)
         int rx = (int)(ix + (0 - ix) * e), ry = (int)(iy + (0 - iy) * e);
         int rw = (int)(L.icon + (W - L.icon) * e), rh = (int)(L.icon + (H - L.icon) * e);
         float r = win_radius(rw, rh, e);
-        if (t == 0 || !base_dim_ok) { for (int i = 0; i < W * H; i++) img_under[i] = dim565(img_base[i], 24); base_dim_ok = 1; have_under = 0; }
+        if (t == 0 || !base_dim_ok) { dim_buf(img_under, img_base, W * H, 24); base_dim_ok = 1; have_under = 0; }
         memcpy(fr0, e < 0.15 ? img_base : img_under, HM_FRAME_BYTES);
         int ready = nav_done && nav_ok;
         draw_scaled(fr0, ready ? fr1 : img_app, rx, ry, rw, rh, r);

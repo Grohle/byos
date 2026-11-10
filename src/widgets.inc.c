@@ -25,7 +25,7 @@ enum { WG_BATT, WG_NOW, WG_DATE, WG_STORAGE, WG_POWER, WG_LIB, WG_NEW, WG_LISTEN
 static const char *const wg_id[WG_N] = { "battery", "nowplaying", "date", "storage", "power", "library", "recent", "listening" };
 static const char *const wg_name[WG_N] = { "Baterías", "Reproduciendo", "Fecha", "Almacenamiento", "Energía", "Biblioteca", "Recién añadido", "Escuchas" };
 static const char *const wg_desc[WG_N] = {
-    "Nivel de batería del HiBy y de tus auriculares Bluetooth.",
+    "Nivel de batería del HiBy y de tus auriculares Bluetooth.",       /* headphones of the Headphones app: L / R / case */
     "Lo que suena ahora, con controles de reproducción.",
     "El día de hoy y el calendario del mes.",
     "Espacio libre en la tarjeta SD y en el HiBy.",
@@ -67,7 +67,12 @@ static void wg_conf_save(FILE *f)
 
 /* ------------------------------------------------------------------ datos */
 struct wg_bt { char name[40]; int pct; };
-struct wdata { int batt, charging, usb; struct wg_bt bt[3]; int nbt; long long sd_free, sd_tot, in_free, in_tot; double t;
+/* headphones of the Headphones app (buds.inc.c, daemon hibybudsd): battery items. hp = L / R / case
+ * of the first device (medium widget), hps = one merged item per device (small widget) */
+struct wg_hp { int pct, chg, fam, part; };
+static int buds_wg_items(int *pct, int *chg, int *fam, int *part, int max, int split);
+static void buds_glyph(uint16_t *d, float cx, float cy, float s, int family, int part, int clip0, int clip1);
+struct wdata { int batt, charging, usb; struct wg_bt bt[3]; int nbt; struct wg_hp hp[3], hps[2]; int nhp, nhps; long long sd_free, sd_tot, in_free, in_tot; double t;
                int songs, albums, artists, favs; long long lib_bytes; char new_artist[64], new_album[96], top_artist[64], last_title[96], last_artist[64]; int top_n; };
 static struct wdata WD, WDs;                 /* WD: la publica el hilo (con cerrojo); WDs: copia con la que se dibuja */
 static pthread_mutex_t wg_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -144,6 +149,13 @@ static void wg_snap(void)
         WDs.charging = !strncmp(st, "Charging", 8);
     }
     npx_snapshot(&wg_ni, wg_cov, &wg_cok);
+    {   /* headphones: copied from the Headphones app's snapshot (no I/O; it changes wg_fresh) */
+        int p[3], c[3], f[3], k[3];
+        WDs.nhp = buds_wg_items(p, c, f, k, 3, 1);
+        for (int i = 0; i < WDs.nhp; i++) { WDs.hp[i].pct = p[i]; WDs.hp[i].chg = c[i]; WDs.hp[i].fam = f[i]; WDs.hp[i].part = k[i]; }
+        WDs.nhps = buds_wg_items(p, c, f, k, 1, 0);
+        for (int i = 0; i < WDs.nhps; i++) { WDs.hps[i].pct = p[i]; WDs.hps[i].chg = c[i]; WDs.hps[i].fam = f[i]; WDs.hps[i].part = k[i]; }
+    }
 }
 
 /* ------------------------------------------------------------------ geometria */
@@ -563,8 +575,12 @@ static void wg_render(int type, int sz, uint16_t *d, int w, int h)
     (void)h;
     switch (type) {
     case WG_BATT: {
-        struct { int pct, kind, chg; } dv[4]; int nd = 0;
+        struct { int pct, kind, chg, fam, part; } dv[4]; int nd = 0;    /* kind 0 HiBy, 1 BlueZ battery, 2 headphones app */
         dv[nd].pct = D->batt; dv[nd].kind = 0; dv[nd++].chg = D->charging;
+        if (sz ? D->nhp : D->nhps) {     /* connected headphones: small = HiBy + one item, medium = HiBy + L / R / case */
+            const struct wg_hp *hp = sz ? D->hp : D->hps; int nh = sz ? D->nhp : D->nhps;
+            for (int i = 0; i < nh && nd < (sz ? 4 : 2); i++) { dv[nd].pct = hp[i].pct; dv[nd].kind = 2; dv[nd].chg = hp[i].chg; dv[nd].fam = hp[i].fam; dv[nd++].part = hp[i].part; }
+        } else
         for (int i = 0; i < D->nbt && nd < 4; i++) { dv[nd].pct = D->bt[i].pct; dv[nd].kind = 1; dv[nd++].chg = 0; }
         if (!sz && nd == 1) {
             uint16_t col = wg_batt_col(dv[0].pct, dv[0].chg, 1);
@@ -584,7 +600,8 @@ static void wg_render(int type, int sz, uint16_t *d, int w, int h)
                 if (i >= nd) { wg_arc(d, cx, cy, r, th, 0, 0, rgb(120, 120, 128), 70); continue; }   /* hueco libre: pista tenue */
                 uint16_t col = wg_batt_col(dv[i].pct, dv[i].chg, !dv[i].kind);
                 wg_ring(d, cx, cy, r, th, dv[i].pct / 100.f, col);
-                if (dv[i].kind) wg_glyph_phones(d, cx, cy, r * .8f, 0xFFFF); else wg_glyph_player(d, cx, cy, r * .8f, 0xFFFF);
+                if (dv[i].kind == 2) buds_glyph(d, cx, cy - r * .08f, r / 44.f, dv[i].fam, dv[i].part, wg_cy0, wg_cy1);
+                else if (dv[i].kind) wg_glyph_phones(d, cx, cy, r * .8f, 0xFFFF); else wg_glyph_player(d, cx, cy, r * .8f, 0xFFFF);
                 if (pct_txt) {
                     if (dv[i].pct >= 0) snprintf(b, sizeof b, "%d %%", dv[i].pct); else snprintf(b, sizeof b, "—");
                     int tw = tw_n(b, 15, -1), bw = dv[i].chg ? 9 : 0, x = (int)cx - (tw + bw) / 2;
@@ -733,7 +750,9 @@ static uint32_t wg_sig(int type, int sz, int sx, int sy)
 #define HM(v) h = (h ^ (uint32_t)(v)) * 16777619u
     HM(type); HM(sz); HM(sx); HM(sy); HM(ui_lang); HM(wall_gen);
     switch (type) {
-    case WG_BATT: HM(D->batt); HM(D->charging); HM(D->nbt); HM(pw_mode); for (int i = 0; i < D->nbt; i++) HM(D->bt[i].pct); break;
+    case WG_BATT: HM(D->batt); HM(D->charging); HM(D->nbt); HM(pw_mode); for (int i = 0; i < D->nbt; i++) HM(D->bt[i].pct);
+        HM(D->nhp); HM(D->nhps); for (int i = 0; i < D->nhp; i++) { HM(D->hp[i].pct); HM(D->hp[i].chg); HM(D->hp[i].fam); HM(D->hp[i].part); }
+        for (int i = 0; i < D->nhps; i++) { HM(D->hps[i].pct); HM(D->hps[i].chg); HM(D->hps[i].fam); } break;
     case WG_NOW: HM(wg_ni.source); HM(wg_ni.track_id); HM(wg_playing()); HM(wg_cok); h = wg_hs(h, wg_ni.title); h = wg_hs(h, wg_ni.artist); break;
     case WG_DATE: { time_t now = time(0); struct tm tm; localtime_r(&now, &tm); HM(tm.tm_yday); HM(tm.tm_year); break; }
     case WG_STORAGE: HM(D->sd_free >> 24); HM(D->sd_tot >> 24); HM(D->in_free >> 24); HM(D->in_tot >> 24); break;

@@ -12,7 +12,7 @@ ADB = os.path.expandvars(r"%LOCALAPPDATA%\platform-tools\adb.exe")
 DEV = os.environ.get("HIBY_DEV", "192.168.1.147:5555")
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "capturas")
 os.makedirs(OUT, exist_ok=True)
-CTL = "/tmp/hibyctl"
+CTL = "/usr/bin/hibyctl"
 LOCAL_CTL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "hibyctl")
 session = []
 

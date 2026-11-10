@@ -28,6 +28,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -45,6 +47,8 @@
 /* ------------------------------------------------------------------ utilidades */
 static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 static void msleep(int ms) { struct timespec t = { ms / 1000, (ms % 1000) * 1000000L }; nanosleep(&t, 0); }
+/* hilos de segundo plano: por debajo de la interfaz y, sobre todo, del audio del reproductor */
+static void thread_nice(int n) { setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), n); }
 static FILE *logfp;
 static void lg(const char *fmt, ...)
 {
@@ -64,8 +68,13 @@ static pthread_mutex_t sock_mu = PTHREAD_MUTEX_INITIALIZER;
 static void cmd(char c) { if (write(fifo, &c, 1) != 1) lg("fifo: %s", strerror(errno)); }
 static uint16_t *visible(void) { return fb + (size_t)st->yoffset * W; }
 
-static int dirty_y0, dirty_y1;   /* presentacion parcial: solo estas filas cambiaron */
+static int dirty_y0, dirty_y1;
+static int sp_on;                  /* aviso del sistema en pantalla (syspop.inc.c) */   /* presentacion parcial: solo estas filas cambiaron */
 static void present(void);
+static void syspop_tick(void);
+static void syspop_after_present(void);
+struct pkt;
+static int syspop_touch(const struct pkt *p);
 static void pw_frame_cap(void);
 static void cc_open(int start_y);
 static void cc_conf_line(char *rest);
@@ -77,11 +86,33 @@ static void widgets_draw(uint16_t *d, int ox);
 static void wg_conf_line(char *rest);
 static void wg_conf_save(FILE *f);
 static void present_rows(int y0, int y1) { dirty_y0 = y0 < 0 ? 0 : y0; dirty_y1 = y1 > H ? H : y1; present(); }
+/* Perfil generico por rafaga de fotogramas (solo si existe /tmp/hibymod/perf al arrancar):
+ * dibujo = tiempo entre el final de un present y el siguiente (lo que tarda el shell en
+ * componer), espera = lo que present() espera al panel. Una linea por animacion/gesto. */
+static int perf_on;
+static struct { double last_end, t0, draw, dmax, wait, first; int n, rows; } pf;
+static void perf_flush(void)
+{
+    /* el primer intervalo va aparte: tras el fotograma del toque incluye lo que el dedo
+     * sigue apoyado y la preparacion de la animacion */
+    if (pf.n >= 3) lg("perf: t0 %.0f %d fot en %.0f ms, dibujo media %.1f max %.1f ms, espera %.1f ms, filas %d, primero %.1f ms",
+                      pf.t0, pf.n, pf.last_end - pf.t0, pf.n > 2 ? pf.draw / (pf.n - 2) : 0, pf.dmax, pf.wait / pf.n, pf.rows / pf.n, pf.first);
+    pf.n = 0; pf.draw = pf.dmax = pf.wait = pf.first = 0; pf.rows = 0;
+}
+static void perf_frame(double t_in, double t_out, int rows)
+{
+    double d = t_in - pf.last_end;
+    if (!pf.n || d > 120) { perf_flush(); pf.t0 = t_in; }
+    else if (pf.n == 1) pf.first = d;
+    else { pf.draw += d; if (d > pf.dmax) pf.dmax = d; }
+    pf.n++; pf.wait += t_out - t_in; pf.rows += rows; pf.last_end = t_out;
+}
 /* presenta frames[0] y espera a que el panel lo tenga */
 static void present(void)
 {
     pw_frame_cap();
     uint32_t p = st->presents; double t = now_ms();
+    int prow = dirty_y1 > dirty_y0 ? dirty_y1 - dirty_y0 : H;
     st->shell_beat++;
     st->fr0_seq++;                                   /* impar: copiando */
     __sync_synchronize();
@@ -90,9 +121,11 @@ static void present(void)
     st->dirty_y0 = dirty_y0; st->dirty_y1 = dirty_y1;
     __sync_synchronize();
     st->fr0_seq++;                                   /* par: lista */
+    syspop_after_present();                          /* aviso del sistema encima (syspop.inc.c) */
     dirty_y0 = dirty_y1 = 0;                         /* la siguiente, completa salvo que se diga */
     cmd('P');
     while (st->presents == p && now_ms() - t < 80) msleep(1);
+    if (perf_on) perf_frame(t, now_ms(), prow);
 }
 
 /* ------------------------------------------------------------------ entrada al reproductor */
@@ -137,10 +170,21 @@ static void inj_swipe(int x1, int y1, int x2, int y2, int steps, int ms)
 
 /* ------------------------------------------------------------------ imagenes */
 static inline int lum(uint16_t p) { return ((p >> 11) * 8 * 3 + ((p >> 5) & 63) * 4 * 6 + (p & 31) * 8) / 10; }
-static inline uint16_t dim565(uint16_t p, int k)   /* k 0..32 */
+/* k 0..32: cada canal * k / 32 (truncado). Los tres canales se separan en una palabra de 32
+ * bits (g arriba, r y b abajo con huecos) y se multiplican de una vez: un solo producto en
+ * vez de tres, mismo resultado bit a bit. Es lo mas usado en las animaciones (fondos). */
+static inline uint16_t dim565(uint16_t p, int k)
 {
-    unsigned r = (p >> 11) * k >> 5, g = ((p >> 5) & 63) * k >> 5, b = (p & 31) * k >> 5;
-    return (uint16_t)(r << 11 | g << 5 | b);
+    uint32_t x = ((uint32_t)p | (uint32_t)p << 16) & 0x07E0F81Fu;
+    x = (x * (uint32_t)k >> 5) & 0x07E0F81Fu;
+    return (uint16_t)(x | x >> 16);
+}
+/* n pixeles de src oscurecidos en dst (k >= 32: copia; puede ser dst == src) */
+static void dim_buf(uint16_t *dst, const uint16_t *src, int n, int k)
+{
+    if (k >= 32) { if (dst != src) memcpy(dst, src, (size_t)n * 2); return; }
+    if (k <= 0) { memset(dst, 0, (size_t)n * 2); return; }
+    for (int i = 0; i < n; i++) dst[i] = dim565(src[i], k);
 }
 static inline uint16_t rgb(int r, int g, int b) { return (uint16_t)((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)); }
 
@@ -395,11 +439,12 @@ static int read_pkt(struct pkt *p, int timeout_ms)
     for (;;) {
         struct pollfd pf = { ts, POLLIN, 0 };
         int left = p->n ? 50 : timeout_ms, r;
-        do {   /* en tramos cortos para mantener el latido */
-            int slice = left > 250 ? 250 : left;
+        do {   /* en tramos cortos para mantener el latido (y mover los avisos del sistema) */
+            int lim = sp_on ? 16 : 250, slice = left > lim ? lim : left;
             st->shell_beat++;
             r = poll(&pf, 1, slice);
             left -= slice;
+            if (r == 0 && timeout_ms > 0) syspop_tick();
         } while (r == 0 && left > 0);
         if (r <= 0) return 0;
         struct input_event e;
@@ -409,7 +454,11 @@ static int read_pkt(struct pkt *p, int timeout_ms)
         if (e.type == EV_KEY && e.code == BTN_TOUCH) cur_down = e.value;
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_X) cur_x = e.value;
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_Y) cur_y = e.value;
-        else if (e.type == EV_SYN && e.code == SYN_REPORT) { p->x = cur_x; p->y = cur_y; p->down = cur_down; return 1; }
+        else if (e.type == EV_SYN && e.code == SYN_REPORT) {
+            p->x = cur_x; p->y = cur_y; p->down = cur_down;
+            if (sp_on && syspop_touch(p)) { p->n = 0; return 0; }      /* el toque era del aviso */
+            return 1;
+        }
     }
 }
 static void fwd(const struct pkt *p) { inj(p->ev, p->n); }
@@ -590,12 +639,21 @@ static int music_session(void)
         if (d) closedir(d);
     }
     char dir[48]; snprintf(dir, sizeof dir, "/proc/%d/fd", player_pid);
+    /* cada 700 ms: primero el descriptor que tenia el pcm la ultima vez (un readlink) en vez
+     * de recorrer los ~100 descriptores del reproductor */
+    static int pcm_fd = -1, pcm_pid;
+    if (pcm_fd >= 0 && pcm_pid == player_pid) {
+        char p[64], l[64]; snprintf(p, sizeof p, "%s/%d", dir, pcm_fd);
+        ssize_t n = readlink(p, l, sizeof l - 1);
+        if (n > 0) { l[n] = 0; if (!strncmp(l, "/dev/snd/pcm", 12)) return 1; }
+        pcm_fd = -1;
+    }
     DIR *d = opendir(dir); if (!d) { player_pid = 0; return 0; }
     struct dirent *e; int found = 0;
     while (!found && (e = readdir(d))) {
         char p[96], l[64]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
         ssize_t n = readlink(p, l, sizeof l - 1);
-        if (n > 0) { l[n] = 0; if (!strncmp(l, "/dev/snd/pcm", 12)) found = 1; }
+        if (n > 0) { l[n] = 0; if (!strncmp(l, "/dev/snd/pcm", 12)) { found = 1; pcm_fd = atoi(e->d_name); pcm_pid = player_pid; } }
     }
     closedir(d);
     return found;
@@ -782,6 +840,8 @@ static int app_back_gesture(int sx, int sy);
 #include "books.inc.c"
 #include "wireless.inc.c"
 #include "freemusic.inc.c"
+#include "buds.inc.c"                  /* app Auriculares (headphones; daemon hibybudsd) */
+#include "syspop.inc.c"                /* avisos del sistema sobre cualquier pantalla */
 
 /* ------------------------------------------------------------------ volumen de la barra */
 /* Lee la cifra del volumen de la barra de estado del reproductor (fondo negro): cada
@@ -853,7 +913,7 @@ static void plane_home_drag(int sy)
     if (launcher_enabled) render_launcher(home, now_ms());
     else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES);
     else memset(home, 0, HM_FRAME_BYTES);
-    for (int i = 0; i < W * H; i++) home_dim[i] = dim565(home[i], 22);
+    dim_buf(home_dim, home, W * H, 22);
     have_under = 0;
     cmd('C');
     double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
@@ -881,7 +941,7 @@ static void plane_home_drag(int sy)
             double t = (now_ms() - t0) / 240.0; if (t > 1) t = 1;
             double e = ease_out(t), pr = p0 + (1.0 - p0) * e;
             int k = 22 + (int)(10 * e);
-            for (int i = 0; i < W * H; i++) fr0[i] = k >= 32 ? home[i] : dim565(home[i], k);
+            dim_buf(fr0, home, W * H, k);
             if (t < 1) {
                 double s = (1 - 0.62 * pr) * (1 - 0.7 * e);      /* encoge mas al final */
                 int w = (int)(W * s), h = (int)(H * s);
@@ -948,6 +1008,7 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "--abdl")) return ab_worker_main();   /* descargas de Libros (books_ab.inc.c) */
     signal(SIGPIPE, SIG_IGN);
     logfp = fopen("/tmp/hibymod/shell.log", "a");
+    perf_on = !access("/tmp/hibymod/perf", F_OK);
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);
     if (!st) { lg("sin estado compartido"); return 1; }
     for (int i = 0; i < 300 && st->magic != HM_MAGIC; i++) msleep(200);
@@ -973,6 +1034,10 @@ int main(int argc, char **argv)
     strcpy(a.sun_path, HM_SOCK);
     if (connect(sock, (struct sockaddr *)&a, sizeof a)) { lg("socket: %s", strerror(errno)); return 1; }
     ts = open_touch();
+    /* los procesos que lance el shell (hibynet, hibymix, el demonio de auriculares...) no deben
+     * heredar la tactil: el "grab" es del fichero abierto y un hijo que sobreviva al shell la
+     * dejaria capturada (el shell siguiente no podria leerla) */
+    { int fds[] = { ts, fbf, fifo, sock }; for (unsigned i = 0; i < 4; i++) if (fds[i] >= 0) fcntl(fds[i], F_SETFD, FD_CLOEXEC); }
     if (ts < 0 || ioctl(ts, EVIOCGRAB, 1)) { lg("no se pudo capturar la tactil"); return 1; }
     keys = -1;
     for (int i = 0; i < 16 && keys < 0; i++) {
@@ -980,7 +1045,7 @@ int main(int argc, char **argv)
         int f = open(pth, O_RDONLY | O_NONBLOCK);
         if (f < 0) continue;
         ioctl(f, EVIOCGNAME(sizeof name), name);
-        if (!strcmp(name, "sa-ring-keys")) keys = f; else close(f);
+        if (!strcmp(name, "sa-ring-keys")) { keys = f; fcntl(f, F_SETFD, FD_CLOEXEC); } else close(f);
     }
     pthread_t th; pthread_create(&th, 0, nav_thread, 0);
     text_init();
@@ -994,6 +1059,7 @@ int main(int argc, char **argv)
     pw_load();
     npx_start();
     audio_boot();
+    buds_preload();                  /* auriculares: hilo + demonio hibybudsd (avisos, widget, app) */
     load_wall();
     load_icons();
     relabel_apps();
@@ -1014,6 +1080,7 @@ int main(int argc, char **argv)
     uint32_t home_frames = st->frames, last_cap = st->cap_frames;
     for (;;) {
         double t = now_ms();
+        if (sp_open_req) { sp_open_req = 0; cc_open_app("headphones"); continue; }   /* toque en el aviso */
         if (t >= next_poll) {
             int m = music_session();
             if (m != music_on) lg("musica: %s (pid %d)", m ? "si" : "no", player_pid);
@@ -1021,6 +1088,7 @@ int main(int argc, char **argv)
         }
         /* teclas de volumen (rueda) sin capturarlas: el reproductor sigue cambiando el volumen */
         st->shell_beat++;
+        if (perf_on && pf.n && t - pf.last_end > 300) perf_flush();
         pw_tick();
         struct pollfd pf[2] = { { ts, POLLIN, 0 }, { keys, POLLIN, 0 } };
         int pr = poll(pf, keys >= 0 ? 2 : 1, hud_active ? 0 : launcher_on ? (V.edit ? 0 : now_ms() < toast_until ? 30 : 250) : 60);

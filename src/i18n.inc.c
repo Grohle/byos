@@ -548,6 +548,7 @@ static const struct trp *const TRX[LANG_N] = { 0, 0, 0, TR_DE, TR_IT, TR_JA, TR_
 #include "lang/books_tr.inc.c"           /* app Libros: { clave, es, en, ... uk } */
 #include "lang/freemusic_tr.inc.c"       /* app Musica libre: { clave, es, en, ... uk } */
 #include "lang/tags_tr.inc.c"            /* editor de etiquetas: { clave, es, en, ... uk } */
+#include "lang/buds_tr.inc.c"            /* app Auriculares: { clave, es, en, ... uk } */
 
 /* traduccion de s al idioma l sin reservas (0 si no hay); en espanol, el texto largo o s */
 static const char *tr_lang(const char *s, int l)
@@ -558,6 +559,7 @@ static const char *tr_lang(const char *s, int l)
     { const char *x = btr_lookup(s, l); if (x) return x; }     /* app Libros */
     { const char *x = fmtr_lookup(s, l); if (x) return x; }    /* app Musica libre */
     { const char *x = tgtr_lookup(s, l); if (x) return x; }    /* editor de etiquetas */
+    { const char *x = budtr_lookup(s, l); if (x) return x; }   /* app Auriculares */
     if (l == LANG_ES) { const char *x = tr_es_long(s); return x ? x : s; }
     if (l == LANG_EN || l == LANG_FR) {
         for (unsigned i = 0; i < sizeof TR / sizeof TR[0]; i++) if (!strcmp(TR[i][0], s)) return TR[i][l];

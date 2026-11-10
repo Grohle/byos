@@ -1,0 +1,37 @@
+# Headphones app in the QEMU harness, fake daemon (docs/HEADPHONES.md, "QEMU harness").
+# Test build: the Wireless icon opens the Headphones app (tests/buds_vm/README in docs).
+mark open_app
+tap 52 74
+sleep 2500
+shot 01_list
+mark open_airpods
+tap 160 166
+sleep 1500
+shot 02_airpods
+mark transparency
+tap 126 378
+sleep 1200
+shot 03_transparency
+mark scroll
+swipe 160 420 160 160 300
+sleep 1500
+shot 04_scrolled
+mark back
+tap 40 62
+sleep 1500
+shot 05_back_list
+mark open_galaxy
+tap 160 230
+sleep 1500
+shot 06_galaxy_off
+mark connect_galaxy
+tap 160 348
+sleep 4000
+shot 07_galaxy_connected
+mark galaxy_anc
+tap 233 378
+sleep 1200
+shot 08_galaxy_anc
+sh tail -4 /tmp/hibybudsd.log
+sh grep -E "^(ack|err)=" /tmp/hibybuds.state
+sh grep auriculares /tmp/hibymod/shell.log | tail -5

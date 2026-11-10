@@ -1,0 +1,5 @@
+sleep 2000
+shot home
+sh ps | grep -E "hibybudsd|hibyshell" | grep -v grep
+sh head -12 /tmp/hibybuds.state
+sh tail -5 /tmp/hibybudsd.log
