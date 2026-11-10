@@ -348,6 +348,22 @@ static int mu_spawn_wait(char *const argv[])
     int stt = 0; while (waitpid(pid, &stt, 0) < 0 && errno == EINTR) {}
     return WIFEXITED(stt) && WEXITSTATUS(stt) == 0 ? 0 : -1;
 }
+/* memoria libre del sistema (KB). El aparato va muy justo (~13 MB): hibywall con una JPEG
+ * progresiva grande pide > 8 MB y el OOM acababa matando al shell. */
+static int mu_mem_avail_kb(void)
+{
+    char b[512]; int f = open("/proc/meminfo", O_RDONLY); if (f < 0) return 0;
+    int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return 0; b[n] = 0;
+    char *m = strstr(b, "MemAvailable:"); return m ? atoi(m + 13) : 0;
+}
+/* hibywall con un tope de memoria virtual (ulimit -v): si no le basta, falla sin tumbar a nadie */
+static int mu_wall(const char *src, const char *out, int s, int lim_kb)
+{
+    char sz[8], cmd[64]; snprintf(sz, sizeof sz, "%d", s);
+    snprintf(cmd, sizeof cmd, "ulimit -v %d; exec \"$0\" \"$@\"", lim_kb);
+    char *argv[] = { "/bin/sh", "-c", cmd, NP_WALLBIN, (char *)src, (char *)out, sz, sz, 0 };
+    return mu_spawn_wait(argv);
+}
 static int mu_read_raw(const char *p, uint16_t *o, int s)
 {
     int f = open(p, O_RDONLY); if (f < 0) return -1;
@@ -437,16 +453,25 @@ static int mu_cover_make(const char *track, int cls, uint16_t *px, uint16_t *tmp
         char m[128]; snprintf(m, sizeof m, "%s_m.raw", base);
         if (!mu_read_raw(m, tmp, MU_GS)) { mu_scale(tmp, MU_GS, px, MU_SS); mu_write_raw(f, px, MU_SS); return 0; }
     }
+    int avail = mu_mem_avail_kb(), lim = avail - 6144; if (lim > 10240) lim = 10240;
+    if (avail < 12288) return -2;                     /* poca memoria ahora: se reintentara (una sola decodificacion a la vez, nice 10) */
     mu_mkcache();
     int kind = mu_cover_src(track, dir, src, sizeof src);
     if (!kind) { int o = open(none, O_WRONLY | O_CREAT, 0644); if (o >= 0) close(o); return -1; }
-    char sz[8]; int s = cls == MC_B ? MU_BS : MU_GS; snprintf(sz, sizeof sz, "%d", s);
+    int s = cls == MC_B ? MU_BS : MU_GS;
     char out[140]; snprintf(out, sizeof out, "%s_%c.tmp2", base, cls == MC_B ? 'b' : 'm');
-    char *argv[] = { NP_WALLBIN, src, out, sz, sz, 0 };
-    int r = mu_spawn_wait(argv);
-    if (kind == 1) unlink(src);
     uint16_t *dst = cls == MC_B ? px : tmp;
-    if (r || mu_read_raw(out, dst, s)) { unlink(out); int o = open(none, O_WRONLY | O_CREAT, 0644); if (o >= 0) close(o); return -1; }
+    int r = mu_wall(src, out, s, lim);
+    if (kind == 1) unlink(src);
+    if (r && kind == 1) {                             /* la incrustada no cabe: la de la carpeta */
+        static const char *names[] = { "cover", "folder", "front", "Cover", "Folder", "Front", 0 };
+        for (int i = 0; r && names[i]; i++) { snprintf(src, sizeof src, "%s/%s.jpg", dir, names[i]); if (!access(src, R_OK)) r = mu_wall(src, out, s, lim); }
+    }
+    if (r || mu_read_raw(out, dst, s)) {
+        unlink(out);
+        if (lim >= 10240) { int o = open(none, O_WRONLY | O_CREAT, 0644); if (o >= 0) close(o); }   /* demasiado grande: no reintentar */
+        return lim >= 10240 ? -1 : -2;
+    }
     char fin[128]; snprintf(fin, sizeof fin, "%s_%c.raw", base, cls == MC_B ? 'b' : 'm');
     rename(out, fin);
     if (mu_cache_bytes >= 0) mu_cache_bytes += s * s * 2;
@@ -496,7 +521,7 @@ static void *mu_cover_thread(void *arg)
                 if (mu_sl[i].state == 1 && (!best || mu_sl[i].use > best->use)) best = &mu_sl[i];
             if (best) break;
             /* en reposo y con la app abierta: adelantar las miniaturas del siguiente album */
-            if (mu_open && ML && !mu_busy && now_ms() - mu_last_input > 1200 && mu_pref_i < ML->nA) { pref = mu_pref_i++; break; }
+            if (mu_open && ML && !mu_busy && now_ms() - mu_last_input > 1200 && mu_pref_i < ML->nA && mu_mem_avail_kb() > 12288) { pref = mu_pref_i++; break; }
             struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 1;
             pthread_cond_timedwait(&mu_cv, &mu_mu, &ts);
         }
@@ -521,11 +546,12 @@ static void *mu_cover_thread(void *arg)
         pthread_mutex_lock(&mu_mu);
         if (best->state == 2 && best->alb == alb && mu_open) {
             if (!r) { if (!best->px) best->px = malloc(s * s * 2); if (best->px) { memcpy(best->px, px, s * s * 2); best->state = 3; best->t_ready = now_ms(); } else best->state = 0; }
-            else best->state = 4;
+            else best->state = r == -2 ? 0 : 4;          /* -2: sin memoria ahora, se vuelve a pedir */
             mu_cov_new = 1;
         } else if (best->state == 2) best->state = 0;
         pthread_mutex_unlock(&mu_mu);
         free(px);
+        if (r == -2) msleep(1000);
     }
     return 0;
 }
@@ -575,10 +601,25 @@ static void mu_note(uint16_t *d, int cx, int cy, int s, uint16_t col)   /* corch
     fill_rrect(d, (int)(cx - 0.6f * k), (int)(cy - 9 * k), (int)(2.4f * k + 1), (int)(15 * k), 1, col, 255);
     fill_rrect(d, (int)(cx - 0.6f * k), (int)(cy - 9 * k), (int)(8 * k), (int)(3.2f * k + 1), 1.5f, col, 255);
 }
+/* hueco gris con la nota: se pinta una vez por tamano (fill_rrect hace una raiz por pixel) y
+ * luego se copia como una caratula mas */
+static struct { int s; uint16_t *px; } mu_ph[4];
 static void mu_placeholder(uint16_t *d, int x, int y, int s, int r)
 {
-    fill_rrect(d, x, y, s, s, (float)r, rgb(44, 44, 46), 255);
-    mu_note(d, x + s / 2 + s / 14, y + s / 2, s * 2 / 5, rgb(99, 99, 102));
+    int k = 0; while (k < 4 && mu_ph[k].px && mu_ph[k].s != s) k++;
+    if (k == 4) k = 0;
+    if (!mu_ph[k].px || mu_ph[k].s != s) {
+        free(mu_ph[k].px); mu_ph[k].px = 0;
+        if (s > H - 30 || !(mu_ph[k].px = malloc(s * s * 2))) { fill_rrect(d, x, y, s, s, (float)r, rgb(44, 44, 46), 255); return; }
+        mu_ph[k].s = s;
+        /* se dibuja en una zona de la pantalla de trabajo y se copia (las primitivas pintan sobre W x H) */
+        uint16_t *t = malloc((30 + s) * W * 2); if (!t) { free(mu_ph[k].px); mu_ph[k].px = 0; return; }
+        for (int yy = 0; yy < s; yy++) for (int xx = 0; xx < s; xx++) t[(30 + yy) * W + xx] = rgb(44, 44, 46);
+        mu_note(t, s / 2 + s / 14, 30 + s / 2, s * 2 / 5, rgb(99, 99, 102));
+        for (int yy = 0; yy < s; yy++) memcpy(mu_ph[k].px + yy * s, t + (30 + yy) * W, s * 2);
+        free(t);
+    }
+    mu_blit(d, mu_ph[k].px, s, x, y, r, 255);
 }
 static int mu_fading;
 static uint16_t *mu_up; static int mu_up_alb = -1;    /* 140 ampliada mientras llega la grande */
@@ -1080,6 +1121,27 @@ static const char *mu_back_label(void)
     const struct mpg *q = mu_st[mu_sp - 1];
     return q->kind == PG_SEARCH ? tr("Buscar") : q->title;
 }
+/* barra de estado sobre negro: debajo esta el inicio de fabrica, cuya barra es transparente
+ * sobre el fondo (compose_statusbar: fondo oscurecido * (1 - a) + icono). Se recupera la
+ * cobertura a de cada pixel y se pinta en gris sobre negro, como en las apps de iOS. */
+static void mu_statusbar(uint16_t *d)
+{
+    if (!is_home(fr1)) { memcpy(d, fr1, 30 * W * 2); return; }
+    for (int y = 0; y < 30; y++) {
+        int k = 22 + y * 10 / 30;
+        const uint16_t *s = fr1 + y * W, *w = wall + y * W; uint16_t *o = d + y * W;
+        for (int x = 0; x < W; x++) {
+            uint16_t p = s[x], b = dim565(w[x], k);
+            int pr = p >> 11, pg = (p >> 5) & 63, pb = p & 31, br = b >> 11, bg = (b >> 5) & 63, bb = b & 31;
+            int a = 0;                                 /* 0..255 */
+            if (pr > br && br < 31) { int t = (pr - br) * 255 / (31 - br); if (t > a) a = t; }
+            if (pg > bg && bg < 63) { int t = (pg - bg) * 255 / (63 - bg); if (t > a) a = t; }
+            if (pb > bb && bb < 31) { int t = (pb - bb) * 255 / (31 - bb); if (t > a) a = t; }
+            if (a > 255) a = 255;
+            o[x] = rgb(a, a, a);
+        }
+    }
+}
 static void mu_render(uint16_t *d, struct mpg *p, int mini)
 {
     mu_fading = 0; mu_spin_on = 0;
@@ -1097,7 +1159,7 @@ static void mu_render(uint16_t *d, struct mpg *p, int mini)
     int scrolled = p->scroll > 4;
     for (int y = 30; y < MU_NAV; y++) for (int x = 0; x < W; x++) d[y * W + x] = scrolled ? dim565(d[y * W + x], 3) + rgb(14, 14, 15) : 0;
     if (scrolled) mu_hline(d, 0, MU_NAV - 1, MU_SEP);
-    memcpy(d, fr1, 30 * W * 2);
+    mu_statusbar(d);
     const char *back = mu_sp > 0 && mu_st[mu_sp] == p ? mu_back_label() : 0;
     if (p->kind != PG_LIB && p != mu_st[0]) {
         if (!back && mu_sp > 0) for (int k = 1; k <= mu_sp; k++) if (mu_st[k] == p) back = mu_st[k - 1]->kind == PG_SEARCH ? tr("Buscar") : mu_st[k - 1]->title;
@@ -1124,17 +1186,23 @@ static void mu_render(uint16_t *d, struct mpg *p, int mini)
 }
 static void mu_present(void)
 {
+    static double acc_r, acc_p, t_last; static int nfr;
+    double t0 = now_ms();
     struct mpg *p = mu_st[mu_sp];
     mu_render(fr0, p, 1);
     if (mu_editing) kb_draw(fr0, -1);
     draw_toast(fr0);
+    double t1 = now_ms();
     present();
+    double t2 = now_ms();
+    acc_r += t1 - t0; acc_p += t2 - t1; nfr++;
+    if (t2 - t_last > 3000) { if (nfr > 20) lg("perfil musica: %d fot, dibujo %.1f ms, presentar %.1f ms", nfr, acc_r / nfr, acc_p / nfr); acc_r = acc_p = 0; nfr = 0; t_last = t2; }
 }
 
 /* --------- transicion de pila (iOS): la de encima en x = off, la de debajo a -(W-off)/3 */
 static void mu_slide_frame(const uint16_t *top, const uint16_t *bot, int off)
 {
-    memcpy(fr0, fr1, 30 * W * 2);
+    mu_statusbar(fr0);
     int bx = -(W - off) / 3, k = 22 + 10 * off / W;
     for (int y = 30; y < H; y++) {
         uint16_t *dr = fr0 + y * W; const uint16_t *tr_ = top + y * W, *br = bot + y * W;
@@ -1186,7 +1254,7 @@ static void mu_play_result(int r)
 {
     if (r >= 0) return;
     lg("musica: reproducir -> error %d", r);
-    if (r == -ENOSYS || r == -ENXIO || r == -ENOEXEC) toast(tr("Reproducción directa no disponible todavía"));
+    if (r == -ENOSYS || r == -ENXIO || r == -ENOEXEC || r == -ETIMEDOUT)   /* sin respuesta: libreria sin la v6 */ toast(tr("Reproducción directa no disponible todavía"));
     else toast(tr("No se pudo reproducir"));
 }
 static void mu_play(const int *tl, int n, int idx, int shuffle, const char *title)
@@ -1469,6 +1537,7 @@ static void music_free_all(void)
     mu_covers_free();
     for (int r = 0; r <= MU_GS / 2; r++) { free(mu_ctab[r]); mu_ctab[r] = 0; }
     free(mu_up); mu_up = 0; mu_up_alb = -1;
+    for (int k = 0; k < 4; k++) { free(mu_ph[k].px); mu_ph[k].px = 0; mu_ph[k].s = 0; }
 }
 static void music_app(int ix, int iy)
 {

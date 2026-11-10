@@ -124,6 +124,7 @@ static void card_label(uint16_t *dst, int x, int y, const struct sprite *ic, con
     if (ic) blit_scaled(dst, ic, x0, y - 26, iw, iw, 255);
     draw_text(dst, x0 + (ic ? iw + 6 : 0), y - 10, name, 13, 0xFFFF, 0, 0, H);
 }
+static int sw_player_first;   /* la tarjeta 0 es el reproductor (no hay app reciente) */
 static void switcher_frame(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, double off, float s0, double lift, int show1, int labels)
 {
     memcpy(fr0, bg, HM_FRAME_BYTES);
@@ -140,8 +141,9 @@ static void switcher_frame(const uint16_t *bg, const uint16_t *c0, const uint16_
         }
         draw_scaled(fr0, cards[i], x, y, w, h, 20 * s / CARD_S + (1 - s) * 10);
         if (labels) {
-            const struct sprite *ic = i == 1 ? &apps[app_by_id("nowplaying")].icon[0] : (last_app >= 0 ? &apps[last_app].icon[0] : 0);
-            card_label(fr0, x + w / 2, y - 4, ic, i == 1 ? tr("Reproduciendo") : (last_app >= 0 ? app_label(last_app) : tr("HiBy")));
+            int pl = i == 1 || sw_player_first;
+            const struct sprite *ic = pl ? &apps[app_by_id("nowplaying")].icon[0] : (last_app >= 0 ? &apps[last_app].icon[0] : 0);
+            card_label(fr0, x + w / 2, y - 4, ic, pl ? tr("Reproduciendo") : (last_app >= 0 ? app_label(last_app) : tr("HiBy")));
         }
     }
     present();
@@ -187,8 +189,23 @@ static void card_to_home(const uint16_t *home, const uint16_t *img, int x0, int 
     }
 }
 
+
+static void player_card(uint16_t *d)
+{
+    static uint16_t cov[128 * 128]; struct np_info ni; int cok = 0;
+    npx_snapshot(&ni, cov, &cok);
+    for (int i = 0; i < W * H; i++) d[i] = rgb(22, 22, 24);
+    if (cok) npx_blit_cover(d, cov, 40, 70, 240, 16);
+    else { int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(d, &apps[a].icon[2], W / 2 - 64, 120, 128, 128, 255); }
+    const char *ti = ni.source && ni.title[0] ? ni.title : tr("Reproduciendo");
+    int sz = 22; while (sz > 14 && tw_n(ti, sz, -1) > W - 60) sz--;
+    draw_text(d, 30, 352, ti, sz, 0xFFFF, W - 60, 0, H);
+    if (ni.source && ni.artist[0]) draw_text(d, 30, 384, ni.artist, 18, rgb(200, 200, 206), W - 60, 0, H);
+}
+
 static void app_switch_gesture(int sy, int sx)
 {
+    sw_player_first = 0;
     uint16_t *app = img_sheet, *home = img_base, *bg = img_app, *bg2 = img_under;
     memcpy(app, visible(), HM_FRAME_BYTES);
     if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
@@ -201,13 +218,7 @@ static void app_switch_gesture(int sy, int sx)
     static uint16_t *ph_card;
     if (!ph) {
         if (!ph_card) ph_card = malloc(W * H * 2);
-        if (ph_card) {
-            for (int i = 0; i < W * H; i++) ph_card[i] = rgb(22, 22, 24);
-            int a = app_by_id("nowplaying");
-            if (a >= 0) blit_scaled(ph_card, &apps[a].icon[2], W / 2 - 48, H / 2 - 70, 96, 96, 255);
-            int tw = tw_n(tr("Reproduciendo"), 20, -1);
-            draw_text(ph_card, (W - tw) / 2, H / 2 + 62, tr("Reproduciendo"), 20, rgb(235, 235, 240), 0, 0, H);
-        }
+        if (ph_card) player_card(ph_card);
         ph = ph_card;
     }
     st->ov_on = 0; ov_cur = 0;
@@ -429,13 +440,12 @@ static void home_switcher(int sy)
     static uint16_t *ph_card;
     if (!ph) {
         if (!ph_card) ph_card = malloc(W * H * 2);
-        for (int i = 0; i < W * H; i++) ph_card[i] = rgb(22, 22, 24);
-        int a = app_by_id("nowplaying");
-        if (a >= 0) blit_scaled(ph_card, &apps[a].icon[2], W / 2 - 48, H / 2 - 70, 96, 96, 255);
+        if (ph_card) player_card(ph_card);
         ph = ph_card;
     }
     /* sin ultima app: el reproductor es la unica tarjeta (en la posicion 0) */
     const uint16_t *c0 = have_app ? appc : ph, *c1 = have_app ? ph : 0;
+    sw_player_first = !have_app;
     have_under = 0;
     struct pkt p; double vel = 0, lt = now_ms(); int ly = sy; double prog = 0;
     for (;;) {
@@ -459,7 +469,7 @@ static void home_switcher(int sy)
         switcher_frame(bg, c0, c1, 0, CARD_S, -(1 - pr) * H * 0.75, c1 != 0, open && t >= 1);
         if (t >= 1) break;
     }
-    if (!open) { launcher_present(); return; }
+    if (!open) { sw_player_first = 0; launcher_present(); return; }
     lg("multitarea (inicio)");
     double off = 0; int ncard = c1 ? 2 : 1;
     for (;;) {
