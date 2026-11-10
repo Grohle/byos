@@ -195,7 +195,7 @@ reload:
         render_picker(fr0, scroll, -1); present();
         if (!read_pkt(&p, 120) || !p.down) continue;
         int sx = p.x, sy = p.y, s0 = scroll, moved = 0;
-        while (cur_down && read_pkt(&p, 40)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (abs(cur_y - sy) > 8) moved = 1;
             if (moved) { scroll = s0 - (cur_y - sy); if (scroll < 0) scroll = 0; if (scroll > maxs) scroll = maxs; render_picker(fr0, scroll, -1); present(); }
         }

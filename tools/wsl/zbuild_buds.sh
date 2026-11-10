@@ -4,6 +4,7 @@
 #   tools/wsl/zbuild_buds.sh          ambos
 #   tools/wsl/zbuild_buds.sh daemon   solo el daemon
 set -e
+. "$(dirname "$0")/fetch.sh"; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 R=/mnt/c/Users/alber/Downloads/Hiby/hibymod
 S=$R/src
 O=$R/out/agent_buds

@@ -64,7 +64,7 @@ static struct {
 
 /* version del orden oficial de las apps: un launcher.conf de una version anterior se reordena
  * UNA vez al orden oficial (las apps instaladas desde Apps se quedan al final, en su orden) */
-#define LCONF_ORDER 2
+#define LCONF_ORDER 3
 static int launcher_enabled = 1, cur_page;
 static uint16_t wall[W * H];
 static struct sprite dock_glass;
@@ -103,9 +103,9 @@ static void lconf_default(void)
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
     /* ORDEN OFICIAL de una instalacion nueva (LCONF_ORDER lo aplica una vez a las ya instaladas) */
-    static const char *const p0[] = { "settings", "personalize", "wireless", "files", "radio", "books", "appstore",
+    static const char *const p0[] = { "settings", "personalize", "wireless", "files", "radio", "appstore",
                                       "tidal", "qobuz", "gutenberg", "freemusic" };
-    static const char *const d0[] = { "headphones", "nowplaying", "music" };
+    static const char *const d0[] = { "books", "headphones", "nowplaying", "music" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_find(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
     for (unsigned i = 0; i < sizeof d0 / sizeof *d0; i++) { int a = app_find(d0[i]); if (a >= 0) L.dock[L.dn++] = a; }
 }
@@ -219,7 +219,7 @@ static void lconf_load(void)
     fclose(f);
     if (!got_kb) kb_cfg_layout = kb_layout_for(ui_lang);
     if (!got_dock && !pages) return;
-    if (order < LCONF_ORDER) {
+    if (order < 2) {
         /* conf anterior al orden oficial: se queda el orden oficial (ya puesto por lconf_default)
          * y detras, en el orden en que estaban, las apps que no son del sistema (instaladas) */
         int in[40] = {0}, pp = per_page(); if (pp > MAXAPPS) pp = MAXAPPS; if (pp < 1) pp = 1;
@@ -241,6 +241,17 @@ static void lconf_load(void)
         lconf_order_migrated = 1;
         return;
     }
+    if (order < 3 && nd < 4) {   /* orden 3: Libros pasa al dock, el primero por la izquierda (una vez, si cabe) */
+        int b = app_find("books"), at = 0;
+        for (int i = 0; i < nd; i++) if (dk[i] == b) at = 1;
+        if (b >= 0 && !at) {
+            for (int q = 0; q < pages; q++) for (int i = 0; i < npn[q]; i++) if (np[q][i] == b) {
+                memmove(&np[q][i], &np[q][i + 1], (npn[q] - i - 1) * sizeof np[q][0]); npn[q]--; i--;
+            }
+            memmove(&dk[1], &dk[0], nd * sizeof dk[0]); dk[0] = b; nd++; seen[b] = 1;
+        }
+    }
+    if (order < LCONF_ORDER) lconf_order_migrated = 1;
     L.dn = nd; memcpy(L.dock, dk, sizeof dk);
     L.npages = pages; memcpy(L.pn, npn, sizeof npn); memcpy(L.page, np, sizeof np);
     /* apps nuevas (no listadas) en el primer hueco libre al final */

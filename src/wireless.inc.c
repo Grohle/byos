@@ -203,7 +203,8 @@ static void wl_ipinfo(char *mask, char *gw, char *dns)
     f = fopen("/etc/resolv.conf", "r");
     char l[128];
     while (f && fgets(l, sizeof l, f)) if (!strncmp(l, "nameserver ", 11)) {
-        l[strcspn(l, "\r\n")] = 0;
+        l[strcspn(l, "#\r\n")] = 0;                    /* sin el comentario ("# wlan0") ni espacios finales */
+        for (int k = (int)strlen(l); k > 11 && (l[k - 1] == ' ' || l[k - 1] == '\t'); k--) l[k - 1] = 0;
         if (dns[0]) { if (strlen(dns) + strlen(l + 11) + 3 < 48) { strcat(dns, ", "); strcat(dns, l + 11); } }
         else wlp_cpy(dns, 48, l + 11);
     }
@@ -1335,6 +1336,10 @@ static void wl_events(int kind)
 /* ------------------------------------------------------------------ bucle de una pagina */
 static struct wpage wl_pages[5];
 static int wl_depth;
+/* abierta desde Ajustes (wireless_sub): app que somos para el gesto de inicio y la pantalla de
+ * Ajustes que hay debajo, para la transicion de vuelta de la primera pagina */
+static int wl_host = -1;
+static uint16_t *wl_host_under;
 static void wl_pull_refresh(int kind)
 {
     if (kind == P_BT) { wl_disc_until = now_ms() + 45000; wl_push(&wl_qb, J_REFRESH, 0, 0, 0); }
@@ -1376,7 +1381,7 @@ static void wl_page(int kind, const char *param, const char *back)
         if (sy >= 456) {
             int up = 0; double tw = now_ms();
             while (cur_down && !up && now_ms() - tw < 400) { read_pkt(&p, 20); if (sy - cur_y > 12) up = 1; }
-            if (up) { wl_render(fr0, pg, -1); if (own_home_gesture(sx, sy, app_by_id("wireless"))) { wl_gone = 1; break; } wl_present(pg, -1); continue; }
+            if (up) { wl_render(fr0, pg, -1); if (own_home_gesture(sx, sy, wl_host >= 0 ? wl_host : app_by_id("wireless"))) { wl_gone = 1; break; } wl_present(pg, -1); continue; }
             while (cur_down && read_pkt(&p, 1000)) {}
             continue;
         }
@@ -1391,7 +1396,7 @@ static void wl_page(int kind, const char *param, const char *back)
         int hi = wl_hit(pg, sy);
         if (hi >= 0 && pg->r[hi].kind != WR_TEXT && pg->r[hi].kind != WR_INFO) wl_present(pg, hi);
         int pulled = 0;
-        while (cur_down && read_pkt(&p, 30)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 10) moved = 1;
             if (!moved) continue;
             double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }
@@ -1438,12 +1443,17 @@ static void wl_page(int kind, const char *param, const char *back)
         if (wl_gone) break;
         wl_snap(); wl_build(pg, kind, 0); wl_present(pg, -1);
     }
-    if (back && !wl_gone) {                     /* salida: la pagina anterior vuelve desde la izquierda */
+    if (back && !wl_gone && wl_depth >= 2) {    /* salida: la pagina anterior vuelve desde la izquierda */
         wl_render(img_under, pg, -1);
         struct wpage *prev = &wl_pages[wl_depth - 2];
         wl_scroll = scroll0;
         wl_snap(); wl_build(prev, prev->kind, 0);
         wl_render(img_base, prev, -1);
+        fs_transition(img_under, img_base, -1, 0);
+        have_under = 0;
+    } else if (back && !wl_gone && wl_host_under) {   /* primera pagina abierta desde Ajustes: vuelve a Ajustes */
+        wl_render(img_under, pg, -1);
+        memcpy(img_base, wl_host_under, HM_FRAME_BYTES);
         fs_transition(img_under, img_base, -1, 0);
         have_under = 0;
     }
@@ -1495,3 +1505,25 @@ static void wireless_app_at(int ix, int iy)
     launcher_present();
 }
 static void wireless_app(void) { wireless_app_at((W - L.icon) / 2, (H - L.icon) / 2); }
+/* Ajustes > Wi-Fi / Bluetooth: la misma pagina de la app, pero entra y sale como una pagina mas
+ * de Ajustes (atras: "Ajustes"); el gesto de inicio cierra Ajustes entero. */
+static void wireless_sub(int kind)
+{
+    wireless_preload();
+    wl_push(&wl_qw, J_HSREAD, 0, 0, 0);
+    wl_push(&wl_qw, J_REFRESH, 0, 0, 0);
+    wl_push(&wl_qb, J_REFRESH, 0, 0, 0);
+    wl_gone = 0; wl_depth = 0; wl_scroll = 0; wl_pull = 0;
+    wl_render_ms = wl_render_max = 0; wl_render_n = 0;
+    wl_snap(); wl_msg_seen = wv.msg_seq; wl_join_seen = wv.join_seq;
+    wl_host = sp_self;
+    wl_host_under = malloc(HM_FRAME_BYTES);
+    if (wl_host_under) memcpy(wl_host_under, fr0, HM_FRAME_BYTES);
+    wl_page(kind, 0, sp_root_name);
+    wl_vis = 0;
+    free(wl_host_under); wl_host_under = 0; wl_host = -1;
+    if (wl_gone) sp_gone = 1;
+    wl_gone = 0;
+}
+static void wireless_sub_wifi(void) { wireless_sub(P_WIFI); }
+static void wireless_sub_bt(void) { wireless_sub(P_BT); }

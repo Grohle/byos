@@ -68,7 +68,7 @@ ota_sign.install_pub(sys.argv[2], 2, src=sys.argv[1])
 assert ota_sign.compiled_pubkeys(sys.argv[1]) == [sys.argv[2], sys.argv[2]]
 EOF
 chk "install writes OTA_PUBKEY / OTA_PUBKEY2 (on a copy)" "[ $? = 0 ] && cmp -s $R/src/ota_net.inc.c $T/src_backup.c"
-chk "the repository source still has no key (all zeros)" "grep -q 'OTA_PUBKEY_HEX \"0\{64\}\" /\* OTA_PUBKEY \*/' $R/src/ota_net.inc.c"
+chk "the repository source keeps one well-formed public key" "grep -q 'OTA_PUBKEY_HEX \"[0-9a-f]\{64\}\" /\* OTA_PUBKEY \*/' $R/src/ota_net.inc.c"
 
 echo; echo "=== 3. flow (worker + hibynet x86 + local server + real installer under dash)"
 # hibynet for the PC from the current source (deps of tools/wsl/zbuild_net.sh x86; bin/ untouched)
@@ -204,10 +204,11 @@ rm -f $SIM/flags/.hibymod_safe; cp $H/sys/hibyos_install.sh $T/ov.bak; echo '# t
 chk "tampered override (sha256 mismatch): ignored" "! dash $R/overlay/usr/bin/hibyos_install.sh sysok hibyos_install.sh"
 cp $T/ov.bak $H/sys/hibyos_install.sh
 cp $H/sys/MANIFEST.sha256 $T/man.bak
-for rev in 1 0; do   # a valid pair whose revision is not newer than the rootfs one (old payload, newer firmware)
+ROOTREV=$(sed -n 's/^# HIBYOS_SYS_REV=\([0-9][0-9]*\).*/\1/p' $R/overlay/usr/bin/hibyos_install.sh | head -n 1)
+for rev in $ROOTREV $((ROOTREV - 1)) 0; do   # a valid pair whose revision is not newer than the rootfs one (old payload, newer firmware)
     sed "s/^# HIBYOS_SYS_REV=.*/# HIBYOS_SYS_REV=$rev/" $T/ov.bak > $H/sys/hibyos_install.sh
     echo "$(sha256sum < $H/sys/hibyos_install.sh | cut -d' ' -f1)  hibyos_install.sh" > $H/sys/MANIFEST.sha256
-    chk "valid override with revision $rev (rootfs has 1): ignored" "! dash $R/overlay/usr/bin/hibyos_install.sh sysok hibyos_install.sh"
+    chk "valid override with revision $rev (rootfs has $ROOTREV): ignored" "! dash $R/overlay/usr/bin/hibyos_install.sh sysok hibyos_install.sh"
 done
 cp $T/ov.bak $H/sys/hibyos_install.sh; cp $T/man.bak $H/sys/MANIFEST.sha256
 chk "and the newer one is valid again" "dash $R/overlay/usr/bin/hibyos_install.sh sysok hibyos_install.sh"

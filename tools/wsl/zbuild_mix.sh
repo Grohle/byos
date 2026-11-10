@@ -1,6 +1,7 @@
 #!/bin/bash
 # hibymix: estatico (musl) con SQLite (sin extensiones, sin hilos)
 set -e
+. "$(dirname "$0")/fetch.sh"; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 S=/mnt/c/Users/alber/Downloads/Hiby/hibymod/src
 ~/hiby/venv/bin/python -m ziglang cc -target mipsel-linux-musleabihf -mcpu=mips32r2 -Os -static -s \
   -I$HOME/hiby/third -w \

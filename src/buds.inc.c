@@ -1399,7 +1399,7 @@ static void bu_page(int kind, const char *addr, int p1, int p2, const char *back
         }
         int tappable = hr && (hr->kind == BR_NAV || hr->kind == BR_TOGGLE || hr->kind == BR_ACTION || hr->kind == BR_CHECK || hr->kind == BR_DEV);
         if (tappable) bu_present(pg, hi);
-        while (cur_down && read_pkt(&p, 30)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (abs(cur_y - sy) > 8 || abs(cur_x - sx) > 10) moved = 1;
             if (!moved) continue;
             double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }

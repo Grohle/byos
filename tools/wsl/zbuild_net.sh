@@ -6,12 +6,14 @@
 # Salidas: bin/hibynet (mipsel) + bin/cacert.pem ; ~/hiby/net/hibynet-x86 (para medir en PC).
 # Uso: tools/wsl/zbuild_net.sh [x86]   (x86 = compila tambien la version de PC)
 set -e
+. "$(dirname "$0")/fetch.sh"
+zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 R=/mnt/c/Users/alber/Downloads/Hiby/hibymod
 S=$R/src
 N=$HOME/hiby/net
 DL=$HOME/hiby/vm/dl/deps
 ZIG="$HOME/hiby/venv/bin/python -m ziglang"
-mkdir -p $N/xcc $N/src
+mkdir -p $N/xcc $N/src $DL
 # envoltorios del compilador cruzado (hard-float!)
 cat > $N/xcc/mipsel-hf-cc <<EOF
 #!/bin/sh
@@ -27,8 +29,9 @@ exec $ZIG ranlib "\$@"
 EOF
 chmod +x $N/xcc/*
 
-[ -f $DL/mbedtls-2.28.9.tar.gz ] || curl -sfL -o $DL/mbedtls-2.28.9.tar.gz https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v2.28.9.tar.gz
-[ -f $DL/jpegsrc.v9f.tar.gz ] || curl -sfL -o $DL/jpegsrc.v9f.tar.gz https://www.ijg.org/files/jpegsrc.v9f.tar.gz
+# pinned sources (exact version + SHA-256, checked on every run): mbedTLS 2.28.9 and libjpeg 9f
+fetch_verify https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v2.28.9.tar.gz e4dbcf86a4fb31506482888560f02b161e0ecfb82fee0643abcfc86abee5817e $DL/mbedtls-2.28.9.tar.gz
+fetch_verify https://www.ijg.org/files/jpegsrc.v9f.tar.gz 04705c110cb2469caa79fb71fba3d7bf834914706e9641a4589485c1f832565b $DL/jpegsrc.v9f.tar.gz
 
 # deps ARCH CC AR RANLIB HOSTTRIPLE
 deps() {
@@ -114,7 +117,9 @@ deps mips $N/xcc/mipsel-hf-cc $N/xcc/mipsel-hf-ar $N/xcc/mipsel-hf-ranlib mipsel
 [ "$1" = "x86" ] && deps x86 gcc ar ranlib x86_64-linux-gnu
 
 # bundle de CA de Mozilla (via curl.se), se distribuye junto al binario
-[ -s $R/bin/cacert.pem ] || curl -sfL -o $R/bin/cacert.pem https://curl.se/ca/cacert.pem
+# pinned to the dated bundle of 2026-11-05 (https://curl.se/docs/caextract.html) and its SHA-256;
+# to move to a newer bundle, change the date and the hash here and delete bin/cacert.pem
+fetch_verify https://curl.se/ca/cacert-2026-11-05.pem 427c064216761a1e72a8b30f0d954d08cb6e4435a82091fb865afd20c8497285 $R/bin/cacert.pem
 
 CF="-Os -Wno-format-truncation -ffunction-sections -fdata-sections -Wall -Wno-unused-function -I$HOME/hiby/third"
 $N/xcc/mipsel-hf-cc $CF -static -s -Wl,--gc-sections -I$N/mips/include -o $R/bin/hibynet $S/hibynet.c \

@@ -2,6 +2,7 @@
 # zbuild_app.sh NOMBRE - compila apps/NOMBRE/*.c (estatico, musl, coma flotante hard, mips32r2)
 # con el SDK de src/sdk y empaqueta apps/NOMBRE/{manifest.ini,icon.png,data/} en out/apps/NOMBRE.hpk
 set -e
+. "$(dirname "$0")/fetch.sh"; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 N=${1:?uso: zbuild_app.sh NOMBRE}
 H=/mnt/c/Users/alber/Downloads/Hiby/hibymod
 A=$H/apps/$N

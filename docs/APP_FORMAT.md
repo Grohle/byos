@@ -216,6 +216,14 @@ python tools/hpk.py inspect miapp.hpk                       # manifest and file 
 python tools/hpk.py verify miapp.hpk                        # same rules as the installer
 ```
 
+Third-party notices: an app that contains third-party code (a statically linked C library,
+a font, a browser engine...) must carry the notices and licence texts of that code in a
+`licenses/` folder inside the package. For the apps of this repository `hpk.py build` does it
+by itself: when `tools/notices.py` has an entry `hpk:<id>`, it adds `licenses/` with
+`THIRD_PARTY_NOTICES.md` and the licence texts listed there (the staging folder is not
+changed, and the build stops if a listed file is missing). For any other app, put your own
+`licenses/` folder in the staging folder; it is packaged as it is.
+
 Installer tests in WSL (temporary root, malicious packages included):
 `~/hiby/tools/hpk_test.sh` (generates the packages with `tests/mkpkgs.py` and runs
 `tests/hpk_test.c` with AddressSanitizer).

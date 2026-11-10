@@ -960,7 +960,7 @@ static int bk_toc(void)
         int row = (int)((sy - BK_THEAD + bk_tscroll) / BK_TROW), moved = 0, ly = sy; double lt = ts; float s0 = bk_tscroll; vel = 0;
         int valid = row >= 0 && row < bk_ntl;
         if (valid) { bk_toc_render(fr0, row, cur); present(); }
-        while (cur_down && read_pkt(&p, 30)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (abs(cur_y - sy) > 8) moved = 1;
             if (moved) {
                 double t = now_ms(); if (t > lt) { vel = 0.6f * vel + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }

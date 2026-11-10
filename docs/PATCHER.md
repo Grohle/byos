@@ -3,7 +3,10 @@
 HiByOS cannot redistribute HiBy's firmware. The patcher is a small program that users run
 on their own computer to turn **their own copy** of the official HiBy R3 II (2025) firmware
 v1.3 (`r3ii_2025.upt`, md5 `0d16d09c1458dd2f2cdaf38d0047917a`) into the HiByOS firmware.
-It ships only HiByOS files (the `overlay/` folder) and the list of changes.
+It ships only HiByOS files (the `overlay/` folder) and the list of changes. No file of the
+official firmware is inside it, and no text of one: the few official files that HiByOS edits
+(two start-up scripts and five screen layouts) are described as a list of edits that the
+patcher applies to the copy in the user's own firmware (see "Edits to HiBy's own files").
 
 It needs no external tools, no WSL and no administrator/root rights: it is pure Python
 (plus the pure-Python `pycdlib` library), packaged as a single `HiByOS-Patcher.exe` for
@@ -36,6 +39,12 @@ shared, not copied), `tools/squashfs.py` and `tools/lzo1x.py`:
    - the `overlay/` files (CRLF converted to LF for scripts, `.sh`, `.json`, `.ini`,
      `.view`); new files are 0755 if they start with `#!` or are ELF, else 0644; a
      replaced file keeps its original mode and owner; new folders are 0755 root:root;
+     the overlay may replace an official file only when it is an image (our own artwork
+     under HiBy's file name); any other official file in `overlay/` aborts the build;
+   - the edits of `tools/vendor_edits.json`: each listed official file is checked (size and
+     SHA-256), rebuilt with our changes, checked again (size and SHA-256 of the result) and
+     put in place with the mode and owner of the official file. If a file is not the
+     expected one the patcher stops and writes nothing;
    - `/etc/hibymod_build` with a random build id;
    - `TEXT_PATCHES` and `BIN_PATCHES` from `build.py`, with the same checks (text found
      exactly once, md5 and original bytes of binary files);
@@ -64,6 +73,71 @@ shared, not copied), `tools/squashfs.py` and `tools/lzo1x.py`:
 Taking about 10 seconds, it is faster than the Linux build because nothing of HiBy's
 data is decompressed and recompressed except for the files being patched (and the
 verification pass).
+
+## Edits to HiBy's own files (`tools/vendor_edits.json`)
+
+Seven files of the official firmware are changed in a way that the simple text patches of
+`build.py` cannot express: `etc/init.d/S11jpeg_display_shell`, `usr/bin/hiby_player.sh`,
+the status bar (`usr/resource/layout/theme2|theme3/topbar/topbar.view`) and the About
+screen (`usr/resource/layout/theme2|theme3/hiby_about_dev.view`,
+`usr/resource/litegui/theme3/hiby_about_dev.view`). The repository and the patcher do not
+contain those files. `tools/vendor_edits.json` holds, for each one, how to rebuild the
+HiByOS version from the official copy, storing only the text written for HiByOS.
+
+Format (version 1; `tools/vendor_edits.py` is the reference implementation and its
+docstring repeats this):
+
+```
+{"format": 1,
+ "files": [
+   {"path": "usr/bin/hiby_player.sh",          path in the root file system, no leading "/"
+    "stock":  {"size": N, "sha256": "..."},    the official file, as found in the firmware
+    "strip_cr": false,                         true: delete every 0x0D byte of the official
+                                               file BEFORE applying the ops
+    "result": {"size": N, "sha256": "..."},    the file HiByOS installs
+    "ops": [ {"copy": [offset, length]}        bytes of the official file (after strip_cr)
+           | {"add": ["line", "line", ...]}    our text: the lines joined with one
+                                               line feed (0x0A) between them, UTF-8
+           , ... ],
+    "previous": [ {"result": {...}, "ops": [...]}, ... ]     optional
+   }, ...]}
+```
+
+To apply an entry:
+
+1. read the official file; its size and SHA-256 must be `stock`, otherwise stop (unknown
+   firmware, nothing is written);
+2. base = those bytes, minus every 0x0D byte when `strip_cr` is true;
+3. result = the concatenation, in order, of `base[offset : offset + length]` for each
+   `copy` (0 <= offset, length > 0, offset + length <= len(base)) and, for each `add`, of the UTF-8 bytes of
+   its lines joined with one line feed (0x0A) between them (no line feed after the last
+   one; an empty last string therefore means "the text ends with a line feed");
+4. the size and SHA-256 of the result must be `result`, otherwise stop;
+5. the result replaces the file; the mode and owner of the official file are kept.
+
+`previous` lists older HiByOS versions of the same file (same base, same kind of ops). The
+firmware builders ignore it; `tools/make_payload.py` uses it so that a new SD payload can
+also update a player whose firmware carries one of those older versions (docs/INSTALLER.md).
+
+Changing one of these files (you need your own unpacked copy of the official root file
+system, outside the repository):
+
+```
+python tools/vendor_edits.py export --stock ROOTFS     # full files -> out/vendor_files/ (not tracked by git)
+#   edit the files in out/vendor_files/
+python tools/vendor_edits.py update --stock ROOTFS     # rebuild tools/vendor_edits.json from them
+python tools/vendor_edits.py check  --stock ROOTFS     # verify every entry, show the numbers
+```
+
+`update --keep-previous` keeps the version being replaced in `previous` (use it when a
+released firmware carried it); `update --add PATH` starts editing another official file.
+Never commit the exported files: they contain HiBy's text. `check` also prints, per file,
+how many bytes are copied from the official file, how many are ours, and the longest run
+of stored text that also exists in the official file (15 bytes at most today: short
+coincidences such as a path or a JSON key).
+
+A port of the patcher (the Android app) needs `vendor_edits.json`, the five steps above and
+the patch lists of `build.py`; it does not need any of the official files.
 
 ## Differences from the `build.py` image
 
@@ -94,20 +168,33 @@ block (the block is still used by other files).
   produce byte-identical `.upt` files for the same build id (`--build-id`, hidden test
   option) and `SOURCE_DATE_EPOCH` (fixes the ISO 9660 dates).
 
+- After the seven edited official files were removed from `overlay/` and replaced by
+  `tools/vendor_edits.json`: each file rebuilt from the official firmware is byte-identical
+  to the copy that used to be in `overlay/`, and the patcher produces a byte-identical
+  `.upt` (same md5) for the same build id and `SOURCE_DATE_EPOCH`, from the sources, from
+  the python zip and from the Windows .exe.
+
 To repeat the comparison after changing the overlay or the patches, build both images and
 compare their `unsquashfs -lln` listings and extracted files as above.
 
 ## Building the patcher
 
 ```
-python tools/build_patcher.py
+python tools/build_patcher.py [--out DIR]
 ```
 
 Creates (in `out/patcher/`, not tracked by git) a private venv with PyInstaller and
-pycdlib if they are missing, then:
+pycdlib if they are missing, then writes to `out/patcher/` (or `DIR`):
 
-- `HiByOS-Patcher.exe` (Windows only) and `HiByOS-Patcher-<version>-windows.zip`;
-- `HiByOS-Patcher-<version>-python.zip`: the patcher modules, `overlay/`, pycdlib in
-  `vendor/` (LGPL-2.1, license included) and a README.
+- `HiByOS-Patcher.exe` (Windows only) and `HiByOS-Patcher-<version>-windows.zip`
+  (the .exe, `README.txt` and `licenses/`);
+- `HiByOS-Patcher-<version>-python.zip`: the patcher modules (`hibyos_patcher.py`,
+  `build.py`, `vendor_edits.py`, `squashfs.py`, `lzo1x.py`), `vendor_edits.json`,
+  `overlay/`, pycdlib in `vendor/` (LGPL-2.1, license included), a README and `licenses/`.
+
+`licenses/` holds `THIRD_PARTY_NOTICES.md` and the licence texts of the third-party
+components inside that package (`tools/notices.py` decides which; the build stops if one
+is missing). Publish the two zips, not the bare `HiByOS-Patcher.exe`: a single .exe cannot
+carry the notices next to it.
 
 `<version>` comes from `overlay/usr/bin/hibymod` (`HiByOS 0.6.1` -> `0.6.1`).

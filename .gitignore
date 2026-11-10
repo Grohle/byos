@@ -25,3 +25,6 @@ src/digits_hiby_orig.h
 .venv/
 todo.md
 backups/
+
+# local agent state and worktrees
+.claude/

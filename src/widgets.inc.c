@@ -1809,7 +1809,7 @@ static int wg_gallery(int *otype, int *osize)
         if (g.view == 0 && sy >= GS_Y + GLIST) g.press = (sy - GS_Y - GLIST + (int)g.ls) / GROW;
         if (g.view == 1 && sy >= GS_Y + GD_ADD && sy < GS_Y + GD_ADD + 44 && abs(sx - W / 2) < W / 2 - 24 && !wg_has(g.sel, g.selsz)) g.press = 100;
         if (g.press >= 0) wg_gal_frame(&g, 1);
-        while (cur_down && read_pkt(&p, 40)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             int dx = cur_x - sx, dy = cur_y - sy;
             if (!moved && (abs(dx) > 8 || abs(dy) > 8)) { moved = 1; g.press = -1; drag_down = sy < GS_Y + 56 && dy > 0; }
             if (!moved) continue;

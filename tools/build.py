@@ -12,6 +12,9 @@ import argparse, hashlib, io, os, re, shutil, stat, subprocess, sys, tempfile
 
 import pycdlib
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # python -I: no script dir in sys.path
+import vendor_edits                # edits to HiBy's own files, stored without HiBy's text
+
 CHUNK = 524288          # tamano de trozo del firmware oficial
 ALIGN = 4096            # img_size del oficial va alineado a 4 KiB
 # particion rootfs del R3 II 2025 (/proc/mtd): 0x2D00000 bytes. Se deja un 5 %
@@ -52,6 +55,25 @@ BIN_PATCHES = [
       (0x260c, "06000000", "07000000"),
       (0x2610, "06000000", "07000000")]),
 ]
+
+
+# The overlay holds only files written for HiByOS. It may replace an official file only when
+# that file is an image (our own artwork under HiBy's file name). Any other official file is
+# changed through TEXT_PATCHES, BIN_PATCHES or tools/vendor_edits.json, which carry the change
+# and not HiBy's text; putting an edited copy of it in overlay/ aborts the build.
+OVERLAY_MAY_REPLACE = (".png", ".jpg", ".jpeg")
+
+
+def overlay_replace_ok(rel, edited_paths):
+    """None if the overlay file `rel` may replace an existing official file, else the reason."""
+    rel = rel.replace(os.sep, "/")
+    if rel in edited_paths:
+        return f"overlay/{rel}: this file is built by tools/vendor_edits.json; remove it from overlay/"
+    if not rel.lower().endswith(OVERLAY_MAY_REPLACE):
+        return (f"overlay/{rel}: would replace a file of the official firmware. Do not store edited "
+                "copies of HiBy's files; describe the change in tools/vendor_edits.json "
+                "(python tools/vendor_edits.py --help)")
+    return None
 
 
 def overlay_file(rel, data):
@@ -182,6 +204,9 @@ def build_rootfs(stock_sqfs, overlay, work):
     # a partir de aqui, permisos normales para lo que crea hibymod (755/644)
     os.umask(0o022)
 
+    edits = vendor_edits.load()
+    edited = {e["path"] for e in edits}
+
     # capa de ficheros nuevos/reemplazados
     if overlay:
         for d, _dirs, names in os.walk(overlay):
@@ -191,12 +216,32 @@ def build_rootfs(stock_sqfs, overlay, work):
                 dst = os.path.join(root, rel)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 data, mode = overlay_file(rel, open(src, "rb").read())
+                why = overlay_replace_ok(rel, edited) if (os.path.lexists(dst) or
+                                                          rel.replace(os.sep, "/") in edited) else None
+                if why:
+                    raise SystemExit(why)
                 if os.path.lexists(dst):
                     mode = stat.S_IMODE(os.lstat(dst).st_mode)  # conservar modo original
                     os.remove(dst)
                 open(dst, "wb").write(data)
                 os.chmod(dst, mode)
                 print("  overlay:", rel)
+
+    # edits to HiBy's own files: the HiByOS version is rebuilt from the official copy and
+    # replaces it exactly like an overlay file would (new file, original mode and owner)
+    for e in edits:
+        p = os.path.join(root, e["path"])
+        if os.path.islink(p) or not os.path.isfile(p):
+            raise SystemExit(f"vendor edit {e['path']}: not a regular file in the official firmware")
+        try:
+            data = vendor_edits.apply(e, open(p, "rb").read())
+        except vendor_edits.EditError as err:
+            raise SystemExit(f"vendor edit: {err}")
+        mode = stat.S_IMODE(os.lstat(p).st_mode)
+        os.remove(p)
+        open(p, "wb").write(data)
+        os.chmod(p, mode)
+        print("  vendor edit:", e["path"])
 
     # identificador unico de esta construccion (invalida la "ruta rapida" de /usr/data)
     import uuid

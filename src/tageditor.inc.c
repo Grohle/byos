@@ -557,7 +557,7 @@ static int te_text_edit(const char *title, char *buf, int cap)
         kb_map(&p);
         if (p.y >= KB_Y) { kb_touch(&p, &tt, fr0, tt_redraw, 1); continue; }
         int sx = p.x, sy = p.y, top0 = tt_top, moved = 0;
-        while (cur_down && read_pkt(&p, 30)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (abs(cur_y - sy) > 8) moved = 1;
             if (moved && sy >= TE_TOP) {
                 int nt = top0 - (cur_y - sy) / TT_LH; if (nt < 0) nt = 0; if (nt > tt_nl - 1) nt = tt_nl - 1;

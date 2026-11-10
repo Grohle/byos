@@ -382,12 +382,21 @@ static const char *ss_count(int i, int n) { if (!si_ui.lib) return "…"; snprin
 static const char *v_songs(void) { return ss_count(0, si_ui.songs); }
 static const char *v_albums(void) { return ss_count(1, si_ui.albums); }
 static const char *v_artists(void) { return ss_count(2, si_ui.artists); }
-static const char *v_ver(void) { return si_ui.ver[0] ? si_ui.ver : si_ui.ready ? "?" : "…"; }
+static const char *v_ver(void)   /* la fila ya dice "Version de HiByOS": solo el numero */
+{
+    if (!si_ui.ver[0]) return si_ui.ready ? "?" : "…";
+    return strncmp(si_ui.ver, "HiByOS ", 7) ? si_ui.ver : si_ui.ver + 7;
+}
 static const char *v_model(void) { return "HiBy R3 II"; }
 static const char *v_mem2(void) { if (!si_ui.ready) return "…"; snprintf(ss_buf[3], 64, "%.0f MB", si_ui.mem_kb / 1024.0); return ss_buf[3]; }
 static const char *v_napps(void) { snprintf(ss_buf[4], 64, "%d", si_ui.napps); return si_ui.ready ? ss_buf[4] : "…"; }
 static const char *v_mac(void) { return si_ui.mac[0] ? si_ui.mac : si_ui.ready ? "—" : "…"; }
-static void ss_gb(char *b, long long v) { double g = v / 1e9; snprintf(b, 16, g >= 100 ? "%.0f GB" : g >= 10 ? "%.1f GB" : "%.2f GB", g); }
+static void ss_gb(char *b, long long v)
+{
+    double g = v / 1e9;
+    if (g < 1) snprintf(b, 16, "%.0f MB", v / 1e6);          /* la memoria interna: 40 MB, no "0.04 GB" */
+    else snprintf(b, 16, g >= 100 ? "%.0f GB" : g >= 10 ? "%.1f GB" : "%.2f GB", g);
+}
 static const char *ss_space(int i, long long fr, long long tot)
 {
     if (!si_ui.ready) return "…";
@@ -408,6 +417,7 @@ static int ui_sd_pm, ui_in_pm;
 #if __has_include("wireless.inc.c")
 #define SS_HAVE_WIRELESS 1
 static void wireless_app(void);
+static void wireless_sub_wifi(void), wireless_sub_bt(void);   /* la pagina, como una mas de Ajustes */
 #endif
 #endif
 static void page_wifi(struct spage *p)
@@ -423,8 +433,8 @@ static void page_bt(struct spage *p)
     p->nsec = 1;
 }
 #ifdef SS_HAVE_WIRELESS
-static void nav_wifi(void) { wireless_app(); }
-static void nav_bt(void) { wireless_app(); }
+static void nav_wifi(void) { wireless_sub_wifi(); }
+static void nav_bt(void) { wireless_sub_bt(); }
 #else
 static void nav_wifi(void) { open_page(page_wifi, "Ajustes"); }
 static void nav_bt(void) { open_page(page_bt, "Ajustes"); }

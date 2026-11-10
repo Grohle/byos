@@ -274,6 +274,15 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
         if (sc->header) { draw_text(d, 32, y + 20, tr(sc->header), 12, rgb(142, 142, 147), 0, NAVH + 30, H); y += 28; } else y += 14;
         int top = y;
         fill_rrect(d, 16, top, W - 32, sc->n * ROWH, 10, rgb(28, 28, 30), 255);
+        /* si en alguna fila no caben titulo y valor a 15, los valores de toda la seccion van a 13 */
+        int vsz = 15;
+        if (top < H && top + sc->n * ROWH > NAVH + 30) for (int r = 0; r < sc->n && vsz == 15; r++) {
+            const struct srow *rw = &sc->rows[r];
+            if (rw->type != R_NAV && rw->type != R_CHOICE && rw->type != R_INFO && rw->type != R_ACTION) continue;
+            const char *v = row_value(rw); if (!v) continue;
+            int room = W - 16 - 12 - (rw->type == R_NAV || rw->type == R_CHOICE ? 14 : 0) - (rw->icon ? 70 : 32) - 12;
+            if (tw_n(tr(rw->title), 15, -1) + tw_n(v, 15, -1) > room) vsz = 13;
+        }
         for (int r = 0; r < sc->n; r++, gi++) {
             const struct srow *rw = &sc->rows[r];
             int ry = top + r * ROWH;
@@ -297,9 +306,12 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
             const char *v = rw->type == R_TOGGLE ? 0 : row_value(rw);
             int chev = rw->type == R_NAV || rw->type == R_CHOICE;
             int vx = W - 16 - 12 - (chev ? 14 : 0);
-            int vw = v ? tw_n(v, 15, -1) : 0; if (vw > 128) vw = 128;
+            /* el valor ocupa lo que deje el titulo (128 como minimo) */
+            int vcap = vx - tx - 12 - tw_n(tr(rw->title), 15, -1); if (vcap < 128) vcap = 128;
+            int vw = v ? tw_n(v, vsz, -1) : 0; if (vw > vcap) vw = vcap;
             int tmax = (rw->type == R_TOGGLE ? W - 16 - 12 - 51 - 10 - tx : vx - tx - (v ? vw + 12 : 0));
-            draw_text(d, tx, ry + 28, tr(rw->title), 15, tc, tmax, NAVH + 30, H);
+            int tsz = 15; while (tsz > 13 && tw_n(tr(rw->title), tsz, -1) > tmax) tsz--;   /* antes de recortar con "…", algo mas pequeno */
+            draw_text(d, tx, ry + 28, tr(rw->title), tsz, tc, tmax, NAVH + 30, H);
             if (rw->type == R_TOGGLE && rw->ival) { float k = sw_pos(rw->ival); if (ry + 6 >= NAVH + 30) sp_switch(d, W - 16 - 12 - 51, ry + 6, k, rw->dis); }
             else if (rw->type == R_CHECK) {                 /* marca azul de iOS en la opcion elegida */
                 if (rw->ival && *rw->ival == rw->nopts && ry + 14 >= NAVH + 30) {
@@ -307,7 +319,7 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
                     for (int i = 0; i < 12; i++) fill_rrect(d, W - 40 + i, ry + 25 - i, 2, 2, 1, rgb(10, 132, 255), 255);
                 }
             } else {
-                if (v) draw_text(d, vx - vw, ry + 28, v, 15, rgb(142, 142, 147), 128, NAVH + 30, H);
+                if (v) draw_text(d, vx - vw, ry + 28, v, vsz, rgb(142, 142, 147), vcap, NAVH + 30, H);
                 if (chev && ry + 16 >= NAVH + 30) for (int i = 0; i < 6; i++) {   /* (recortado abajo: no escribir fuera) */
                     int cx = W - 16 - 18 + i - 2, y1 = ry + 16 + i, y2 = ry + 28 - i;
                     if (y1 < H) { d[y1 * W + cx] = rgb(90, 90, 96); d[y1 * W + cx + 1] = rgb(90, 90, 96); }
@@ -325,13 +337,13 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
     for (int x = 0; x < W; x++) d[(NAVH + 29) * W + x] = rgb(38, 38, 40);
     if (back) {
         for (int i = 0; i < 9; i++) { fill_rrect(d, 12 + i, 62 - i, 3, 3, 1.2f, rgb(10, 132, 255), 255); fill_rrect(d, 12 + i, 62 + i, 3, 3, 1.2f, rgb(10, 132, 255), 255); }
-        int tw = tw_n(tr(pg->title), 17, -1); if (tw > 150) tw = 150;
-        int bmax = (W - tw) / 2 - 28 - 8; if (bmax < 24) bmax = 24;      /* la etiqueta de atras no pisa el titulo */
+        int tw = tw_n(tr(pg->title), 17, -1); if (tw > 216) tw = 216;
+        int bmax = (W - tw) / 2 - 28 - 8; if (bmax < 0) bmax = 0;        /* la etiqueta de atras no pisa el titulo */
         /* como iOS: si el titulo anterior no cabe entero se pone "Atras", y si tampoco, solo la flecha */
         const char *bl = tr(back);
         if (tw_n(bl, 16, -1) > bmax) { bl = tr("Atrás"); if (tw_n(bl, 16, -1) > bmax) bl = 0; }
         if (bl) draw_text(d, 28, 68, bl, 16, rgb(10, 132, 255), bmax, 0, H);
-        draw_text(d, (W - tw) / 2, 68, tr(pg->title), 17, 0xFFFF, 150, 0, H);
+        draw_text(d, (W - tw) / 2, 68, tr(pg->title), 17, 0xFFFF, 216, 0, H);
     } else draw_text(d, 16, 80, tr(pg->title), 26, 0xFFFF, 0, 0, H);
     draw_toast(d);
 }
@@ -479,9 +491,13 @@ static void act_reset(void)
 static void act_wallpaper_h(void) { wallpaper_picker(); home_prev_ok = 0; wg_cache_ok = 0; }
 static const char *v_wall(void)
 {
-    if (!L.wall[0]) return "Aurora";
+    /* los fondos de serie, con su nombre traducido (tr cachea por puntero: siempre literales) */
+    static const char *const std[] = { "Negro", "Aurora", "Medianoche", "Océano", "Brasa", "Bosque", "Grafito", "Plata", "Atardecer" };
+    if (!L.wall[0]) return tr(std[1]);
     static char b[64]; const char *n = strrchr(L.wall, '/'); snprintf(b, sizeof b, "%s", n ? n + 1 : L.wall);
-    char *e = strrchr(b, '.'); if (e && e != b) *e = 0; return b;
+    char *e = strrchr(b, '.'); if (e && e != b) *e = 0;
+    for (unsigned i = 0; i < sizeof std / sizeof *std; i++) if (!strcmp(b, std[i])) return tr(std[i]);
+    return b;
 }
 static void page_gestures(struct spage *p);
 static void nav_gestures_h(void) { open_page(page_gestures, "Inicio"); }
@@ -830,7 +846,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
         }
         if (hi >= 0 && !on_slider) { sp_render(fr0, &pg, hi, back); present(); }
         int sliding = 0, v0 = on_slider ? *rw->ival : 0;
-        while (cur_down && read_pkt(&p, 30)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (on_slider && !moved && !sliding && abs(cur_x - sx) > 6 && abs(cur_x - sx) > abs(cur_y - sy)) sliding = 1;
             if (sliding) {
                 int nv = sl_value(rw, v0, cur_x - sx);

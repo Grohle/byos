@@ -273,7 +273,15 @@ static void test_i18n(void)
             ui_lang = l; CHECK(!strcmp(tr(BTR[i][0]), v), "[%s] tr() no usa BTR: %s", LANG_CODES[l], BTR[i][0]);
             const char *s = v; int c;
             while ((c = utf8_next(&s))) { if (c <= ' ' || c == 0xA0) continue; int gi; font_glyph(c, &gi); CHECK(gi, "[%s] sin glifo U+%04X en %s", LANG_CODES[l], c, v); }
-            if (strncmp(BTR[i][0], "BOOKS_", 6)) CHECK(text_width(v, 15) < 280, "[%s] demasiado ancho: %s", LANG_CODES[l], v);
+            /* paragraphs drawn with ab_wrap / draw_wrapped (up to 4 lines of 264 px at 14 px); the rest are single-line labels */
+            static const char *const para[] = { "AB_HELP", "GUT_DL_HELP", "Busca libros por título o autor.", "Busca audiolibros por título o autor.",
+                "No se pudo conectar. Comprueba la WiFi y toca para reintentar.", "No hay espacio en la SD: hacen falta %s y quedan %s.",
+                "Libros de dominio público de Project Gutenberg (gutenberg.org).",
+                "Audiolibros de dominio público grabados por voluntarios de LibriVox (librivox.org).", 0 };
+            int isp = !strncmp(BTR[i][0], "BOOKS_", 6);
+            for (int q = 0; para[q] && !isp; q++) isp = !strcmp(BTR[i][0], para[q]);
+            if (isp) CHECK(text_width(v, 14) < 4 * 240, "[%s] parrafo demasiado largo: %s", LANG_CODES[l], v);
+            else CHECK(text_width(v, 15) < 280, "[%s] demasiado ancho: %s", LANG_CODES[l], v);
         }
     }
     for (int i = 0; used[i]; i++) for (int l = 0; l < LANG_N; l++) { ui_lang = l; CHECK(tr(used[i]) != used[i] || l == LANG_ES, "[%s] falta %s", LANG_CODES[l], used[i]); }

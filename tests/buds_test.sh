@@ -13,7 +13,7 @@ gcc -O1 -g -Wall -Wextra -Wno-unused-function -fsanitize=address,undefined -o /t
 # fake daemon: AirPods Pro 2 connected; connect the Galaxy Buds2 Pro; commands to both
 D=$(mktemp -d); export HIBYBUDS_DIR=$D HIBYBUDS_DATA=$D/data
 /tmp/hibybudsd_x86 --fake & P=$!
-trap 'kill $P 2>/dev/null; rm -rf $D' EXIT
+trap 'kill $P 2>/dev/null || true; rm -rf $D' EXIT
 sleep 1
 ok() { if grep -q "$1" <(sed -n "/dev=$2/,/end/p" $D/hibybuds.state); then echo "  ok: $3"; else echo "FAIL: $3"; sed -n "/dev=$2/,/end/p" $D/hibybuds.state; exit 1; fi; }
 A=F0:5C:77:A1:02:14; S=F0:5C:77:5A:07:02

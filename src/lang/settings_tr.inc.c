@@ -343,6 +343,16 @@ static const char *const TRS[][1 + LANG_N] = {
       "Відскануйте код камерою телефона, щоб відкрити посилання." },
     /* raiz de Ajustes: el grupo que antes era la app "Personalizar" */
     { "PERSONALIZACIÓN", "PERSONALIZACIÓN", "PERSONALIZATION", "PERSONNALISATION", "PERSONALISIERUNG", "PERSONALIZZAZIONE", "カスタマイズ", "사용자화", "PERSONALIZACJA", "ПЕРСОНАЛИЗАЦИЯ", "个性化", "การปรับแต่ง", "個人化", "ПЕРСОНАЛІЗАЦІЯ" },
+    /* fondos de pantalla de serie (theme/wallpapers.py): el nombre del fichero es la clave */
+    { "Negro", "Negro", "Black", "Noir", "Schwarz", "Nero", "ブラック", "블랙", "Czarny", "Чёрный", "黑色", "สีดำ", "黑色", "Чорний" },
+    { "Aurora", "Aurora", "Aurora", "Aurore", "Aurora", "Aurora", "オーロラ", "오로라", "Zorza", "Аврора", "极光", "แสงเหนือ", "極光", "Аврора" },
+    { "Medianoche", "Medianoche", "Midnight", "Minuit", "Mitternacht", "Mezzanotte", "ミッドナイト", "미드나이트", "Północ", "Полночь", "午夜", "เที่ยงคืน", "午夜", "Північ" },
+    { "Océano", "Océano", "Ocean", "Océan", "Ozean", "Oceano", "オーシャン", "오션", "Ocean", "Океан", "海洋", "มหาสมุทร", "海洋", "Океан" },
+    { "Brasa", "Brasa", "Ember", "Braise", "Glut", "Brace", "エンバー", "엠버", "Żar", "Угли", "余烬", "ถ่านไฟ", "餘燼", "Жар" },
+    { "Bosque", "Bosque", "Forest", "Forêt", "Wald", "Bosco", "フォレスト", "포레스트", "Las", "Лес", "森林", "ป่าไม้", "森林", "Ліс" },
+    { "Grafito", "Grafito", "Graphite", "Graphite", "Graphit", "Grafite", "グラファイト", "그래파이트", "Grafit", "Графит", "石墨", "กราไฟต์", "石墨", "Графіт" },
+    { "Plata", "Plata", "Silver", "Argent", "Silber", "Argento", "シルバー", "실버", "Srebrny", "Серебро", "银色", "สีเงิน", "銀色", "Срібло" },
+    { "Atardecer", "Atardecer", "Sunset", "Crépuscule", "Sonnenuntergang", "Tramonto", "サンセット", "선셋", "Zachód słońca", "Закат", "日落", "อาทิตย์ตก", "日落", "Захід сонця" },
 };
 /* traduccion de s al idioma l o 0 si la clave no es de esta tabla */
 static const char *trs_lookup(const char *s, int l)

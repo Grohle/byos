@@ -93,6 +93,23 @@ Also add `# HIBYOS_SYS_REV=1` as its second line. The marker string makes `make_
 start shipping `sys/hiby_player.sh`; it takes over on a device once a payload carries a
 higher revision than that device's firmware.
 
+`hiby_player.sh` is HiBy's script with our changes, so it is not a file of this repository:
+edit it through `tools/vendor_edits.py export` / `update --keep-previous` (docs/PATCHER.md).
+For the same reason the payload does not carry `sys/hiby_player.sh` as a file: it carries a
+recipe in `derive/` with the destination `sys/hiby_player.sh`, and the installer rebuilds it
+from `/usr/bin/hiby_player.sh` of the firmware (docs/INSTALLER.md, "Files rebuilt on the
+player"). The line of `sys/MANIFEST.sha256` is the hash of the rebuilt file. This path is
+implemented in `make_payload.py` and in the installer but has not shipped a script yet.
+
+### Installer revisions and `derive/`
+
+The installer of revision 2 (`HIBYOS_SYS_REV=2`) is the first one that understands payloads
+with `derive/` (the edited layouts are rebuilt on the player instead of being shipped). A
+firmware whose built-in installer is revision 1 was only ever a development build; if one is
+updated with a payload that has `derive/`, see "Installer revisions" in docs/INSTALLER.md.
+`install_failed` now holds the failed version and, on a second line, `rev N` (the revision of
+the installer that failed); a newer installer retries a version that an older one failed.
+
 ## 2. Release format
 
 One GitHub release per version, tag `vX.Y.Z`, marked **latest**, with two assets:
@@ -281,7 +298,8 @@ wsl -d Ubuntu -- bash /mnt/c/Users/alber/Downloads/Hiby/hibymod/tests/ota_test.s
   min-version; user state untouched throughout.
 
 `tools/simtest_install.sh` (the SD installer suite) also passes with the new installer and a
-payload containing `sys/` (built with `make_payload.py --out <tmp>`).
+payload containing `sys/` and `derive/` (built with `make_payload.py --out <tmp> --expect <tmp2>`;
+see "Testing on the PC" in docs/INSTALLER.md).
 
 ```
 wsl -d Ubuntu -- bash /mnt/c/Users/alber/Downloads/Hiby/hibymod/tests/ota_render.sh

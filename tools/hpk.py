@@ -6,7 +6,10 @@
 
 El tar se normaliza: formato ustar, uid/gid 0 sin nombres, mtime fijo, orden alfabetico con
 manifest.ini e icon.png primero (el shell los lee sin recorrer todo el archivo), modos 0644/0755.
-Sin dependencias obligatorias; usa Pillow (icono) y pyelftools (ELF) si estan instalados."""
+Sin dependencias obligatorias; usa Pillow (icono) y pyelftools (ELF) si estan instalados.
+
+Third-party notices: "build" adds a licenses/ folder (THIRD_PARTY_NOTICES.md + licence texts)
+to the apps listed in tools/notices.py as "hpk:<id>"; see notice_files() below."""
 import argparse
 import io
 import os
@@ -161,6 +164,45 @@ def check_icon(data, warn):
         pass
 
 
+# ------------------------------------------------------------------ third-party notices
+NOTICES_DIR = "licenses"
+
+
+def notice_files(app_id, dirs, files):
+    """Third-party notices of the app: {name inside the package: file on disk}.
+
+    The apps of this repository that contain third-party code are listed in tools/notices.py
+    as "hpk:<id>". For those, THIRD_PARTY_NOTICES.md and the licence texts of the components
+    inside the app are added to the package as licenses/<name> (they are taken from the
+    repository, DIR is not changed). A missing licence file stops the build. If DIR already
+    has a licenses/ folder it is packaged as it is and nothing is added: an app from outside
+    this repository that contains third-party code brings its notices that way.
+    """
+    if NOTICES_DIR in dirs or NOTICES_DIR in files:
+        print("%s/: packaged as found in the folder" % NOTICES_DIR)
+        return {}
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import notices
+    except ImportError:
+        return {}
+    finally:
+        sys.path.pop(0)
+    art = "hpk:" + app_id
+    if art not in notices.ARTEFACTS:
+        print("note: tools/notices.py has no entry %s; if the app contains third-party code, "
+              "put its notices and licence texts in a %s/ folder" % (art, NOTICES_DIR))
+        return {}
+    out = {}
+    for rel in notices.files_for(art):
+        p = os.path.join(notices.REPO, *rel.split("/"))
+        if not os.path.isfile(p):
+            raise HpkError("third-party notices: %s is missing" % p)
+        out["%s/%s" % (NOTICES_DIR, os.path.basename(rel))] = p
+    print("%s/: %d third-party notice and licence files added (tools/notices.py, %s)" % (NOTICES_DIR, len(out), art))
+    return out
+
+
 # ------------------------------------------------------------------ build
 def build(src, out):
     warns = []
@@ -195,6 +237,10 @@ def build(src, out):
         check_icon(open(os.path.join(src, "icon.png"), "rb").read(), warn)
     else:
         warn("no hay icon.png: el instalador generara uno de color liso")
+    extra = notice_files(kv["id"], dirs, files)
+    if extra:
+        dirs.append(NOTICES_DIR)
+        files.extend(sorted(extra))
     first = [f for f in ("manifest.ini", "icon.png") if f in files]
     order = [(f, False) for f in first] + sorted([(d, True) for d in dirs] + [(f, False) for f in files if f not in first])
     if len(order) > MAX_ENTRIES:
@@ -210,12 +256,12 @@ def build(src, out):
                 ti.type, ti.mode = tarfile.DIRTYPE, 0o755
                 t.addfile(ti)
                 continue
-            p = os.path.join(src, name)
+            p = extra.get(name) or os.path.join(src, name)
             size = os.path.getsize(p)
             if size > MAX_FILE:
                 raise HpkError("%s pasa de 256 MB" % name)
             ti.size = size
-            ti.mode = 0o755 if (name == kv["exec"] or os.access(p, os.X_OK) and open(p, "rb").read(4) in (b"\x7fELF", b"#!/b")) else 0o644
+            ti.mode = 0o755 if name not in extra and (name == kv["exec"] or os.access(p, os.X_OK) and open(p, "rb").read(4) in (b"\x7fELF", b"#!/b")) else 0o644
             with open(p, "rb") as f:
                 t.addfile(ti, f)
     os.replace(tmp, out)

@@ -1,6 +1,7 @@
 #!/bin/bash
 # hibywall: estatico (musl, soft-float) con libjpeg 9f (solo decodificador) y stb_image
 set -e
+. "$(dirname "$0")/fetch.sh"; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 J=~/hiby/third/jpeg-9f
 cat > $J/jconfig.h <<'EOF'
 #define HAVE_PROTOTYPES

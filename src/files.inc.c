@@ -268,23 +268,26 @@ static void fs_go(const char *path, int dir)
 }
 
 /* ------------------------------------------------------------------ hojas de acciones */
+static int wrap_cw;   /* definida en settings_app.inc.c: centra las lineas de draw_wrapped */
 static int action_sheet(const char *title, const char **opts, int n, int destructive_idx)
 {
     static uint16_t base[W * H]; memcpy(base, fr0, sizeof base);
-    int bh = 46, sh = 40 + n * bh + 12 + bh + 16, y0 = H - sh;
+    /* el titulo se parte en las lineas que haga falta (avisos largos): la cabecera crece con el */
+    int th = draw_wrapped(0, 0, 0, W - 48, title, 12, 0, 16, 0); if (th < 16) th = 16;
+    int hh = 24 + th;
+    int bh = 46, sh = hh + n * bh + 12 + bh + 16, y0 = H - sh;
     for (int s = 0; s <= 6; s++) {
         float e = (float)ease_out(s / 6.0); int yy = y0 + (int)((1 - e) * sh);
         dim_buf(fr0, base, W * H, 32 - (int)(14 * e));
-        fill_rrect(fr0, 8, yy, W - 16, 40 + n * bh, 13, rgb(44, 44, 48), 250);
-        int tw = tw_n(title, 12, -1); if (tw > W - 40) tw = W - 40;
-        draw_text(fr0, (W - tw) / 2, yy + 25, title, 12, rgb(142, 142, 147), W - 40, 0, H);
+        fill_rrect(fr0, 8, yy, W - 16, hh + n * bh, 13, rgb(44, 44, 48), 255);   /* opaca: con 250 el redondeo en RGB565 dejaba ver la lista de debajo */
+        wrap_cw = W - 48; draw_wrapped(fr0, 24, yy + 13, W - 48, title, 12, rgb(142, 142, 147), 16, 1); wrap_cw = 0;
         for (int i = 0; i < n; i++) {
-            int by = yy + 40 + i * bh;
+            int by = yy + hh + i * bh;
             for (int x = 8; x < W - 8; x++) if (by < H) fr0[by * W + x] = rgb(64, 64, 68);
             int w = tw_n(opts[i], 17, -1);
             draw_text(fr0, (W - w) / 2, by + 29, opts[i], 17, i == destructive_idx ? rgb(255, 69, 58) : rgb(10, 132, 255), 0, 0, H);
         }
-        int cy = yy + 40 + n * bh + 12;
+        int cy = yy + hh + n * bh + 12;
         fill_rrect(fr0, 8, cy, W - 16, bh, 13, rgb(44, 44, 48), 255);
         int w = tw_n(tr("Cancelar"), 17, -1);
         draw_text(fr0, (W - w) / 2, cy + 29, tr("Cancelar"), 17, rgb(10, 132, 255), 0, 0, H);
@@ -297,7 +300,7 @@ static int action_sheet(const char *title, const char **opts, int n, int destruc
     for (;;) {
         if (!read_pkt(&p, 300) || !p.down) continue;
         int y = p.y; while (cur_down && read_pkt(&p, 3000)) {}
-        if (y >= y0 + 40 && y < y0 + 40 + n * bh) return (y - y0 - 40) / bh;
+        if (y >= y0 + hh && y < y0 + hh + n * bh) return (y - y0 - hh) / bh;
         return -1;
     }
 }
@@ -555,7 +558,7 @@ static void text_editor(const char *path, const char *name)
             tx_redraw(fr0, -1); present(); continue;
         }
         int sx = p.x, sy = p.y, top0 = tx_top, moved = 0;
-        while (cur_down && read_pkt(&p, 40)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             if (abs(cur_y - sy) > 8) moved = 1;
             if (moved && sy > 86) { tx_top = top0 - (cur_y - sy) / 20; if (tx_top < 0) tx_top = 0; if (tx_top > tx_nl - 1) tx_top = tx_nl - 1; tx_redraw(fr0, -1); present(); }
         }

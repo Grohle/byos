@@ -679,7 +679,7 @@ static int playlists(sqlite3 *db)
 {
     sqlite3_stmt *st; int n = 0;
     if (!sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM COLLECT_TABLE", -1, &st, 0)) { if (sqlite3_step(st) == SQLITE_ROW) n = sqlite3_column_int(st, 0); sqlite3_finalize(st); }
-    printf("P\tfav\t-\t%s\t%d\n", L3("Favoritos", "Favourites", "Favoris"), n);
+    printf("P\tfav\t-\t%s\t%d\n", L3("Favoritos", "Favorites", "Favoris"), n);
     if (!sqlite3_prepare_v2(db, "SELECT id, name, cn FROM PLAYLIST_TABLE ORDER BY name", -1, &st, 0)) {
         while (sqlite3_step(st) == SQLITE_ROW) {
             char t[32]; snprintf(t, sizeof t, "list_tb_%d", sqlite3_column_int(st, 0));

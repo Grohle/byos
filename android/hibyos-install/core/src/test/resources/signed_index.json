@@ -1,0 +1,9 @@
+{
+ "format": 1,
+ "product": "hibyos-install-bundle",
+ "hibyos_version": "9.9.9",
+ "url": "https://example.invalid/releases/download/v9.9.9/hibyos-install-bundle-9.9.9.zip",
+ "size": 12345,
+ "sha256": "abababababababababababababababababababababababababababababababab",
+ "signature": "ed25519:33085315aa3e34c04254d98800e4667ba04305687dae0a02d387b01d88506c860ed23ba8c85f44d03a0b631d5e40bca612341149aeab7fcdc81406d9d6a3ab07"
+}

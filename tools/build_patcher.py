@@ -2,13 +2,23 @@
 """
 Packages the HiByOS patcher (tools/hibyos_patcher.py).
 
-  python tools/build_patcher.py            (Windows: builds the .exe too)
+  python tools/build_patcher.py [--out DIR]   (Windows: builds the .exe too)
 
-Produces in out/patcher/:
+Produces in out/patcher/ (or DIR):
   HiByOS-Patcher.exe                        (Windows only, PyInstaller one-file console app)
-  HiByOS-Patcher-<version>-windows.zip      (the .exe + README.txt)
+  HiByOS-Patcher-<version>-windows.zip      (the .exe + README.txt + licenses/)
   HiByOS-Patcher-<version>-python.zip       (pure Python version for macOS/Linux/Windows:
-                                             patcher modules + overlay + bundled pycdlib)
+                                             patcher modules + overlay + bundled pycdlib
+                                             + licenses/)
+
+What is inside: our own files (overlay/), the patcher code and tools/vendor_edits.json, the
+list of edits that the patcher applies to the official files it changes. No file of the
+official firmware and no text of one: tools/build.py refuses to build if overlay/ holds a
+non-image file that would replace an official file.
+
+Both zips carry licenses/ (THIRD_PARTY_NOTICES.md and the licence texts of the third-party
+components inside that artefact, chosen by tools/notices.py). Publish the zips: the bare
+HiByOS-Patcher.exe has no room for the notices next to it.
 
 If PyInstaller or pycdlib are missing, a private virtual environment is created in
 out/patcher/venv (out/ is not tracked by git) and the script re-runs itself there.
@@ -24,7 +34,12 @@ import zipfile
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(REPO, "tools")
 OUT = os.path.join(REPO, "out", "patcher")
-MODULES = ["hibyos_patcher.py", "build.py", "squashfs.py", "lzo1x.py"]
+sys.path.insert(0, TOOLS)
+import notices  # noqa: E402
+
+MODULES = ["hibyos_patcher.py", "build.py", "vendor_edits.py", "squashfs.py", "lzo1x.py"]
+# data files the modules read from their own folder (in the .exe: the PyInstaller bundle root)
+DATA = ["vendor_edits.json"]
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
 
 README_WIN = """HiByOS patcher {v} for Windows
@@ -46,6 +61,10 @@ HiBy R3 II (2025) firmware v1.3 into the HiByOS firmware, on your computer.
 The patcher only accepts the exact official file (md5 0d16d09c1458dd2f2cdaf38d0047917a).
 It checks every step and writes nothing if anything is unexpected.
 Windows SmartScreen may warn because the program is not signed: "More info" > "Run anyway".
+
+Third-party software: this program contains the Python runtime, the PyInstaller bootloader,
+pycdlib and a few small programs that it adds to the firmware. Their notices and licence
+texts are in the "licenses" folder; start with the file THIRD_PARTY_NOTICES.md in it.
 """
 
 README_PY = """HiByOS patcher {v} (Python version: macOS, Linux, Windows)
@@ -71,6 +90,10 @@ vendor/pycdlib-LICENSE.txt), nothing to install.
 
 The patcher only accepts the exact official file (md5 0d16d09c1458dd2f2cdaf38d0047917a).
 It checks every step and writes nothing if anything is unexpected.
+
+Third-party software: vendor/pycdlib and a few small programs in overlay/ that the patcher
+adds to the firmware. Their notices and licence texts are in the licenses folder, starting
+with licenses/THIRD_PARTY_NOTICES.md.
 """
 
 
@@ -88,7 +111,7 @@ def ensure_tools():
         pass
     if os.environ.get("HIBYOS_PATCHER_VENV"):
         sys.exit("PyInstaller/pycdlib still missing inside the build venv")
-    venv = os.path.join(OUT, "venv")
+    venv = os.path.join(REPO, "out", "patcher", "venv")
     py = os.path.join(venv, "Scripts", "python.exe") if os.name == "nt" else os.path.join(venv, "bin", "python")
     if not os.path.exists(py):
         print("== Creating", venv)
@@ -114,6 +137,12 @@ def add_file(z, path, arc, data=None):
     z.writestr(zi, data if data is not None else open(path, "rb").read())
 
 
+def add_notices(z, artefact, arc):
+    """THIRD_PARTY_NOTICES.md + the licence texts of `artefact` (tools/notices.py) as arc/<name>."""
+    for rel in notices.files_for(artefact):
+        add_file(z, os.path.join(REPO, *rel.split("/")), f"{arc}/{os.path.basename(rel)}")
+
+
 def pycdlib_files():
     import pycdlib
     pkg = os.path.dirname(pycdlib.__file__)
@@ -126,9 +155,17 @@ def pycdlib_files():
 
 
 def main():
+    global OUT
+    if len(sys.argv) == 3 and sys.argv[1] == "--out":
+        OUT = os.path.abspath(sys.argv[2])
+    elif len(sys.argv) != 1:
+        sys.exit(__doc__)
     ensure_tools()
     v = version()
     os.makedirs(OUT, exist_ok=True)
+    problems = notices.check()
+    if problems:
+        sys.exit("ERROR: third-party notices incomplete:\n  " + "\n  ".join(problems))
     print("HiByOS patcher", v)
 
     # ---- pure Python zip
@@ -137,9 +174,10 @@ def main():
     pkg, lic = pycdlib_files()
     with zipfile.ZipFile(pyzip, "w") as z:
         add_file(z, None, f"{top}/README.txt", README_PY.format(v=v).encode())
-        for m in MODULES:
+        for m in MODULES + DATA:
             add_file(z, os.path.join(TOOLS, m), f"{top}/{m}")
         add_tree(z, os.path.join(REPO, "overlay"), f"{top}/overlay")
+        add_notices(z, "patcher-python", f"{top}/licenses")
         for d, dirs, names in os.walk(pkg):
             dirs[:] = sorted(x for x in dirs if x != "__pycache__")
             for n in sorted(names):
@@ -162,9 +200,11 @@ def main():
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--console",
            "--name", "HiByOS-Patcher", "--distpath", OUT, "--workpath", work, "--specpath", work,
            "--paths", TOOLS, "--hidden-import", "build", "--hidden-import", "squashfs",
-           "--hidden-import", "lzo1x", "--exclude-module", "tkinter",
-           "--add-data", os.path.join(REPO, "overlay") + os.pathsep + "overlay",
-           os.path.join(TOOLS, "hibyos_patcher.py")]
+           "--hidden-import", "lzo1x", "--hidden-import", "vendor_edits", "--exclude-module", "tkinter",
+           "--add-data", os.path.join(REPO, "overlay") + os.pathsep + "overlay"]
+    for d in DATA:
+        cmd += ["--add-data", os.path.join(TOOLS, d) + os.pathsep + "."]
+    cmd.append(os.path.join(TOOLS, "hibyos_patcher.py"))
     print("+", " ".join(cmd))
     subprocess.check_call(cmd)
     exe = os.path.join(OUT, "HiByOS-Patcher.exe")
@@ -173,6 +213,7 @@ def main():
         add_file(z, exe, f"HiByOS-Patcher-{v}/HiByOS-Patcher.exe")
         add_file(z, None, f"HiByOS-Patcher-{v}/README.txt",
                  README_WIN.format(v=v).replace("\n", "\r\n").encode())
+        add_notices(z, "patcher-windows", f"HiByOS-Patcher-{v}/licenses")
     print("->", exe, os.path.getsize(exe), "bytes")
     print("->", winzip, os.path.getsize(winzip), "bytes")
 

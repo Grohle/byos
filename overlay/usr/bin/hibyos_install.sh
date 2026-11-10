@@ -1,5 +1,5 @@
 #!/bin/sh
-# HIBYOS_SYS_REV=1
+# HIBYOS_SYS_REV=2
 # HiByOS: instala/actualiza en /usr/data/hibymod el payload de la SD (HiByOS/payload).
 # El rootfs no tiene sitio: shell, binarios, libreria de pantalla y tema viven en la
 # particion de datos (UBIFS, sobrevive al flasheo). Ver docs/INSTALLER.md.
@@ -20,6 +20,11 @@
 # wall_custom.raw, power.conf, audio.conf, apps/, appdata/, archivos/, fondos/, espejo del
 # inicio...) no esta en el payload y no se toca; la base de datos de musica tampoco.
 # Rutas reemplazables con HIBYOS_* solo para la simulacion en el PC (tools/simtest_install.sh).
+#
+# Files that are an edited copy of a file of the official firmware (screen layouts) are not
+# in the payload: derive/ holds only our changes and the file is rebuilt here from the copy
+# in the player's own firmware, then checked against its SHA-256 (see "derived files" below
+# and docs/INSTALLER.md).
 
 HM=${HIBYOS_HM:-/usr/data/hibymod}
 DATA=${HIBYOS_DATA:-/usr/data}
@@ -39,6 +44,7 @@ LOG=$SDM/HiByOS/install.log
 TH=$HM/theme
 ALLSUBS="layout/theme2 layout/theme3 litegui/theme2 litegui/theme3"
 PRISTINE=$TMPD/rootfs_ro
+DRV=$TMPD/derive
 
 sd_ok() { grep -qE "$SD_RE" $MOUNTS 2>/dev/null; }
 
@@ -176,11 +182,111 @@ mirror_apply()
     log "inicio espejo activado"
 }
 
+# ------------------------------------------------------------------ derived files (derive/)
+# The payload carries no text of the official firmware. A file that is an edited copy of an
+# official one comes as a recipe: derive/INDEX has one line per accepted starting file
+#     <req|opt> <payload path> <sha256 of the result> <base> <sha256 of the base> <strip> <id>
+# where <base> is a path inside the firmware (usr/resource/... or usr/bin/...), <strip> = 1
+# removes every CR from it first, and derive/<id>.ops lists the pieces of the result:
+#     c <offset> <length>   bytes of the base      a <offset> <length>   bytes of derive/<id>.add
+# (<id> "-" = the base already is the result). The first line whose base has the stated
+# SHA-256 is used, and the result must have the stated SHA-256 or it is thrown away.
+# Nothing is written outside $DRV here. A "req" file that cannot be built stops the
+# installation before anything is changed; an "opt" one is skipped and logged, and the
+# firmware's own file stays in use.
+sha_of() { sha256sum < "$1" 2>/dev/null | cut -d' ' -f1; }
+src_of() { if [ -f "$DRV/files/$1" ]; then echo "$DRV/files/$1"; else echo "$PL/$1"; fi; }
+drv_base()
+{
+    case "$1" in
+        usr/resource/*) echo "$STOCK/${1#usr/resource/}" ;;
+        usr/bin/*)      echo "$ROOTBIN/${1#usr/bin/}" ;;
+        *)              echo "" ;;
+    esac
+}
+
+# base strip id sha256 -> $DRV/out.tmp (0 only if it has that sha256)
+derive_one()
+{
+    if [ "$3" = - ]; then
+        cp "$1" $DRV/out.tmp && [ "$(sha_of $DRV/out.tmp)" = "$4" ]
+        return $?
+    fi
+    ops=$PL/derive/$3.ops; add=$PL/derive/$3.add
+    [ -f $ops ] && [ -f $add ] || return 1
+    src=$1
+    if [ "$2" = 1 ]; then
+        tr -d '\r' < "$1" > $DRV/base.tmp || return 1
+        src=$DRV/base.tmp
+    fi
+    # whole files in memory (they are small texts with no byte 1), pieces by position
+    LC_ALL=C awk -v B="$src" -v A="$add" '
+        BEGIN { RS = "\001"; getline b < B; getline a < A; RS = "\n" }
+        $1 == "c" { printf "%s", substr(b, $2 + 1, $3) }
+        $1 == "a" { printf "%s", substr(a, $2 + 1, $3) }' $ops > $DRV/out.tmp 2>/dev/null
+    [ "$(sha_of $DRV/out.tmp)" = "$4" ] && return 0
+    # same thing byte by byte with dd (slow; only if this awk did not do it right)
+    while read -r k o n; do
+        case "$k" in
+            c) dd if="$src" bs=1 skip=$o count=$n 2>/dev/null ;;
+            a) dd if="$add" bs=1 skip=$o count=$n 2>/dev/null ;;
+        esac
+    done < $ops > $DRV/out.tmp
+    [ "$(sha_of $DRV/out.tmp)" = "$4" ]
+}
+
+# builds every derived file in $DRV/files/<payload path>; $DRV/list = their MANIFEST-like lines
+derive_prepare()
+{
+    rm -rf $DRV; mkdir -p $DRV/files || return 1
+    : > $DRV/list; : > $DRV/seen
+    [ -f $PL/derive/INDEX ] || return 0
+    while read -r kind dest want base bsum strip id rest; do
+        case "$kind" in req|opt) ;; *) continue ;; esac
+        [ -n "$id" ] && [ -n "$(dest_of "$dest")" ] || continue
+        case "$dest $base $id" in *..*) continue ;; esac
+        [ -f "$PL/$dest" ] || [ -f "$DRV/files/$dest" ] && continue
+        b=$(drv_base "$base")
+        [ -n "$b" ] && [ -f "$b" ] && [ "$(sha_of "$b")" = "$bsum" ] || continue
+        if derive_one "$b" "$strip" "$id" "$want" && mkdir -p "$(dirname "$DRV/files/$dest")" && mv -f $DRV/out.tmp "$DRV/files/$dest"; then
+            echo "derived  $dest" >> $DRV/list
+        else
+            log "derive: $dest: recipe $id did not give the expected file"
+        fi
+    done < $PL/derive/INDEX
+    # what no line could build: the copy already installed if it is the right one; if not,
+    # "req" stops the installation and "opt" is left out
+    bad=0
+    while read -r kind dest want rest; do
+        case "$kind" in req|opt) ;; *) continue ;; esac
+        d=$(dest_of "$dest"); [ -n "$d" ] || continue
+        case "$dest" in *..*) continue ;; esac
+        [ -f "$PL/$dest" ] || [ -f "$DRV/files/$dest" ] && continue
+        grep -qxF "$dest" $DRV/seen && continue
+        echo "$dest" >> $DRV/seen
+        if [ -f "$HM/$d" ] && [ "$(sha_of "$HM/$d")" = "$want" ] && mkdir -p "$(dirname "$DRV/files/$dest")" && cp "$HM/$d" "$DRV/files/$dest"; then
+            echo "derived  $dest" >> $DRV/list
+            log "derive: $dest: firmware file not recognised, the copy already installed is kept"
+        elif [ "$kind" = req ]; then
+            log "ERROR: derive: $dest cannot be built: the file of this firmware is not a known version"
+            bad=1
+        else
+            log "derive: $dest skipped: the file of this firmware is not a known version (the firmware's own file stays in use)"
+        fi
+    done < $PL/derive/INDEX
+    rm -f $DRV/out.tmp $DRV/base.tmp
+    [ $bad = 0 ]
+}
+
 # ------------------------------------------------------------------ instalacion
+# install_failed: version that failed + revision of the installer that failed (a newer
+# installer tries again: it may know how to install what the old one could not)
+MYREV=$(sys_rev "$0")
 fail()
 {
     log "ERROR: $*"
-    echo "$NEWV" > $HM/install_failed
+    { echo "$NEWV"; echo "rev $MYREV"; } > $HM/install_failed
+    rm -rf $DRV
     stock_close
     sync
     return 1
@@ -209,16 +315,21 @@ do_install()
     (cd $PL && md5sum -c MANIFEST.md5 >/dev/null 2>&1) || { fail "payload danado o incompleto en la SD (vuelve a copiar la carpeta HiByOS)"; return 1; }
     mkdir -p $HM || { fail "no puedo crear $HM"; return 1; }
 
+    # derived files (derive/): built and checked in $DRV before anything is changed
+    stock_open || { fail "tema de fabrica no disponible"; return 1; }
+    derive_prepare || { fail "this payload does not fit the firmware of this player (see the lines above); nothing was changed"; return 1; }
+    # everything to install: the files of the payload + the derived ones
+    awk 'NF >= 2' $PL/MANIFEST.md5 > $DRV/all && cat $DRV/list >> $DRV/all || { fail "no puedo escribir en $TMPD"; return 1; }
+
     # espacio: ficheros nuevos + el mayor (copia .new) + tema de fabrica si falta + 1 MB
     need=1024; big=0
     while read -r sum f; do
         d=$(dest_of $f); [ -n "$d" ] || continue
-        sz=$(( ($(wc -c < $PL/$f) + 1023) / 1024 ))
+        sz=$(( ($(wc -c < "$(src_of $f)") + 1023) / 1024 ))
         [ $sz -gt $big ] && big=$sz
         [ -e $HM/$d ] || need=$((need + sz))
-    done < $PL/MANIFEST.md5
-    stock_open || { fail "tema de fabrica no disponible"; return 1; }
-    SUBS=$(cd $PL/theme && for s in $ALLSUBS; do [ -d $s ] && printf '%s ' $s; done)
+    done < $DRV/all
+    SUBS=$(for s in $ALLSUBS; do if [ -d $PL/theme/$s ] || [ -d $DRV/files/theme/$s ]; then printf '%s ' $s; fi; done)
     for s in $SUBS; do
         [ -d $TH/$s ] || need=$((need + $(du -sk $STOCK/$s | cut -f1)))
     done
@@ -235,7 +346,7 @@ do_install()
     while read -r sum f; do
         d=$(dest_of $f)
         case "$d" in ''|payload_mirror/*) ;; *) echo "$d" >> $TMPD/newfiles ;; esac
-    done < $PL/MANIFEST.md5
+    done < $DRV/all
 
     # 1. tema: copia completa de fabrica de cada sub del payload + nuestros ficheros
     for s in $SUBS; do
@@ -258,11 +369,11 @@ do_install()
     while read -r sum f; do
         d=$(dest_of $f); [ -n "$d" ] || continue
         mode=; case "$f" in bin/hibymod_disp.so|bin/cacert.pem|sys/*) mode=644 ;; bin/*) mode=755 ;; esac
-        put "$PL/$f" "$HM/$d" $mode || { fail "no se pudo copiar $f"; return 1; }
-    done < $PL/MANIFEST.md5
+        put "$(src_of $f)" "$HM/$d" $mode || { fail "no se pudo copiar $f"; return 1; }
+    done < $DRV/all
     # obsoletos del payload_mirror
     (cd $HM/payload_mirror 2>/dev/null && find . -type f) | while read -r f; do
-        [ -f "$PL/mirror/$f" ] || rm -f "$HM/payload_mirror/$f"
+        [ -f "$PL/mirror/$f" ] || [ -f "$DRV/files/mirror/$f" ] || rm -f "$HM/payload_mirror/$f"
     done
 
     # 3. inicio de fabrica sin launcher (hiby_player.sh lo usa si el launcher no arranca):
@@ -271,7 +382,7 @@ do_install()
     for f in $PL/theme/litegui/theme3/launcher/*.png; do
         [ -f "$f" ] && { put "$f" $HM/mirror_bak/$(basename "$f") || { fail "mirror_bak"; return 1; }; }
     done
-    put $PL/theme/layout/theme3/launcher/hiby_launcher_apps.view $HM/launcher_view.bak || { fail "launcher_view.bak"; return 1; }
+    put "$(src_of theme/layout/theme3/launcher/hiby_launcher_apps.view)" $HM/launcher_view.bak || { fail "launcher_view.bak"; return 1; }
     rm -f $HM/mirror_on
     mirror_apply || { fail "no se pudo aplicar el inicio espejo"; return 1; }
 
@@ -295,6 +406,7 @@ do_install()
     mv -f $TMPD/newfiles $HM/payload_files
     echo "$SUBS" > $HM/payload_subs
     rm -f $HM/install_nowait
+    rm -rf $DRV
     echo "$NEWV" > $HM/payload_version
     sync
     log "HiByOS $NEWV instalado ($(du -sk $HM/shell $HM/preload $TH 2>/dev/null | awk '{s+=$1} END{print s}') KB)"
@@ -307,7 +419,8 @@ pending()
     v=$(sd_ver)
     [ -n "$v" ] || return 1
     [ "$v" = "$(installed_ver)" ] && return 1
-    if [ "$v" = "$(ver_of $HM/install_failed)" ]; then
+    fr=$(sed -n '2s/^rev //p' $HM/install_failed 2>/dev/null)
+    if [ "$v" = "$(ver_of $HM/install_failed)" ] && [ "${fr:-1}" = "$MYREV" ]; then
         [ -f $TMPD/install_failed_logged ] || { log "HiByOS $v ya fallo antes: no se reintenta (hibyos_install.sh install para forzar)"; touch $TMPD/install_failed_logged; }
         return 1
     fi

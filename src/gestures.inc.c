@@ -224,7 +224,7 @@ static int sw_loop(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, i
         if (ty >= 456) { while (cur_down && read_pkt(&p, 1000)) {} res = SW_HOME; break; }
         for (int i = 0; i < ncard; i++) { int x, y, w, h; card_geom(i, off, CARD_S, 0, &x, &y, &w, &h); if (tx >= x && tx < x + w && ty >= y - 30 && ty < y + h) hit = i; }
         int closable = hit == 0 && has_app;
-        while (cur_down && read_pkt(&p, 30)) {
+        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             int dx = cur_x - tx, dy = cur_y - ty;
             if (!mode && (abs(dx) > 10 || abs(dy) > 10)) mode = abs(dx) >= abs(dy) ? 1 : (dy < 0 && hit >= 0 ? 2 : 3);
             double t = now_ms(); if (t > lt) { vx = 0.6 * vx + 0.4 * (cur_x - lx) / (t - lt); vy = 0.6 * vy + 0.4 * (cur_y - ly) / (t - lt); lx = cur_x; ly = cur_y; lt = t; }

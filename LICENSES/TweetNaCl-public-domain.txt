@@ -1,0 +1,20 @@
+TweetNaCl - public domain statement.
+
+TweetNaCl has no licence file. Its home page, https://tweetnacl.cr.yp.to (read on
+2026-11-10), states:
+
+   "TweetNaCl is a self-contained public-domain C library, so it can easily be
+   integrated into applications."
+
+Contributors (alphabetical order, as listed on that page):
+   Daniel J. Bernstein, University of Illinois at Chicago and Technische
+      Universiteit Eindhoven
+   Bernard van Gastel, Radboud Universiteit Nijmegen
+   Wesley Janssen, Radboud Universiteit Nijmegen
+   Tanja Lange, Technische Universiteit Eindhoven
+   Peter Schwabe, Radboud Universiteit Nijmegen
+   Sjaak Smetsers, Radboud Universiteit Nijmegen
+
+HiByOS uses the Ed25519 field arithmetic and group law of tweetnacl.c, adapted,
+for signature verification only (src/ota_net.inc.c). The latest published
+version of TweetNaCl is 20140427.

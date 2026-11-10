@@ -11,6 +11,7 @@ if [ "$1" = pc ]; then
 fi
 O=${1:-$R/out/agent_set}
 mkdir -p "$O"
+. "$(dirname "$0")/wsl/fetch.sh"; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 ~/hiby/venv/bin/python -m ziglang cc -target mipsel-linux-musleabihf -mcpu=mips32r2 -O2 -static -s \
   -I$S -Wall -Wextra -Wno-unused-function -o "$O/hibysetctl" $S/hibysetctl.c
 ls -la "$O/hibysetctl"

@@ -1,0 +1,7 @@
+# container written by tools/build.py write_upt() (pycdlib) from generated files
+epoch 1767225600
+utc_offset 3600
+size 2078720
+sha256 ab2acf9c8e5390995a25639dcdd4742a848c09b3b7e79e163e7fa6aa95b50661
+files 10
+names_sha256 9d41acf41f97442670e2fed560504f447b89c389b3588658c9ad183bf5fa7965

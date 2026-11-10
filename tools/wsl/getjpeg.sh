@@ -1,6 +1,8 @@
 set -e
+. "$(dirname "$0")/fetch.sh"
 cd ~/hiby/third
-[ -f jpegsrc.v9f.tar.gz ] || curl -sSfL -o jpegsrc.v9f.tar.gz https://www.ijg.org/files/jpegsrc.v9f.tar.gz
+# libjpeg 9f (Independent JPEG Group), pinned by SHA-256
+fetch_verify https://www.ijg.org/files/jpegsrc.v9f.tar.gz 04705c110cb2469caa79fb71fba3d7bf834914706e9641a4589485c1f832565b jpegsrc.v9f.tar.gz
 tar xzf jpegsrc.v9f.tar.gz
 cd jpeg-9f
 cp jconfig.txt jconfig.h 2>/dev/null || true

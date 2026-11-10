@@ -3,6 +3,7 @@
 # Antes: bash apps/netsurf-hiby/build/build_hf.sh (genera ~/hiby/nshf/.../netsurf/nsfb)
 set -e
 H=/mnt/c/Users/alber/Downloads/Hiby/hibymod
+. $H/tools/wsl/fetch.sh; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 A=$H/apps/navegador
 N=~/hiby/nshf/netsurf-all-3.11/netsurf
 ST=~/hiby/build/apps/navegador

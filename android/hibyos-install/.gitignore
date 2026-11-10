@@ -1,0 +1,9 @@
+.gradle/
+build/
+*/build/
+local.properties
+.kotlin/
+*.jks
+*.keystore
+keystore.properties
+/app/src/main/assets/hibyos-bundle.zip

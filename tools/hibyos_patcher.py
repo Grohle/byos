@@ -4,7 +4,8 @@ HiByOS patcher: turns YOUR copy of the official HiBy R3 II (2025) firmware v1.3
 (r3ii_2025.upt) into the HiByOS firmware, on your own computer.
 
 HiByOS does not redistribute HiBy's firmware. This program only contains the HiByOS
-files (the "overlay") and the list of changes; it modifies your copy locally.
+files (the "overlay") and the list of changes (tools/build.py and tools/vendor_edits.json,
+which store our changes and none of HiBy's text); it modifies your copy locally.
 
 Pure Python, no external tools, no root/admin rights:
   Windows:      HiByOS-Patcher.exe path\\to\\r3ii_2025.upt   (or drag the .upt onto the .exe)
@@ -38,6 +39,7 @@ for _p in (os.path.join(BASE, "vendor"), os.path.join(HERE, "vendor")):
 try:
     import build                       # tools/build.py: .upt format + patch definitions
     import squashfs
+    import vendor_edits                # edits to HiBy's own files, stored without HiBy's text
 except ImportError as e:               # pragma: no cover
     print("ERROR: a required module is missing:", e)
     print("On macOS/Linux install it with:  python3 -m pip install pycdlib")
@@ -119,7 +121,7 @@ def normalize_like_build_py(root):
     root.uid = root.gid = 0
 
 
-def apply_overlay(root, overlay, mtime):
+def apply_overlay(root, overlay, mtime, edited=()):
     count = 0
     for d, dirs, names in os.walk(overlay):
         dirs.sort()
@@ -139,6 +141,10 @@ def apply_overlay(root, overlay, mtime):
                 node = child
             uid = gid = 0
             old = node.children.get(parts[-1])
+            if old is not None or rel.replace(os.sep, "/") in edited:
+                why = build.overlay_replace_ok(rel, edited)
+                if why:
+                    raise PatchError(why)
             if old is not None:
                 if old.kind != "file":
                     raise PatchError(f"overlay {rel}: replaces a {old.kind}, not supported")
@@ -148,6 +154,28 @@ def apply_overlay(root, overlay, mtime):
             node.children[parts[-1]] = new             # breaks a hard link, like rm + create
             count += 1
     return count
+
+
+def apply_vendor_edits(img, root, edits, mtime, log):
+    """tools/vendor_edits.json: rebuild the HiByOS version of a few official files from the copy
+    in this firmware. The new file replaces the official one exactly like an overlay file
+    (new inode, original mode and owner)."""
+    for e in edits:
+        rel = e["path"]
+        parent = lookup(root, os.path.dirname(rel)) if "/" in rel else root
+        name = os.path.basename(rel).encode()
+        old = parent.children.get(name) if parent is not None and parent.kind == "dir" else None
+        if old is None or old.kind != "file":
+            raise PatchError(f"vendor edit {rel}: not a regular file in the official firmware")
+        try:
+            data = vendor_edits.apply(e, content(img, old))
+        except vendor_edits.EditError as err:
+            raise PatchError(f"vendor edit: {err}")
+        new = squashfs.Inode("file", old.mode, old.uid, old.gid, mtime)
+        new.set_data(data)
+        parent.children[name] = new
+        log(f"edit: {rel}")
+    return len(edits)
 
 
 def write_in_place(img, root, rel, data):
@@ -274,8 +302,14 @@ def patch(upt_path, out_dir=None, overlay=None, build_id=None):
 
     step("Applying the HiByOS changes")
     normalize_like_build_py(root)
-    n = apply_overlay(root, overlay, img.mtime)
+    try:
+        edits = vendor_edits.load()
+    except (OSError, ValueError, KeyError, vendor_edits.EditError) as e:
+        raise PatchError(f"cannot read the list of edits (vendor_edits.json): {e}")
+    n = apply_overlay(root, overlay, img.mtime, {e["path"] for e in edits})
     info(f"{n} HiByOS files added or replaced")
+    n = apply_vendor_edits(img, root, edits, img.mtime, lambda m: None)
+    info(f"{n} official files edited in place (start-up scripts and screen layouts)")
     bid = build_id or uuid.uuid4().hex
     node = lookup(root, build.BUILD_ID_PATH)
     if node is None:
