@@ -1,8 +1,8 @@
 /* store.inc.c - "Apps": instalador de paquetes .hpk de la SD (estilo App Store) y ejecucion
- * de apps externas. Formato y garantias del instalador: docs/FORMATO_APPS.md, hpk.inc.c.
+ * de apps externas. Formato y garantias del instalador: docs/APP_FORMAT.md, hpk.inc.c.
  *
  * Tienda con repositorios (index.json por HTTPS con hibynet) y apps instaladas en el HiBy o en la
- * tarjeta SD: docs/TIENDA.md.
+ * tarjeta SD: docs/STORE.md.
  *
  * Al abrir una app externa: el reproductor se retiene (su pantalla queda quieta, el audio
  * sigue), la app dibuja en /dev/fb0 y lee la tactil de un dispositivo virtual que alimenta
@@ -254,7 +254,7 @@ static void app_backup(const struct hpk_info *in)
  * con el mismo instalador atomico pero con la raiz en SD_APPROOT (SD/HiByOS/apps/<id>/), y en
  * /usr/data/hibymod/apps/<id>/ queda un "talon" pequeno: manifest.ini + icon_*.ov + sd_location
  * (ruta real). Asi el launcher y la lista de instaladas no cambian; run_ext_app() lanza desde la
- * ruta real. Sus datos (appdata/<id>) siguen en /usr/data. Ver docs/TIENDA.md. */
+ * ruta real. Sus datos (appdata/<id>) siguen en /usr/data. Ver docs/STORE.md. */
 #define SD_APPROOT SD_ROOT "/HiByOS"
 static int sd_present(void)
 {
@@ -437,7 +437,7 @@ static void installed_detail(int i)
 }
 
 /* ================================================================== tienda con repositorios
- * Un repositorio es la URL de un index.json (formato en docs/TIENDA.md). Se descarga con
+ * Un repositorio es la URL de un index.json (formato en docs/STORE.md). Se descarga con
  * hibynet a cache/store/<hash>.json; los iconos (PNG pequenos) a cache/store/icons/ y los .hpk a
  * cache/store/dl/ (se verifica sha256 y tamano antes de instalar y se borra despues).
  * Todo lo de red va en procesos hibynet en segundo plano: la interfaz nunca se bloquea. */

@@ -1,7 +1,7 @@
 /* hpk.h - paquetes de apps de hibymod (.hpk) : interfaz del instalador.
  *
  * Un .hpk es un tar POSIX ustar sin comprimir con manifest.ini + icon.png + ficheros de la app
- * (ver docs/FORMATO_APPS.md). La implementacion esta en hpk.inc.c (se incluye en hibyshell.c, o
+ * (ver docs/APP_FORMAT.md). La implementacion esta en hpk.inc.c (se incluye en hibyshell.c, o
  * en el arnes de pruebas de PC). Todo devuelve 0 si va bien o un codigo negativo -HPK_E_*;
  * los textos son CLAVES ("err.traversal") que se traducen con hpk_msg(clave, idioma).
  *

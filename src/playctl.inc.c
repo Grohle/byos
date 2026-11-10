@@ -1,5 +1,5 @@
 /* playctl.inc.c - controlar la reproduccion del reproductor de HiBy desde el shell.
- * Ver docs/investigacion_reproduccion.md.
+ * Ver docs/research_playback.md.
  *
  * Como: se escriben pulsaciones en los nodos evdev de los botones fisicos. Un write() en
  * /dev/input/eventN inyecta el evento en ese dispositivo (input_inject_event) y le llega a
@@ -13,7 +13,7 @@
  *   pc_play_list(paths, n, index, title, mode)  reproduce una lista con el motor de fabrica
  *   pc_play_file(path)                          = lista de 1
  *   pc_list_send(...) / pc_list_poll(id, &res)  lo mismo sin bloquear (para el bucle de la UI)
- *     -> necesitan hibymod_disp.so v6 (orden 'L'); ver docs/investigacion_reproducir_lista.md
+ *     -> necesitan hibymod_disp.so v6 (orden 'L'); ver docs/research_play_list.md
  * pc_play/pc_pause necesitan nowplaying.inc.c (incluirlo antes) para saber el estado. */
 #include <errno.h>
 #include <stdio.h>

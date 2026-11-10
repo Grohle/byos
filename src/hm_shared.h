@@ -23,7 +23,7 @@
  *  'R' devolver (si venia de captura, se muestra frames[1])
  *  'O' redibujar la capa superpuesta sobre lo visible
  *  'L' (v6) reproducir la lista pedida en /tmp/hibymod_playreq; respuesta en /tmp/hibymod_playres
- *      (la atiende un hilo aparte; ver playctl.inc.c pc_play_list y docs/investigacion_reproducir_lista.md)
+ *      (la atiende un hilo aparte; ver playctl.inc.c pc_play_list y docs/research_play_list.md)
  */
 struct hm_state {
     volatile uint32_t magic;

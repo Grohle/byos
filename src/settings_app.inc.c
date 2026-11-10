@@ -433,7 +433,7 @@ static void page_dev(struct spage *p)
  *   Se aplica con amixer y se guarda en audio.conf (se reaplica al arrancar el shell).
  * - config.json (aviso de volumen UE, biblioteca y caratulas en la SD): override en
  *   /usr/data/hibymod/override/config.json, que hiby_player.sh monta al arrancar -> reinicio.
- * Ver docs/investigacion_firmware_oculto.md. */
+ * Ver docs/research_hidden_firmware.md. */
 #define AUDIO_CONF "/usr/data/hibymod/audio.conf"
 #define OVR_DIR "/usr/data/hibymod/override"
 static const char *const O_FILT8[] = { "Rápido, fase lineal", "Lento, fase lineal", "Rápido, fase mínima", "Lento, fase mínima",

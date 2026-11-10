@@ -3,7 +3,7 @@
  *
  * Pantalla: NetSurf pinta en un lienzo en RAM; al presentar se copia ENTERO al bufer oculto de
  * /dev/fb0 (320x480 RGB565, virtual 320x960) y despues se hace FBIOPAN_DISPLAY (que espera al
- * final del fotograma): nunca se escribe en el bufer que se barre (docs/FORMATO_APPS.md §6).
+ * final del fotograma): nunca se escribe en el bufer que se barre (docs/APP_FORMAT.md §6).
  *
  * Tactil: HM_TOUCH (tactil virtual que alimenta el shell, protocolo A); si no existe, event1.
  *   - toque corto = clic (MOUSE_1)

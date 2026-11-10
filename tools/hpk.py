@@ -1,4 +1,4 @@
-"""hpk.py - empaquetador de apps de hibymod (.hpk = tar ustar sin comprimir). Ver docs/FORMATO_APPS.md.
+"""hpk.py - empaquetador de apps de hibymod (.hpk = tar ustar sin comprimir). Ver docs/APP_FORMAT.md.
 
   python tools/hpk.py build DIR -o app.hpk     valida DIR y crea un paquete reproducible
   python tools/hpk.py inspect app.hpk          muestra el manifest y el contenido

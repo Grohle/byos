@@ -1,7 +1,7 @@
 #!/bin/sh
 # HiByOS: instala/actualiza en /usr/data/hibymod el payload de la SD (HiByOS/payload).
 # El rootfs no tiene sitio: shell, binarios, libreria de pantalla y tema viven en la
-# particion de datos (UBIFS, sobrevive al flasheo). Ver docs/INSTALADOR.md.
+# particion de datos (UBIFS, sobrevive al flasheo). Ver docs/INSTALLER.md.
 #
 #   hibyos_install.sh boot      antes del reproductor (hiby_player.sh). Sin nada que hacer
 #                               no espera a la SD; solo la espera (como mucho $WAIT s) si

@@ -26,7 +26,7 @@
  * libasound): tramas, frecuencia, vaciados. El shell lo interpreta (src/nowplaying.inc.c).
  * Coste: unas comparaciones de fd por llamada; nada de esto toca el mutex de la pantalla.
  *
- * REPRODUCIR UNA LISTA (v6, orden 'L'): ver la seccion final y docs/investigacion_reproducir_lista.md.
+ * REPRODUCIR UNA LISTA (v6, orden 'L'): ver la seccion final y docs/research_play_list.md.
  * Inerte mientras nadie mande 'L'.
  */
 #define _GNU_SOURCE
@@ -47,6 +47,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/un.h>
 #include <sys/syscall.h>
 #include <sched.h>
@@ -195,7 +196,7 @@ static void wait_even(volatile uint32_t *seq)
 }
 
 /* El panel (ST77903) NO tiene memoria: el DPU barre sin parar el bufer de la DDR a 44,3 Hz
- * (docs/investigacion_60fps.md). FBIOPAN_DISPLAY solo cambia la direccion y duerme hasta el
+ * (docs/research_60fps.md). FBIOPAN_DISPLAY solo cambia la direccion y duerme hasta el
  * fin del fotograma en curso. Para el bufer de otro (el que ya se ve), escribir "y luego
  * presentar" deja un corte donde estuviera el barrido. Por eso, cuando hay que escribir en
  * el bufer VISIBLE: primero frame_edge() (pan del mismo bufer = esperar al fin de fotograma)
@@ -867,7 +868,7 @@ int snd_pcm_drop(void *pcm)
 }
 
 /* ---------------------------------------------------------------- v6: reproducir una lista
- * Orden 'L' por la FIFO (ver docs/investigacion_reproducir_lista.md). INERTE si nadie la manda.
+ * Orden 'L' por la FIFO (ver docs/research_play_list.md). INERTE si nadie la manda.
  * El shell deja la peticion en PL_REQ (texto UTF-8) y manda 'L'; un hilo propio (nunca el de
  * control, que sirve las animaciones) hace lo mismo que la interfaz de fabrica al tocar una
  * cancion de una lista (manejador 0x4b4420) y que el servidor HiBy Link (playUuid, 0x4577a0),
@@ -1162,6 +1163,9 @@ static void *pl_thread(void *arg)
         if (d.rc) rows = -1;
     } else {
         if (!n) { rc = -EINVAL; msg = "sin entradas f="; goto out; }
+        /* la UBIFS casi llena se vuelve lentisima (GC) y ya colgo el aparato: escribir la cola solo con margen */
+        { struct statvfs v; if (!statvfs("/usr/data", &v) && (unsigned long long)v.f_bavail * v.f_frsize < (6ull << 20) + (unsigned long long)n * 2048)
+            { rc = -ENOSPC; msg = "poco espacio en /usr/data: no se escribe la cola"; goto out; } }
         /* la ranura que no suena */
         static hw16 cur[0x104];
         memset(cur, 0, sizeof cur);

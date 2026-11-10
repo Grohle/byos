@@ -4,7 +4,7 @@
 
 Cada paquete se publica como asset de la release de GitHub TAG con el nombre <id>-<version>.hpk
 (gh release upload TAG FICHERO --clobber); el indice y los iconos van en la rama main y se sirven
-por raw.githubusercontent.com. Formato del indice: docs/TIENDA.md."""
+por raw.githubusercontent.com. Formato del indice: docs/STORE.md."""
 import argparse, hashlib, io, json, os, shutil, sys, tarfile
 sys.path.insert(0, os.path.dirname(__file__))
 from hpk import parse_manifest  # noqa: E402

@@ -1,7 +1,7 @@
 /* hm_app.h - SDK minimo (solo cabecera) para apps de hibymod en el HiBy R3 II.
  *
  * Pantalla, tactil, teclas, idioma y salida limpia. Nada mas: el dibujo es cosa de la app.
- * Contrato completo en docs/FORMATO_APPS.md. Uso tipico:
+ * Contrato completo en docs/APP_FORMAT.md. Uso tipico:
  *
  *   #include "hm_app.h"
  *   static uint16_t img[HM_W * HM_H];                  // lienzo en RAM

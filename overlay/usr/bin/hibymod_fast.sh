@@ -22,6 +22,9 @@ librt.so.1:librt-2.22.so libdl.so.2:libdl-2.22.so
 libatomic.so.1:libatomic.so.1.1.0 libasound.so.2:libasound.so.2.0.0 libz.so.1:libz.so.1.2.11"
 FONT=/usr/resource/fonts/default.otf
 RESDIRS="layout/theme2 layout/theme3 litegui/theme2 litegui/theme3"
+# con el tema de HiByOS en /usr/data (se monta encima de theme3) copiar las imagenes de fabrica
+# es duplicarlas: ~7 MB que no caben junto al resto. Solo hacen falta sin tema propio.
+[ -d /usr/data/hibymod/theme/litegui/theme3 ] && RESDIRS=""
 
 ok()
 {
@@ -40,7 +43,8 @@ setup()
     rm -rf $FAST
     # espacio: se necesitan ~22 MB sin comprimir; UBIFS comprime, pero se exige margen
     avail=$(df /usr/data | awk 'NR==2{print $4}')
-    [ "${avail:-0}" -gt 21000 ] || { echo "sin espacio ($avail KB)"; return 1; }   # ~17 MB en flash (UBIFS comprime) + margen
+    need=21000; [ -z "$RESDIRS" ] && need=14000
+    [ "${avail:-0}" -gt $need ] || { echo "sin espacio ($avail KB)"; return 1; }   # ~17 MB en flash (UBIFS comprime) + margen
     mkdir -p $FAST/lib $FAST/res || return 1
     fail() { echo "copia fallida: $1"; rm -rf $FAST; sync; return 1; }
     copy_check /usr/bin/hiby_player $FAST/hiby_player.tmp || { fail hiby_player; return 1; }

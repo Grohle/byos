@@ -15,7 +15,7 @@ MARK=/data/.hibymod_running
 SD=/data/mnt/sd_0
 H=$SD/hibymod
 
-done_file() { mv -f "$H/$1" "$H/$1.hecho" 2>/dev/null; sync; }
+done_file() { mv -f "$H/$1" "$H/$1.done" 2>/dev/null; sync; }
 
 boot_tasks()
 {
@@ -36,6 +36,14 @@ boot_tasks()
         echo "$(date 2>/dev/null) | anterior: $prev | $(/usr/bin/hibymod status 2>/dev/null | sed -n '2p;5p' | tr '\n' ' ') | reset: $(cat /proc/jz/reset/reset 2>/dev/null | tr '\n' ' ')" >> $H/boot_history.txt 2>/dev/null
         [ "$prev" != "clean" ] && dmesg 2>/dev/null | tail -60 > $H/logs_last_unclean_boot_dmesg.txt 2>/dev/null
 
+        # English command names (documented in the README) -> internal names
+        # (Windows hides extensions: "SAFE.txt" counts as "SAFE")
+        for p in REINSTALL:REINSTALAR NO_SHELL:SIN_SHELL SHELL_ON:CON_SHELL NO_LAUNCHER:SIN_LAUNCHER LAUNCHER_ON:CON_LAUNCHER \
+                 SAFE:SAFE NORMAL:NORMAL ADB_WIFI:ADB_WIFI; do
+            for e in "" .txt .TXT; do
+                [ -f "$H/${p%%:*}$e" ] && mv -f "$H/${p%%:*}$e" "$H/${p#*:}" 2>/dev/null
+            done
+        done
         if [ -f $H/ADB_WIFI ]; then touch /data/.hibymod_adbwifi; done_file ADB_WIFI; fi
         if [ -f $H/SIN_LAUNCHER ]; then touch /data/.hibymod_nopreload; rm -f /usr/data/hibymod/preload_ok; done_file SIN_LAUNCHER; sync; reboot; return; fi
         if [ -f $H/CON_LAUNCHER ]; then rm -f /data/.hibymod_nopreload; touch /usr/data/hibymod/preload_ok; done_file CON_LAUNCHER; sync; reboot; return; fi

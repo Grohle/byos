@@ -1,23 +1,23 @@
-# Inventario de paneles · HiBy R3 II 2025 (tema 3)
+# Panel inventory · HiBy R3 II 2025 (theme 3)
 
-- Paneles (.view / .dlg / .listview): **148** · visibles para el usuario: **123** · de fábrica/pruebas: 25
-- Imágenes PNG: **590** · visibles: **577**
+- Panels (.view / .dlg / .listview): **148** · visible to the user: **123** · factory/test: 25
+- PNG images: **590** · visible: **577**
 
-| Área | Paneles | PNG |
+| Area | Panels | PNG |
 |---|---:|---:|
-| Diálogos | 24 (+18 fábrica) | 0 |
-| Ajustes | 36 (+3 fábrica) | 147 |
-| Música: biblioteca y listas | 24 (+0 fábrica) | 194 |
-| Streaming y radio | 10 (+2 fábrica) | 10 |
-| Libros, grabadora, podómetro | 10 (+0 fábrica) | 24 |
-| Inicio y barra de estado | 7 (+1 fábrica) | 102 |
-| Reproductor | 8 (+0 fábrica) | 64 |
-| Otros | 3 (+1 fábrica) | 49 |
-| Centro de control | 1 (+0 fábrica) | 0 |
+| Dialogs | 24 (+18 factory) | 0 |
+| Settings | 36 (+3 factory) | 147 |
+| Music: library and playlists | 24 (+0 factory) | 194 |
+| Streaming and radio | 10 (+2 factory) | 10 |
+| Books, recorder, pedometer | 10 (+0 factory) | 24 |
+| Home and status bar | 7 (+1 factory) | 102 |
+| Player | 8 (+0 factory) | 64 |
+| Other | 3 (+1 factory) | 49 |
+| Control Center | 1 (+0 factory) | 0 |
 
-## Paneles por área
+## Panels by area
 
-### Diálogos
+### Dialogs
 
 - `adb.dlg`
 - `confirm.dlg`
@@ -36,7 +36,7 @@
 - `play_remove.dlg`
 - `play_reprater_prompt.dlg`
 - `power_save_shutdown_timer.dlg`
-- `qrcode.dlg` *(fábrica, no se rediseña)*
+- `qrcode.dlg` *(factory, not redesigned)*
 - `remove_folder.dlg`
 - `remove_song.dlg`
 - `repeat_name_op.dlg`
@@ -44,25 +44,25 @@
 - `set_playspeed.dlg`
 - `shutdown_timer.dlg`
 - `song_nosupport.dlg`
-- `test_audio.dlg` *(fábrica, no se rediseña)*
-- `test_fail.dlg` *(fábrica, no se rediseña)*
-- `test_fm.dlg` *(fábrica, no se rediseña)*
-- `test_gsensor.dlg` *(fábrica, no se rediseña)*
-- `test_key.dlg` *(fábrica, no se rediseña)*
-- `test_lcd.dlg` *(fábrica, no se rediseña)*
-- `test_led.dlg` *(fábrica, no se rediseña)*
-- `test_line_control.dlg` *(fábrica, no se rediseña)*
-- `test_ok.dlg` *(fábrica, no se rediseña)*
-- `test_otg.dlg` *(fábrica, no se rediseña)*
-- `test_qrcode.dlg` *(fábrica, no se rediseña)*
-- `test_rf.dlg` *(fábrica, no se rediseña)*
-- `test_standby.dlg` *(fábrica, no se rediseña)*
-- `test_tf.dlg` *(fábrica, no se rediseña)*
-- `test_touch.dlg` *(fábrica, no se rediseña)*
-- `test_version.dlg` *(fábrica, no se rediseña)*
-- `url_qrcode.dlg` *(fábrica, no se rediseña)*
+- `test_audio.dlg` *(factory, not redesigned)*
+- `test_fail.dlg` *(factory, not redesigned)*
+- `test_fm.dlg` *(factory, not redesigned)*
+- `test_gsensor.dlg` *(factory, not redesigned)*
+- `test_key.dlg` *(factory, not redesigned)*
+- `test_lcd.dlg` *(factory, not redesigned)*
+- `test_led.dlg` *(factory, not redesigned)*
+- `test_line_control.dlg` *(factory, not redesigned)*
+- `test_ok.dlg` *(factory, not redesigned)*
+- `test_otg.dlg` *(factory, not redesigned)*
+- `test_qrcode.dlg` *(factory, not redesigned)*
+- `test_rf.dlg` *(factory, not redesigned)*
+- `test_standby.dlg` *(factory, not redesigned)*
+- `test_tf.dlg` *(factory, not redesigned)*
+- `test_touch.dlg` *(factory, not redesigned)*
+- `test_version.dlg` *(factory, not redesigned)*
+- `url_qrcode.dlg` *(factory, not redesigned)*
 
-### Ajustes
+### Settings
 
 - `hiby_about_dev.view`
 - `hiby_airplay.view`
@@ -95,16 +95,16 @@
 - `peq_filter.dlg`
 - `settings_color.dlg`
 - `settings_digital_filter.dlg`
-- `test_bt.dlg` *(fábrica, no se rediseña)*
-- `test_bt_on.dlg` *(fábrica, no se rediseña)*
-- `test_wifi.dlg` *(fábrica, no se rediseña)*
+- `test_bt.dlg` *(factory, not redesigned)*
+- `test_bt_on.dlg` *(factory, not redesigned)*
+- `test_wifi.dlg` *(factory, not redesigned)*
 - `tune_preset_tuning.dlg`
 - `tune_set.dlg`
 - `wifi_password.dlg`
 - `wifi_scan.dlg`
 - `hiby_peq.view`
 
-### Música: biblioteca y listas
+### Music: library and playlists
 
 - `category_edit_icon.view`
 - `hiby_category_label.view`
@@ -131,7 +131,7 @@
 - `vg_listview_music.listview`
 - `vg_listview_tidal_play_info.listview`
 
-### Streaming y radio
+### Streaming and radio
 
 - `hiby_radio_label.view`
 - `hiby_smb_login.view`
@@ -142,11 +142,11 @@
 - `hiby_tidal_play_info.view`
 - `hiby_tidal_track_info.view`
 - `tidal_login.dlg`
-- `tidal_qrcode.dlg` *(fábrica, no se rediseña)*
+- `tidal_qrcode.dlg` *(factory, not redesigned)*
 - `tidal_subscription.dlg`
-- `tidal_subscription_china.dlg` *(fábrica, no se rediseña)*
+- `tidal_subscription_china.dlg` *(factory, not redesigned)*
 
-### Libros, grabadora, podómetro
+### Books, recorder, pedometer
 
 - `hiby_gallery.view`
 - `hiby_record.view`
@@ -159,7 +159,7 @@
 - `record_back.dlg`
 - `record_remove.dlg`
 
-### Inicio y barra de estado
+### Home and status bar
 
 - `hiby_charge.view`
 - `hiby_screensavers.view`
@@ -168,9 +168,9 @@
 - `topbar.view`
 - `hiby_launcher_apps.view`
 - `settings_clock_set.dlg`
-- `test_charge.dlg` *(fábrica, no se rediseña)*
+- `test_charge.dlg` *(factory, not redesigned)*
 
-### Reproductor
+### Player
 
 - `hiby_play_menu.view`
 - `hiby_play_speed_menu.view`
@@ -181,20 +181,20 @@
 - `volume.dlg`
 - `volume_long_time_high.dlg`
 
-### Otros
+### Other
 
 - `hiby_exception.view`
 - `hiby_staff.view`
 - `hiby_switch.view`
-- `hiby_test.view` *(fábrica, no se rediseña)*
+- `hiby_test.view` *(factory, not redesigned)*
 
-### Centro de control
+### Control Center
 
 - `hiby_pull_down_menu.view`
 
-## Imágenes por carpeta
+## Images by folder
 
-| Carpeta | PNG | Tamaños más comunes |
+| Folder | PNG | Most common sizes |
 |---|---:|---|
 | `litegui/theme3/about_dev` | 11 | 168×168 (3), 86×86 (2), 163×163 (2) |
 | `litegui/theme3/book` | 13 | 24×24 (6), 54×54 (2), 240×8 (2) |

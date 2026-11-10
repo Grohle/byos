@@ -1,5 +1,5 @@
 /* power.inc.c - modos de energia y "Solo USB (no cargar la bateria)".
- * Diseno y medidas: docs/investigacion_overclock_energia.md. Sin overclock: la CPU ya va a
+ * Diseno y medidas: docs/research_overclock_power.md. Sin overclock: la CPU ya va a
  * 1104 MHz (un 10 % sobre la hoja de datos) y la interfaz la limita el panel.
  *
  *  Ahorro:       pantalla a 30 Hz (30 fps), brillo como mucho 40, vm.dirty_expire 60 s
@@ -102,7 +102,7 @@ static const char *pw_name(int m) { return m == PW_SAVE ? "Ahorro" : m == PW_PER
  * (reloj LCD = MPLL/33, CPM LPCDR 0x10000064 = 0x44000020). Con el divisor /24 da 60,9 Hz
  * (medido en el aparato: 16,5 ms por fotograma). Secuencia de Ingenic: escribir con CE,
  * esperar a que BUSY se limpie y quitar CE. El driver puede restaurarlo al encender la
- * pantalla: pw_tick lo comprueba cada segundo y lo reaplica. docs/investigacion_60fps.md */
+ * pantalla: pw_tick lo comprueba cada segundo y lo reaplica. docs/research_60fps.md */
 #define LPCDR_PHYS 0x10000064u
 static int lcd_hz = 45;                   /* 30 (Ahorro), 45 (de serie) o 60 (Rendimiento) */
 static volatile uint32_t *lpcdr;

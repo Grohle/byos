@@ -4,7 +4,7 @@
  *   caratulas: iTunes Search + MusicBrainz/Cover Art Archive; letras: LRCLIB (sincronizadas).
  * Manual: cambiar los terminos de busqueda con el teclado, o elegir una imagen de la SD
  * (por ejemplo, descargada desde el ordenador o con el navegador).
- * Donde se guarda (lo que lee el reproductor de HiBy): ver docs/LETRAS_CARATULAS.md.
+ * Donde se guarda (lo que lee el reproductor de HiBy): ver docs/LYRICS_AND_COVERS.md.
  *   - caratula: cover.jpg en la carpeta del album
  *   - letra: <cancion>.lrc junto al fichero de audio */
 #define NETBIN "/usr/data/hibymod/shell/hibynet"

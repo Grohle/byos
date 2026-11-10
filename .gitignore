@@ -24,3 +24,4 @@ apps/*/*.hpk
 src/digits_hiby_orig.h
 .venv/
 todo.md
+backups/

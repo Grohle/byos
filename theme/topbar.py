@@ -5,7 +5,7 @@ La barra de serie es solo imagenes (digitos, iconos de 20 px de alto) colocadas 
 layout/themeN/topbar/topbar.view, asi que redibujandolas se cambia en TODAS las
 pantallas (las de HiBy y, por transparencia, el launcher y las apps de hibyshell).
 
-Reglas de diseno (GUIA_UI_AGENTES.md): misma fuente que el shell (default.otf),
+Reglas de diseno (UI_GUIDE_FOR_AGENTS.md): misma fuente que el shell (default.otf),
 cifras tabulares, todo centrado en la misma linea (y=15 de la barra), iconos de 12 px
 de alto, sin cajas de codec, hora a la izquierda como en iOS.
 

@@ -1,5 +1,5 @@
 /* nowplaying.inc.c - "lo que suena" en el reproductor de HiBy, para el modulo Now Playing
- * del Centro de control, los widgets y la app Musica. Ver docs/investigacion_reproduccion.md.
+ * del Centro de control, los widgets y la app Musica. Ver docs/research_playback.md.
  *
  *   struct np_info i;  if (np_get(&i) > 0) ...   (barato: llamar cada 250-1000 ms)
  *   uint16_t cov[128*128];  np_cover(i.path, cov) (0 = hay caratula; ver abajo el coste)
@@ -370,7 +370,7 @@ static int np_from_shim(struct np_info *o)
     const struct np_meta *m = np_meta_for(o->path);
     o->source = NP_SRC_SHIM; o->stopped = stopped;
     o->rate = (int)s->pcm_rate; o->bits = (int)s->pcm_bits; o->channels = (int)s->pcm_channels;
-    o->playing = !stopped && s->pcm_open && !s->pcm_paused && now - s->pcm_last_ms < 400;
+    o->playing = !stopped && s->pcm_open && !s->pcm_paused && now - s->pcm_last_ms < 1500;   /* a 176,4/192 kHz escribe bloques de > 0,5 s */
     o->track_id = np_hash(o->path, e->gen * 2654435761u);
     /* posicion: tramas escritas desde que se abrio la pista; si el usuario salto (lseek del
      * decodificador junto a un vaciado del PCM), desde ese punto (bytes -> tiempo) */

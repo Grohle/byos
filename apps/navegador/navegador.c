@@ -1,6 +1,6 @@
 /* navegador.c - lanzador de la app "Navegador" (NetSurf 3.11 estatico, ver apps/netsurf-hiby).
  *
- * El shell ejecuta bin/navegador (contrato de docs/FORMATO_APPS.md §6). Este lanzador:
+ * El shell ejecuta bin/navegador (contrato de docs/APP_FORMAT.md §6). Este lanzador:
  *   - usa HM_DATA_DIR como HOME (Choices, cookies e historial persisten en appdata/<id>)
  *   - escribe ~/.netsurf/Choices con los ajustes medidos para ~7 MB de RAM libre
  *   - pone oom_score_adj=1000 (si falta memoria, el kernel mata al navegador y no al reproductor)

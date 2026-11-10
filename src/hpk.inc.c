@@ -1,6 +1,6 @@
 /* hpk.inc.c - instalador de paquetes de apps (.hpk) de hibymod. Se incluye desde hibyshell.c
  * (o desde el arnes de pruebas tests/hpk_test.c); no tiene main. Interfaz en hpk.h y formato en
- * docs/FORMATO_APPS.md.
+ * docs/APP_FORMAT.md.
  *
  * Principios:
  *  - Nada se escribe fuera de <raiz>/apps/.tmp-<id> hasta que el paquete entero se ha validado y

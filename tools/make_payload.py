@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Construye la carpeta HiByOS/ de la SD para una version publica (ver docs/INSTALADOR.md).
+"""Construye la carpeta HiByOS/ de la SD para una version publica (ver docs/INSTALLER.md).
 
   python tools/make_payload.py [--version 0.6.0] [--out out/sd]
 

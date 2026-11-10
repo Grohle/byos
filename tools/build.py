@@ -31,7 +31,7 @@ TEXT_PATCHES = [
     ("usr/resource/set_functions.json",
      '{"usb_mode":0}',
      '{"usb_mode":1}'),
-    # Funciones de serie ocultas (riesgo bajo, ver docs/investigacion_firmware_oculto.md 3.1):
+    # Funciones de serie ocultas (riesgo bajo, ver docs/research_hidden_firmware.md 3.1):
     # aparecen en Ajustes del sistema de HiBy
     ("usr/resource/set_functions.json", '{"dac_charge_disable":0}', '{"dac_charge_disable":1}'),
     ("usr/resource/set_functions.json", '{"car_mode":0}', '{"car_mode":1}'),
@@ -95,7 +95,7 @@ def extract_image(files, name, md5sum):
     data, prev = b"", md5sum
     for i, h in enumerate(hashes):
         chunk = files[f"ota_v0/{name}.{i:04d}.{prev}"]
-        assert md5(chunk) == h, f"md5 trozo {i} de {name}"
+        assert md5(chunk) == h, f"md5 of chunk {i} of {name}"
         data += chunk
         prev = h
     return data
@@ -164,7 +164,7 @@ def build_rootfs(stock_sqfs, overlay, work):
     r = subprocess.run(["unsquashfs", "-q", "-n", "-ig", "-d", root, stock_sqfs],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if r.returncode not in (0, 2) or not os.path.isfile(os.path.join(root, "usr/bin/hiby_player")):
-        raise SystemExit(f"unsquashfs fallo (rc={r.returncode})")
+        raise SystemExit(f"unsquashfs failed (rc={r.returncode})")
 
     # a partir de aqui, permisos normales para lo que crea hibymod (755/644)
     os.umask(0o022)
@@ -203,7 +203,7 @@ def build_rootfs(stock_sqfs, overlay, work):
         cnt = t.count(o)
         # tolera espacios en JSON: compara sin espacios si no aparece literal
         if cnt != 1:
-            raise SystemExit(f"parche {rel}: texto original encontrado {cnt} veces (se esperaba 1)")
+            raise SystemExit(f"patch {rel}: original text found {cnt} times (expected 1)")
         open(p, "wb").write(t.replace(o, nw))
         print("  patch:", rel)
 
@@ -211,11 +211,11 @@ def build_rootfs(stock_sqfs, overlay, work):
         p = os.path.join(root, rel)
         b = bytearray(open(p, "rb").read())
         if md5(bytes(b)) != want_md5:
-            raise SystemExit(f"parche binario {rel}: md5 inesperado {md5(bytes(b))}")
+            raise SystemExit(f"binary patch {rel}: unexpected md5 {md5(bytes(b))}")
         for off, old, new in edits:
             o, nw = bytes.fromhex(old), bytes.fromhex(new)
             if bytes(b[off:off + len(o)]) != o:
-                raise SystemExit(f"parche binario {rel}@{off:#x}: bytes inesperados")
+                raise SystemExit(f"binary patch {rel}@{off:#x}: unexpected bytes")
             b[off:off + len(o)] = nw
         mode = stat.S_IMODE(os.lstat(p).st_mode)
         open(p, "wb").write(bytes(b))
@@ -250,14 +250,14 @@ def build_rootfs(stock_sqfs, overlay, work):
 
     out = os.path.join(work, "rootfs.squashfs")
     if os.geteuid() != 0:
-        raise SystemExit("ejecutar como root o dentro de 'unshare -r' para conservar propietarios")
+        raise SystemExit("run as root or inside 'unshare -r' to keep file owners")
     run(["mksquashfs", root, out, "-comp", "lzo", "-b", "131072", "-noappend",
          "-no-xattrs", "-no-progress", "-quiet", "-pf", pseudo])
     return out, orig
 
 
 def compare_listings(orig, new):
-    print("\n=== diferencias rootfs (original -> nuevo)")
+    print("\n=== rootfs differences (original -> new)")
     diffs = 0
     for p in sorted(set(orig) | set(new)):
         a, b = orig.get(p), new.get(p)
@@ -267,7 +267,7 @@ def compare_listings(orig, new):
             print("  - ", p, a); diffs += 1
         elif a[0] != b[0] or a[1] != b[1] or (a[2] != b[2] and not a[0].startswith("d")):
             print("  ~ ", p, a, "->", b); diffs += 1
-    print(f"=== {diffs} diferencias\n")
+    print(f"=== {diffs} differences\n")
 
 
 # ---------------------------------------------------------------- main
@@ -307,9 +307,9 @@ def main():
         # particion rootfs del R3 II 2025 (/proc/mtd): 0x2D00000 bytes. Se deja un 5 %
         # de margen para bloques defectuosos de la NAND.
         limit = int(0x2D00000 * 0.95)
-        print(f"rootfs: {len(new_rdata)} bytes de {limit} permitidos ({len(new_rdata) * 100 // limit} %)")
+        print(f"rootfs: {len(new_rdata)} of {limit} bytes allowed ({len(new_rdata) * 100 // limit} %)")
         if len(new_rdata) > limit:
-            raise SystemExit("rootfs demasiado grande para la particion; abortado")
+            raise SystemExit("rootfs too big for the partition; aborted")
 
     out_files = {"ota_config.in": files["ota_config.in"],
                  "ota_v0/ota_v0.ok": files["ota_v0/ota_v0.ok"]}
@@ -325,11 +325,11 @@ def main():
 
     if a.roundtrip:
         same = set(out_files) == set(files) and all(out_files[k] == files[k] for k in files)
-        print("ROUNDTRIP: ficheros identicos al original =", same)
+        print("ROUNDTRIP: files identical to the original =", same)
         if not same:
             for k in sorted(set(out_files) | set(files)):
                 if out_files.get(k) != files.get(k):
-                    print("  difiere:", k)
+                    print("  differs:", k)
             sys.exit(1)
         out = a.out or os.path.join(work, "roundtrip.upt")
     else:
@@ -343,7 +343,7 @@ def main():
     for i in imgs2:
         d = extract_image(chk, i["img_name"], i["img_md5"])
         assert md5(d) == i["img_md5"] and len(d) == int(i["img_size"]), i
-        print("verificado:", i["img_name"], i["img_size"], i["img_md5"])
+        print("verified:", i["img_name"], i["img_size"], i["img_md5"])
     if not a.roundtrip:
         open(os.path.join(work, "check.squashfs"), "wb").write(
             extract_image(chk, rfs["img_name"], rmd5))
