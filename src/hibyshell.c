@@ -249,6 +249,15 @@ static int is_cc(const uint16_t *img)
     return c > 25 && s < 5 && has_statusbar(img);
 }
 
+/* pagina de inicio de sesion de fabrica con su teclado T9 (Qobuz sin sesion: es la raiz de la
+ * app y no tiene flecha de atras; se sale con "Cancel", que lleva a "Stream media") */
+static int is_stock_login(const uint16_t *img)
+{
+    static const int box[][2] = { {60, 77}, {160, 77}, {60, 112}, {160, 112}, {160, 257}, {100, 290}, {290, 322}, {300, 420} };
+    for (unsigned i = 0; i < sizeof box / sizeof *box; i++) { int l = lum(img[box[i][1] * W + box[i][0]]); if (l < 15 || l > 40) return 0; }
+    return lum(img[200 * W + 5]) < 8 && lum(img[165 * W + 240]) < 8 && has_statusbar(img);
+}
+
 /* ------------------------------------------------------------------ capas (sprites) */
 struct sprite { int w, h; uint16_t *rgb; uint8_t *a; };
 static struct sprite spr_chev, spr_bar;   /* flecha de musica (inicio) y barra de inicio (apps) */
@@ -380,7 +389,8 @@ static int back_to_home(void)
     for (int i = 0; i < 8; i++) {
         if (is_home(fr1)) return 1;
         uint32_t c = st->cap_frames;
-        if (still >= 2) { lg("nav: la flecha no responde; deslizamiento de atras de HiBy"); inj_swipe(2, 240, 230, 240, 8, 120); still = 0; }
+        if (is_stock_login(fr1)) { lg("nav: inicio de sesion de fabrica -> Cancel"); inj_tap(80, 165); }
+        else if (still >= 2) { lg("nav: la flecha no responde; deslizamiento de atras de HiBy"); inj_swipe(2, 240, 230, 240, 8, 120); still = 0; }
         else inj_tap(22, 48);
         settle(c, 500, 120);
         if (st->cap_frames == c) still++; else still = 0;
@@ -1152,13 +1162,6 @@ int main(int argc, char **argv)
             int m = music_session();
             if (m != music_on) lg("musica: %s (pid %d)", m ? "si" : "no", player_pid);
             music_on = m; update_overlay(); next_poll = t + 700;
-            /* el panel de control antiguo de HiBy no debe verse nunca: si aparece, se cierra */
-            static double old_cc_t;
-            if (!launcher_on && !st->capture && !st->held && !cur_down && t - old_cc_t > 1500 && is_cc(visible())) {
-                old_cc_t = t; lg("panel antiguo de HiBy en pantalla: cerrandolo");
-                inj_swipe(160, 470, 160, 120, 6, 90);
-                next_poll = t + 400;
-            }
         }
         /* teclas de volumen (rueda) sin capturarlas: el reproductor sigue cambiando el volumen */
         st->shell_beat++;
