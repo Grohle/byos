@@ -253,7 +253,7 @@ static int is_cc(const uint16_t *img)
  * app y no tiene flecha de atras; se sale con "Cancel", que lleva a "Stream media") */
 static int is_stock_login(const uint16_t *img)
 {
-    static const int box[][2] = { {60, 77}, {160, 77}, {60, 112}, {160, 112}, {160, 257}, {100, 290}, {290, 322}, {300, 420} };
+    static const int box[][2] = { {54, 66}, {262, 66}, {54, 123}, {262, 123}, {262, 87}, {160, 236}, {8, 300}, {312, 340}, {160, 440} };   /* fondo de las casillas (sin texto) y teclas */
     for (unsigned i = 0; i < sizeof box / sizeof *box; i++) { int l = lum(img[box[i][1] * W + box[i][0]]); if (l < 15 || l > 40) return 0; }
     return lum(img[200 * W + 5]) < 8 && lum(img[165 * W + 240]) < 8 && has_statusbar(img);
 }
