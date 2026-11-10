@@ -453,5 +453,9 @@ static const struct trp TR_JA[] = {
     { "Canciones, álbumes, artistas y favoritas.", "曲、アルバム、アーティスト、お気に入り。" },
     { "El último álbum que has añadido a la biblioteca.", "ライブラリに最後に追加したアルバム。" },
     { "Lo último que has escuchado y tu artista favorito.", "最後に聴いた曲とお気に入りのアーティスト。" },
+    { "Editar pantalla de inicio", "ホーム画面を編集" },
+    { "INCLUIDAS CON HiByOS", "HiByOS に付属" },
+    { "Incluida con HiByOS", "HiByOS に付属" },
+    { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "このアプリをアンインストールしますか？ Apps から再インストールできます。" },
     { 0, 0 }
 };

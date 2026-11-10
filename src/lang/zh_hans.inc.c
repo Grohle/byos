@@ -453,5 +453,9 @@ static const struct trp TR_ZHS[] = {
     { "Canciones, álbumes, artistas y favoritas.", "歌曲、专辑、艺人和最爱。" },
     { "El último álbum que has añadido a la biblioteca.", "最近添加到资料库的专辑。" },
     { "Lo último que has escuchado y tu artista favorito.", "最近收听的内容和你最爱的艺人。" },
+    { "Editar pantalla de inicio", "编辑主屏幕" },
+    { "INCLUIDAS CON HiByOS", "HiByOS 自带" },
+    { "Incluida con HiByOS", "HiByOS 自带" },
+    { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "卸载此应用？可以在 Apps 中重新安装。" },
     { 0, 0 }
 };

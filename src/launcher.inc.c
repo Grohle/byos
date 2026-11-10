@@ -34,10 +34,9 @@ struct lapp {
 static struct lapp apps[40] = {
     { "music",      "Música",        ACT_MUSIC,  116, 425 },   /* app propia; (ax, ay) = la de fabrica */
     /* Ajustes lo tiene TODO (Wi-Fi, Bluetooth, USB/DAC y la personalizacion son paginas suyas).
-     * "Personalizar" e "Inalambrico" son accesos directos a esas paginas; el antiguo icono
-     * "DAC USB" ya no existe (su id vale como alias de "settings": ver app_by_id). */
+     * "Inalambrico" es un acceso directo a esa pagina; los antiguos iconos "Personalizar" y
+     * "DAC USB" ya no existen ("dac" vale como alias de "settings": ver app_by_id). */
     { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },
-    { "personalize", "Personalizar", ACT_SETTINGS, 1,   0 },   /* ax = 1: abre en la pagina de personalizacion */
     { "wireless",   "Inalámbrico",   ACT_WIRELESS, 46, 74 },   /* Wi-Fi y Bluetooth propios */
     { "radio",      "Radio",         ACT_SOON,     0,   0 },
     { "books",      "Libros",        ACT_BOOKS,  117,  74 },   /* lector propio (TXT/EPUB) */
@@ -50,7 +49,7 @@ static struct lapp apps[40] = {
     { "headphones", "Auriculares",   ACT_BUDS,     0,   0 },   /* AirPods, Galaxy Buds, Nothing... */
     { "gutenberg",  "Gutenberg",     ACT_BOOKS,    1,   0 },   /* Libros abierto en su tienda (audiolibros + libros) */
 };
-static int napps = 14;              /* internas + instaladas (register_installed_apps) */
+static int napps = 13;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
 static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
@@ -78,6 +77,18 @@ static int app_by_id(const char *id)
     if (!strcmp(id, "dac")) id = "settings";
     return app_find(id);
 }
+/* Apps incluidas que NO son del sistema base: vienen instaladas, pero se pueden desinstalar (salen
+ * del inicio) y volver a instalar desde Apps, como las que se bajan de un repositorio. */
+static const char *const sys_removable[] = { "gutenberg", "freemusic", "headphones" };
+#define NSYSREM ((int)(sizeof sys_removable / sizeof *sys_removable))
+static unsigned char app_removed[40];        /* por indice de apps[] (solo internas: indices fijos) */
+static int app_sys_removable(int a)
+{
+    if (a < 0 || a >= NAPPS) return 0;
+    for (int k = 0; k < NSYSREM; k++) if (!strcmp(apps[a].id, sys_removable[k])) return 1;
+    return 0;
+}
+static int app_removable(int a) { return a >= 0 && a < NAPPS && (apps[a].act == ACT_EXT || app_sys_removable(a)); }
 /* pagina en la que se abre Ajustes la proxima vez (la pone el Centro de control y se consume
  * en launch_app): 0 raiz, 1 USB, 2 Wi-Fi y Bluetooth, 3 personalizacion (icono "Personalizar") */
 enum { SET_ROOT, SET_USB, SET_WIRELESS, SET_PERS };
@@ -97,13 +108,30 @@ static void lconf_compact(void)
         L.page[p][L.pn[p]++] = all[i];
     }
 }
+/* fuera del inicio lo desinstalado, y sin paginas vacias */
+static void lconf_drop_empty_pages(void)
+{
+    for (int p = 0; p < L.npages; p++) if (!L.pn[p] && L.npages > 1) {
+        for (int q = p; q < L.npages - 1; q++) { L.pn[q] = L.pn[q + 1]; memcpy(L.page[q], L.page[q + 1], sizeof L.page[q]); }
+        L.npages--; p--;
+    }
+}
+static void lconf_strip_removed(void)
+{
+    for (int p = 0; p < L.npages; p++) for (int i = 0; i < L.pn[p]; i++) if (app_removed[L.page[p][i]]) {
+        memmove(&L.page[p][i], &L.page[p][i + 1], (L.pn[p] - i - 1) * sizeof(int)); L.pn[p]--; i--;
+    }
+    for (int i = 0; i < L.dn; i++) if (app_removed[L.dock[i]]) { memmove(&L.dock[i], &L.dock[i + 1], (L.dn - i - 1) * sizeof(int)); L.dn--; i--; }
+    lconf_drop_empty_pages();
+}
 static void lconf_default(void)
 {
     memset(&L, 0, sizeof L);
+    memset(app_removed, 0, sizeof app_removed);      /* "Restablecer inicio" las vuelve a instalar */
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
     /* ORDEN OFICIAL de una instalacion nueva (LCONF_ORDER lo aplica una vez a las ya instaladas) */
-    static const char *const p0[] = { "settings", "personalize", "wireless", "files", "radio", "appstore",
+    static const char *const p0[] = { "settings", "wireless", "files", "radio", "appstore",
                                       "tidal", "qobuz", "gutenberg", "freemusic" };
     static const char *const d0[] = { "books", "headphones", "nowplaying", "music" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_find(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
@@ -165,6 +193,7 @@ static void lconf_save(void)
         fprintf(f, "\npage");
         for (int i = 0; i < L.pn[p]; i++) fprintf(f, " %s", apps[L.page[p][i]].id);
     }
+    int nrem = 0; for (int a = 0; a < NAPPS; a++) if (app_removed[a]) { fprintf(f, nrem++ ? " %s" : "\nremoved %s", apps[a].id); }
     fprintf(f, "\nlook %d %d %d %d\n", L.labels, L.dots, L.dockbg, L.dim);
     gestures_conf_save(f);
     cc_conf_save(f);
@@ -185,7 +214,7 @@ static void lang_sys_poll(void)
     int l = lang_system();
     if (l != ui_lang) { ui_lang = l; relabel_apps(); }
 }
-static void lconf_load(void)
+static void lconf_load0(void)
 {
     lconf_default();
     ui_lang_sys = 1; ui_lang = lang_system();        /* sin "lang" (instalacion nueva): el del sistema */
@@ -210,6 +239,7 @@ static void lconf_load(void)
         else if (!strcmp(t, "cc")) cc_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
         else if (!strcmp(t, "wall")) { char *v = strtok(0, "\r\n"); if (v && strcmp(v, "-")) snprintf(L.wall, sizeof L.wall, "%s", v); }
+        else if (!strcmp(t, "removed")) { while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (app_sys_removable(a)) app_removed[a] = 1; } }
         else if (!strcmp(t, "dock")) { got_dock = 1; while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a >= 0 && !seen[a] && nd < 4) { dk[nd++] = a; seen[a] = 1; } } }
         else if (!strcmp(t, "page") && pages < MAXPAGES) {
             while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a >= 0 && !seen[a] && npn[pages] < MAXAPPS) { np[pages][npn[pages]++] = a; seen[a] = 1; } }
@@ -256,18 +286,16 @@ static void lconf_load(void)
     L.npages = pages; memcpy(L.pn, npn, sizeof npn); memcpy(L.page, np, sizeof np);
     /* apps nuevas (no listadas) en el primer hueco libre al final */
     int pp = per_page(); if (pp > MAXAPPS) pp = MAXAPPS;
-    for (int a = 0; a < NAPPS; a++) if (!seen[a]) {
+    for (int a = 0; a < NAPPS; a++) if (!seen[a] && !app_removed[a]) {
         if (!L.npages) L.npages = 1;
         int p = L.npages - 1;
         if (L.pn[p] >= pp && L.npages < MAXPAGES) { p = L.npages++; L.pn[p] = 0; }
         if (L.pn[p] < pp) L.page[p][L.pn[p]++] = a;
     }
     if (!layout2) lconf_compact();                 /* una vez: todo arriba a la izquierda */
-    for (int p = 0; p < L.npages; p++) if (!L.pn[p] && L.npages > 1) {   /* sin paginas vacias */
-        for (int q = p; q < L.npages - 1; q++) { L.pn[q] = L.pn[q + 1]; memcpy(L.page[q], L.page[q + 1], sizeof L.page[q]); }
-        L.npages--; p--;
-    }
+    lconf_drop_empty_pages();
 }
+static void lconf_load(void) { lconf_load0(); lconf_strip_removed(); }
 
 /* ------------------------------------------------------------------ geometria */
 static int per_page(void)

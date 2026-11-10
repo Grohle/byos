@@ -300,6 +300,7 @@ static int action_sheet(const char *title, const char **opts, int n, int destruc
     for (;;) {
         if (!read_pkt(&p, 300) || !p.down) continue;
         int y = p.y; while (cur_down && read_pkt(&p, 3000)) {}
+        memcpy(fr0, base, sizeof base);          /* una hoja encadenada (confirmar) parte de la pantalla limpia, no de esta hoja */
         if (y >= y0 + hh && y < y0 + hh + n * bh) return (y - y0 - hh) / bh;
         return -1;
     }
@@ -607,6 +608,7 @@ static void file_info(const char *path, const struct fent *e)
 
 static void files_app(int ix, int iy)
 {
+    sel_mode = 0; nsel = 0; memset(selmask, 0, sizeof selmask);   /* la seleccion no sobrevive a salir con el gesto de inicio */
     have_under = 0;   /* Archivos reutiliza img_under */
     cwd[0] = 0; move_src[0] = 0; fs_load();
     mkdir(FS_INT, 0755);

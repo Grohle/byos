@@ -18,7 +18,10 @@ session = []
 
 
 def sh(cmd):
-    return subprocess.run([ADB, "-s", DEV, "shell", cmd], capture_output=True, text=True).stdout
+    r = subprocess.run([ADB, "-s", DEV, "shell", cmd], capture_output=True, text=True)
+    if r.stderr.startswith("error:"):          # p. ej. "error: closed": sin esto las capturas salian repetidas
+        sys.exit("adb shell: " + r.stderr.strip())
+    return r.stdout
 
 
 def ensure_ctl():

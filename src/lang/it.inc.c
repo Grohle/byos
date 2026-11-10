@@ -453,5 +453,9 @@ static const struct trp TR_IT[] = {
     { "Canciones, álbumes, artistas y favoritas.", "Brani, album, artisti e preferiti." },
     { "El último álbum que has añadido a la biblioteca.", "L'ultimo album aggiunto alla libreria." },
     { "Lo último que has escuchado y tu artista favorito.", "L'ultimo ascolto e il tuo artista preferito." },
+    { "Editar pantalla de inicio", "Modifica schermata Home" },
+    { "INCLUIDAS CON HiByOS", "INCLUSE IN HiByOS" },
+    { "Incluida con HiByOS", "Inclusa in HiByOS" },
+    { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "Disinstallare l’app? Puoi reinstallarla da Apps." },
     { 0, 0 }
 };

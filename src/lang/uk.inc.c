@@ -453,5 +453,9 @@ static const struct trp TR_UK[] = {
     { "Canciones, álbumes, artistas y favoritas.", "Пісні, альбоми, виконавці й улюблене." },
     { "El último álbum que has añadido a la biblioteca.", "Останній альбом, доданий до медіатеки." },
     { "Lo último que has escuchado y tu artista favorito.", "Останнє прослухане й улюблений виконавець." },
+    { "Editar pantalla de inicio", "Редагувати початковий екран" },
+    { "INCLUIDAS CON HiByOS", "ВХОДЯТЬ ДО HiByOS" },
+    { "Incluida con HiByOS", "Входить до HiByOS" },
+    { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "Видалити програму? Її можна встановити знову в Apps." },
     { 0, 0 }
 };

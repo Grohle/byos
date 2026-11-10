@@ -453,5 +453,9 @@ static const struct trp TR_KO[] = {
     { "Canciones, álbumes, artistas y favoritas.", "노래, 앨범, 아티스트 및 즐겨찾기." },
     { "El último álbum que has añadido a la biblioteca.", "보관함에 마지막으로 추가한 앨범." },
     { "Lo último que has escuchado y tu artista favorito.", "마지막으로 들은 음악과 좋아하는 아티스트." },
+    { "Editar pantalla de inicio", "홈 화면 편집" },
+    { "INCLUIDAS CON HiByOS", "HiByOS 기본 앱" },
+    { "Incluida con HiByOS", "HiByOS 기본 앱" },
+    { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "앱을 제거할까요? Apps에서 다시 설치할 수 있습니다." },
     { 0, 0 }
 };

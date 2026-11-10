@@ -437,6 +437,40 @@ static void sd_recover(void)
 }
 
 static int st_open_after = -1;      /* app que abrir al salir de la tienda */
+/* Desinstalar desde el inicio (menu de la app) o desde Apps. Las de un paquete se desinstalan
+ * (sus datos se conservan); las incluidas con HiByOS salen del inicio y se reinstalan desde Apps. */
+static int app_uninstall_home(int a)
+{
+    if (!app_removable(a)) return 0;
+    if (apps[a].act == ACT_EXT) {
+        struct hpk_info *in = apps[a].ext; if (!in) return 0;
+        if (!confirm(tr("¿Desinstalar la app? Sus datos se conservan."), tr("Desinstalar"))) return 0;
+        remove_app_everywhere(a); lconf_drop_empty_pages();
+        int r = app_uninstall_any(in, 0);
+        toast(r ? hpk_msg(hpk_errkey(r), ui_lang) : tr("Desinstalada"));
+        if (last_app == a) last_app = -1;
+        register_installed_apps(); load_icons(); relabel_apps();
+    } else {
+        if (!confirm(tr("¿Desinstalar la app? Puedes volver a instalarla desde Apps."), tr("Desinstalar"))) return 0;
+        remove_app_everywhere(a); lconf_drop_empty_pages();
+        app_removed[a] = 1; if (last_app == a) last_app = -1;
+        toast(tr("Desinstalada"));
+        lg("app incluida desinstalada: %s", apps[a].id);
+    }
+    if (cur_page >= L.npages) cur_page = L.npages - 1;
+    lconf_save();
+    return 1;
+}
+/* volver a instalar una incluida: al final de la ultima pagina del inicio */
+static void sys_app_install(int a)
+{
+    if (a < 0 || !app_removed[a]) return;
+    app_removed[a] = 0;
+    int q = L.npages - 1; if (L.pn[q] >= per_page() && L.npages < MAXPAGES) { q = L.npages++; L.pn[q] = 0; }
+    if (L.pn[q] < per_page()) L.page[q][L.pn[q]++] = a;
+    lconf_save(); toast(tr("Instalada"));
+    lg("app incluida instalada: %s", apps[a].id);
+}
 static void installed_detail(int i)
 {
     struct hpk_info *in = &inst[i];
@@ -1039,7 +1073,7 @@ static void st_start_download(int i, int to_sd)
 #define ST_PTR_GAP 52       /* hueco que queda bajo la cabecera mientras se actualiza */
 #define ST_UPD_MIN_MS 700   /* el indicador gira al menos esto, aunque la red conteste antes */
 enum { T_TODAY, T_APPS, T_SEARCH, T_INST, T_N };
-enum { HT_APP = 1, HT_PILL, HT_SD, HT_INST, HT_INSTPILL, HT_REPO, HT_ADDREPO, HT_SEARCH, HT_BACK, HT_TAB, HT_REFRESH };
+enum { HT_APP = 1, HT_PILL, HT_SD, HT_INST, HT_INSTPILL, HT_REPO, HT_ADDREPO, HT_SEARCH, HT_BACK, HT_TAB, HT_REFRESH, HT_SYS, HT_SYSPILL };
 struct st_hit { short x0, y0, x1, y1; int kind, idx; };
 static struct st_hit st_hits[96]; static int st_nhit, st_rec;
 static int st_tab = T_TODAY, st_detail = -1, st_press_kind, st_press_idx = -1;
@@ -1334,12 +1368,48 @@ static int st_render_today(uint16_t *d, int y0)
     if (!shown) y += st_status_msg(d, y);
     return y - y0 + 10;
 }
+/* apps incluidas con HiByOS que se pueden desinstalar (inst_only: solo las que siguen instaladas) */
+static int st_sys_rows(uint16_t *d, int y, int inst_only)
+{
+    int y0 = y, n = 0;
+    for (int k = 0; k < NSYSREM; k++) { int a = app_find(sys_removable[k]); if (a >= 0 && !(inst_only && app_removed[a])) n++; }
+    if (!n) return 0;
+    y += 18; st_section(d, y + 14, tr("INCLUIDAS CON HiByOS")); y += 22;
+    for (int k = 0, m = 0; k < NSYSREM; k++) {
+        int a = app_find(sys_removable[k]); if (a < 0 || (inst_only && app_removed[a])) continue;
+        m++;
+        if (y + ST_ROW >= ST_TOP && y <= ST_TABY) {
+            if (st_press_kind == HT_SYS && st_press_idx == k) fill_rrect(d, 0, y, W, ST_ROW, 0, rgb(44, 44, 46), 255);
+            st_icon_box(d, &apps[a].icon[0], 16, y + 8, 48);
+            int pw = st_pill(d, W - 16, y + 18, app_removed[a] ? S_GET : S_OPEN, 0, 0, st_press_kind == HT_SYSPILL && st_press_idx == k);
+            draw_text(d, 76, y + 28, app_label(a), 15, 0xFFFF, W - 76 - pw - 26, ST_TOP, ST_TABY);
+            draw_text(d, 76, y + 46, tr("Incluida con HiByOS"), 12, rgb(142, 142, 147), W - 76 - pw - 26, ST_TOP, ST_TABY);
+            st_hit_add(0, y, W - 16 - pw - 6, y + ST_ROW, HT_SYS, k);
+            st_hit_add(W - 16 - pw - 6, y, W, y + ST_ROW, HT_SYSPILL, k);
+            if (m < n) st_hline(d, 76, W, y + ST_ROW - 1, rgb(38, 38, 40));
+        }
+        y += ST_ROW;
+    }
+    return y - y0;
+}
+/* toque en una incluida: el boton abre o instala; la fila ofrece abrir o desinstalar */
+static void st_sys_tap(int k, int pill, int *quit)
+{
+    int a = k >= 0 && k < NSYSREM ? app_find(sys_removable[k]) : -1; if (a < 0) return;
+    if (app_removed[a]) { sys_app_install(a); return; }
+    if (pill) { st_open_after = a; *quit = 1; return; }
+    const char *o[2] = { tr("Abrir"), tr("Desinstalar") };
+    int r = action_sheet(app_label(a), o, 2, 1);
+    if (r == 0) { st_open_after = a; *quit = 1; }
+    else if (r == 1) app_uninstall_home(a);
+}
 static int st_render_apps(uint16_t *d, int y0)
 {
     int y = y0 + 8, n = 0;
     st_section(d, y + 14, tr("TODAS LAS APPS")); y += 22;
     for (int i = 0; i < st_napp; i++, n++) { st_app_row(d, y, i, i == st_napp - 1); y += ST_ROW; }
     if (!n) y += st_status_msg(d, y);
+    y += st_sys_rows(d, y, 0);
     /* paquetes .hpk copiados a la tarjeta SD */
     y += 18; st_section(d, y + 14, tr("EN LA TARJETA SD (/Apps)")); y += 22;
     if (!npkgs) y += st_wrap(d, 16, y + 18, W - 32, tr("HPK_HELP"), 13, rgb(142, 142, 147), 18, 6) + 14;
@@ -1408,6 +1478,7 @@ static int st_render_inst(uint16_t *d, int y0)
         st_hit_add(0, y, W - 16 - pw - 6, y + ST_ROW, HT_INST, i);
         if (i < ninst - 1) st_hline(d, 76, W, y + ST_ROW - 1, rgb(38, 38, 40));
     }
+    y += st_sys_rows(d, y, 1);
     /* repositorios */
     y += 18; st_section(d, y + 14, tr("REPOSITORIOS")); y += 22;
     for (int r = 0; r < st_nrepo; r++, y += 56) {
@@ -1967,6 +2038,7 @@ static void store_app_ui(int ix, int iy)
                 case HT_PILL: case HT_INSTPILL: st_action_pill(i, &quit); break;
                 case HT_SD: store_detail(i, &quit); break;
                 case HT_INST: installed_detail(i); if (st_open_after >= 0) quit = 1; st_inst_sync(); break;
+                case HT_SYS: case HT_SYSPILL: st_sys_tap(i, k == HT_SYSPILL, &quit); break;
                 case HT_REPO: st_repo_menu(i); break;
                 case HT_ADDREPO: st_add_repo(); break;
                 case HT_REFRESH: if (!st_upd_on) { st_refresh(); st_upd_start("boton"); } break;
@@ -1996,7 +2068,8 @@ static void store_app_ui(int ix, int iy)
     have_under = 0;
     if (st_open_after >= 0) {                                     /* ABRIR: la app sale del centro */
         st_detail = -1;
-        run_ext_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);
+        if (apps[st_open_after].act == ACT_EXT) run_ext_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);
+        else launch_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);    /* incluida con HiByOS */
         return;
     }
     if (st_gone) { st_detail = -1; launcher_present(); return; }  /* el gesto de inicio ya lo animo */

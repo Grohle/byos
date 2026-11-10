@@ -455,5 +455,9 @@ static const struct trp TR_TH[] = {
     { "Canciones, álbumes, artistas y favoritas.", "เพลง อัลบั้ม ศิลปิน และรายการโปรด" },
     { "El último álbum que has añadido a la biblioteca.", "อัลบั้มล่าสุดที่เพิ่มในคลังเพลง" },
     { "Lo último que has escuchado y tu artista favorito.", "เพลงล่าสุดที่ฟังและศิลปินคนโปรด" },
+    { "Editar pantalla de inicio", "แก้ไขหน้าจอโฮม" },
+    { "INCLUIDAS CON HiByOS", "มาพร้อมกับ HiByOS" },
+    { "Incluida con HiByOS", "มาพร้อมกับ HiByOS" },
+    { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "ถอนการติดตั้งแอปนี้หรือไม่ ติดตั้งใหม่ได้จาก Apps" },
     { 0, 0 }
 };

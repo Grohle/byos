@@ -193,7 +193,6 @@ static void launch_app(int a, int ix, int iy)
     if (ap->act == ACT_SETTINGS) {       /* una sola app: el Centro de control puede pedir una pagina */
         int st = settings_start; settings_start = SET_ROOT;
         V.pressed_app = -1; last_app = a;
-        if (!st && ap->ax == 1) st = SET_PERS;               /* icono "Personalizar" */
         if (st == SET_USB) usbdac_app_at(ix, iy); else if (st == SET_WIRELESS) wireless_app_at(ix, iy);
         else if (st == SET_PERS) personalize_app(ix, iy); else settings_app(ix, iy);
         return;
@@ -350,6 +349,22 @@ static void animate_scroll_to(int page)
 
 static void launcher_settings(void);
 static void home_switcher(int sy);
+static int action_sheet(const char *title, const char **opts, int n, int destructive_idx);
+static int app_uninstall_home(int a);       /* store.inc.c */
+/* menu de una app del inicio (pulsacion larga y soltar, como en iOS) */
+static void app_menu(int a, int ix, int iy)
+{
+    V.pressed_app = -1; launcher_present();
+    const char *o[3]; int n = 0, rem = app_removable(a);
+    o[n++] = tr("Abrir"); o[n++] = tr("Editar pantalla de inicio");
+    if (rem) o[n++] = tr("Desinstalar");
+    lg("menu de app: %s", apps[a].id);
+    int k = action_sheet(app_label(a), o, n, rem ? 2 : -1);
+    if (k == 0) { launch_app(a, ix, iy); return; }
+    if (k == 1) V.edit = 1;
+    if (k == 2 && rem) app_uninstall_home(a);
+    launcher_present();
+}
 static void widgets_touch(struct pkt *p);
 static int wg_page_on;
 
@@ -401,7 +416,7 @@ static void launcher_touch(struct pkt *p)
     int ix, iy, dock, idx;
     int a = hit_app(sx, sy, &ix, &iy, &dock, &idx);
     if (a >= 0 && !V.edit) { V.pressed_app = a; launcher_present(); }
-    int moved = 0, longp = 0, entered = 0; float vel = 0; int lastx = sx; double lastt = t0;
+    int moved = 0, longp = 0, entered = 0, held = 0; float vel = 0; int lastx = sx; double lastt = t0;
     for (;;) {
         int got = read_pkt(p, 30);
         double t = now_ms();
@@ -414,8 +429,10 @@ static void launcher_touch(struct pkt *p)
                 if (V.pressed_app >= 0) { V.pressed_app = -1; launcher_present(); }
             }
         }
-        /* pulsacion larga sobre una app (o, ya editando, moverla): arrastre */
-        if (!longp && a >= 0 && ((!moved && t - t0 > 450) || (V.edit && moved))) {
+        /* pulsacion larga sobre una app: queda "armada" (el icono se suelta). Al levantar el dedo sin
+         * moverlo sale su menu, como en iOS; al moverlo (o, ya editando, con solo moverla) se arrastra */
+        if (!held && !longp && a >= 0 && !V.edit && !moved && t - t0 > 450) { held = 1; V.pressed_app = -1; launcher_present(); }
+        if (!longp && a >= 0 && moved && (held || V.edit)) {
             longp = 1; V.edit = 1; V.pressed_app = -1;
             V.drag_app = a; V.drag_x = cur_x; V.drag_y = cur_y; V.drag_dock = -1;
             drop_target(cur_x, cur_y, &V.drag_slot_page, &V.drag_slot, &V.drag_dock);
@@ -461,6 +478,7 @@ static void launcher_touch(struct pkt *p)
         animate_scroll_to(np);
         return;
     }
+    if (held && !moved && a >= 0) { app_menu(a, ix, iy); return; }
     if (!moved && a >= 0 && !V.edit) { launch_app(a, ix, iy); return; }
     if (!moved && V.edit && a < 0 && !entered) { V.edit = 0; lconf_save(); }   /* tocar en vacio sale de edicion */
     V.pressed_app = -1;

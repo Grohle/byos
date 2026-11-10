@@ -25,4 +25,10 @@ w /proc/sys/vm/dirty_ratio 10
 w /proc/sys/vm/dirty_expire_centisecs 500
 w /proc/sys/vm/dirty_writeback_centisecs 300
 
+# Sobrecompromiso siempre permitido. En modo heuristico (0) este kernel rechaza un fork() cuando
+# una sola zona privada del proceso (las pilas de 8 MB de los hilos de adbd o de la interfaz) no
+# cabe en la memoria libre + cache: con menos de ~8 MB libres "adb shell" responde "error: closed"
+# y las descargas de las apps no arrancan, aunque el hijo apenas vaya a usar memoria.
+w /proc/sys/vm/overcommit_memory 1
+
 exit 0
