@@ -609,7 +609,7 @@ static void ab_tabbar(uint16_t *d, int tab, int rec)
     if (k != key) {
         ab_fill(d, AB_TABY, H, rgb(20, 20, 22));
         for (int x = 0; x < W; x++) d[AB_TABY * W + x] = rgb(48, 48, 52);
-        static const char *tl[3] = { "Biblioteca", "Audiolibros", "Tienda" };
+        static const char *tl[3] = { "Biblioteca", "Audiolibros", "Gutenberg" };
         for (int i = 0; i < 3; i++) {
             int cx = W * i / 3 + W / 6; uint16_t col = i == tab ? AB_BLUE : AB_GRAY;
             ab_tab_glyph(d, i, cx, AB_TABY + 18, col);
@@ -993,10 +993,10 @@ static void ab_render(uint16_t *d)
         /* cabecera */
         ab_fill(d, 30, top, 0);
         if (root) {
-            draw_text(d, 16, 76, tr(bk_tab == 1 ? "Audiolibros" : "Tienda"), 28, 0xFFFF, W - 32, 0, H);
+            draw_text(d, 16, 76, bk_tab == 1 ? tr("Audiolibros") : "Gutenberg", 28, 0xFFFF, W - 32, 0, H);
         } else {
             const struct ab_pg *prev = &ab_stk[bk_tab][ab_spn[bk_tab] - 2];
-            const char *bt = prev->kind == AP_MINE ? tr("Audiolibros") : prev->kind == AP_STORE ? tr("Tienda") : tr("Atrás");
+            const char *bt = prev->kind == AP_MINE ? tr("Audiolibros") : prev->kind == AP_STORE ? "Gutenberg" : tr("Atrás");
             uint16_t c = ab_pressed(H_BACK, 0) ? rgb(5, 66, 128) : AB_BLUE;
             ab_chev_left(d, 16, 53, c); draw_text(d, 30, 59, bt, 17, c, 140, 0, H);
             ab_hit(0, 30, 160, AB_NAV, H_BACK, 0, 0, H);
@@ -1516,6 +1516,7 @@ static int ab_run(void)
             int r = kb_touch(&p, &ab_eb, fr0, ab_kb_redraw, 0);
             if (strcmp(before, ab_eb.b)) { ab_deb_t = now_ms() + 400; ab_present(); }
             if (r == K_ENTER) { kb_hide(); ab_search_fire(); ab_present(); }
+            if (r == K_HOME) { kb_hide(); ab_render(fr0); if (own_home_gesture(sx, sy, app_by_id("books"))) return 1; ab_present(); }   /* inicio con el teclado abierto */
             continue;
         }
         int tabhit = -1, idx = -1, k = H_NONE;

@@ -163,6 +163,7 @@ static void bk_index_apply(void)
         for (int i = 0; i < bln; i++) if (bl[i].h == h && bl[i].size == sz && (long)bl[i].mtime == mt) {
             snprintf(bl[i].title, sizeof bl[i].title, "%s", t); snprintf(bl[i].author, sizeof bl[i].author, "%s", a);
             bl[i].cov = cov; bl[i].meta = 1;
+            if (cov >= 3 && cov < 6) bl[i].meta = 0;   /* portada que fallo (3..5 = intentos): se reintenta */
         }
     }
     fclose(f);
@@ -224,10 +225,16 @@ static void *bk_meta_thread(void *a)
         for (int i = 0; i < bln; i++) if (!bl[i].meta) { snprintf(path, sizeof path, "%s", bl[i].path); h = bl[i].h; found = 1; break; }
         pthread_mutex_unlock(&bk_mu);
         if (!found) break;
-        struct bk_book b; char t[160] = "", au[120] = ""; int cov = 2;
+        struct bk_book b; char t[160] = "", au[120] = ""; int cov = 2, prev = 0;
+        pthread_mutex_lock(&bk_mu);
+        for (int i = 0; i < bln; i++) if (bl[i].h == h) prev = bl[i].cov;
+        pthread_mutex_unlock(&bk_mu);
         if (!bk_open(&b, path, 1)) {
             snprintf(t, sizeof t, "%s", b.title); snprintf(au, sizeof au, "%s", b.author);
             if (bk_make_cover(&b, h)) cov = 1;
+            /* tiene portada pero no se pudo sacar (hibywall, memoria...): no se da por perdida
+             * para siempre; se reintenta en los siguientes escaneos (hasta 3 veces) */
+            else if (b.cover_zi >= 0) cov = prev >= 3 && prev < 5 ? prev + 1 : prev == 5 ? 2 : 3;
             bk_close(&b);
         }
         pthread_mutex_lock(&bk_mu);
@@ -283,7 +290,7 @@ static void bk_gen_cover(uint16_t *px, const struct bk_li *b)
         bk_break(t, off, tl, (BK_CW - 26) << 6, 16, bk_adv_ui, 0, &e, &nx, &w26, &nsp);
         if (e <= off) e = nx = off + 1;
         char ln[200]; int n = e - off; memcpy(ln, t + off, n); ln[n] = 0;
-        if (lines == 4 && nx < tl) { while (n > 0 && bk_text_w(ln, 16) > BK_CW - 40) { do n--; while (n > 0 && ((unsigned char)ln[n] & 0xC0) == 0x80); ln[n] = 0; } strcat(ln, "…"); }
+        if (lines == 4 && nx < tl) { while (n > 0 && (n > (int)sizeof ln - 4 || bk_text_w(ln, 16) > BK_CW - 40)) { do n--; while (n > 0 && ((unsigned char)ln[n] & 0xC0) == 0x80); ln[n] = 0; } strcat(ln, "…"); }
         int w = bk_text_w(ln, 16);
         bk_text_clip(bk_cscr, 4 + (BK_CW - 4 - w) / 2, y, ln, 16, 0xFFFF, 2, 0, BK_CHT);
         y += 21; lines++; off = nx;
@@ -621,6 +628,12 @@ static void bk_chrome_draw(uint16_t *d, int scrub_ch, int scrub_pg)
 {
     struct bk_th T = bk_T();
     memcpy(d, fr1, 30 * W * 2);
+    /* bandas del color de la pagina arriba y abajo (como Libros de iOS): los controles no se
+     * montan sobre el texto ni sobre el pie "N de M" de la propia pagina */
+    for (int y = 30; y < 82; y++) for (int x = 0; x < W; x++) d[y * W + x] = T.bg;
+    for (int y = 82; y < 90; y++) { int k = 32 - (y - 81) * 4; for (int x = 0; x < W; x++) d[y * W + x] = bk_mix(T.bg, d[y * W + x], k); }
+    for (int y = H - 74; y < H; y++) for (int x = 0; x < W; x++) d[y * W + x] = T.bg;
+    for (int y = H - 82; y < H - 74; y++) { int k = 32 - (H - 74 - y) * 4; for (int x = 0; x < W; x++) d[y * W + x] = bk_mix(T.bg, d[y * W + x], k); }
     bk_xbtn(d, 34, 56, T.chrome, T.fg);
     int tw = tw_n(RB.title, 13, -1); if (tw > 190) tw = 190;
     draw_text(d, (W - tw) / 2, 61, RB.title, 13, T.dim, 190, 0, H);
@@ -720,11 +733,14 @@ static int bk_menu(void)
     static uint16_t *base; if (!base) base = img_base;
     memcpy(base, fr0, HM_FRAME_BYTES);
     const char *it[2] = { tr("Contenido"), tr("Temas y ajustes") };
-    int mw = 214, rh = 46, mh = 2 * rh, mx = W - 16 - mw, my = H - 66 - mh;
+    int mw = 214, rh = 46, mh = 2 * rh, mx = W - 16 - mw, my = H - 84 - mh;   /* por encima de la barra y de "N de M" */
     for (int s = 0; s <= 6; s++) {
         float e = (float)ease_out(s / 6.0);
         memcpy(fr0, base, HM_FRAME_BYTES);
         int h = (int)(mh * (0.6f + 0.4f * e)), y = my + mh - h, w = (int)(mw * (0.7f + 0.3f * e)), x = mx + mw - w;
+        /* sombra suave y filete: en el tema Original la tarjeta es blanca sobre blanco */
+        for (int k = 4; k >= 1; k--) fill_rrect(fr0, x - k, y - k + 2, w + 2 * k, h + 2 * k, 13 + k, 0, (int)(14 * e));
+        fill_rrect(fr0, x - 1, y - 1, w + 2, h + 2, 14, T.dim, (int)(50 * e));
         fill_rrect(fr0, x, y, w, h, 13, T.card, (int)(255 * e));
         if (s == 6) {
             for (int i = 0; i < 2; i++) {
@@ -969,7 +985,7 @@ static void bk_zoom(const uint16_t *lib, const uint16_t *page, const uint16_t *c
     for (;;) {
         double t = (now_ms() - t0) / dur; if (t > 1) t = 1;
         double e = open ? ease_out(t) : 1 - ease_out(t);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(lib[i], 32 - (int)(10 * e));
+        dim_buf(fr0, lib, W * H, 32 - (int)(10 * e));
         int rx = (int)(cx * (1 - e)), ry = (int)(cy * (1 - e)), rw = (int)(BK_CW + (W - BK_CW) * e), rh = (int)(BK_CHT + (H - BK_CHT) * e);
         draw_scaled(fr0, page, rx, ry, rw, rh, (float)(4 + 10 * (1 - e)) * (e < 0.98 ? 1 : 0));
         int a = (int)(32 * (1 - e * 1.8)); if (a > 0 && cover) bk_blit_scaled(fr0, cover, BK_CW, BK_CHT, rx, ry, rw, rh, a, (int)(4 + 10 * (1 - e)), 0, H);
@@ -1081,8 +1097,7 @@ static int bk_reader(void)
                 double t = now_ms(); if (t > lt) { v = 0.6f * v + 0.4f * (cur_y - ly) / (float)(t - lt); ly = cur_y; lt = t; }
                 pr = (cur_y - sy) / 420.f; if (pr < 0) pr = 0; if (pr > 1) pr = 1;
                 float s = 1 - 0.35f * pr; int rw = (int)(W * s), rh = (int)(H * s);
-                for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 22 + (int)(10 * pr));
-                draw_scaled(fr0, pg, (W - rw) / 2 + (cur_x - sx) / 3, (int)(pr * 160), rw, rh, 6 + 14 * pr);
+                zoom_frame(fr0, img_base, 22 + (int)(10 * pr), pg, (W - rw) / 2 + (cur_x - sx) / 3, (int)(pr * 160), rw, rh, 6 + 14 * pr);
                 present();
                 if ((got && !p.down) || !cur_down) break;
                 if (!got) msleep(2);
@@ -1095,7 +1110,7 @@ static int bk_reader(void)
                 double t0 = now_ms(); bk_anim = 1;
                 for (;;) {
                     double t = (now_ms() - t0) / 280; if (t > 1) t = 1; double e = ease_out(t);
-                    for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 22 + (int)(10 * (pr + (1 - pr) * e)));
+                    dim_buf(fr0, img_base, W * H, 22 + (int)(10 * (pr + (1 - pr) * e)));
                     int rx = x0 + (int)((cx - x0) * e), ry = y0 + (int)((cy - y0) * e), rw = w0 + (int)((BK_CW - w0) * e), rh = h0 + (int)((BK_CHT - h0) * e);
                     draw_scaled(fr0, pg, rx, ry, rw, rh, 6 + 14 * pr * (1 - e) + 4 * e);
                     if (cv) bk_blit_scaled(fr0, cv, BK_CW, BK_CHT, rx, ry, rw, rh, (int)(32 * e), 4, BK_LIST_Y, H);
@@ -1109,8 +1124,7 @@ static int bk_reader(void)
             for (;;) {
                 double t = (now_ms() - t0) / 220; if (t > 1) t = 1; float q = p0 * (1 - (float)ease_out(t));
                 float s = 1 - 0.35f * q; int rw = (int)(W * s), rh = (int)(H * s);
-                for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 22 + (int)(10 * q));
-                draw_scaled(fr0, pg, (W - rw) / 2, (int)(q * 160), rw, rh, q > 0.01f ? 6 + 14 * q : 0);
+                zoom_frame(fr0, img_base, 22 + (int)(10 * q), pg, (W - rw) / 2, (int)(q * 160), rw, rh, q > 0.01f ? 6 + 14 * q : 0);
                 present(); if (t >= 1) break;
             }
             bk_show(); continue;
@@ -1169,6 +1183,7 @@ static int bk_read(int i, int from_icon, int ix, int iy)
     return 0;
 }
 static void bk_lib_present(int pressed) { bk_lib_render(fr0, pressed); present(); }
+static int bk_start_store;     /* icono "Gutenberg" del inicio: entrar directamente en la tienda */
 static void books_app_at(int ix, int iy)
 {
     have_under = 0;                               /* se reutilizan img_under / img_sheet / img_base */
@@ -1177,6 +1192,10 @@ static void books_app_at(int ix, int iy)
     bk_lscroll = 0;
     ab_open();
     int gone = 0;
+    if (bk_start_store) {                         /* Gutenberg: la tienda de audiolibros y libros */
+        bk_start_store = 0; bk_resume_h = 0; bk_tab = 2;
+        if (!ab_spn[2]) { ab_spn[2] = 1; ab_stk[2][0].kind = AP_STORE; }
+    }
     /* volver al libro que estaba abierto (como iOS) */
     if (bk_resume_h) {
         int i = -1; for (int k = 0; k < bln; k++) if (bl[k].h == bk_resume_h) i = k;

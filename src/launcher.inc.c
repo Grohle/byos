@@ -45,8 +45,9 @@ static struct lapp apps[40] = {
     { "appstore",   "Apps",          ACT_STORE,    0,   0 },
     { "freemusic",  "Vinyl",         ACT_FREEMUSIC, 0,  0 },   /* Vinyl: musica libre (Internet Archive, Jamendo, repositorios) */
     { "headphones", "Auriculares",   ACT_BUDS,     0,   0 },   /* AirPods, Galaxy Buds, Nothing... */
+    { "gutenberg",  "Gutenberg",     ACT_BOOKS,    1,   0 },   /* Libros abierto en su tienda (audiolibros + libros) */
 };
-static int napps = 14;              /* internas + instaladas (register_installed_apps) */
+static int napps = 15;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
 static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
@@ -84,7 +85,7 @@ static void lconf_default(void)
     memset(&L, 0, sizeof L);
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
-    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "freemusic", "headphones", "tidal", "qobuz" };
+    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "freemusic", "gutenberg", "headphones", "tidal", "qobuz" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_by_id(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
     L.dock[L.dn++] = app_by_id("music");
     L.dock[L.dn++] = app_by_id("settings");

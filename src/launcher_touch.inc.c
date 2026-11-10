@@ -4,6 +4,7 @@ static void settings_app(int ix, int iy);
 static void usbdac_app_at(int ix, int iy);
 static void wireless_app_at(int ix, int iy);
 static void books_app_at(int ix, int iy);
+static int bk_start_store;
 static void freemusic_app_at(int ix, int iy);
 static void buds_app_at(int ix, int iy);
 static void store_app(int ix, int iy);
@@ -191,7 +192,7 @@ static void launch_app(int a, int ix, int iy)
     if (ap->act == ACT_SETTINGS) { V.pressed_app = -1; last_app = a; settings_app(ix, iy); return; }
     if (ap->act == ACT_USBDAC) { V.pressed_app = -1; last_app = a; usbdac_app_at(ix, iy); return; }
     if (ap->act == ACT_WIRELESS) { V.pressed_app = -1; last_app = a; wireless_app_at(ix, iy); return; }
-    if (ap->act == ACT_BOOKS) { V.pressed_app = -1; last_app = a; books_app_at(ix, iy); return; }
+    if (ap->act == ACT_BOOKS) { V.pressed_app = -1; last_app = a; bk_start_store = ap->ax == 1; books_app_at(ix, iy); return; }
     if (ap->act == ACT_FREEMUSIC) { V.pressed_app = -1; last_app = a; freemusic_app_at(ix, iy); return; }
     if (ap->act == ACT_BUDS) { V.pressed_app = -1; last_app = a; buds_app_at(ix, iy); return; }
     if (ap->act == ACT_STORE) { V.pressed_app = -1; last_app = a; store_app(ix, iy); return; }
