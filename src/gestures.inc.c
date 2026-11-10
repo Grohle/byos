@@ -59,18 +59,22 @@ static void compose_slide(uint16_t *dst, const uint16_t *under, const uint16_t *
     if (dx < 0) for (int y = 0; y < H; y++) for (int s = 0; s < 6 && W + dx + s < W; s++) dst[y * W + W + dx + s] = dim565(dst[y * W + W + dx + s], 20 + s * 2);
     if (dy < 0) for (int s = 0; s < 6 && H + dy + s < H; s++) for (int x = 0; x < W; x++) dst[(H + dy + s) * W + x] = dim565(dst[(H + dy + s) * W + x], 20 + s * 2);
 }
+static int np_from_screen(const uint16_t *under);        /* nowui.inc.c */
+/* Reproduciendo (el propio) desde un borde siguiendo al dedo; al soltar a mas del 40 % se abre y
+ * al cerrarlo se vuelve a la pantalla de debajo (o al inicio si se sube desde la barra). */
 static void player_from_edge(int dir, int start)
 {
     if (launcher_on) { render_launcher(img_under, now_ms()); }
     else memcpy(img_under, visible(), HM_FRAME_BYTES);
     have_under = 1;
-    const uint16_t *ph = have_cache_plane ? img_cache_plane : 0;
-    if (!ph) { memset(img_sheet, 0, HM_FRAME_BYTES); ph = img_sheet; }
+    if (!np_card(img_sheet)) memset(img_sheet, 0, HM_FRAME_BYTES);
+    const uint16_t *ph = img_sheet;
     st->ov_on = 0; ov_cur = 0;
-    cmd('C');
-    double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
-    if (!st->capture) return;
-    nav_start(NAV_TO_PLANE);
+    if (!launcher_on) {
+        cmd('C');
+        double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
+        if (!st->capture) return;
+    }
     int span = dir == 3 ? H : W, rev = 0; double vel = 0, lt = now_ms(); int last = start;
     struct pkt p;
     for (;;) {
@@ -80,11 +84,10 @@ static void player_from_edge(int dir, int start)
         int cur = dir == 3 ? cur_y : cur_x;
         double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur - last) / (t - lt); last = cur; lt = t; }
         rev = dir == 1 ? start - cur + 12 : cur - start + 12; if (rev < 0) rev = 0; if (rev > span) rev = span;
-        int k = 32 - 11 * rev / span;
-        int ready = nav_done && nav_ok;
-        compose_slide(fr0, img_under, ready ? fr1 : ph, dir == 1 ? W - rev : dir == 2 ? rev - W : 0, dir == 3 ? rev - H : 0, k);
+        compose_slide(fr0, img_under, ph, dir == 1 ? W - rev : dir == 2 ? rev - W : 0, dir == 3 ? rev - H : 0, 32 - 11 * rev / span);
         present();
         if (!cur_down) break;
+        if (!got) msleep(2);
     }
     double v = dir == 1 ? -vel : vel;
     int complete = rev > span * 0.4 || v > 0.35;
@@ -92,20 +95,17 @@ static void player_from_edge(int dir, int start)
     for (;;) {
         double t = (now_ms() - t0) / 240.0; if (t > 1) t = 1;
         int r = from + (int)((to - from) * ease_out(t));
-        int ready = nav_done && nav_ok;
-        compose_slide(fr0, img_under, ready ? fr1 : ph, dir == 1 ? W - r : dir == 2 ? r - W : 0, dir == 3 ? r - H : 0, 32 - 11 * r / span);
+        compose_slide(fr0, img_under, ph, dir == 1 ? W - r : dir == 2 ? r - W : 0, dir == 3 ? r - H : 0, 32 - 11 * r / span);
         present();
         if (t >= 1) break;
     }
-    int ok = nav_wait(2500);
-    if (complete && ok == 1) {
-        memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1;
-        if (launcher_on) { launcher_on = 0; home_publish(); }
-        cmd('R');
-        return;
-    }
-    if (ok == 1) { nav_start(NAV_BACK); nav_wait(2000); }
-    if (!launcher_resume()) cmd('R');
+    if (!complete) { if (launcher_on) launcher_present(); else cmd('R'); return; }
+    static uint16_t *under_copy; if (!under_copy) under_copy = malloc(HM_FRAME_BYTES);
+    if (!under_copy) { if (launcher_on) launcher_present(); else cmd('R'); return; }
+    memcpy(under_copy, img_under, HM_FRAME_BYTES);
+    int home = np_from_screen(under_copy);
+    if (home && !launcher_on) { nav_start(NAV_HOME); nav_wait(3000); if (!launcher_resume()) cmd('R'); return; }
+    if (launcher_on) launcher_present(); else cmd('R');
 }
 
 /* ------------------------------------------------------------------ multitarea */
@@ -181,7 +181,7 @@ static void card_to_home(const uint16_t *home, const uint16_t *img, int x0, int 
         int w = (int)(w0 + (L.icon - w0) * e), h = (int)(h0 + (L.icon - h0) * e);
         int x = (int)(x0 + (tx - x0) * e), y = (int)(y0 + (ty - y0) * e);
         int k = 22 + (int)(10 * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = k >= 32 ? home[i] : dim565(home[i], k);
+        dim_buf(fr0, home, W * H, k);
         if (t < 0.92) {
             draw_scaled(fr0, img, x, y, w, h, win_radius(w, h, 1 - e));
             if (last_app >= 0) { int ia = (int)(255 * (e - 0.55) / 0.45); if (ia > 0) blit_scaled(fr0, &apps[last_app].icon[sz_idx()], x, y, w, h, ia > 255 ? 255 : ia); }
@@ -271,7 +271,7 @@ static void sw_reveal_home(const uint16_t *home, int k0)
     for (;;) {
         double t = (now_ms() - t0) / 200.0; if (t > 1) t = 1;
         int k = k0 + (int)((32 - k0) * ease_out(t));
-        for (int i = 0; i < W * H; i++) fr0[i] = k >= 32 ? home[i] : dim565(home[i], k);
+        dim_buf(fr0, home, W * H, k);
         present(); if (t >= 1) break;
     }
 }
@@ -284,7 +284,7 @@ static void app_switch_gesture(int sy, int sx)
     if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
         memcpy(app + (st->ov_uy + r) * W + st->ov_ux, st->ov_under + r * st->ov_uw, st->ov_uw * 2);
     if (launcher_enabled) render_launcher(home, now_ms()); else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES); else memset(home, 0, HM_FRAME_BYTES);
-    for (int i = 0; i < W * H; i++) { bg[i] = dim565(home[i], 22); bg2[i] = dim565(home[i], 11); }
+    dim_buf(bg, home, W * H, 22); dim_buf(bg2, home, W * H, 11);
     have_under = 0;
     /* tarjeta del reproductor (el propio): se prepara solo si se mantiene el gesto */
     static uint16_t *ph_card; if (!ph_card) ph_card = malloc(W * H * 2);
@@ -563,7 +563,7 @@ static void home_switcher(int sy)
         double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lt = t; }
         prog = (sy - cur_y) / 260.0; if (prog < 0) prog = 0; if (prog > 1.1) prog = 1.1;
         int k = 32 - (int)(21 * (prog > 1 ? 1 : prog));
-        for (int i = 0; i < W * H; i++) bg[i] = dim565(home[i], k);
+        dim_buf(bg, home, W * H, k);
         switcher_frame(bg, c0, c1, 0, CARD_S, -(1 - (prog > 1 ? 1 : prog)) * H * 0.75, c1 != 0, prog > 0.8);
         if (got && !p.down) break;
         if (!cur_down) break;
@@ -575,7 +575,7 @@ static void home_switcher(int sy)
         double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1;
         double e = ease_out(t), pr = open ? p0 + (1 - p0) * e : p0 * (1 - e); if (pr > 1) pr = 1;
         int k = 32 - (int)(21 * pr);
-        for (int i = 0; i < W * H; i++) bg[i] = dim565(home[i], k);
+        dim_buf(bg, home, W * H, k);
         switcher_frame(bg, c0, c1, 0, CARD_S, -(1 - pr) * H * 0.75, c1 != 0, open && t >= 1);
         if (t >= 1) break;
     }
@@ -592,7 +592,7 @@ static void home_switcher(int sy)
     for (;;) {
         double t = (now_ms() - t1) / 220.0; if (t > 1) t = 1; double e = ease_out(t);
         int k = 11 + (int)(21 * e);
-        for (int i = 0; i < W * H; i++) bg[i] = dim565(home[i], k);
+        dim_buf(bg, home, W * H, k);
         switcher_frame(bg, c0, c1, off, CARD_S, -e * H * 0.75, c1 != 0, 0);
         if (t >= 1) break;
     }

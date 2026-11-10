@@ -319,20 +319,29 @@ static void nu_make_page(void)
 /* posicion extrapolada desde la ultima lectura del hilo de nowplay (que lee cada ~1 s). Con el
  * estado optimista de reproducir/pausa (nu.hold) para que la letra se pare al tocar, no 1 s
  * despues; el tope de 4 s solo protege si el hilo se queda sin publicar. */
+/* ultima posicion conocida de la pista: en pausa la libreria publica -1 ("desconocida") y la
+ * pagina mostraba "--:--"; se queda la ultima (tambien al volver a abrir Reproduciendo) */
+static uint32_t nu_last_trk; static int nu_last_ms = -1;
 static int nu_pos(void)
 {
-    if (nu.anc < 0) return -1;
+    if (nu.anc < 0) return nu_last_trk == nu.ni.track_id ? nu_last_ms : -1;
     int p = nu.anc;
     if (nu.hold ? nu.playing : nu.ni.playing) { double e = now_ms() - nu.anc_t; p += (int)(e > 4000 ? 4000 : e); }
     if (nu.ni.duration_ms > 0 && p > nu.ni.duration_ms) p = nu.ni.duration_ms;
+    nu_last_trk = nu.ni.track_id; nu_last_ms = p;
     return p;
+}
+static void nu_anchor_init(double now)
+{
+    nu.raw_pos = nu.ni.position_ms; nu.anc = nu.ni.position_ms; nu.anc_t = now;
+    if (nu.anc < 0 && nu_last_trk == nu.ni.track_id) nu.anc = nu_last_ms;
 }
 /* lectura barata de la posicion publicada (cada vuelta del bucle): el ancla se toma a <=25 ms de
  * que el hilo la publique, no a <=100 ms (sin deriva entre lecturas) */
 static void nu_pos_sync(void)
 {
     pthread_mutex_lock(&npx_mu); int p = npx.position_ms; uint32_t id = npx.track_id; int src = npx.source; pthread_mutex_unlock(&npx_mu);
-    if (src == NP_SRC_NONE || id != nu.ni.track_id || p == nu.raw_pos) return;
+    if (src == NP_SRC_NONE || id != nu.ni.track_id || p == nu.raw_pos || p < 0) return;
     nu.raw_pos = p; nu.anc = p; nu.anc_t = now_ms();
 }
 static void nu_draw_prog(uint16_t *d)
@@ -609,7 +618,7 @@ static int nu_init(void)
     if (!cf) nu.cov_ok = 0;
     if (!cf && mu_npcov_ok) { memcpy(nu.cov, mu_npcov, sizeof nu.cov); nu.cov_ok = 1; }   /* la del mini reproductor */
     nu.playing = nu.ni.playing; nu.sc = nu.playing ? 1 : NU_PAUSE; nu.pressed = -1; nu.lcur = -1;
-    nu.raw_pos = nu.ni.position_ms; nu.anc = nu.ni.position_ms; nu.anc_t = now_ms();
+    nu_anchor_init(now_ms());
     nu_build_all();
     return 1;
 }
@@ -731,7 +740,7 @@ static int nu_poll(void)
         if (nu.pend_id != n.track_id) { nu.pend_id = n.track_id; nu.pend_t = now; }
         if (cf || now - nu.pend_t > 1500) {                    /* con su caratula (o sin ella tras 1,5 s) */
             int ok; nu_snap(&nu.ni, nu.cov, &ok, &cf); nu.cov_ok = cf && ok;
-            nu.raw_pos = nu.ni.position_ms; nu.anc = nu.ni.position_ms; nu.anc_t = now; nu.pend_id = 0;
+            nu_anchor_init(now); nu.pend_id = 0;
             if (!nu.hold) nu.playing = nu.ni.playing;
             nu_build_all(); nu.lcur = -1;         /* sin letra se queda en la vista de letra (ofrece buscarla) */
             if (nu.lyr) { nu_lyrics_tick(); nu.lsc = nu.lsc1; nu.lst = 0; }
@@ -746,7 +755,7 @@ static int nu_poll(void)
     if (!nu.hold && n.playing != nu.playing) { nu.playing = n.playing; r |= NB_CTL; }
     /* posicion: se ancla cuando el hilo publica un valor nuevo y se extrapola mientras suena */
     if (!nu.ni.playing && n.playing && !held) { nu.anc = nu_pos(); nu.anc_t = now; }   /* vuelve a sonar: extrapolar desde ahora */
-    if (n.position_ms != nu.raw_pos) { nu.raw_pos = n.position_ms; nu.anc = n.position_ms; nu.anc_t = now; }
+    if (n.position_ms != nu.raw_pos && n.position_ms >= 0) { nu.raw_pos = n.position_ms; nu.anc = n.position_ms; nu.anc_t = now; }   /* -1 (en pausa): se queda la ultima */
     if (nu.ni.playing && !n.playing && !held) { nu.anc = nu_pos(); nu.anc_t = now; }   /* se paro: congelar donde iba */
     nu.ni.playing = n.playing; nu.ni.duration_ms = n.duration_ms;
     if (strcmp(n.title, nu.ni.title) || strcmp(n.artist, nu.ni.artist)) {   /* etiquetas editadas */
@@ -1128,7 +1137,8 @@ static int nu_loop(int *arg)
         int sx = p.x, sy = p.y, hit = nu_hit(sx, sy), moved = 0, lp = 0; double tdown = now_ms();
         /* abajo del todo: subir = al inicio */
         if (sy >= 456) {
-            while (cur_down && read_pkt(&p, 1000)) if (sy - cur_y > 20) moved = 1;
+            /* en cuanto sube (sin esperar a soltar: antes la respuesta llegaba ~190 ms tarde) */
+            while (cur_down && read_pkt(&p, 1000)) if (sy - cur_y > 20) { moved = 1; break; }
             if (moved || sy - cur_y > 20) return NU_HOME;
             if (hit == 4) nu_toggle_lyrics();
             continue;
@@ -1390,8 +1400,7 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
         for (;;) {
             double t = (now_ms() - t0) / 300; if (t > 1) t = 1; double e = ease_out(t);
             int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-            for (int i = 0; i < W * H; i++) fr0[i] = dim565(home[i], 32 - (int)(8 * e));
-            draw_scaled(fr0, pg, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+            zoom_frame(fr0, home, 32 - (int)(8 * e), pg, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
             present(); if (t >= 1) break;
         }
     }
@@ -1421,7 +1430,7 @@ static int own_home_gesture(int sx, int sy, int self)
     memcpy(own_card, fr0, HM_FRAME_BYTES); own_card_app = self; last_app = self;
     uint16_t *home = img_base, *bg = img_app, *bg2 = img_under;
     render_launcher(home, now_ms());
-    for (int i = 0; i < W * H; i++) { bg[i] = dim565(home[i], 22); bg2[i] = dim565(home[i], 11); }
+    dim_buf(bg, home, W * H, 22); dim_buf(bg2, home, W * H, 11);
     have_under = 0;
     static uint16_t *phb; if (!phb) phb = malloc(HM_FRAME_BYTES);
     const uint16_t *ph = 0;          /* la tarjeta del reproductor se prepara solo si se mantiene el gesto */
@@ -1475,4 +1484,12 @@ static int own_home_gesture(int sx, int sy, int self)
     }
     memcpy(fr0, own_card, HM_FRAME_BYTES);
     return 0;
+}
+
+/* Reproduciendo abierto desde un gesto sobre otra pantalla (que ya muestra la pagina: la hoja
+ * acaba de entrar). Devuelve 1 si el usuario subio desde la barra (ir al inicio). */
+static int np_from_screen(const uint16_t *under)
+{
+    int r = np_app_run(under, -1, -1);
+    return r == NU_HOME;
 }

@@ -298,8 +298,35 @@ static const uint16_t *cc_player_img(void)
 }
 /* arrastre hacia la izquierda desde el centro de control: entra el reproductor.
  * Devuelve 1 si se completo (y la pantalla ya es del reproductor). */
+static int np_from_screen(const uint16_t *under);
 static int cc_to_player(const uint16_t *panel, int sx)
 {
+    /* el reproductor propio (nowui): su pagina entra por la derecha siguiendo al dedo */
+    static uint16_t *npimg; if (!npimg) npimg = malloc(HM_FRAME_BYTES);
+    if (npimg && np_card(npimg)) {
+        struct pkt p; double vel = 0, lt = now_ms(); int lx = sx, o = 0;
+        while (cur_down) {
+            int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+            double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_x - lx) / (t - lt); lx = cur_x; lt = t; }
+            o = cur_x - sx; if (o > 0) o = 0; cc_hpage(panel, npimg, o); present();
+            if (got && !p.down) break;
+            if (!got) msleep(2);
+        }
+        int done = -o > W * 0.35 || vel < -0.35;
+        double t0 = now_ms(); int o0 = o, to = done ? -W : 0;
+        for (;;) {
+            double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1;
+            cc_hpage(panel, npimg, o0 + (int)((to - o0) * ease_out(t))); present();
+            if (t >= 1) break;
+        }
+        if (!done) { memcpy(fr0, panel, HM_FRAME_BYTES); present(); return 0; }
+        static uint16_t *under; if (!under) under = malloc(HM_FRAME_BYTES);
+        if (under) { if (cc_under) memcpy(under, cc_under, HM_FRAME_BYTES); else memcpy(under, panel, HM_FRAME_BYTES); }
+        int home = under ? np_from_screen(under) : 0;
+        if (cc_from_launcher || home) { if (!cc_from_launcher) { nav_start(NAV_HOME); nav_wait(3000); } if (!launcher_resume()) cmd('R'); }
+        else cmd('R');
+        return 1;
+    }
     const uint16_t *pl = cc_player_img();
     if (!cc_player_right) nav_start(NAV_TO_PLANE);       /* se adelanta mientras se arrastra */
     struct pkt p; double vel = 0, lt = now_ms(); int lx = sx, o = 0;
