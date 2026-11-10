@@ -578,7 +578,9 @@ static void te_draw_main(uint16_t *d, const struct te_row *r, int sy, int presse
         const struct te_f *f = &te_fs[r->idx];
         int b = ht_key_base(f->key), locked = b >= 0 && TE_LOCKED(b, te_n), ro = f->flags & (HT_ITEM_RO | HT_ITEM_TRUNC);
         char nm[160]; te_name(f->key, f->orig, nm, sizeof nm);
-        draw_text(d, 32, cy, nm, 13, locked || ro ? rgb(90, 90, 96) : rgb(152, 152, 159), 110, TE_TOP, H);
+        int lw = tw_n(nm, 13, -1); if (lw > 136) lw = 136;
+        int vx = 32 + lw + 10 > 150 ? 32 + lw + 10 : 150;         /* etiquetas largas empujan el valor */
+        draw_text(d, 32, cy, nm, 13, locked || ro ? rgb(90, 90, 96) : rgb(152, 152, 159), 136, TE_TOP, H);
         const char *v = f->dirty ? f->nv : f->multi ? tr("Varios valores") : f->val;
         uint16_t vc = f->dirty ? C_BLUE : f->multi ? rgb(110, 110, 116) : ro ? rgb(150, 150, 156) : 0xFFFF;
         if (locked) { v = tr("Distinto en cada una"); vc = rgb(90, 90, 96); }
@@ -588,7 +590,7 @@ static void te_draw_main(uint16_t *d, const struct te_row *r, int sy, int presse
         one[k] = 0;
         if (v[k] && k < (int)sizeof one - 4) strcat(one, "…");
         int ml = te_multiline(f) && !locked;
-        draw_text(d, 150, cy, one, 14, vc, W - 16 - 12 - 150 - (ml ? 12 : 0), TE_TOP, H);
+        draw_text(d, vx, cy, one, 14, vc, W - 16 - 12 - vx - (ml ? 12 : 0), TE_TOP, H);
         if (ml) te_chev(d, W - 30, sy + r->h / 2, rgb(90, 90, 96), TE_TOP, H);
         break;
     }

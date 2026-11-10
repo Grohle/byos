@@ -370,7 +370,8 @@ static void lx_row(uint16_t *d, int x, int y, int w, const struct lrc_cand *c, i
     if (busy) spn_draw(d, x1 - 18, y + 20, spn_phase(now_ms()), 8, 0, H);
     mu_text_bold(d, x + 16, y + 25, c->title, 16, ct, x1 - x - 16 - (busy ? 34 : 8));
     char sub[220];
-    snprintf(sub, sizeof sub, "%s%s%s", c->artist, c->artist[0] && c->album[0] ? " \xC2\xB7 " : "", c->album);
+    int k2 = snprintf(sub, sizeof sub, "%s%s%s", c->artist, c->artist[0] && c->album[0] ? " \xC2\xB7 " : "", c->album);
+    if (c->dur > 0 && k2 < (int)sizeof sub - 16) snprintf(sub + k2, sizeof sub - k2, "%s%d:%02d", k2 ? " \xC2\xB7 " : "", c->dur / 60, c->dur % 60);
     draw_text(d, x + 16, y + 45, sub, 13, cs, x2 - x - 24, 0, H);
     if (c->first[0]) { char q[140]; snprintf(q, sizeof q, "\xE2\x80\x9C%s\xE2\x80\x9D", c->first); draw_text(d, x + 16, y + 65, q, 13, cq, w - 28, 0, H); }
 }

@@ -18,7 +18,7 @@
 #define GRID_TOP 46
 #define DOTS_Y (DOCK_Y - 13)
 
-enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS, ACT_BOOKS };
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC, ACT_USBDAC, ACT_WIRELESS, ACT_BOOKS, ACT_FREEMUSIC };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -43,8 +43,9 @@ static struct lapp apps[40] = {
     { "radio",      "Radio",         ACT_SOON,     0,   0 },
     { "personalize", "Personalizar", ACT_SETTINGS, 0,   0 },
     { "appstore",   "Apps",          ACT_STORE,    0,   0 },
+    { "freemusic",  "Música libre",  ACT_FREEMUSIC, 0,  0 },   /* Internet Archive + Jamendo */
 };
-static int napps = 12;              /* internas + instaladas (register_installed_apps) */
+static int napps = 13;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
 static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
@@ -82,7 +83,7 @@ static void lconf_default(void)
     memset(&L, 0, sizeof L);
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
-    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "tidal", "qobuz" };
+    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "freemusic", "tidal", "qobuz" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_by_id(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
     L.dock[L.dn++] = app_by_id("music");
     L.dock[L.dn++] = app_by_id("settings");

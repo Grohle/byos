@@ -23,6 +23,7 @@ const G = {
   play: ['M4 9v6M8 6v12M12 9v6M16 4v16M20 8v8', ''],
   sliders: ['M4 7h9M17 7h3M4 17h3M11 17h9M4 12h13M21 12h-0M15 4.5v5M9 14.5v5M19 9.5v5', ''],
   store: ['M7.5 19.5l4.5-15 4.5 15M9.3 13.5h5.4M4 19.5h16', ''],
+  freemusic: ['M8 15.5V5.5l9-2v9.5M8 15.5a2.4 2.4 0 11-4.8 0 2.4 2.4 0 014.8 0zM17 13a2.4 2.4 0 11-4.8 0 2.4 2.4 0 014.8 0zM18.5 16v5M16.3 18.8l2.2 2.2 2.2-2.2', ''],
   radio: ['M5 9.5h14a1.5 1.5 0 011.5 1.5v8a1.5 1.5 0 01-1.5 1.5H5A1.5 1.5 0 013.5 19v-8A1.5 1.5 0 015 9.5zM7 9.5l9-5.5M15.5 15a2 2 0 100 .01M7 13.5h4M7 16.5h4', ''],
 };
 // fondo [c1, c2], glifo, color del glifo
@@ -38,6 +39,7 @@ const APPS = {
   radio:      [['#c58cff', '#7b3fe4'], 'radio', '#fff'],
   personalize:[['#8e8e93', '#3a3a3c'], 'sliders', '#fff'],
   appstore:   [['#4fb3ff', '#1d6cf2'], 'store', '#fff'],
+  freemusic:  [['#3ee0c0', '#0b8f8a'], 'freemusic', '#fff'],
 };
 
 function shell(size, c1, c2, inner) {
