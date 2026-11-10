@@ -58,6 +58,43 @@ deps() {
     python3 scripts/config.py unset MBEDTLS_SELF_TEST
     python3 scripts/config.py unset MBEDTLS_VERSION_FEATURES
     python3 scripts/config.py unset MBEDTLS_SSL_RENEGOTIATION
+    python3 scripts/config.py unset MBEDTLS_SSL_PROTO_TLS1 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_SSL_PROTO_TLS1_1 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_SSL_CBC_RECORD_SPLITTING 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_DES_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_CAMELLIA_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_ARIA_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_BLOWFISH_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_XTEA_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_ARC4_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_RIPEMD160_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_CCM_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_CMAC_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_NIST_KW_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_HKDF_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_ECJPAKE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_KEY_EXCHANGE_ECJPAKE_ENABLED 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_KEY_EXCHANGE_DHE_RSA_ENABLED 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_KEY_EXCHANGE_DHE_PSK_ENABLED 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_KEY_EXCHANGE_PSK_ENABLED 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_KEY_EXCHANGE_RSA_PSK_ENABLED 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_KEY_EXCHANGE_ECDHE_PSK_ENABLED 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_DHM_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_PKCS12_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_PKCS5_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_X509_CRL_PARSE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_X509_CSR_PARSE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_X509_CREATE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_X509_CRT_WRITE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_X509_CSR_WRITE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_PK_WRITE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_CERTS_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_PEM_WRITE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_TIMING_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_HAVEGE_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_PADLOCK_C 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_SSL_DTLS_SRTP 2>/dev/null || true
+    python3 scripts/config.py unset MBEDTLS_SSL_TRUNCATED_HMAC 2>/dev/null || true
     make -C library -j20 libmbedtls.a libmbedx509.a libmbedcrypto.a CC="$CC" AR="$AR" \
       CFLAGS="-Os -ffunction-sections -fdata-sections -w" >/dev/null
     cp library/*.a $P/lib/; cp -r include/mbedtls $P/include/

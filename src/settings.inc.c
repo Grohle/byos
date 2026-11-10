@@ -145,12 +145,13 @@ static void *thumb_thread(void *arg)
 }
 
 static struct sprite s_pick_title, s_nosd, s_cancel;
+static int pick_off;   /* 1: modo "elegir imagen" (sin la casilla Aurora) */
 static void render_picker(uint16_t *dst, int scroll, int sel)
 {
     for (int i = 0; i < W * H; i++) dst[i] = rgb(0, 0, 0);
-    int n = nimg + 1;
-    for (int i = 0; i < n; i++) {
-        int col = i % 3, row = i / 3;
+    int n = nimg + 1 - pick_off;
+    for (int k = 0; k < n; k++) {
+        int i = k + pick_off, col = k % 3, row = k / 3;
         int x = 8 + col * (TW + 4), y = 64 + row * (TH + 4) - scroll;
         if (y + TH < 56 || y > H) continue;
         if (thumb_ready[i] == 1 && thumbs[i]) {
@@ -166,8 +167,14 @@ static void render_picker(uint16_t *dst, int scroll, int sel)
     if (!nimg) blit(dst, &s_nosd, (W - s_nosd.w) / 2, 260, 32, 255);
 }
 
-static void wallpaper_picker(void)
+static int picker_run(char *out, int cap);
+static void sprite_free(struct sprite *s);
+static void wallpaper_picker(void) { picker_run(0, 0); }
+/* elegir una imagen de la SD (devuelve 1 y la ruta en out) */
+static int image_picker(char *out, int cap) { sprite_free(&s_pick_title); text_sprite(&s_pick_title, tr("Elegir imagen"), 16.f, 0xFFFF, 0); int r = picker_run(out, cap); sprite_free(&s_pick_title); return r; }
+static int picker_run(char *out, int cap)
 {
+    pick_off = out ? 1 : 0;
     if (!s_pick_title.w) {
         text_sprite(&s_pick_title, tr("Fondo de pantalla"), 16.f, 0xFFFF, 0);
         text_sprite(&s_cancel, tr("Cerrar"), 15.f, rgb(10, 132, 255), 0);
@@ -187,7 +194,7 @@ reload:
     }
     for (int i = 1; i <= MAXIMG; i++) thumb_ready[i] = 0;
     if (!thumbs_busy) { pthread_t th; pthread_create(&th, 0, thumb_thread, 0); pthread_detach(th); }
-    int scroll = 0, rows = (nimg + 1 + 2) / 3, maxs = rows * (TH + 4) + 64 - H; if (maxs < 0) maxs = 0;
+    int scroll = 0, rows = (nimg + 1 - pick_off + 2) / 3, maxs = rows * (TH + 4) + 64 - H; if (maxs < 0) maxs = 0;
     struct pkt p;
     for (;;) {
         render_picker(fr0, scroll, -1); present();
@@ -199,13 +206,14 @@ reload:
         }
         if (moved) continue;
         if (sy < 56) {
-            if (sx > W - 90) break;
+            if (sx > W - 90) { if (out) return 0; break; }
             if (sx < 110) { pick_all = !pick_all; goto reload; }
             continue;
         }
-        int col = (sx - 8) / (TW + 4), row = (sy - 64 + scroll) / (TH + 4), i = row * 3 + col;
-        if (col < 0 || col > 2 || i < 0 || i > nimg) continue;
+        int col = (sx - 8) / (TW + 4), row = (sy - 64 + scroll) / (TH + 4), i = row * 3 + col + pick_off;
+        if (col < 0 || col > 2 || i < pick_off || i > nimg) continue;
         render_picker(fr0, scroll, i); present();
+        if (out) { snprintf(out, cap, "%s", img_path[i - 1]); return 1; }
         if (i == 0) { L.wall[0] = 0; unlink(ASSETS "/wall_custom.raw"); }
         else {
             toast(tr("Aplicando fondo…"));
@@ -218,4 +226,5 @@ reload:
         break;
     }
     /* esperar a que termine el hilo de miniaturas antes de liberar nada (no se libera: se reutiliza) */
+    return 0;
 }

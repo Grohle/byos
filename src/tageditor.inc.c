@@ -8,6 +8,8 @@
 
 #define TAGBIN ASSETS "/hibytag"
 static int confirm(const char *title, const char *button);
+static void cover_search(const char *path, const char *artist, const char *album);
+static void lyrics_search(const char *path, const char *artist, const char *title, const char *album);
 static const char *const TE_FIELDS[HT_NFIELDS] = { "Título", "Artista", "Álbum", "Artista del álbum", "Género", "Año", "Pista", "Disco" };
 static const char *const TE_SUGG[HT_NFIELDS] = { 0, "artist", "album", "albumartist", "genre", 0, 0, 0 };
 
@@ -75,6 +77,8 @@ static int line_edit_suggest(const char *title, const char *hint, char *buf, int
 
 /* ------------------------------------------------------------------ formulario */
 #define TE_MAX 400
+#define TE_Y 120
+#define TE_RH 36
 static char *te_val[HT_NFIELDS];          /* valor comun (NULL = varios valores) */
 static int te_multi[HT_NFIELDS];          /* distintos entre ficheros */
 static int te_dirty[HT_NFIELDS];
@@ -91,19 +95,25 @@ static void te_render(uint16_t *d, int n, int sel)
     int any = 0; for (int f = 0; f < HT_NFIELDS; f++) any |= te_dirty[f];
     draw_text(d, W - 14 - tw_n(tr("Guardar"), 16, -1), 68, tr("Guardar"), 16, any ? rgb(10, 132, 255) : rgb(70, 70, 76), 0, 0, H);
     if (n > 1) { char c[64]; snprintf(c, sizeof c, tr("%d canciones"), n); draw_text(d, 32, 116, c, 12, rgb(142, 142, 147), 0, 0, H); }
-    int y = 124, rh = 42;
+    int y = TE_Y, rh = TE_RH;
     fill_rrect(d, 16, y, W - 32, HT_NFIELDS * rh, 10, rgb(28, 28, 30), 255);
     for (int f = 0; f < HT_NFIELDS; f++) {
         int ry = y + f * rh;
         if (f == sel) fill_rrect(d, 16, ry, W - 32, rh, (f == 0 || f == HT_NFIELDS - 1) ? 10 : 0, rgb(58, 58, 60), 255);
         if (f) for (int x = 32; x < W - 16; x++) d[ry * W + x] = rgb(56, 56, 58);
         int locked = n > 1 && (f == HT_TITLE || f == HT_TRACK);
-        draw_text(d, 32, ry + 27, tr(TE_FIELDS[f]), 13, locked ? rgb(90, 90, 96) : rgb(152, 152, 159), 112, 0, H);
+        draw_text(d, 32, ry + 24, tr(TE_FIELDS[f]), 13, locked ? rgb(90, 90, 96) : rgb(152, 152, 159), 112, 0, H);
         const char *v = te_dirty[f] ? te_new[f] : te_multi[f] ? tr("Varios valores") : (te_val[f] ? te_val[f] : "");
         uint16_t vc = te_dirty[f] ? rgb(10, 132, 255) : te_multi[f] ? rgb(110, 110, 116) : 0xFFFF;
         if (locked) { v = tr("Distinto en cada una"); vc = rgb(90, 90, 96); }
-        draw_text(d, 150, ry + 27, v, 14, vc, W - 16 - 12 - 150, 0, H);
+        draw_text(d, 150, ry + 24, v, 14, vc, W - 16 - 12 - 150, 0, H);
     }
+    /* buscar en internet: caratula (album) y letra (una cancion) */
+    int by = TE_Y + HT_NFIELDS * TE_RH + 10, bw = (W - 32 - 10) / 2;
+    fill_rrect(d, 16, by, bw, 36, 12, rgb(44, 44, 48), 255);
+    int w1 = tw_n(tr("Buscar carátula"), 14, -1); draw_text(d, 16 + (bw - w1) / 2, by + 24, tr("Buscar carátula"), 14, rgb(10, 132, 255), bw - 8, 0, H);
+    fill_rrect(d, 26 + bw, by, bw, 36, 12, rgb(44, 44, 48), 255);
+    int w2 = tw_n(tr("Buscar letra"), 14, -1); draw_text(d, 26 + bw + (bw - w2) / 2, by + 24, tr("Buscar letra"), 14, n == 1 ? rgb(10, 132, 255) : rgb(70, 70, 76), bw - 8, 0, H);
     draw_toast(d);
 }
 
@@ -184,8 +194,17 @@ static void tag_editor(char **paths, int n)
             toast(bad ? tr("Algunas no se pudieron guardar") : tr("Cambios guardados"));
             return;
         }
-        int f = (y - 124) / 42;
-        if (y < 124 || f < 0 || f >= HT_NFIELDS) continue;
+        int by = TE_Y + HT_NFIELDS * TE_RH + 10;
+        if (y >= by - 4 && y < by + 44) {
+            const char *ar = te_dirty[HT_ARTIST] ? te_new[HT_ARTIST] : te_val[HT_ARTIST] ? te_val[HT_ARTIST] : "";
+            const char *al = te_dirty[HT_ALBUM] ? te_new[HT_ALBUM] : te_val[HT_ALBUM] ? te_val[HT_ALBUM] : "";
+            const char *ti = te_dirty[HT_TITLE] ? te_new[HT_TITLE] : te_val[HT_TITLE] ? te_val[HT_TITLE] : "";
+            if (x < W / 2) cover_search(paths[0], ar, al);
+            else if (n == 1) lyrics_search(paths[0], ar, ti, al);
+            te_render(fr0, n, -1); present(); continue;
+        }
+        int f = (y - TE_Y) / TE_RH;
+        if (y < TE_Y || f < 0 || f >= HT_NFIELDS) continue;
         if (n > 1 && (f == HT_TITLE || f == HT_TRACK)) continue;
         te_render(fr0, n, f); present();
         char buf[256]; snprintf(buf, sizeof buf, "%s", te_dirty[f] ? te_new[f] : te_multi[f] ? "" : (te_val[f] ? te_val[f] : ""));
