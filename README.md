@@ -40,14 +40,15 @@ frame by frame.
 > direction.
 
 <p align="center">
-  <img src="docs/media/shots/01_home.png" width="200" alt="Home screen">
-  <img src="docs/media/shots/25_cc_now_playing.png" width="200" alt="Control Centre">
-  <img src="docs/media/shots/22_widgets.png" width="200" alt="Widgets">
-  <img src="docs/media/shots/10_about.png" width="200" alt="About">
+  <img src="docs/media/apps/system/01_home.png" width="200" alt="Home screen">
+  <img src="docs/media/apps/system/03_control_centre.png" width="200" alt="Control Centre">
+  <img src="docs/media/apps/system/02_widgets.png" width="200" alt="Widgets">
+  <img src="docs/media/apps/music/03_albums.png" width="200" alt="Music: albums">
 </p>
 
 ## Contents
 
+- [Apps](#apps)
 - [Install HiByOS (step by step)](#install-hibyos-step-by-step)
 - [Update, uninstall and recovery](#update-uninstall-and-recovery)
 - [What it does](#what-it-does)
@@ -57,6 +58,24 @@ frame by frame.
 - [How it works](#how-it-works)
 - [Status and known limitations](#status-and-known-limitations)
 - [Licence](#licence)
+
+## Apps
+
+Every app has its own page with screenshots, a step-by-step guide, its settings and its
+known limitations: see the **[app index](apps/README.md)**.
+
+| | App | What it does | Status |
+|---|---|---|---|
+| <img src="docs/media/apps/icons/music_64.png" width="32" alt=""> | [Music](apps/music/README.md) | Apple Music-style library, mixes, Now Playing with synced lyrics, tag editor | Beta |
+| <img src="docs/media/apps/icons/files_64.png" width="32" alt=""> | [Files](apps/files/README.md) | File manager for the SD card and internal storage, image viewer, text editor | Stable |
+| <img src="docs/media/apps/icons/books_64.png" width="32" alt=""> | [Books](apps/books/README.md) | EPUB / TXT reader, LibriVox audiobooks and Project Gutenberg books | Beta |
+| <img src="docs/media/apps/icons/freemusic_64.png" width="32" alt=""> | [Free Music](apps/freemusic/README.md) | Free and Creative Commons music from the Internet Archive and Jamendo | Beta |
+| <img src="docs/media/apps/icons/settings_64.png" width="32" alt=""> | [Settings](apps/settings/README.md) | Player and system settings, USB DAC, home screen, gestures, Control Centre | Beta |
+| <img src="docs/media/apps/icons/wireless_64.png" width="32" alt=""> | [Wireless](apps/wireless/README.md) | Wi-Fi and Bluetooth | Experimental |
+| <img src="docs/media/apps/icons/appstore_64.png" width="32" alt=""> | [Apps](apps/store/README.md) | App store: repositories, `.hpk` files, SD card installs, backups | Beta |
+| | [Headphones](apps/headphones/README.md) | AirPods, Galaxy Buds, Nothing, Sony and Fast Pair controls | In development |
+| <img src="docs/media/apps/icons/navegador_64.png" width="32" alt=""> | [Browser](apps/navegador/README.md) | NetSurf web browser | Experimental (blocked) |
+| <img src="docs/media/apps/icons/hola_64.png" width="32" alt=""> | [Hello](apps/hola/README.md) | Example app for developers | Stable (example) |
 
 ## Install HiByOS (step by step)
 
@@ -337,26 +356,38 @@ Raising the clock brings a high risk of instability for no visible gain. See
 ## Screenshots
 
 <p align="center">
-  <img src="docs/media/shots/01_home.png" width="160" alt="Home">
-  <img src="docs/media/shots/22_widgets.png" width="160" alt="Widgets">
-  <img src="docs/media/shots/25_cc_now_playing.png" width="160" alt="Control Centre">
-  <img src="docs/media/shots/13_player.png" width="160" alt="Now Playing">
-  <img src="docs/media/shots/11_files.png" width="160" alt="Files">
+  <img src="docs/media/apps/system/01_home.png" width="160" alt="Home">
+  <img src="docs/media/apps/system/02_widgets.png" width="160" alt="Widgets">
+  <img src="docs/media/apps/system/03_control_centre.png" width="160" alt="Control Centre">
+  <img src="docs/media/apps/system/06_multitasking.png" width="160" alt="Multitasking">
+  <img src="docs/media/apps/system/07_back_gesture.png" width="160" alt="Back gesture">
 </p>
 <p align="center">
-  <img src="docs/media/shots/18_tag_editor.png" width="160" alt="Tag editor">
-  <img src="docs/media/shots/19_lyrics_search.png" width="160" alt="Lyrics search">
-  <img src="docs/media/shots/21_cover_search.png" width="160" alt="Cover search">
-  <img src="docs/media/shots/24_apply_scope.png" width="160" alt="This song or the whole album">
-  <img src="docs/media/shots/15_apps.png" width="160" alt="Apps">
+  <img src="docs/media/apps/music/05_album_tracks.png" width="160" alt="Music: album">
+  <img src="docs/media/apps/music/09_context_menu.png" width="160" alt="Music: song menu">
+  <img src="docs/media/apps/music/10_now_playing.png" width="160" alt="Now Playing">
+  <img src="docs/media/apps/music/12_lyrics.png" width="160" alt="Synced lyrics">
+  <img src="docs/media/apps/music/19_tag_editor.png" width="160" alt="Tag editor">
 </p>
 <p align="center">
-  <img src="docs/media/shots/04_settings.png" width="160" alt="Settings">
-  <img src="docs/media/shots/08_gestures.png" width="160" alt="Gestures">
-  <img src="docs/media/shots/06_power.png" width="160" alt="Battery and power">
-  <img src="docs/media/shots/23_software_update.png" width="160" alt="Software update">
-  <img src="docs/media/shots/10_about.png" width="160" alt="About">
+  <img src="docs/media/apps/books/01_library.png" width="160" alt="Books">
+  <img src="docs/media/apps/books/05_reader_sepia.png" width="160" alt="Reading a book">
+  <img src="docs/media/apps/freemusic/04_search.png" width="160" alt="Free Music search">
+  <img src="docs/media/apps/files/04_album_folder.png" width="160" alt="Files">
+  <img src="docs/media/apps/store/04_app_page.png" width="160" alt="Apps store">
 </p>
+<p align="center">
+  <img src="docs/media/apps/settings/01_settings.png" width="160" alt="Settings">
+  <img src="docs/media/apps/settings/10_gestures.png" width="160" alt="Gestures">
+  <img src="docs/media/apps/settings/03_usb.png" width="160" alt="USB">
+  <img src="docs/media/apps/settings/09_home_screen.png" width="160" alt="Home screen settings">
+  <img src="docs/media/apps/system/08_edit_mode.png" width="160" alt="Home screen edit mode">
+</p>
+
+These screenshots were taken in English in the QEMU harness, which runs the real shell binary
+(`docs/VM_SHELL.md`), with a demo library of public-domain works. The harness has no real
+player, so the status bar is a placeholder and the track is shown paused. More screenshots
+on each [app's page](apps/README.md).
 
 ## Installing apps
 
@@ -378,9 +409,10 @@ told so.
 [docs/APP_FORMAT.md](docs/APP_FORMAT.md):
 - the C header is [src/sdk/hm_app.h](src/sdk/hm_app.h);
 - the packer is [tools/hpk.py](tools/hpk.py);
-- [apps/hola](apps/hola) is a complete example.
+- [apps/hola](apps/hola/README.md) is a complete example.
 
-The store and repository format are described in [docs/STORE.md](docs/STORE.md).
+The store and repository format are described in [docs/STORE.md](docs/STORE.md); the store's
+user guide is [apps/store](apps/store/README.md).
 
 ## ADB and developer tools
 
