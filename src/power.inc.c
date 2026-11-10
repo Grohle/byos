@@ -113,8 +113,14 @@ static int lcd_want_hz(void)
     return idle && lcd_idle_hz < lcd_hz ? lcd_idle_hz : lcd_hz;
 }
 static uint32_t lcd_div(void) { return hz_div(lcd_cur_hz = lcd_want_hz()); }
+/* DESACTIVADO (2026-11-10): cambiar el reloj del LCD en caliente coincidio con corrupcion de la
+ * memoria del kernel (oops en ubi_eba_write_leb y /usr/data colgado) en dos ocasiones, con el
+ * refresco en reposo alternando 45/30 Hz. Hasta entender la causa, el LCD se queda en el valor
+ * de fabrica (45 Hz) en todos los modos; el modo Ahorro limita fotogramas solo por software. */
+#define LCD_CLOCK_CHANGES 0
 static void lcd_apply(void)
 {
+    if (!LCD_CLOCK_CHANGES) return;
     if (!lpcdr) {
         int f = open("/dev/mem", O_RDWR | O_SYNC); if (f < 0) return;
         void *m = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, f, LPCDR_PHYS & ~0xFFFu); close(f);

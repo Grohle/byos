@@ -52,8 +52,14 @@ static unsigned char *load_jpeg(FILE *f, int tw, int th, int *w, int *h)
     return img;
 }
 
+#include <sys/resource.h>
 int main(int argc, char **argv)
 {
+    /* tope de memoria: un JPEG progresivo enorme necesita todos sus coeficientes en RAM y
+     * agotaba la del aparato (el OOM mato al reproductor). Con el tope, malloc falla y la
+     * decodificacion termina con error limpio. HIBYWALL_MAX_MB cambia el tope (por defecto 12). */
+    { const char *e = getenv("HIBYWALL_MAX_MB"); long mb = e ? atol(e) : 12; if (mb < 4) mb = 4;
+      struct rlimit rl = { (rlim_t)mb << 20, (rlim_t)mb << 20 }; setrlimit(RLIMIT_AS, &rl); }
     if (argc < 3) { fprintf(stderr, "uso: hibywall ENTRADA SALIDA.raw [ANCHO ALTO]\n"); return 1; }
     int tw = argc >= 5 ? atoi(argv[3]) : 320, th = argc >= 5 ? atoi(argv[4]) : 480;
     if (tw < 8 || th < 8 || tw > 640 || th > 960) return 1;
