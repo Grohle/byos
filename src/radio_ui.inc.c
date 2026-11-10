@@ -30,9 +30,9 @@ static struct ra_station *ra_station_at(int id)
 {
     int l = id >> 16, i = id & 0xffff;
     if (l == 0 || l == 1) return ra_ls[l].it && i < ra_ls[l].n ? &ra_ls[l].it[i] : 0;
-    if (l == 2) return i < ra_lb.nfav ? &ra_lb.fav[i] : 0;
-    if (l == 3) return i < ra_lb.nrec ? &ra_lb.rec[i] : 0;
-    if (l == 4) return i < ra_lb.nown ? &ra_lb.own[i] : 0;
+    if (l == 2) return i < ra_lb->nfav ? &ra_lb->fav[i] : 0;
+    if (l == 3) return i < ra_lb->nrec ? &ra_lb->rec[i] : 0;
+    if (l == 4) return i < ra_lb->nown ? &ra_lb->own[i] : 0;
     return 0;
 }
 
@@ -124,7 +124,7 @@ static void ra_row(uint16_t *d, int y, const struct ra_station *s, int id)
     ra_sub(s, b, sizeof b); if (!b[0]) ra_url_host(s->url, b, sizeof b);
     draw_text(d, x, y + 47, b, 12, FMC_GREY, W - 52 - x, 30, H);
     if (own) fm_glyph_more(d, W - 28, y + 30, fm_pressed(RH_OWNMORE, id) ? rgb(5, 66, 128) : FMC_BLUE);
-    else ra_star(d, W - 28, y + 30, ra_is_fav(&ra_lb, s), fm_pressed(RH_STAR, id));
+    else ra_star(d, W - 28, y + 30, ra_is_fav(ra_lb, s), fm_pressed(RH_STAR, id));
     fm_hline(d, 68, W, y + RA_RH - 1, FMC_SEP);
     ra_hit(0, y, W - 52, y + RA_RH, RH_ST, id);
     ra_hit(W - 52, y, W, y + RA_RH, own ? RH_OWNMORE : RH_STAR, id);
@@ -173,20 +173,20 @@ static void ra_card(uint16_t *d, int y, int n)
 static int ra_draw_favs(uint16_t *d, int y)
 {
     int y0 = y;
-    if (!ra_lb.nfav && !ra_lb.nrec && !ra_lb.nown) {
-        if (y + 40 < H) draw_wrapped(d, 28, y + 24, W - 56, tr("Aún no tienes emisoras. Explora el directorio y toca la estrella, o añade una por su dirección."), 14, FMC_GREY, 20, 1);
+    if (!ra_lb->nfav && !ra_lb->nrec && !ra_lb->nown) {
+        if (y + 40 < H) draw_wrapped(d, 28, y + 24, W - 56, tr("RA_EMPTY"), 14, FMC_GREY, 20, 1);
         y += 104;
     }
-    if (ra_lb.nfav) {
+    if (ra_lb->nfav) {
         y += ra_section(d, y, tr("Favoritas"));
-        for (int i = 0; i < ra_lb.nfav; i++, y += RA_RH) ra_row(d, y, &ra_lb.fav[i], (2 << 16) | i);
+        for (int i = 0; i < ra_lb->nfav; i++, y += RA_RH) ra_row(d, y, &ra_lb->fav[i], (2 << 16) | i);
     }
-    if (ra_lb.nrec) {
+    if (ra_lb->nrec) {
         y += ra_section(d, y, tr("Recientes"));
-        for (int i = 0; i < ra_lb.nrec; i++, y += RA_RH) ra_row(d, y, &ra_lb.rec[i], (3 << 16) | i);
+        for (int i = 0; i < ra_lb->nrec; i++, y += RA_RH) ra_row(d, y, &ra_lb->rec[i], (3 << 16) | i);
     }
     y += ra_section(d, y, tr("Mis emisoras"));
-    for (int i = 0; i < ra_lb.nown; i++, y += RA_RH) ra_row(d, y, &ra_lb.own[i], (4 << 16) | i);
+    for (int i = 0; i < ra_lb->nown; i++, y += RA_RH) ra_row(d, y, &ra_lb->own[i], (4 << 16) | i);
     if (y < ra_clip1 && y + 56 > ra_clip0) {         /* fila "añadir" */
         uint16_t c = fm_pressed(RH_ADD, 0) ? rgb(5, 66, 128) : FMC_BLUE;
         fill_rrect(d, 16, y + 8, 40, 40, 9, FMC_CARD, 255);
@@ -236,7 +236,7 @@ static void ra_status(char *o, int cap, uint16_t *col)
 static void ra_mini(uint16_t *d)
 {
     if (!ra_np.have) return;
-    const struct ra_station *s = &ra_np.cur; int y = RA_MINI_Y, act = ra_active(), own = !s->uuid[0] && ra_is_own(&ra_lb, s);
+    const struct ra_station *s = &ra_np.cur; int y = RA_MINI_Y, act = ra_active(), own = !s->uuid[0] && ra_is_own(ra_lb, s);
     for (int yy = RA_MINI_TOP - 14; yy < RA_MINI_TOP; yy++) { int k = 32 * (RA_MINI_TOP - yy) / 15; uint16_t *r = d + yy * W; for (int x = 0; x < W; x++) r[x] = dim565(r[x], k); }
     for (int yy = RA_MINI_TOP; yy < H; yy++) memset(d + yy * W, 0, W * 2);
     fill_rrect(d, 8, y, W - 16, 56, 14, rgb(36, 36, 40), 255);
@@ -245,7 +245,7 @@ static void ra_mini(uint16_t *d)
     draw_text(d, 62, y + 24, s->name, 14, 0xFFFF, tw, 30, H);
     char b[300]; uint16_t col; ra_status(b, sizeof b, &col);
     draw_text(d, 62, y + 42, b, 12, col, tw, 30, H);
-    if (!own) { ra_star(d, W - 84, y + 28, ra_is_fav(&ra_lb, s), fm_pressed(RH_MSTAR, 0)); }
+    if (!own) { ra_star(d, W - 84, y + 28, ra_is_fav(ra_lb, s), fm_pressed(RH_MSTAR, 0)); }
     fill_circle(d, W - 38, y + 28, 17, fm_pressed(RH_MPLAY, 0) ? rgb(84, 84, 90) : rgb(58, 58, 62), 255);
     if (act) fill_rrect(d, W - 44, y + 22, 12, 12, 2.5f, 0xFFFF, 255);
     else fm_glyph_play(d, W - 37, y + 28, 7, 0xFFFF);
@@ -281,7 +281,7 @@ static void ra_render_root(uint16_t *d)
     /* cabecera, encima de la lista */
     for (int yy = 30; yy < hb && yy < H; yy++) memset(d + yy * W, 0, W * 2);
     float ta = (1 - e) * (1 - c / 30); if (ta < 0) ta = 0;
-    if (ta > 0.02f) draw_text(d, 16, 72 - (int)c - (int)(40 * e), "Radio", 28, mix565(0xFFFF, 0, (unsigned)(255 * ta)), W - 32, 30, H);
+    if (ta > 0.02f) draw_text(d, 16, 72 - (int)c - (int)(40 * e), tr("Radio"), 28, mix565(0xFFFF, 0, (unsigned)(255 * ta)), W - 32, 30, H);
     fm_chrome_status(d);
     int bx1 = W - 16 - (int)(70 * e);
     fill_rrect(d, 16, by, bx1 - 16, 36, 10, FMC_FIELD, 255);
@@ -313,7 +313,7 @@ static void ra_render_list(uint16_t *d)
     y += ra_rows(d, y, l, 1);
     ra_ch[RG_LIST] = y - y0 + 16;
     fm_chrome_status(d);
-    fm_navbar(d, "Radio", l->title, pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
+    fm_navbar(d, tr("Radio"), l->title, pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
     ra_mini(d);
     draw_toast(d);
 }
@@ -345,7 +345,7 @@ static void ra_render_ctry(uint16_t *d)
     }
     ra_ch[RG_CTRY] = y - y0 + 16;
     fm_chrome_status(d);
-    fm_navbar(d, "Radio", tr("País"), pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
+    fm_navbar(d, tr("Radio"), tr("País"), pos > 44 ? 1 : pos > 24 ? (pos - 24) / 20 : 0);
     ra_mini(d);
     draw_toast(d);
 }

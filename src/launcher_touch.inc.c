@@ -8,6 +8,7 @@ static void books_app_at(int ix, int iy);
 static int bk_gut;
 static void freemusic_app_at(int ix, int iy);
 static void buds_app_at(int ix, int iy);
+static void radio_app_at(int ix, int iy);
 static void store_app(int ix, int iy);
 static void run_ext_app(int a, int ix, int iy);
 static void music_app(int ix, int iy);
@@ -208,6 +209,7 @@ static void launch_app(int a, int ix, int iy)
     if (ap->act == ACT_BOOKS) { V.pressed_app = -1; last_app = a; bk_gut = ap->ax == 1; books_app_at(ix, iy); return; }
     if (ap->act == ACT_FREEMUSIC) { V.pressed_app = -1; last_app = a; freemusic_app_at(ix, iy); return; }
     if (ap->act == ACT_BUDS) { V.pressed_app = -1; last_app = a; buds_app_at(ix, iy); return; }
+    if (ap->act == ACT_RADIO) { V.pressed_app = -1; last_app = a; radio_app_at(ix, iy); return; }
     if (ap->act == ACT_STORE) { V.pressed_app = -1; last_app = a; store_app(ix, iy); return; }
     if (ap->act == ACT_EXT) { V.pressed_app = -1; run_ext_app(a, ix, iy); return; }
     lg("abrir %s", ap->id);

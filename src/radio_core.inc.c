@@ -298,13 +298,14 @@ static void ra_lib_parse(struct ra_lib *L, char *text)
         if (nf > 5) fm_cpy(s.codec, sizeof s.codec, f[5]);
         if (nf > 6) { int b = atoi(f[6]); s.br = (short)(b > 0 && b < 4000 ? b : 0); }
         if (nf > 7) fm_cpy(s.tags, sizeof s.tags, f[7]);
+        if (l[0] == 'C') s.uuid[0] = 0;                          /* las propias no son del directorio */
         s.kind = (unsigned char)ra_codec_kind(s.codec, 0);
         if (!ra_playable(s.kind)) s.kind = RS_UNKNOWN;
         if (!s.uuid[0] && s.kind == RS_UNKNOWN) { int k = rs_url_kind(s.url); if (k == RS_MP3 || k == RS_AAC) s.kind = (unsigned char)k; }
         switch (l[0]) {
         case 'F': if (L->nfav < RA_MAXFAV && ra_ix(L->fav, L->nfav, &s) < 0) L->fav[L->nfav++] = s; break;
         case 'R': if (L->nrec < RA_MAXREC && ra_ix(L->rec, L->nrec, &s) < 0) L->rec[L->nrec++] = s; break;
-        case 'C': s.uuid[0] = 0; if (L->nown < RA_MAXOWN && ra_ix(L->own, L->nown, &s) < 0) L->own[L->nown++] = s; break;
+        case 'C': if (L->nown < RA_MAXOWN && ra_ix(L->own, L->nown, &s) < 0) L->own[L->nown++] = s; break;
         }
     }
 }
@@ -366,7 +367,7 @@ static void ra_player_path(const char *file, int mode, char *o, int cap)
 struct ra_conf {
     char dir[160];               /* donde escribe el ayudante (tmpfs; o una carpeta de la SD) */
     int presize_mb;              /* tamano logico del fichero disperso; 0 = fichero que crece */
-    int prebuf_kb;               /* 0 = lo decide el ayudante (unos 5 s de audio) */
+    int prebuf_kb;               /* 0 = lo decide el ayudante (unos 8 s de audio) */
     char cc[4], cname[64];       /* pais elegido ("" = el del idioma) */
     int tab;                     /* pestana abierta la ultima vez */
     int pathmode;                /* como entiende el reproductor la ruta (ra_player_path); -1 = por probar */
@@ -380,7 +381,10 @@ static int ra_dir_ok(const char *d)
 {
     if (d[0] != '/' || !d[1] || strlen(d) >= 150 || strstr(d, "..")) return 0;
     for (const unsigned char *p = (const unsigned char *)d; *p; p++) if (*p <= ' ' || *p == '\\' || *p == '\'' || *p == '"' || *p == 0x7f) return 0;
+    if (d[strlen(d) - 1] == '/') return 0;
     /* nunca la raiz de un almacenamiento: el ayudante borra sus ficheros al acabar */
+    const char *m = !strncmp(d, "/usr/data/mnt/", 14) ? d + 14 : !strncmp(d, "/data/mnt/", 10) ? d + 10 : !strncmp(d, "/mnt/", 5) ? d + 5 : 0;
+    if (m) { const char *sl = strchr(m, '/'); return sl && sl[1]; }        /* tarjeta: una carpeta dentro */
     int slashes = 0; for (const char *p = d; *p; p++) if (*p == '/' && p[1]) slashes++;
     return slashes >= 2;
 }

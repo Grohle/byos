@@ -899,6 +899,7 @@ static int app_back_gesture(int sx, int sy);
 #include "books.inc.c"
 #include "wireless.inc.c"
 #include "freemusic.inc.c"
+#include "radio.inc.c"                 /* app Radio (emisoras por internet; ayudante hibynet radio) */
 #include "buds.inc.c"                  /* app Auriculares (headphones; daemon hibybudsd) */
 #include "ccbt.inc.c"                  /* modulo de Bluetooth del centro de control */
 #include "ccair.inc.c"                 /* modo avion y control de ruido del centro de control */

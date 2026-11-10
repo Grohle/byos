@@ -13,12 +13,14 @@
  *   3. Escribe DIR/NAME.mp3|.aac. Con PRESIZE_MB > 0 (lo normal: DIR en tmpfs) el fichero se
  *      crea HUECO con ese tamano logico - el motor guarda el tamano al abrir pero lee con
  *      fread, asi que ve los datos segun llegan - y se van perforando (PUNCH_HOLE) los
- *      bloques que el reproductor ya leyo: en RAM solo queda ~1-2 MB. Con 0 el fichero crece
+ *      bloques que el reproductor ya leyo: en RAM solo queda ~1 MB. Con 0 el fichero crece
  *      sin mas (tarjeta SD).
  *   4. Vigila la posicion de lectura del reproductor en /proc/<pid>/fdinfo:
  *        - si no abre el fichero en 20 s            -> err=player
  *        - si lo cierra (> 3 s)                     -> st=stopped (puso otra musica) y sale
- *        - si esta en pausa (> 1,5 MB sin leer)     -> deja de pedir a la red
+ *        - si abre otro audio y no tiene ninguno nuestro (> 2 s; tambien mientras se llena una
+ *          generacion nueva)                        -> st=stopped y sale
+ *        - si esta en pausa (> 1 MB sin leer)       -> deja de pedir a la red
  *        - si alcanza a la escritura (corte de red) -> generacion nueva: otro fichero y de
  *          nuevo st=buffering -> st=ready con gen+1 (el shell vuelve a mandar la lista)
  *      Igual al agotar el tamano logico (relevo de fichero).
@@ -35,11 +37,11 @@
 #include "radio_stream.inc.c"
 
 #define RD_UA "HiByOS-Radio/1.0 (https://github.com/Grohle/hibyos)"
-static long long rd_high = 1536 * 1024;   /* sin leer por delante del lector: se deja de pedir a la red (HIBYRADIO_HIGH_KB) */
+static long long rd_high = 1024 * 1024;   /* el tmpfs es RAM (quedan ~5 MB libres): poco por delante; sin leer por delante del lector: se deja de pedir a la red (HIBYRADIO_HIGH_KB) */
 #define RD_HIGH rd_high
 #define RD_LOW (rd_high / 4)          /* reconectar (tras una pausa larga) cuando quede menos que esto */
-#define RD_KEEP (256 * 1024)       /* por detras del lector que no se perfora (pequenos retrocesos) */
-#define RD_NOPUNCH_MAX (6 << 20)   /* tmpfs sin PUNCH_HOLE: relevo de fichero a los 6 MB */
+#define RD_KEEP (192 * 1024)       /* por detras del lector que no se perfora (pequenos retrocesos) */
+#define RD_NOPUNCH_MAX (3 << 20)   /* tmpfs sin PUNCH_HOLE: relevo de fichero a los 3 MB */
 #define RD_SNIFF (64 * 1024)
 #ifndef FALLOC_FL_KEEP_SIZE
 #define FALLOC_FL_KEEP_SIZE 1
@@ -49,14 +51,14 @@ static long long rd_high = 1536 * 1024;   /* sin leer por delante del lector: se
 typedef struct {
     conn_t c; int open;
     int metaint, kind, br, chunked;
-    int ck_st, ck_ext, ck_end; long long ck_left, ck_acc;
+    struct rs_chunk ck;
     char ctype[96], url[2100];
     struct rs_icy icy;
 } rd_src;
 
 static struct {
     char dir[300], state[320], tmp[328], pidf[320], name[80];
-    char file[420], real[460], old[420];
+    char file[420], real[460], old[420], realdir[460];
     int fd, oldfd, gen, br, pct, opened;
     const char *codec, *st;
     char title[256];
@@ -108,25 +110,7 @@ static void rd_sig(int sig)
 }
 
 /* ------------------------------------------------------------------ HTTP / ICY */
-static int rd_dechunk(rd_src *s, unsigned char *b, int n)
-{
-    if (!s->chunked) return n;
-    int o = 0;
-    for (int i = 0; i < n && !s->ck_end; ) {
-        if (s->ck_left > 0) {
-            int k = n - i; if (k > s->ck_left) k = (int)s->ck_left;
-            memmove(b + o, b + i, k); o += k; i += k; s->ck_left -= k;
-            if (!s->ck_left) s->ck_st = 2;
-            continue;
-        }
-        unsigned char ch = b[i++];
-        if (s->ck_st == 2) { if (ch == '\n') s->ck_st = 0; }               /* CRLF tras los datos */
-        else if (ch == '\n') { s->ck_left = s->ck_acc; s->ck_acc = 0; s->ck_ext = 0; if (!s->ck_left) s->ck_end = 1; }
-        else if (ch == ';') s->ck_ext = 1;
-        else if (!s->ck_ext && isxdigit(ch)) s->ck_acc = s->ck_acc * 16 + (isdigit(ch) ? ch - '0' : (ch | 32) - 'a' + 10);
-    }
-    return o;
-}
+static int rd_dechunk(rd_src *s, unsigned char *b, int n) { return s->chunked ? rs_dechunk(&s->ck, b, n) : n; }
 static void rd_close(rd_src *s) { if (s->open) conn_close(&s->c); s->open = 0; }
 
 /* GET con Icy-MetaData siguiendo redirecciones. 0 = s abierto al principio del cuerpo. */
@@ -195,7 +179,7 @@ static int rd_read(rd_src *s, unsigned char *b, int n, int *newtitle)
     int r = conn_read(&s->c, b, n);
     if (r <= 0) return -1;
     r = rd_dechunk(s, b, r);
-    if (!r) return s->ck_end ? -1 : 0;
+    if (!r) return s->ck.end ? -1 : 0;
     return rs_icy_feed(&s->icy, b, r, b, newtitle);
 }
 
@@ -284,11 +268,24 @@ static int rd_player_pid(void)
     }
     return rd_pid;
 }
-/* 0 = el reproductor no tiene el fichero abierto; 1 = *rpos es su posicion (la mayor que no
- * pasa de wpos); 2 = solo hay posiciones por delante de la escritura (*rpos la menor). */
-static int rd_reader(const char *real, long long wpos, long long *rpos)
+/* fichero de audio por la extension (lo que abre el motor para sonar) */
+static int rd_is_audio(const char *t)
 {
+    static const char *const X[] = { ".mp3", ".flac", ".wav", ".ape", ".m4a", ".aac", ".ogg", ".opus", ".dsf", ".dff", ".wma",
+                                     ".aif", ".aiff", ".alac", ".wv", ".mka", ".mp2", ".iso", ".dst", 0 };
+    const char *d = strrchr(t, '.'); if (!d) return 0;
+    for (int i = 0; X[i]; i++) if (!strcasecmp(d, X[i])) return 1;
+    return 0;
+}
+/* 0 = el reproductor no tiene el fichero abierto; 1 = *rpos es su posicion (la mayor que no
+ * pasa de wpos); 2 = solo hay posiciones por delante de la escritura (*rpos la menor).
+ * *other = 1 si tiene abierto un fichero de audio que no es nuestro y ninguno de los nuestros
+ * (ni el de la generacion anterior): suena otra musica. */
+static int rd_reader(const char *real, long long wpos, long long *rpos, int *other)
+{
+    *other = 0;
     int pid = rd_player_pid(); if (pid <= 0) return 0;
+    int ours = 0, foreign = 0; size_t dl = strlen(rd.realdir);
     char d[64]; snprintf(d, sizeof d, "/proc/%d/fd", pid);
     DIR *D = opendir(d); if (!D) return 0;
     long long best = -1, over = -1; struct dirent *e;
@@ -298,6 +295,8 @@ static int rd_reader(const char *real, long long wpos, long long *rpos)
         snprintf(l, sizeof l, "%s/%.12s", d, e->d_name);
         ssize_t n = readlink(l, t, sizeof t - 1); if (n <= 0) continue;
         t[n] = 0;
+        if (!strncmp(t, rd.realdir, dl) && t[dl] == '/') ours = 1;
+        else if (t[0] == '/' && rd_is_audio(t)) foreign = 1;
         if (strcmp(t, real)) continue;
         snprintf(l, sizeof l, "/proc/%d/fdinfo/%.12s", pid, e->d_name);
         int f = open(l, O_RDONLY); if (f < 0) continue;
@@ -309,6 +308,7 @@ static int rd_reader(const char *real, long long wpos, long long *rpos)
         if (pos <= wpos) { if (pos > best) best = pos; } else if (over < 0 || pos < over) over = pos;
     }
     closedir(D);
+    *other = foreign && !ours;
     if (best >= 0) { *rpos = best; return 1; }
     if (over >= 0) { *rpos = over; return 2; }
     return 0;
@@ -345,6 +345,7 @@ static int cmd_radio(int argc, char **argv)
     if (getenv("HIBYRADIO_HIGH_KB") && atoi(getenv("HIBYRADIO_HIGH_KB")) >= 64) rd_high = atoll(getenv("HIBYRADIO_HIGH_KB")) * 1024;
     rd.ppid = getppid();
     mkdir(rd.dir, 0755);
+    { char rp[4096]; snprintf(rd.realdir, sizeof rd.realdir, "%s", realpath(rd.dir, rp) ? rp : rd.dir); }
     { FILE *pf = fopen(rd.pidf, "w"); if (pf) { fprintf(pf, "%d\n", (int)getpid()); fclose(pf); } }
     signal(SIGTERM, rd_sig); signal(SIGINT, rd_sig); signal(SIGHUP, rd_sig);
     g_timeout = 12; g_idle = 0;
@@ -365,14 +366,15 @@ static int cmd_radio(int argc, char **argv)
     rd.br = fr.kind == RS_MP3 && fr.kbps ? fr.kbps : s.br;
     if (s.icy.title[0]) snprintf(rd.title, sizeof rd.title, "%s", s.icy.title);
     int bps = (rd.br > 0 ? rd.br : 96) * 125;                         /* bytes por segundo */
-    long long prebuf = prebuf_arg > 0 ? prebuf_arg : bps * 5;
-    if (!prebuf_arg) { if (prebuf < 64 * 1024) prebuf = 64 * 1024; if (prebuf > 192 * 1024) prebuf = 192 * 1024; }
+    long long prebuf = prebuf_arg > 0 ? prebuf_arg : bps * 8;                  /* ~8 s: el motor lee por delante al abrir */
+    if (!prebuf_arg) { if (prebuf < 96 * 1024) prebuf = 96 * 1024; if (prebuf > 256 * 1024) prebuf = 256 * 1024; }
+    if (prebuf > RD_HIGH * 3 / 4) prebuf = RD_HIGH * 3 / 4;                  /* si no, nunca se anuncia: la red para en RD_HIGH */
 
     long long wpos = 0, punched = 0, rpos = 0;
     long long need = prebuf;                                          /* bytes para anunciar esta generacion */
     const char *fill = "buffering";                                   /* "roll" en un relevo: el fichero viejo sigue sonando */
-    int ready = 0, seen = 0, beyond = 0, nopunch = 0, retries = 0, resync = 0, under = 0;
-    double t_ready = 0, t_gone = 0, t_mon = 0, t_data = now_s(), t_retry = 0, t_pct = 0, t_old = 0;
+    int ready = 0, seen = 0, seen_any = 0, beyond = 0, nopunch = 0, retries = 0, resync = 0, under = 0;
+    double t_ready = 0, t_gone = 0, t_other = 0, t_mon = 0, t_data = now_s(), t_retry = 0, t_pct = 0, t_old = 0;
     rd.gen = 1;
     if (rd_newfile(presize)) rd_end("error", "io", E_IO);
     rd.pct = 0; rd_state("buffering", 0);
@@ -425,10 +427,15 @@ static int cmd_radio(int argc, char **argv)
         /* ---- relevo de fichero: se acaba el tamano logico, o crece en RAM sin poder perforar */
         if (ready && ((presize > 0 && wpos > presize - 512 * 1024) || (presize > 0 && nopunch && wpos > RD_NOPUNCH_MAX))) goto newgen;
 
-        /* ---- lector */
-        if (!ready || rd.noreader || now - t_mon < 0.3) continue;
+        /* ---- lector (tambien mientras se llena una generacion nueva, si ya sonamos antes) */
+        if (rd.noreader || (!ready && !seen_any) || now - t_mon < 0.3) continue;
         t_mon = now;
-        long long rp = 0; int k = rd_reader(rd.real, wpos, &rp);
+        long long rp = 0; int other = 0, k = rd_reader(rd.real, wpos, &rp, &other);
+        /* el reproductor abrio otra musica y solto la nuestra: se acabo (sin esto, tras un corte
+         * el shell mandaria la generacion nueva al reproductor encima de lo que eligio el usuario) */
+        if (seen_any && other) { if (!t_other) t_other = now; else if (now - t_other > 2) rd_end("stopped", 0, E_OK); }
+        else t_other = 0;
+        if (!ready) continue;
         if (k == 0) {
             if (!seen) { if (now - t_ready > 20) rd_end("error", "player", E_NONE); }
             else if (!t_gone) t_gone = now;
@@ -436,7 +443,7 @@ static int cmd_radio(int argc, char **argv)
             continue;
         }
         t_gone = 0;
-        if (!seen) { seen = 1; rd_drop_old(); rd.opened = 1; rd_state(rd.st, 0); vlog("radio: el reproductor abrio el fichero (pos %lld)", rp); }
+        if (!seen) { seen = seen_any = 1; rd_drop_old(); rd.opened = 1; rd_state(rd.st, 0); vlog("radio: el reproductor abrio el fichero (pos %lld)", rp); }
         if (k == 2 || rp < punched) {                                  /* leyo mas alla de lo escrito (o un hueco) */
             if (presize > 0 && ++beyond >= 3) { under = 1; goto newgen; }
             continue;
@@ -455,7 +462,7 @@ static int cmd_radio(int argc, char **argv)
         vlog("radio: %s (w=%lld r=%lld)", under ? "corte: el lector alcanzo a la escritura" : "relevo de fichero", wpos, rpos);
         rd_drop_old();
         snprintf(rd.old, sizeof rd.old, "%s", rd.file); rd.oldfd = rd.fd; rd.fd = -1;
-        if (under) { if (ftruncate(rd.oldfd, 0)) {} if (!prebuf_arg && prebuf < 1024 * 1024) prebuf *= 2; }   /* que no recorra 256 MB de ceros */
+        if (under) { if (ftruncate(rd.oldfd, 0)) {} if (!prebuf_arg && prebuf < 512 * 1024 && prebuf * 2 <= RD_HIGH * 3 / 4) prebuf *= 2; }   /* que no recorra 256 MB de ceros */
         rd.gen++;
         if (rd_newfile(presize)) rd_end("error", "io", E_IO);
         wpos = punched = rpos = 0; ready = seen = beyond = 0; t_gone = 0; t_old = now_s() + 30;

@@ -122,7 +122,7 @@ static void ra_search_edit(int *rk, int *ri)
 static void ra_fav_tap(const struct ra_station *s0)
 {
     struct ra_station s = *s0;
-    if (ra_fav_toggle(&ra_lb, &s) < 0) { toast(tr("No caben más favoritas")); return; }
+    if (ra_fav_toggle(ra_lb, &s) < 0) { toast(tr("No caben más favoritas")); return; }
     ra_save_lib();
 }
 static void ra_add_station(void)
@@ -133,7 +133,7 @@ static void ra_add_station(void)
     ra_url_host(norm, host, sizeof host);
     snprintf(name, sizeof name, "%s", host);
     if (!line_edit(tr("Nombre"), host, name, sizeof name - 1)) return;
-    int r = ra_own_add(&ra_lb, name, norm);
+    int r = ra_own_add(ra_lb, name, norm);
     if (r == -2) toast(tr("Esa emisora ya está en la lista"));
     else if (r == -3) toast(tr("No caben más emisoras"));
     else if (r < 0) toast(tr("URL no válida"));
@@ -141,8 +141,8 @@ static void ra_add_station(void)
 }
 static void ra_own_menu(int i)
 {
-    if (i < 0 || i >= ra_lb.nown) return;
-    struct ra_station *s = &ra_lb.own[i];
+    if (i < 0 || i >= ra_lb->nown) return;
+    struct ra_station *s = &ra_lb->own[i];
     const char *o[3] = { tr("Renombrar"), tr("Editar URL"), tr("Eliminar") };
     int r = action_sheet(s->name, o, 3, 2);
     if (r == 0) {
@@ -154,7 +154,7 @@ static void ra_own_menu(int i)
             if (ra_url_norm(u, norm, sizeof norm)) toast(tr("URL no válida"));
             else { snprintf(s->url, sizeof s->url, "%s", norm); ra_save_lib(); }
         }
-    } else if (r == 2) { ra_own_del(&ra_lb, i); ra_save_lib(); }
+    } else if (r == 2) { ra_own_del(ra_lb, i); ra_save_lib(); }
 }
 static void ra_tap(int k, int i);
 static void ra_search_ui(void)
@@ -200,11 +200,16 @@ static void ra_tap(int k, int i)
 /* ------------------------------------------------------------------ la app */
 static void radio_app_at(int ix, int iy)
 {
-    ra_load();
+    if (!ra_load()) {
+        toast(tr("No hay memoria suficiente"));
+        double t = now_ms(); while (now_ms() - t < 1700) launcher_present();
+        launcher_present();
+        return;
+    }
     fm_pa = img_under; fm_pb = img_sheet; have_under = 0;
     ra_sp = 0; ra_stack[0] = RG_ROOT; memset(ra_pos, 0, sizeof ra_pos); ra_vel = 0;
     ra_editing = 0; ra_edit_e = 0; ra_q[0] = ra_q_sent[0] = 0; ra_q_typed = 0; ra_tab_t0 = 0; ra_conf_dirty = 0;
-    ra_tab = (ra_lb.nfav || ra_lb.nrec || ra_lb.nown) ? ra_cf.tab : 1;      /* sin nada guardado: a explorar */
+    ra_tab = (ra_lb->nfav || ra_lb->nrec || ra_lb->nown) ? ra_cf.tab : 1;      /* sin nada guardado: a explorar */
     fm_press_kind = 0; fm_press_idx = -1;
     ra_list_reset(0); ra_list_reset(1);
     ra_pl_sync();
@@ -304,6 +309,7 @@ static void radio_app_at(int ix, int iy)
     ra_list_reset(0); ra_list_reset(1);
     free(ra_ls[0].it); ra_ls[0].it = 0; free(ra_ls[1].it); ra_ls[1].it = 0;
     free(ra_ct); ra_ct = 0; ra_nct = 0; ra_ct_state = 0;
+    ra_unload();
     ra_sp = 0; ra_editing = 0; ra_edit_e = 0;
     have_under = 0;
     if (gone) { launcher_present(); return; }

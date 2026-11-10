@@ -3,6 +3,7 @@
  *     primeros bytes
  *   - listas .m3u / .pls -> URLs
  *   - metadatos ICY (StreamTitle='...';) y el desentrelazado audio/metadatos
+ *   - el cuerpo HTTP "chunked"
  *   - cabeceras de trama MPEG audio y ADTS, y busqueda del primer punto de sincronismo
  *   - nombres de fichero seguros y Latin-1 -> UTF-8
  * Lo incluyen hibynet (subcomando radio), el shell (radio_core.inc.c) y tests/radio_test.c.
@@ -97,7 +98,7 @@ static int rs_playlist_parse(const char *body, int len, char urls[][RS_URL], int
             u = e + 1; while (*u == ' ') u++;
         }
         if (!rs_url_ok(u) || strlen(u) >= RS_URL) continue;
-        if (n < max) snprintf(urls[n++], RS_URL, "%s", u);
+        if (n < max) { size_t ul = strlen(u); memcpy(urls[n], u, ul + 1); n++; }
     }
     return n;
 }
@@ -181,6 +182,30 @@ static int rs_icy_feed(struct rs_icy *st, const unsigned char *in, int n, unsign
                 st->mlen = -1; st->left = st->metaint;
             }
         }
+    }
+    return o;
+}
+
+/* ------------------------------------------------------------------ HTTP chunked
+ * Quita las cabeceras de trozo ("1a2;ext\r\n" ... "\r\n") de b[0..n) en el sitio; devuelve
+ * los bytes de datos que quedan. El estado sigue entre llamadas (un trozo puede venir partido);
+ * c->end = 1 al llegar el trozo de largo 0. Empezar con memset(c, 0, ...). */
+struct rs_chunk { int st, ext, end; long long left, acc; };
+static int rs_dechunk(struct rs_chunk *c, unsigned char *b, int n)
+{
+    int o = 0;
+    for (int i = 0; i < n && !c->end; ) {
+        if (c->left > 0) {
+            int k = n - i; if (k > c->left) k = (int)c->left;
+            memmove(b + o, b + i, k); o += k; i += k; c->left -= k;
+            if (!c->left) c->st = 2;
+            continue;
+        }
+        unsigned char ch = b[i++];
+        if (c->st == 2) { if (ch == '\n') c->st = 0; }                   /* CRLF tras los datos */
+        else if (ch == '\n') { c->left = c->acc; c->acc = 0; c->ext = 0; if (!c->left) c->end = 1; }
+        else if (ch == ';') c->ext = 1;
+        else if (!c->ext && isxdigit(ch)) c->acc = c->acc * 16 + (isdigit(ch) ? ch - '0' : (ch | 32) - 'a' + 10);
     }
     return o;
 }

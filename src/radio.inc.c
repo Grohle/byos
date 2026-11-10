@@ -28,29 +28,38 @@
 
 enum { RY_IDLE, RY_CONNECTING, RY_BUFFERING, RY_PLAYING, RY_ERROR };
 
-static struct ra_lib ra_lb; static struct ra_conf ra_cf; static int ra_loaded;
+/* la biblioteca (~110 KB) solo vive con la app abierta: radio_app_at la pide y la suelta al salir;
+ * los ajustes (pequenos) se quedan, el hilo vigilante guarda en ellos el modo de ruta */
+static struct ra_lib *ra_lb; static struct ra_conf ra_cf; static int ra_loaded;
 
 /* ------------------------------------------------------------------ disco */
 static void ra_save_file(const char *name, int conf)
 {
     char p[200], t[208]; snprintf(p, sizeof p, RA_DATA "/%s", name); snprintf(t, sizeof t, "%s.tmp", p);
     mkdir("/usr/data/hibymod/appdata", 0755); mkdir(RA_DATA, 0755);
+    if (!conf && !ra_lb) return;
     FILE *f = fopen(t, "w"); if (!f) return;
-    if (conf) ra_conf_write(&ra_cf, f); else ra_lib_write(&ra_lb, f);
+    if (conf) ra_conf_write(&ra_cf, f); else ra_lib_write(ra_lb, f);
     int bad = ferror(f); bad |= fclose(f);
     if (bad) unlink(t); else rename(t, p);
 }
 static void ra_save_lib(void) { ra_save_file("stations.tsv", 0); }
 static void ra_save_conf(void) { ra_save_file("config", 1); }
-static void ra_load(void)
+/* 0 = sin memoria para la biblioteca */
+static int ra_load(void)
 {
-    if (ra_loaded) return;
-    ra_loaded = 1;
-    ra_conf_default(&ra_cf);
-    char *t = fm_slurp(RA_DATA "/config", 4096, 0); if (t) { ra_conf_parse(&ra_cf, t); free(t); }
-    t = fm_slurp(RA_DATA "/stations.tsv", 400000, 0); if (t) { ra_lib_parse(&ra_lb, t); free(t); }
-    if (!ra_cf.cc[0]) ra_lang_country(LANG_CODES[ui_lang], ra_cf.cc, ra_cf.cname, sizeof ra_cf.cname);
+    if (!ra_loaded) {
+        ra_loaded = 1;
+        ra_conf_default(&ra_cf);
+        char *t = fm_slurp(RA_DATA "/config", 4096, 0); if (t) { ra_conf_parse(&ra_cf, t); free(t); }
+        if (!ra_cf.cc[0]) ra_lang_country(LANG_CODES[ui_lang], ra_cf.cc, ra_cf.cname, sizeof ra_cf.cname);
+    }
+    if (ra_lb) return 1;
+    if (!(ra_lb = calloc(1, sizeof *ra_lb))) return 0;
+    char *t = fm_slurp(RA_DATA "/stations.tsv", 400000, 0); if (t) { ra_lib_parse(ra_lb, t); free(t); }
+    return 1;
 }
+static void ra_unload(void) { free(ra_lb); ra_lb = 0; }
 
 /* ------------------------------------------------------------------ red: directorio */
 enum { RJ_LIST, RJ_CTRY, RJ_CLICK };
@@ -362,7 +371,7 @@ static void ra_play(const struct ra_station *s0)
     ra_pl.err[0] = ra_pl.title[0] = ra_pl.codec[0] = 0; ra_pl.ver++;
     pthread_mutex_unlock(&ra_pl.mu);
     ra_wake();
-    if (!ra_lb.nrec || !ra_same(&ra_lb.rec[0], &s)) { ra_rec_add(&ra_lb, &s); ra_save_lib(); }
+    if (ra_lb && (!ra_lb->nrec || !ra_same(&ra_lb->rec[0], &s))) { ra_rec_add(ra_lb, &s); ra_save_lib(); }
     if (s.uuid[0]) ra_job_add(RJ_CLICK, 0, 0, s.uuid, 0);
     ra_pl_sync();
 }
