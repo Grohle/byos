@@ -43,7 +43,7 @@ static struct lapp apps[40] = {
     { "radio",      "Radio",         ACT_SOON,     0,   0 },
     { "personalize", "Personalizar", ACT_SETTINGS, 0,   0 },
     { "appstore",   "Apps",          ACT_STORE,    0,   0 },
-    { "freemusic",  "Música libre",  ACT_FREEMUSIC, 0,  0 },   /* Internet Archive + Jamendo */
+    { "freemusic",  "Vinyl",         ACT_FREEMUSIC, 0,  0 },   /* Vinyl: musica libre (Internet Archive, Jamendo, repositorios) */
     { "headphones", "Auriculares",   ACT_BUDS,     0,   0 },   /* AirPods, Galaxy Buds, Nothing... */
 };
 static int napps = 14;              /* internas + instaladas (register_installed_apps) */
@@ -374,6 +374,25 @@ static int load_wall(void)
     return n == (ssize_t)sizeof wall;
 }
 
+/* etiqueta bajo el icono: como en iOS, recortada con "…" al ancho de su celda (los nombres
+ * largos como "Reproduciendo" o "Personalizar" ya no pisan a los vecinos) */
+static void app_label_sprite(int a)
+{
+    const char *s = app_label(a);
+    int maxw = (W - 36) / (L.cols > 0 ? L.cols : 4) - 4;
+    char b[128]; snprintf(b, sizeof b, "%s", s);
+    if (text_width(b, 12.5f) > maxw) {
+        int n = (int)strlen(b);
+        while (n > 0) {
+            do n--; while (n > 0 && ((unsigned char)b[n] & 0xC0) == 0x80);
+            while (n > 0 && b[n - 1] == ' ') n--;
+            b[n] = 0;
+            char t[136]; snprintf(t, sizeof t, "%s…", b);
+            if (text_width(t, 12.5f) <= maxw) { snprintf(b, sizeof b, "%s", t); break; }
+        }
+    }
+    text_sprite(&apps[a].lbl, b, 12.5f, 0xFFFF, 1);
+}
 static int load_icons(void)
 {
     static const int sizes[3] = { 48, 56, 64 };
@@ -383,7 +402,7 @@ static int load_icons(void)
             char n[96]; if (apps[a].act == ACT_EXT) snprintf(n, sizeof n, "../apps/%s/icon_%d", apps[a].id + 2, sizes[s]); else snprintf(n, sizeof n, "icons/%s_%d", apps[a].id, sizes[s]);
             load_sprite(n, &apps[a].icon[s]);
         }
-        text_sprite(&apps[a].lbl, app_label(a), 12.5f, 0xFFFF, 1);
+        app_label_sprite(a);
     }
     return 1;
 }

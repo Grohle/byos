@@ -12,6 +12,10 @@ static const char *const MTR[][LANG_N + 1] = {
       "HiByライブラリを読み込めませんでした", "HiBy 보관함을 읽을 수 없음", "Nie można odczytać biblioteki HiBy",
       "Не удалось прочитать медиатеку HiBy", "无法读取 HiBy 资料库", "ไม่สามารถอ่านคลัง HiBy ได้", "無法讀取 HiBy 資料庫",
       "Не вдалося прочитати медіатеку HiBy" },
+    { "Bluetooth activado", "Bluetooth activado", "Bluetooth On", "Bluetooth activé", "Bluetooth ein", "Bluetooth attivo",
+      "Bluetooth オン", "Bluetooth 켬", "Bluetooth włączony", "Bluetooth включён", "蓝牙已打开", "เปิดบลูทูธแล้ว", "藍牙已開啟", "Bluetooth увімкнено" },
+    { "Bluetooth desactivado", "Bluetooth desactivado", "Bluetooth Off", "Bluetooth désactivé", "Bluetooth aus", "Bluetooth disattivato",
+      "Bluetooth オフ", "Bluetooth 끔", "Bluetooth wyłączony", "Bluetooth выключен", "蓝牙已关闭", "ปิดบลูทูธแล้ว", "藍牙已關閉", "Bluetooth вимкнено" },
     { "Editar álbum", "Editar álbum", "Edit Album", "Modifier l'album", "Album bearbeiten", "Modifica album",
       "アルバムを編集", "앨범 편집", "Edytuj album", "Изменить альбом", "编辑专辑", "แก้ไขอัลบั้ม", "編輯專輯", "Редагувати альбом" },
     /* letras: busqueda y ajuste de sincronizacion (lyrics.inc.c, nowui.inc.c) */

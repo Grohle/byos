@@ -40,7 +40,6 @@ const APPS = {
   radio:      [['#c58cff', '#7b3fe4'], 'radio', '#fff'],
   personalize:[['#8e8e93', '#3a3a3c'], 'sliders', '#fff'],
   appstore:   [['#4fb3ff', '#1d6cf2'], 'store', '#fff'],
-  freemusic:  [['#3ee0c0', '#0b8f8a'], 'freemusic', '#fff'],
   headphones: [['#f2f2f7', '#aeaeb2'], 'buds', '#1c1c1e'],
 };
 
@@ -71,12 +70,34 @@ function filesIcon(size) {
   return shell(size, '#ffffff', '#d9dce3', inner);
 }
 
+// Vinyl: disco de vinilo estilo iOS (surcos, brillo en abanico y etiqueta de color)
+function vinylIcon(size) {
+  const s = size / 56, c = 28;
+  let grooves = '';
+  for (let r = 11; r <= 22.5; r += 1.25) grooves += `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="rgba(255,255,255,${r % 2.5 < 1.25 ? .07 : .035})" stroke-width=".6"/>`;
+  const inner = `<defs>
+      <radialGradient id="v1" cx=".5" cy=".5" r=".5"><stop offset=".40" stop-color="#26262a"/><stop offset=".97" stop-color="#0c0c0e"/><stop offset="1" stop-color="#1d1d20"/></radialGradient>
+      <linearGradient id="v2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5f6d"/><stop offset="1" stop-color="#ffb347"/></linearGradient>
+      <linearGradient id="v3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="rgba(255,255,255,.0)"/><stop offset=".5" stop-color="rgba(255,255,255,.22)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient></defs>
+    <g transform="scale(${s})">
+      <circle cx="${c}" cy="${c}" r="23.5" fill="url(#v1)"/>
+      ${grooves}
+      <path d="M${c} ${c}L${c - 16} ${c - 17.5}A23.5 23.5 0 0 1 ${c + 4} ${c - 23.2}z" fill="url(#v3)" opacity=".9"/>
+      <path d="M${c} ${c}L${c + 16} ${c + 17.5}A23.5 23.5 0 0 1 ${c - 4} ${c + 23.2}z" fill="url(#v3)" opacity=".55"/>
+      <circle cx="${c}" cy="${c}" r="8.6" fill="url(#v2)"/>
+      <circle cx="${c}" cy="${c}" r="8.6" fill="none" stroke="rgba(0,0,0,.25)" stroke-width=".6"/>
+      <circle cx="${c}" cy="${c}" r="1.6" fill="#141416"/>
+    </g>`;
+  return shell(size, '#3a3a3e', '#111113', inner);
+}
+
 (async () => {
   const b = await chromium.launch({ executablePath: exe });
   const p = await b.newPage({ deviceScaleFactor: 1 });
   for (const size of [48, 56, 64]) {
     const all = Object.entries(APPS).map(([n, a]) => [n, glyphIcon(size, ...a)]);
     all.push(['files', filesIcon(size)]);
+    all.push(['freemusic', vinylIcon(size)]);
     for (const [name, svg] of all) {
       await p.setContent(`<html><body style="margin:0;background:transparent">${svg}</body></html>`);
       const file = path.join(out, `${name}_${size}.png`);

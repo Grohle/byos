@@ -10,16 +10,17 @@
  * Rendimiento: el panel completo (fondo desenfocado + controles) se compone UNA vez en
  * img_base y cada fotograma es solo una mezcla lineal con la pantalla de debajo. */
 
-enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_HIBY, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_N };
-static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "hiby", "wireless", "filter", "files", "settings" };
-static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Panel de HiBy", "Inalámbrico", "Filtro digital", "Archivos", "Personalizar" };
-static int cc_tiles[CT_N] = { CT_NOCHARGE, CT_POWER, CT_DAC, CT_HIBY, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS };
+enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_BT, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_N };
+static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "bt", "wireless", "filter", "files", "settings" };
+static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Inalámbrico", "Filtro digital", "Archivos", "Personalizar" };
+static int cc_tiles[CT_N] = { CT_NOCHARGE, CT_POWER, CT_BT, CT_DAC, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS };
 static int cc_ntiles = CT_N;
 
 static void cc_conf_line(char *rest)      /* "cc id id id..." de launcher.conf */
 {
     cc_ntiles = 0; char *t;
     while ((t = strtok(rest, " \t\r\n"))) { rest = 0;
+        if (!strcmp(t, "hiby")) t = "bt";        /* el boton del panel antiguo de HiBy ya no existe */
         for (int i = 0; i < CT_N; i++) if (!strcmp(t, ct_id[i])) { int dup = 0; for (int k = 0; k < cc_ntiles; k++) dup |= cc_tiles[k] == i; if (!dup) cc_tiles[cc_ntiles++] = i; } }
 }
 static void cc_conf_save(FILE *f) { fprintf(f, "cc"); for (int i = 0; i < cc_ntiles; i++) fprintf(f, " %s", ct_id[cc_tiles[i]]); fprintf(f, "\n"); }
@@ -29,12 +30,23 @@ static void cc_conf_save(FILE *f) { fprintf(f, "cc"); for (int i = 0; i < cc_nti
 #define CC_T 64
 #define CC_G 12
 #define CC_Y 68
-static void cc_tile_rect(int slot, int *x, int *y)
+/* posicion y ancho del control i: huecos 0 y 1 en la columna derecha junto a los modulos grandes;
+ * despues filas de 4. El modulo de Bluetooth ocupa 2 celdas (nunca en la columna derecha ni
+ * partido entre dos filas). */
+static void cc_tile_geom(int idx, int *x, int *y, int *w)
 {
-    /* huecos 0 y 1: columna derecha junto a los modulos grandes; despues filas de 4 */
-    if (slot < 2) { *x = CC_M + 3 * (CC_T + CC_G); *y = CC_Y + slot * (CC_T + CC_G); return; }
-    int s = slot - 2; *x = CC_M + (s % 4) * (CC_T + CC_G); *y = CC_Y + 2 * (CC_T + CC_G) + (s / 4) * (CC_T + CC_G);
+    int right = 0, cell = 0;
+    for (int i = 0; i <= idx && i < cc_ntiles; i++) {
+        int wide = cc_tiles[i] == CT_BT, c;
+        if (!wide && right < 2) { c = -1 - right; right++; }
+        else { if (wide && cell % 4 == 3) cell++; c = cell; cell += wide ? 2 : 1; }
+        if (i == idx) {
+            if (c < 0) { *x = CC_M + 3 * (CC_T + CC_G); *y = CC_Y + (-1 - c) * (CC_T + CC_G); *w = CC_T; }
+            else { *x = CC_M + (c % 4) * (CC_T + CC_G); *y = CC_Y + 2 * (CC_T + CC_G) + (c / 4) * (CC_T + CC_G); *w = wide ? 2 * CC_T + CC_G : CC_T; }
+        }
+    }
 }
+static void cc_tile_rect(int slot, int *x, int *y) { int w; cc_tile_geom(slot, x, y, &w); }
 #define NP_X CC_M
 #define NP_W (2 * CC_T + CC_G)
 #define BR_X (CC_M + 2 * (CC_T + CC_G))
@@ -44,6 +56,9 @@ static struct sprite cc_ic[12]; static int cc_ic_ok;
 static const char *const cc_ic_name[12] = { "plug", "leaf", "gauge", "bolt", "usb", "sliders", "wifi", "wave", "folder", "gear", "sun", 0 };
 static const struct sprite *cc_icon(const char *n) { for (int i = 0; cc_ic_name[i]; i++) if (!strcmp(n, cc_ic_name[i])) return &cc_ic[i]; return 0; }
 
+static void cc_bt_module(uint16_t *d, int x, int y, int w, int h, int pressed);   /* ccbt.inc.c */
+static int cc_bt_toggle(void);
+static int cc_bt_connected(void);
 static int cc_filter_short(void) { return au_filt_cur; }
 static const char *cc_caption; static double cc_caption_t;
 
@@ -121,7 +136,7 @@ static void cc_tile(uint16_t *d, int x, int y, int tile)
     case CT_NOCHARGE: on = pw_nocharge; acc = rgb(48, 209, 88); ic = "plug"; break;
     case CT_POWER: on = pw_mode != PW_NORMAL; acc = pw_mode == PW_SAVE ? rgb(255, 204, 0) : rgb(255, 69, 58); ic = pw_mode == PW_SAVE ? "leaf" : pw_mode == PW_PERF ? "bolt" : "gauge"; break;
     case CT_DAC: ic = "usb"; break;
-    case CT_HIBY: ic = "sliders"; break;
+    case CT_BT: ic = "wifi"; break;          /* (se dibuja como modulo ancho: cc_bt_module) */
     case CT_WIRELESS: ic = "wifi"; break;
     case CT_FILTER: on = cc_filter_short() > 0; acc = rgb(191, 90, 242); ic = "wave"; break;
     case CT_FILES: ic = "folder"; break;
@@ -181,7 +196,11 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
     }
     /* brillo: el mismo dibujo que durante el arrastre */
     { float lv = cc_bl_level() / 101.f; cc_slider_paint(dst, blur, lv > 1 ? 1 : lv, 1, 0); }
-    for (int i = 0; i < cc_ntiles; i++) { int x, y; cc_tile_rect(i, &x, &y); cc_tile(dst, x, y, cc_tiles[i]); if (pressed == i) cc_rrect(dst, x, y, CC_T, CC_T, CC_T / 2.f, 0xFFFF, 50); }
+    for (int i = 0; i < cc_ntiles; i++) {
+        int x, y, w; cc_tile_geom(i, &x, &y, &w);
+        if (cc_tiles[i] == CT_BT) { cc_bt_module(dst, x, y, w, CC_T, pressed == i ? 1 : pressed == 200 + i ? 2 : 0); continue; }
+        cc_tile(dst, x, y, cc_tiles[i]); if (pressed == i) cc_rrect(dst, x, y, CC_T, CC_T, CC_T / 2.f, 0xFFFF, 50);
+    }
     /* rotulo del ultimo cambio (como el aviso de iOS al tocar un control) */
     if (cc_caption && now_ms() - cc_caption_t < 1800) {
         int w = tw_n(cc_caption, 13, -1) + 28; if (w > W - 40) w = W - 40;
@@ -196,7 +215,11 @@ static int cc_hit(int x, int y)
 {
     if (x >= NP_X && x < NP_X + NP_W && y >= CC_Y && y < CC_Y + BR_H) return 100;
     if (x >= BR_X && x < BR_X + CC_T && y >= CC_Y - 6 && y < CC_Y + BR_H + 6) return 101;
-    for (int i = 0; i < cc_ntiles; i++) { int tx, ty; cc_tile_rect(i, &tx, &ty); if (x >= tx - 4 && x < tx + CC_T + 4 && y >= ty - 4 && y < ty + CC_T + 4) return i; }
+    for (int i = 0; i < cc_ntiles; i++) {
+        int tx, ty, tw; cc_tile_geom(i, &tx, &ty, &tw);
+        if (x >= tx - 4 && x < tx + tw + 4 && y >= ty - 4 && y < ty + CC_T + 4)
+            return cc_tiles[i] == CT_BT && x < tx + CC_T - 6 ? 200 + i : i;   /* modulo BT: el circulo enciende/apaga */
+    }
     return -1;
 }
 
@@ -268,6 +291,7 @@ static const uint16_t *cc_player_img(void)
     if (cc_player_right) return cc_under;               /* venimos del reproductor: es el fondo */
     if (have_cache_plane) return img_cache_plane;
     static uint16_t *ph; if (!ph) ph = malloc(HM_FRAME_BYTES);
+    if (!ph) return cc_under ? cc_under : img_under;     /* sin memoria: sin marcador */
     for (int i = 0; i < W * H; i++) ph[i] = rgb(18, 18, 20);
     int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(ph, &apps[a].icon[2], W / 2 - 48, H / 2 - 70, 96, 96, 255);
     return ph;
@@ -559,6 +583,12 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
                 cmd('R'); return; }
             cc_animate(under, panel, 1, 0, 180); cc_open_app("nowplaying"); return;
         }
+        if (hit >= 200) {                                      /* Bluetooth: encender / apagar */
+            int on = cc_bt_toggle();
+            cc_set_caption(tr(on ? "Bluetooth activado" : "Bluetooth desactivado"));
+            cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+            continue;
+        }
         int tile = cc_tiles[hit];
         switch (tile) {
         case CT_NOCHARGE:
@@ -572,10 +602,8 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
             for (int k = 0; k < n; k++) if (vv[k] == cur) i = k;
             au_filt_i = (i + 1) % n; apply_filter();
             cc_set_caption(tr(n == 7 ? O_FILT8[au_filt_i] : O_FILT2[au_filt_i])); break; }
-        case CT_HIBY:
-            cc_animate(under, panel, 1, 0, 160);
-            if (!from_launcher) cmd('R'); else launcher_present();
-            open_cc(); return;
+        case CT_BT:                                            /* el modulo: auriculares conectados o Inalambrico */
+            cc_animate(under, panel, 1, 0, 160); cc_open_app(cc_bt_connected() ? "headphones" : "wireless"); return;
         case CT_DAC: cc_animate(under, panel, 1, 0, 160); cc_open_app("dac"); return;
         case CT_WIRELESS: cc_animate(under, panel, 1, 0, 160); cc_open_app("wireless"); return;
         case CT_FILES: cc_animate(under, panel, 1, 0, 160); cc_open_app("files"); return;

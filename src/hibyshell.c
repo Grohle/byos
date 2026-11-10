@@ -43,6 +43,9 @@
 #define W HM_W
 #define H HM_H
 #define ASSETS "/usr/data/hibymod/shell"
+#ifndef HIBYOS_VERSION
+#define HIBYOS_VERSION "0.1.0"       /* version del shell (Ajustes > Informacion si falta "hibymod status"); -DHIBYOS_VERSION=... */
+#endif
 
 /* ------------------------------------------------------------------ utilidades */
 static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
@@ -841,6 +844,7 @@ static int app_back_gesture(int sx, int sy);
 #include "wireless.inc.c"
 #include "freemusic.inc.c"
 #include "buds.inc.c"                  /* app Auriculares (headphones; daemon hibybudsd) */
+#include "ccbt.inc.c"                  /* modulo de Bluetooth del centro de control */
 #include "syspop.inc.c"                /* avisos del sistema sobre cualquier pantalla */
 
 /* ------------------------------------------------------------------ volumen de la barra */
