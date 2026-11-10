@@ -280,7 +280,9 @@ static void test_i18n(void)
                 "Audiolibros de dominio público grabados por voluntarios de LibriVox (librivox.org).", 0 };
             int isp = !strncmp(BTR[i][0], "BOOKS_", 6);
             for (int q = 0; para[q] && !isp; q++) isp = !strcmp(BTR[i][0], para[q]);
-            if (isp) CHECK(text_width(v, 14) < 4 * 240, "[%s] parrafo demasiado largo: %s", LANG_CODES[l], v);
+            /* the Catalogs help is the one paragraph drawn smaller and longer: ab_wrap at 12 px, 288 px wide, up to 8 lines */
+            if (!strcmp(BTR[i][0], "BOOKS_CAT_HELP")) CHECK(text_width(v, 12) < 7 * 260, "[%s] ayuda de catalogos demasiado larga: %s", LANG_CODES[l], v);
+            else if (isp) CHECK(text_width(v, 14) < 4 * 240, "[%s] parrafo demasiado largo: %s", LANG_CODES[l], v);
             else CHECK(text_width(v, 15) < 280, "[%s] demasiado ancho: %s", LANG_CODES[l], v);
         }
     }

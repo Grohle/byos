@@ -426,7 +426,20 @@ static int cc_prepare(void)
     }
     have_under = 0;
     double tb = now_ms();
-    cc_blur(under, img_sheet); cc_under = under;
+    /* La franja de la barra de estado recibe el MISMO desenfoque y oscurecido que el resto:
+     * la fuente del desenfoque no lleva ni el oscurecido propio de la franja del launcher ni
+     * los glifos (dejaban una banda mas oscura y un halo: un corte a la altura de la barra).
+     * Launcher: el fondo tal cual. Otras pantallas con barra: el contenido de debajo reflejado. */
+    {
+        static uint16_t sb_keep[30 * W];
+        int fix = cc_from_launcher ? 1 : has_statusbar(under) ? 2 : 0;
+        if (fix) memcpy(sb_keep, under, sizeof sb_keep);
+        if (fix == 1) memcpy(under, wall, sizeof sb_keep);
+        else if (fix == 2) for (int y = 0; y < 30; y++) memcpy(under + y * W, under + (59 - y) * W, W * 2);
+        cc_blur(under, img_sheet);
+        if (fix) memcpy(under, sb_keep, sizeof sb_keep);
+    }
+    cc_under = under;
     double tb2 = now_ms();
     cc_caption = 0;
     cc_render(img_base, img_sheet, -1);
