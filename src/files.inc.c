@@ -31,11 +31,35 @@ static int sd_mounted(void)
     while (fgets(l, sizeof l, f)) if (strstr(l, " " FS_SD " ") || strstr(l, " /data/mnt/sd_0 ")) ok = 1;
     fclose(f); return ok;
 }
+/* orden "natural" como Archivos de iOS: los numeros se comparan por su valor (pista 2 antes
+ * que pista 10); el resto, sin distinguir mayusculas */
+static int nat_cmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (isdigit((unsigned char)*a) && isdigit((unsigned char)*b)) {
+            const char *a0 = a, *b0 = b;
+            while (*a == '0') a++;
+            while (*b == '0') b++;
+            const char *as = a, *bs = b;
+            while (isdigit((unsigned char)*a)) a++;
+            while (isdigit((unsigned char)*b)) b++;
+            if (a - as != b - bs) return (int)(a - as) - (int)(b - bs);   /* mas cifras = mayor */
+            int c = strncmp(as, bs, (size_t)(a - as)); if (c) return c;
+            if ((as - a0) != (bs - b0)) return (int)(as - a0) - (int)(bs - b0);   /* "01" despues de "1" */
+            continue;
+        }
+        int ca = tolower((unsigned char)*a), cb = tolower((unsigned char)*b);
+        if (ca != cb) return ca - cb;
+        a++; b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
 static int ent_cmp(const void *a, const void *b)
 {
     const struct fent *x = a, *y = b;
     if (x->dir != y->dir) return y->dir - x->dir;
-    return strcasecmp(x->name, y->name);
+    int c = nat_cmp(x->name, y->name);
+    return c ? c : strcmp(x->name, y->name);
 }
 static void fs_free(void) { for (int i = 0; i < nents; i++) free(ents[i].name); nents = 0; }
 static void fs_load(void)
@@ -250,7 +274,7 @@ static int action_sheet(const char *title, const char **opts, int n, int destruc
     int bh = 46, sh = 40 + n * bh + 12 + bh + 16, y0 = H - sh;
     for (int s = 0; s <= 6; s++) {
         float e = (float)ease_out(s / 6.0); int yy = y0 + (int)((1 - e) * sh);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(base[i], 32 - (int)(14 * e));
+        dim_buf(fr0, base, W * H, 32 - (int)(14 * e));
         fill_rrect(fr0, 8, yy, W - 16, 40 + n * bh, 13, rgb(44, 44, 48), 250);
         int tw = tw_n(title, 12, -1); if (tw > W - 40) tw = W - 40;
         draw_text(fr0, (W - tw) / 2, yy + 25, title, 12, rgb(142, 142, 147), W - 40, 0, H);
@@ -297,6 +321,87 @@ static int rm_rf(const char *p)
         return r | rmdir(p);
     }
     return unlink(p);
+}
+
+/* Mover entre la SD y la memoria interna: rename() no cruza sistemas de ficheros (EXDEV).
+ * Se copia (64 KB a la vez, con suma de cada fichero), se fuerza a disco, se vuelve a leer la
+ * copia y se compara la suma; solo si todo cuadra se borra el original. Con progreso. */
+struct fs_mv { long long done, tot; double last; const char *name; int err; };
+static long long fs_du(const char *p)
+{
+    struct stat s; if (lstat(p, &s)) return 0;
+    if (!S_ISDIR(s.st_mode)) return s.st_size;
+    long long t = 0; DIR *d = opendir(p); struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char c[900]; snprintf(c, sizeof c, "%s/%s", p, e->d_name); t += fs_du(c);
+    }
+    if (d) closedir(d);
+    return t;
+}
+static void fs_mv_progress(struct fs_mv *m)
+{
+    double t = now_ms(); if (t - m->last < 120 && m->done < m->tot) return;
+    m->last = t; st->shell_beat++;
+    progress_card(tr("Moviendo…"), m->name, m->tot > 0 ? (double)m->done / m->tot : 0);
+}
+static uint32_t fs_sum(uint32_t a, const uint8_t *b, ssize_t n)   /* Adler-32 */
+{
+    uint32_t s1 = a & 0xFFFF, s2 = a >> 16;
+    for (ssize_t i = 0; i < n; i++) { s1 = (s1 + b[i]) % 65521; s2 = (s2 + s1) % 65521; }
+    return s2 << 16 | s1;
+}
+static int fs_copy_file(const char *src, const char *dst, mode_t mode, struct fs_mv *m)
+{
+    static uint8_t *buf; if (!buf) buf = malloc(65536);
+    if (!buf) return -1;
+    int fi = open(src, O_RDONLY); if (fi < 0) return -1;
+    int fo = open(dst, O_WRONLY | O_CREAT | O_EXCL, mode & 0777); if (fo < 0) { close(fi); return -1; }
+    uint32_t a = 1; ssize_t n; int bad = 0;
+    while ((n = read(fi, buf, 65536)) > 0) {
+        if (write(fo, buf, n) != n) { bad = 1; break; }
+        a = fs_sum(a, buf, n); m->done += n; fs_mv_progress(m);
+    }
+    if (n < 0) bad = 1;
+    close(fi);
+    if (fsync(fo)) bad = 1;
+    if (close(fo)) bad = 1;
+    if (!bad) {                                       /* verificar: releer la copia */
+        uint32_t b = 1; int fv = open(dst, O_RDONLY);
+        if (fv < 0) bad = 1; else { while ((n = read(fv, buf, 65536)) > 0) b = fs_sum(b, buf, n); if (n < 0) bad = 1; close(fv); }
+        if (b != a) bad = 1;
+    }
+    if (bad) unlink(dst);
+    return bad ? -1 : 0;
+}
+static int fs_copy_tree(const char *src, const char *dst, struct fs_mv *m)
+{
+    struct stat s; if (lstat(src, &s)) return -1;
+    if (S_ISLNK(s.st_mode)) return -1;                 /* (FAT de la SD: no hay enlaces) */
+    if (!S_ISDIR(s.st_mode)) return fs_copy_file(src, dst, s.st_mode, m);
+    if (mkdir(dst, 0755) && errno != EEXIST) return -1;
+    DIR *d = opendir(src); if (!d) return -1;
+    struct dirent *e; int r = 0;
+    while (!r && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char a[900], b[900]; snprintf(a, sizeof a, "%s/%s", src, e->d_name); snprintf(b, sizeof b, "%s/%s", dst, e->d_name);
+        r = fs_copy_tree(a, b, m);
+    }
+    closedir(d);
+    return r;
+}
+/* 0 movido; -1 no se pudo (el original queda intacto; una copia a medias se borra) */
+static int fs_move(const char *src, const char *dst)
+{
+    if (!rename(src, dst)) return 0;
+    if (errno != EXDEV) return -1;
+    struct fs_mv m = { 0, fs_du(src), 0, base_name(src), 0 };
+    struct statvfs v;
+    { char dir[900]; snprintf(dir, sizeof dir, "%s", dst); char *sl = strrchr(dir, '/'); if (sl) *sl = 0;
+      if (!statvfs(dir, &v) && (long long)v.f_bavail * v.f_frsize < m.tot + (1 << 20)) { toast(tr("No hay espacio suficiente")); return -1; } }
+    fs_mv_progress(&m);
+    if (fs_copy_tree(src, dst, &m)) { rm_rf(dst); return -1; }
+    return rm_rf(src) ? -1 : 0;   /* copia completa y verificada: ya se puede borrar el original */
 }
 
 /* ------------------------------------------------------------------ visor de imagenes */
@@ -358,8 +463,8 @@ static void tx_layout(int maxw)
         int w = 0, last_sp = -1, j = i;
         while (j < tx.len && tx.b[j] != '\n') {
             const char *s = tx.b + j; int c = utf8_next(&s);
-            struct glyph *g = glyph_get(c, 14); int gw = g ? g->adv >> 6 : 7;
-            if (w + gw > maxw) break;
+            struct glyph *g = glyph_get(c, 14); int gw = g ? g->adv : 7 << 6;   /* 26.6, como draw_text */
+            if ((w + gw) >> 6 > maxw) break;                                     /* (antes: >>6 por glifo, las lineas largas se salian) */
             if (c == ' ') last_sp = (int)(s - tx.b);
             w += gw; j = (int)(s - tx.b);
         }
@@ -400,9 +505,11 @@ static void tx_redraw(uint16_t *d, int pressed)
     if (tx_edit) kb_draw(d, pressed);
     draw_toast(d);
 }
+static int fs_gone;          /* salio con el gesto de inicio: el inicio ya esta en pantalla */
 static void text_editor(const char *path, const char *name)
 {
     static char *buf; if (!buf) buf = malloc(TXT_CAP);
+    if (!buf) { toast(tr("No se pudo abrir")); return; }
     int f = open(path, O_RDONLY);
     int n = f >= 0 ? (int)read(f, buf, TXT_CAP - 1) : 0; if (n < 0) n = 0;
     struct stat s; tx_ro = f < 0 || (fstat(f, &s) == 0 && s.st_size > TXT_CAP / 2);
@@ -416,7 +523,21 @@ static void text_editor(const char *path, const char *name)
     struct pkt p;
     for (;;) {
         if (!read_pkt(&p, 300) || !p.down) continue;
-        if (tx_edit && p.y >= KB_Y) { int ol = tx.len; kb_touch(&p, &tx, fr0, tx_redraw, 1); if (tx.len != ol) dirty = 1; continue; }
+        int hx = p.x, hy = p.y, home = 0;
+        if (tx_edit && p.y >= KB_Y) {
+            int ol = tx.len, r = kb_touch(&p, &tx, fr0, tx_redraw, 1); if (tx.len != ol) dirty = 1;
+            if (r != K_HOME) continue;
+            home = 1;                                     /* inicio con el teclado abierto */
+        } else if (p.y >= 456) {                          /* desde abajo: inicio (como en la lista) */
+            double tw = now_ms();
+            while (cur_down && !home && now_ms() - tw < 400) { read_pkt(&p, 20); if (hy - cur_y > 12) home = 1; }
+        }
+        if (home) {
+            if (dirty && !confirm(tr("Hay cambios sin guardar"), tr("Descartar cambios"))) { drain_until_up(); tx_redraw(fr0, -1); present(); continue; }
+            tx_redraw(fr0, -1);
+            if (own_home_gesture(hx, hy, app_by_id("files"))) { if (tx_edit) kb_end(); fs_gone = 1; return; }
+            tx_redraw(fr0, -1); present(); continue;
+        }
         int sx = p.x, sy = p.y, top0 = tx_top, moved = 0;
         while (cur_down && read_pkt(&p, 40)) {
             if (abs(cur_y - sy) > 8) moved = 1;
@@ -463,7 +584,6 @@ static void file_info(const char *path, const struct fent *e)
     action_sheet(e->name, o, 1, -1);
 }
 
-static int fs_gone;          /* salio con el gesto de inicio: el inicio ya esta en pantalla */
 static void files_app(int ix, int iy)
 {
     have_under = 0;   /* Archivos reutiliza img_under */
@@ -476,8 +596,7 @@ static void files_app(int ix, int iy)
     for (;;) {
         double t = (now_ms() - t0) / 300; if (t > 1) t = 1;
         double e = ease_out(t);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
         present();
         if (t >= 1) break;
     }
@@ -488,7 +607,7 @@ static void files_app(int ix, int iy)
         /* inercia */
         if (fabsf(vel) > 0.02f) {
             static double lt; double now = now_ms(); if (!lt || now - lt > 100) lt = now - 16;
-            fscroll -= vel * (float)(now - lt); vel *= powf(0.95f, (float)(now - lt) / 16.f); lt = now;
+            fscroll -= vel * (float)(now - lt); vel *= powf(0.9975f, (float)(now - lt)); lt = now;   /* deceleracion comun (Musica, Ajustes) */
             float maxs = fs_count() * ROW_H - (H - LIST_Y - (move_src[0] ? 60 : 0)); if (maxs < 0) maxs = 0;
             if (fscroll < 0) { fscroll = 0; vel = 0; } if (fscroll > maxs) { fscroll = maxs; vel = 0; }
             fs_present(-1);
@@ -561,7 +680,7 @@ static void files_app(int ix, int iy)
                     const char *src = move_n ? move_list[i] : move_src;
                     char dst[900]; snprintf(dst, sizeof dst, "%s/%s", cwd, base_name(src));
                     if (!strncmp(cwd, src, strlen(src)) && (cwd[strlen(src)] == '/' || !cwd[strlen(src)])) { bad++; continue; }
-                    if (!access(dst, F_OK) || rename(src, dst)) bad++; else ok++;
+                    if (!access(dst, F_OK) || fs_move(src, dst)) bad++; else ok++;
                 }
                 if (!bad) toast(tr("Movido")); else toast(nlist == 1 ? tr("No se pudo mover") : tr("Algunos no se pudieron mover"));
                 if (ok || !bad) { move_src[0] = 0; for (int i = 0; i < move_n; i++) free(move_list[i]); move_n = 0; }
@@ -630,12 +749,13 @@ static void files_app(int ix, int iy)
                 if (tn > lt) vel = 0.6f * vel + 0.4f * (cur_y - lastyy) / (float)(tn - lt);
                 lastyy = cur_y; lt = tn;
                 float maxs = nents * ROW_H - (H - LIST_Y - bar_h()); if (maxs < 0) maxs = 0;
+                float prev = fscroll;
                 fscroll = s0 - (cur_y - sy); if (fscroll < 0) fscroll = 0; if (fscroll > maxs) fscroll = maxs;
-                fs_present(-1);
+                if (fscroll != prev) fs_present(-1);          /* lista corta o en el tope: nada que pintar */
             }
             if (!moved && valid && !fs_root() && !move_src[0] && !sel_mode && tn - ts > 450) { longp = 1; break; }
         }
-        if (moved) { if (fs_root()) vel = 0; continue; }
+        if (moved) { if (fs_root() || now_ms() - lt > 60) vel = 0; continue; }   /* el dedo se paro antes de soltar: sin inercia (como Ajustes) */
         vel = 0;
         if (!valid) { fs_present(-1); continue; }
         if (fs_root()) {
@@ -663,7 +783,7 @@ static void files_app(int ix, int iy)
                     if (!access(np, F_OK)) toast(tr("Ya existe uno con ese nombre"));
                     else if (rename(path, np)) toast(tr("No se pudo renombrar")); else { fs_load(); toast(tr("Renombrado")); }
                 }
-            } else if (a == 2) { snprintf(move_src, sizeof move_src, "%s", path); toast("Elige la carpeta de destino"); }
+            } else if (a == 2) { snprintf(move_src, sizeof move_src, "%s", path); toast(tr("Elige la carpeta de destino")); }
             else if (a == 3) {
                 char t[300]; snprintf(t, sizeof t, tr("¿Eliminar «%s»? No se puede deshacer."), e->name);
                 if (confirm(t, e->dir ? tr("Eliminar carpeta") : tr("Eliminar"))) {
@@ -678,7 +798,7 @@ static void files_app(int ix, int iy)
         if (e->dir) { fs_go(path, 1); continue; }
         int ty = ftype(e->name);
         if (ty == 2) { image_viewer(row); fs_present(-1); }
-        else if (ty == 3) { text_editor(path, e->name); fs_load(); fs_present(-1); }
+        else if (ty == 3) { text_editor(path, e->name); if (fs_gone) break; fs_load(); fs_present(-1); }
         else if (ty == 1) { toast(tr("Para reproducir, usa Música › Carpetas")); fs_present(-1); }
         else { file_info(path, e); fs_present(-1); }
     }
@@ -688,8 +808,7 @@ static void files_app(int ix, int iy)
     if (!fs_gone) for (;;) {
         double t = (now_ms() - t0) / 280; if (t > 1) t = 1;
         double e = 1 - ease_out(t);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
         present();
         if (t >= 1) break;
     }

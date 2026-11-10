@@ -449,7 +449,18 @@ static uint32_t mu_cover_key(const char *track, char *dir, int cap)
     return np_hash(dir, m1 * 31u + m2);
 }
 /* genera/lee la caratula cls del album en px; 0 bien, -1 no tiene */
+/* mu_cover_make usa ficheros temporales comunes (w.img, *.tmp2): un solo hilo a la vez
+ * (el de Musica y el de la caratula de Reproduciendo sin biblioteca, nowui.inc.c) */
+static pthread_mutex_t mu_make_mu = PTHREAD_MUTEX_INITIALIZER;
+static int mu_cover_make_unlocked(const char *track, int cls, uint16_t *px, uint16_t *tmp);
 static int mu_cover_make(const char *track, int cls, uint16_t *px, uint16_t *tmp)
+{
+    pthread_mutex_lock(&mu_make_mu);
+    int r = mu_cover_make_unlocked(track, cls, px, tmp);
+    pthread_mutex_unlock(&mu_make_mu);
+    return r;
+}
+static int mu_cover_make_unlocked(const char *track, int cls, uint16_t *px, uint16_t *tmp)
 {
     char dir[420], base[96], f[128], src[480];
     uint32_t k = mu_cover_key(track, dir, sizeof dir);
@@ -463,8 +474,11 @@ static int mu_cover_make(const char *track, int cls, uint16_t *px, uint16_t *tmp
         char m[128]; snprintf(m, sizeof m, "%s_m.raw", base);
         if (!mu_read_raw(m, tmp, MU_GS)) { mu_scale(tmp, MU_GS, px, MU_SS); mu_write_raw(f, px, MU_SS); return 0; }
     }
-    int avail = mu_mem_avail_kb(), lim = avail - 6144; if (lim > 10240) lim = 10240;
-    if (avail < 12288) return -2;                     /* poca memoria ahora: se reintentara (una sola decodificacion a la vez, nice 10) */
+    /* en el aparato suelen quedar 7-11 MB libres con el reproductor sonando: con el umbral
+     * antiguo (12 MB) las caratulas de albumes aun sin cache (p. ej. las filas de una mezcla)
+     * no se generaban nunca y salia siempre la nota. hibywall va limitado (ulimit -v). */
+    int avail = mu_mem_avail_kb(), lim = avail - 4096; if (lim > 10240) lim = 10240;
+    if (lim < 4096) return -2;                        /* poca memoria ahora: se reintentara (una sola decodificacion a la vez, nice 10) */
     mu_mkcache();
     int kind = mu_cover_src(track, dir, src, sizeof src);
     if (!kind) { int o = open(none, O_WRONLY | O_CREAT, 0644); if (o >= 0) close(o); return -1; }
@@ -1491,7 +1505,8 @@ static void mu_search_redraw(uint16_t *d, int pressed)
     kb_draw(d, pressed);
     draw_toast(d);
 }
-/* devuelve: 0 sigue en la pagina (sin teclado), -1 cancelar (volver), >0 fila tocada + 1 */
+/* devuelve: 0 sigue en la pagina (sin teclado), -1 cancelar (volver), >0 fila tocada + 1,
+ * -3 se fue al inicio con el gesto (la app sale sin su animacion) */
 static int mu_search_edit(int *tap_x)
 {
     struct ebuf e = { mu_q, (int)strlen(mu_q), sizeof mu_q, (int)strlen(mu_q) };
@@ -1503,7 +1518,16 @@ static int mu_search_edit(int *tap_x)
         if (!read_pkt(&p, 300)) { if (mu_cov_new) { mu_cov_new = 0; mu_search_redraw(fr0, -1); present(); } continue; }
         if (!p.down) continue;
         mu_last_input = now_ms();
-        if (p.y >= KB_Y) { int r = kb_touch(&p, &e, fr0, mu_search_redraw, 0); if (r == K_ENTER) { res = 0; break; } continue; }
+        if (p.y >= KB_Y) {
+            int kx = p.x, ky = p.y, r = kb_touch(&p, &e, fr0, mu_search_redraw, 0);
+            if (r == K_ENTER) { res = 0; break; }
+            if (r == K_HOME) {                            /* inicio con el teclado abierto (iOS) */
+                mu_search_redraw(fr0, -1);
+                if (own_home_gesture(kx, ky, app_by_id("music"))) { res = -3; break; }
+                mu_search_redraw(fr0, -1); present();
+            }
+            continue;
+        }
         int x = p.x, y = p.y, moved = 0;
         while (cur_down && read_pkt(&p, 3000)) if (abs(cur_y - y) > 12) moved = 1;
         struct mpg *pg = mu_st[mu_sp];
@@ -1585,8 +1609,7 @@ static void music_app(int ix, int iy)
     for (;;) {                                         /* zoom desde el icono */
         double t = (now_ms() - t0) / 300; if (t > 1) t = 1;
         double e = ease_out(t);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
         present();
         if (t >= 1) break;
     }
@@ -1677,7 +1700,7 @@ static void music_app(int ix, int iy)
                 struct mpg *s = mu_page_new(PG_SEARCH, 0, tr("Buscar"));
                 if (s) { mu_q[0] = 0; snprintf(mu_qlast, sizeof mu_qlast, "%s", ""); mu_build(s); mu_push(s);
                     int tx = 0, r = mu_search_edit(&tx);
-                    if (r == -1) mu_pop(); else if (r > 0) mu_tap(mu_st[mu_sp], r - 1, tx, 0); else mu_present(); }
+                    if (r == -3) { mu_gone = 1; break; } if (r == -1) mu_pop(); else if (r > 0) mu_tap(mu_st[mu_sp], r - 1, tx, 0); else mu_present(); }
                 if (mu_open < 0) break;
                 continue;
             }
@@ -1746,8 +1769,7 @@ static void music_app(int ix, int iy)
     if (!mu_gone) for (;;) {
         double t = (now_ms() - t0) / 280; if (t > 1) t = 1;
         double e = 1 - ease_out(t);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), (int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), win_radius((int)(L.icon + (W - L.icon) * e), (int)(L.icon + (H - L.icon) * e), e));
         present();
         if (t >= 1) break;
     }

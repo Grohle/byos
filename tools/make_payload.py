@@ -14,6 +14,8 @@ Resultado: out/sd/HiByOS/payload/
   mirror/        inicio "espejo": vista del inicio con fondo launcher/mirror.png e iconos
                  transparentes. Se aplica cuando hibyshell ya ha generado mirror.png.
   Pictures/      los 9 fondos (theme/wallpapers.py); se copian a /Pictures de la SD si faltan.
+  sys/           versiones nuevas de scripts del rootfs (hibyos_install.sh...) + MANIFEST.sha256:
+                 el script del rootfs solo las usa si el sha256 coincide (docs/OTA.md).
 
 Se comprueba que ningun fichero de theme/ sea identico al de fabrica (no se redistribuye nada
 de HiBy) y que los binarios sean MIPS.
@@ -56,6 +58,12 @@ SRCS = {
     "hibynet": ["src/hibynet.c"],
 }
 THEME_SUBS = ("layout/theme3", "litegui/theme3")
+# sustitutos de scripts del rootfs (docs/OTA.md): nombre en sys/ -> fuente. Un script solo se
+# incluye si su version del rootfs ya sabe delegar (la marca es la condicion de seguridad).
+SYS = {
+    "hibyos_install.sh": ("overlay/usr/bin/hibyos_install.sh", None),
+    "hiby_player.sh": ("overlay/usr/bin/hiby_player.sh", "HIBYOS_SYS_COUNTED"),
+}
 # iconos del inicio de fabrica que en modo espejo pasan a ser transparentes
 MIRROR_ICONS = ("book", "book_s", "dac", "dac_s", "music", "music_s", "stream_media", "stream_media_s",
                 "sys_set", "sys_set_s", "wireless", "wireless_s")
@@ -206,6 +214,22 @@ def main():
             copy(os.path.join(tmp, "p", f), os.path.join(pl, "Pictures", f))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # ---- sustitutos del rootfs (LF, como build.py) y su MANIFEST.sha256
+    sysd = os.path.join(pl, "sys")
+    sums = []
+    for name, (rel, marker) in SYS.items():
+        with open(os.path.join(ROOT, rel), "rb") as f:
+            data = f.read().replace(b"\r\n", b"\n")
+        if marker and marker.encode() not in data:
+            continue                       # su version del rootfs aun no delega: no se manda
+        os.makedirs(sysd, exist_ok=True)
+        with open(os.path.join(sysd, name), "wb") as f:
+            f.write(data)
+        sums.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+    if sums:
+        with open(os.path.join(sysd, "MANIFEST.sha256"), "w", newline="\n", encoding="utf-8") as f:
+            f.writelines(sums)
 
     # ---- version y manifiesto (LF; rutas sin espacios)
     with open(os.path.join(pl, "VERSION"), "w", newline="\n") as f:

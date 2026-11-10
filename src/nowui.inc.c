@@ -231,12 +231,58 @@ static void nu_make_bg(void)
     }
     lg("np: fondo en %.1f ms", now_ms() - t0);
 }
+/* Caratula nitida sin la biblioteca (Reproduciendo abierto desde el gesto, el Centro de
+ * control o el icono, con Musica cerrada): un hilo (nice 10) la saca de la pista con la misma
+ * cache de Musica (mu_cover_make, por carpeta del fichero) y la interfaz la cambia al llegar. */
+static pthread_mutex_t nu_bc_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint16_t nu_bc_px[NU_S * NU_S];
+static char nu_bc_path[600]; static uint32_t nu_bc_trk, nu_bc_want; static volatile int nu_bc_ready, nu_bc_busy;
+static void *nu_bc_thread(void *a)
+{
+    (void)a; thread_nice(10);
+    for (;;) {
+        pthread_mutex_lock(&nu_bc_mu); char path[600]; snprintf(path, sizeof path, "%s", nu_bc_path); uint32_t id = nu_bc_want; pthread_mutex_unlock(&nu_bc_mu);
+        uint16_t *px = malloc(NU_S * NU_S * 2), *tmp = malloc(MU_GS * MU_GS * 2);
+        int r = px && tmp ? mu_cover_make(path, MC_B, px, tmp) : -1;
+        pthread_mutex_lock(&nu_bc_mu);
+        if (!r && id == nu_bc_want) { memcpy(nu_bc_px, px, sizeof nu_bc_px); nu_bc_trk = id; nu_bc_ready = 1; }
+        int again = id != nu_bc_want;                 /* cambio de pista mientras tanto */
+        if (!again) nu_bc_busy = 0;
+        pthread_mutex_unlock(&nu_bc_mu);
+        free(px); free(tmp);
+        if (!again) break;
+    }
+    return 0;
+}
+static void nu_bc_request(const char *path, uint32_t id)
+{
+    if (!path[0]) return;
+    pthread_mutex_lock(&nu_bc_mu);
+    if (nu_bc_ready && nu_bc_trk == id) { pthread_mutex_unlock(&nu_bc_mu); return; }
+    nu_bc_ready = 0; nu_bc_want = id; snprintf(nu_bc_path, sizeof nu_bc_path, "%s", path);
+    int start = !nu_bc_busy; if (start) nu_bc_busy = 1;
+    pthread_mutex_unlock(&nu_bc_mu);
+    if (start) { pthread_t th; if (!pthread_create(&th, 0, nu_bc_thread, 0)) pthread_detach(th); else nu_bc_busy = 0; }
+}
+/* 1 si la nitida de esta pista ya esta (se copia en nu.art) */
+static int nu_bc_take(void)
+{
+    int ok = 0;
+    pthread_mutex_lock(&nu_bc_mu);
+    if (nu_bc_ready && nu_bc_trk == nu.ni.track_id && nu.art) { memcpy(nu.art, nu_bc_px, sizeof nu_bc_px); ok = 1; }
+    pthread_mutex_unlock(&nu_bc_mu);
+    return ok;
+}
 /* caratula 232: la nitida de la biblioteca si ya esta; si no, la de 128 ampliada (bilineal) */
 static void nu_make_art(void)
 {
     if (nu.alb >= 0) {
         double t; int none; const uint16_t *b = mu_cover(nu.alb, MC_B, &t, &none);
         if (b) { memcpy(nu.art, b, NU_S * NU_S * 2); nu.art_src = 2; return; }
+    }
+    if (nu.alb < 0 && nu.cov_ok) {                    /* sin biblioteca: la nitida en segundo plano */
+        if (nu_bc_take()) { nu.art_src = 2; return; }
+        nu_bc_request(nu.ni.path, nu.ni.track_id);
     }
     if (nu.cov_ok) {
         for (int y = 0; y < NU_S; y++) {
@@ -769,6 +815,7 @@ static int nu_poll(void)
         mu_cov_new = 0; double t; int none; const uint16_t *b = mu_cover(nu.alb, MC_B, &t, &none);
         if (b) { memcpy(nu.art, b, NU_S * NU_S * 2); nu.art_src = 2; r |= NB_ART; lg("np: caratula nitida"); }
     }
+    if (nu.art_src == 1 && nu.alb < 0 && nu_bc_ready && nu_bc_take()) { nu.art_src = 2; r |= NB_ART; lg("np: caratula nitida (sin biblioteca)"); }
     if (now - last_full > 1000) {
         last_full = now;
         if (cf) {

@@ -4,7 +4,7 @@
  *
  *  Ahorro:       pantalla a 30 Hz (30 fps), brillo como mucho 40, vm.dirty_expire 60 s
  *  Normal:       44 fps (el maximo del panel), brillo del usuario, 30 s
- *  Rendimiento:  pantalla a 60 Hz (reloj del LCD), sin topes; pensado para ir enchufado
+ *  Rendimiento:  sin topes; con LCD_CLOCK_CHANGES 0 la pantalla sigue a 45 Hz (como Normal)
  *
  * Solo USB: el AXP2101 deja de cargar (axp_battery/charger = 0) y el aparato se alimenta
  * del USB. El driver vuelve a activar la carga ~5 s despues de cada enchufado, y "cat

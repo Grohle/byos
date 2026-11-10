@@ -115,7 +115,7 @@ static double te_last_draw;
 static void progress_card(const char *title, const char *sub, double frac)
 {
     static uint16_t base[W * H]; static int have;
-    if (frac < 0) { memcpy(base, fr0, sizeof base); for (int i = 0; i < W * H; i++) base[i] = dim565(base[i], 14); have = 1; return; }
+    if (frac < 0) { memcpy(base, fr0, sizeof base); dim_buf(base, base, W * H, 14); have = 1; return; }
     if (!have) return;
     memcpy(fr0, base, sizeof base);
     int cw = 250, ch = 120, cx = (W - cw) / 2, cy = (H - ch) / 2;
@@ -486,8 +486,8 @@ static void tt_layout(int maxw)
         int w = 0, last_sp = -1, j = i;
         while (j < tt.len && tt.b[j] != '\n') {
             const char *s = tt.b + j; int c = utf8_next(&s);
-            struct glyph *g = glyph_get(c, 15); int gw = g ? g->adv >> 6 : 7;
-            if (w + gw > maxw) break;
+            struct glyph *g = glyph_get(c, 15); int gw = g ? g->adv : 7 << 6;   /* 26.6, como draw_text */
+            if ((w + gw) >> 6 > maxw) break;
             if (c == ' ') last_sp = (int)(s - tt.b);
             w += gw; j = (int)(s - tt.b);
         }

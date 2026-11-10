@@ -383,7 +383,7 @@ done:
 
 static void *wl_wifi_thread(void *arg)
 {
-    (void)arg;
+    (void)arg; thread_nice(5);
     double last = 0, last_scan = 0, scan_t = 0;
     for (;;) {
         struct wl_job j;
@@ -533,7 +533,7 @@ static void wl_bt_busy(const char *addr) { pthread_mutex_lock(&wl_mu); wlp_cpy(W
 
 static void *wl_bt_thread(void *arg)
 {
-    (void)arg;
+    (void)arg; thread_nice(5);
     double last = 0;
     for (;;) {
         struct wl_job j;
@@ -1471,8 +1471,7 @@ static void wireless_app_at(int ix, int iy)
     for (;;) {   /* apertura con zoom desde el icono */
         double t = (now_ms() - t0) / 300; if (t > 1) t = 1; double e = ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
     lg("wireless: abierta en %.0f ms", now_ms() - t_open);
@@ -1486,8 +1485,7 @@ static void wireless_app_at(int ix, int iy)
         for (;;) {
             double t = (now_ms() - t0) / 280; if (t > 1) t = 1; double e = 1 - ease_out(t);
             int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-            for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-            draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+            zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
             present(); if (t >= 1) break;
         }
     }

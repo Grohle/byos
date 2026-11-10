@@ -442,7 +442,7 @@ static void home_reflow(void)
     }
     if (cur_page >= L.npages) cur_page = L.npages - 1;
 }
-static void apply_home(void) { L.icon = 48 + 8 * set_icon_idx; L.cols = 3 + set_cols_idx; home_reflow(); home_prev_ok = 0; lconf_save(); }
+static void apply_home(void) { L.icon = 48 + 8 * set_icon_idx; L.cols = 3 + set_cols_idx; home_reflow(); relabel_apps(); home_prev_ok = 0; lconf_save(); }   /* etiquetas: al ancho de la celda nueva */
 static void apply_look(void)
 {
     int dim = L.dim != set_dim;
@@ -498,7 +498,7 @@ static const char *v_version(void)
     FILE *f = popen("/usr/bin/hibymod status 2>/dev/null | head -1", "r"); if (f) { if (!fgets(sv_buf[1], 64, f)) sv_buf[1][0] = 0; pclose(f); }
     sv_buf[1][strcspn(sv_buf[1], "\n")] = 0;
 done:
-    return sv_buf[1][0] ? sv_buf[1] + (strncmp(sv_buf[1], "hibymod ", 8) ? 0 : 8) : "?";
+    return sv_buf[1][0] ? sv_buf[1] + (strncmp(sv_buf[1], "hibymod ", 8) ? 0 : 8) : HIBYOS_VERSION;
 }
 static const char *v_mem(void)
 {
@@ -725,7 +725,7 @@ static void nav_power(void) { set_nocharge = pw_nocharge; set_hz_i = lcd_hz == 6
 static const char *v_apps(void) { int n = 0; DIR *d = opendir("/usr/data/hibymod/apps"); struct dirent *e; while (d && (e = readdir(d))) if (e->d_name[0] != '.') n++; if (d) closedir(d); snprintf(sv_buf[3], 64, "%d", n); return sv_buf[3]; }
 /* sp_gone: se salio al inicio con el gesto de la barra; sp_self: app (launcher) que somos */
 static int sp_gone, sp_self = -1;
-static void ps_tick(void); static int ps_busy(void); static void ps_refresh(void);
+static void ps_tick(void); static int ps_busy(void); static void ps_refresh(void); static volatile int ps_gen;
 /* pagina de eleccion (lista con marca) con animacion de ejemplo si es un gesto */
 static void choice_page(const struct srow *rw, const char *back)
 {
@@ -783,13 +783,22 @@ static void open_page(void (*build)(struct spage *), const char *back)
         sp_render(img_base, &pg, -1, back); fs_transition(img_under, img_base, 1, 0);
     }
     float vel = 0;
+    /* repintar solo si algo cambio: un toque, un interruptor animandose, un aviso, valores
+     * nuevos de la libreria (ps_gen) o cada ~400 ms (memoria, almacenamiento...). Antes se
+     * repintaba la pagina entera cada 30 ms mientras la libreria contestaba (hasta segundos). */
+    int need = 1, seen_gen = ps_gen; double drawn = 0;
     for (;;) {
         ps_tick();
-        build(&pg);
-        sp_render(fr0, &pg, -1, back); present();
+        double tn = now_ms();
+        if (need || sw_busy() || ps_gen != seen_gen || tn < toast_until + 40 || tn - drawn >= 390) {
+            seen_gen = ps_gen; need = 0;
+            build(&pg);
+            sp_render(fr0, &pg, -1, back); present(); drawn = now_ms();
+        }
         struct pkt p;
         int tmo = sw_busy() ? 0 : (ps_busy() || now_ms() < toast_until + 40) ? 30 : 400;
         if (!read_pkt(&p, tmo)) continue;
+        need = 1;
         if (!p.down) continue;
         int sx = p.x, sy = p.y; double ts = now_ms(); float s0 = sp_scroll; int moved = 0, ly = sy; double lt = ts;
         const struct srow *rw = 0; int hi = sp_hit(&pg, sx, sy, &rw);
@@ -878,7 +887,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
 static void sprite_free(struct sprite *s) { free(s->rgb); free(s->a); memset(s, 0, sizeof *s); }
 static void relabel_apps(void)
 {
-    for (int a = 0; a < NAPPS; a++) { sprite_free(&apps[a].lbl); text_sprite(&apps[a].lbl, app_label(a), 12.5f, 0xFFFF, 1); }
+    for (int a = 0; a < NAPPS; a++) { sprite_free(&apps[a].lbl); app_label_sprite(a); }
     sprite_free(&pill_done); sprite_free(&pill_cfg);
     text_sprite(&pill_done, tr("Listo"), 14.f, 0xFFFF, 0);
     text_sprite(&pill_cfg, tr("Ajustes"), 14.f, 0xFFFF, 0);
@@ -916,8 +925,7 @@ static void settings_run(int ix, int iy, int usb)
     for (;;) {   /* apertura con zoom desde el icono */
         double t = (now_ms() - t0) / 300; if (t > 1) t = 1; double e = ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
     open_page(root_fn, 0);
@@ -928,8 +936,7 @@ static void settings_run(int ix, int iy, int usb)
         for (;;) {
             double t = (now_ms() - t0) / 280; if (t > 1) t = 1; double e = 1 - ease_out(t);
             int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-            for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-            draw_scaled(fr0, img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+            zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
             present(); if (t >= 1) break;
         }
     }

@@ -42,6 +42,7 @@ static int ps_unsup[PS_N];      /* la libreria no conoce la clave */
 static int ps_api;              /* 1 responde, 0 sin saber aun, -1 no responde (sin libreria v7) */
 static struct psjob { int idx, val, flags; } ps_q[16];   /* idx -1: leer todo (hs_list) */
 static int ps_qn, ps_inflight = -2, ps_thr;
+static volatile int ps_gen;        /* +1 al terminar cada trabajo: la interfaz repinta solo si cambia */
 static volatile int ps_err, ps_err_idx = -1;
 static double ps_list_t;
 static pthread_mutex_t ps_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -83,7 +84,7 @@ static void *ps_thread(void *arg)
                 }
                 for (int k = PS_EXT; k < PS_N; k++) if (!seen[k]) ps_unsup[k] = 1;   /* libreria v7: aun sin estas */
             } else if (n == -ENXIO || n == -ETIMEDOUT || n == -ENOEXEC) ps_api = -1;
-            ps_inflight = -2;
+            ps_inflight = -2; ps_gen++;
             continue;
         }
         double w = 250 - (now_ms() - last_set);               /* como mucho 4 escrituras/s */
@@ -108,7 +109,7 @@ static void *ps_thread(void *arg)
         }
         /* el reproductor cambia otras opciones por su cuenta (sin pausas <-> fundido) */
         if (k == PS_GAPLESS || k == PS_FADE || k == PS_LINEOUT || k == PS_WIFI) ps_push(-1, 0, 0);
-        ps_inflight = -2;
+        ps_inflight = -2; ps_gen++;
     }
     return 0;
 }
@@ -175,7 +176,7 @@ static pthread_mutex_t si_mu = PTHREAD_MUTEX_INITIALIZER;
 static volatile int si_busy; static double si_t;
 static void *si_thread(void *a)
 {
-    (void)a;
+    (void)a; thread_nice(10);
     static struct sinfo n;
     pthread_mutex_lock(&si_mu); n = si; pthread_mutex_unlock(&si_mu);
     if (!n.ver[0]) {
@@ -183,6 +184,7 @@ static void *si_thread(void *a)
         if (f) { if (!fgets(l, sizeof l, f)) l[0] = 0; pclose(f); }
         l[strcspn(l, "\n")] = 0;
         snprintf(n.ver, sizeof n.ver, "%s", strncmp(l, "hibymod ", 8) ? l : l + 8);
+        if (!n.ver[0]) snprintf(n.ver, sizeof n.ver, "%s", HIBYOS_VERSION);   /* sin "hibymod status": la del binario */
     }
     struct statvfs v;
     if (!statvfs("/usr/data/mnt/sd_0", &v) && v.f_blocks) { n.sd_free = (long long)v.f_bavail * v.f_frsize; n.sd_tot = (long long)v.f_blocks * v.f_frsize; } else n.sd_tot = n.sd_free = 0;
@@ -240,7 +242,7 @@ static int ss_alert(const char *title, const char *msg, const char *ok, int dest
         double t = now_ms();
         float e = tc ? 1 - (float)ease_out((t - tc) / 160.0 > 1 ? 1 : (t - tc) / 160.0) : (float)ease_out((t - t0) / 220.0 > 1 ? 1 : (t - t0) / 220.0);
         float sc = tc ? 1 : 1.12f - 0.12f * e;                       /* entra encogiendo hasta 1 */
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(base[i], 32 - (int)(13 * e));
+        dim_buf(fr0, base, W * H, 32 - (int)(13 * e));
         /* tarjeta a escala: se dibuja en su sitio y, si sc > 1, crece desde el centro */
         int w2 = (int)(aw * sc), h2 = (int)(ah * sc), x2 = (W - w2) / 2, y2 = (H - h2) / 2;
         int al = (int)(250 * e);

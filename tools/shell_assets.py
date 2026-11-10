@@ -73,8 +73,31 @@ def home_bar():
     return big.resize((w, h), Image.LANCZOS)
 
 
+BAYER4 = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+
+
+def rgb565_dither(img):
+    """RGBA 8 bits -> bytes RGB565 con tramado ordenado 4x4 (evita bandas en los degradados de los iconos:
+    el panel solo tiene 5/6 bits). Un color plano que ya cae en un nivel 565 exacto no se trama."""
+    w, h = img.size
+    px = img.load()
+    out = bytearray()
+    for y in range(h):
+        row = BAYER4[y & 3]
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            t = (row[x & 3] + .5) / 16
+
+            def q(v, lv):
+                f = v * lv / 255
+                i = int(f)
+                return min(lv, i + (1 if f - i > t else 0))
+            out += struct.pack("<H", (q(r, 31) << 11) | (q(g, 63) << 5) | q(b, 31))
+    return bytes(out)
+
+
 def icons():
-    """PNG de launcher_icons.js -> shell/icons/<app>_<tam>.ov"""
+    """PNG de launcher_icons.js -> shell/icons/<app>_<tam>.ov (RGB565 tramado + alfa)"""
     src = os.path.join(OUT, "icons_png")
     dst = os.path.join(OUT, "icons")
     os.makedirs(dst, exist_ok=True)
@@ -83,10 +106,8 @@ def icons():
         if f.endswith(".png"):
             img = Image.open(os.path.join(src, f)).convert("RGBA")
             w, h = img.size
-            px = list(img.getdata())
-            rgb = b"".join(struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) for r, g, b, a in px)
             with open(os.path.join(dst, f[:-4] + ".ov"), "wb") as o:
-                o.write(b"HMOV" + struct.pack("<HH", w, h) + rgb + bytes(a for r, g, b, a in px))
+                o.write(b"HMOV" + struct.pack("<HH", w, h) + rgb565_dither(img) + bytes(img.getchannel("A").tobytes()))
             n += 1
     print("iconos:", n)
 
@@ -114,70 +135,20 @@ def default_wall():
 
 
 def cc_icons():
-    """Iconos del centro de control (26x26, blancos con alfa): shell/cc_<nombre>.ov"""
-    Z = 26 * S
-    def c():
-        im = Image.new("RGBA", (Z, Z), (0, 0, 0, 0)); return im, ImageDraw.Draw(im)
-    def P(x, y): return (x * S, y * S)
-    W_ = (255, 255, 255, 255); lw = int(2.2 * S)
-    out = {}
-    im, d = c()                                     # enchufe: solo alimentacion USB
-    d.line([P(10, 3), P(10, 8)], fill=W_, width=lw); d.line([P(16, 3), P(16, 8)], fill=W_, width=lw)
-    d.rounded_rectangle([P(6, 8), P(20, 15)], 2 * S, fill=W_)
-    d.pieslice([P(6, 9), P(20, 21)], 0, 180, fill=W_)
-    d.line([P(13, 19), P(13, 24)], fill=W_, width=lw)
-    out["plug"] = im
-    im, d = c()                                     # hoja: ahorro
-    lf = Image.new("RGBA", (Z, Z), (0, 0, 0, 0)); ld = ImageDraw.Draw(lf)
-    ld.ellipse([P(7.5, 2), P(18.5, 24)], fill=W_)
-    ld.line([P(13, 7), P(13, 26)], fill=(0, 0, 0, 0), width=int(1.5 * S))
-    im = lf.rotate(-40, resample=Image.BICUBIC, center=(Z / 2, Z / 2)); d = ImageDraw.Draw(im)
-    d.line([P(5, 23), P(9, 18)], fill=W_, width=int(1.8 * S))
-    out["leaf"] = im
-    im, d = c()                                     # indicador: normal
-    d.arc([P(3, 5), P(23, 25)], 150, 390, fill=W_, width=lw)
-    d.line([P(13, 15), P(18.5, 9)], fill=W_, width=lw); d.ellipse([P(11, 13), P(15, 17)], fill=W_)
-    out["gauge"] = im
-    im, d = c()                                     # rayo: rendimiento
-    d.polygon([P(15, 2), P(6, 15), P(12, 15), P(10, 24), P(20, 10), P(14, 10), P(17, 2)], fill=W_)
-    out["bolt"] = im
-    im, d = c()                                     # USB: DAC
-    d.line([P(13, 4), P(13, 21)], fill=W_, width=lw); d.polygon([P(13, 1.5), P(16.5, 6), P(9.5, 6)], fill=W_)
-    d.line([P(13, 15), P(7, 11.5), P(7, 9)], fill=W_, width=lw); d.rectangle([P(5.5, 6.5), P(8.5, 9.5)], fill=W_)
-    d.line([P(13, 17.5), P(19, 14), P(19, 11)], fill=W_, width=lw); d.ellipse([P(17, 8.5), P(21, 12.5)], fill=W_)
-    d.ellipse([P(10.5, 20), P(15.5, 25)], fill=W_)
-    out["usb"] = im
-    im, d = c()                                     # deslizadores: panel de HiBy
-    for i, (y, kx) in enumerate(((7, 16), (13, 9), (19, 14))):
-        d.line([P(4, y), P(22, y)], fill=W_, width=int(1.8 * S)); d.ellipse([P(kx - 3, y - 3), P(kx + 3, y + 3)], fill=W_)
-    out["sliders"] = im
-    im, d = c()                                     # wifi: inalambrico
-    for r, w in ((3, 0), (7.5, lw), (12, lw)):
-        if not w: d.pieslice([P(13 - r, 21 - r), P(13 + r, 21 + r)], 225, 315, fill=W_)
-        else: d.arc([P(13 - r, 21.5 - r), P(13 + r, 21.5 + r)], 225, 315, fill=W_, width=w)
-    out["wifi"] = im
-    im, d = c()                                     # carpeta: archivos
-    d.rounded_rectangle([P(3, 6), P(12, 10)], 1.5 * S, fill=W_); d.rounded_rectangle([P(3, 8), P(23, 21)], 2.5 * S, fill=W_)
-    out["folder"] = im
-    im, d = c()                                     # engranaje: personalizar
-    import math
-    pts = []
-    for i in range(16):
-        a = i * math.pi / 8; r = 11 if i % 2 == 0 else 8.5
-        pts.append(P(13 + r * math.cos(a), 13 + r * math.sin(a)))
-    d.polygon(pts, fill=W_); d.ellipse([P(9.5, 9.5), P(16.5, 16.5)], fill=(0, 0, 0, 0))
-    out["gear"] = im
-    im, d = c()                                     # onda: filtro del DAC
-    d.line([P(2, 13), P(6, 13), P(9, 5), P(13, 21), P(17, 8), P(20, 13), P(24, 13)], fill=W_, width=lw, joint="curve")
-    out["wave"] = im
-    im, d = c()                                     # sol: brillo
-    d.ellipse([P(8.5, 8.5), P(17.5, 17.5)], fill=W_)
-    for i in range(8):
-        a = i * math.pi / 4
-        d.line([P(13 + 7.5 * math.cos(a), 13 + 7.5 * math.sin(a)), P(13 + 11 * math.cos(a), 13 + 11 * math.sin(a))], fill=W_, width=int(2 * S))
-    out["sun"] = im
-    for n, im in out.items():
-        save_ov(im.resize((26, 26), Image.LANCZOS), "cc_" + n)
+    """Glifos del centro de control (26x26, blancos con alfa, peso tipo SF Symbols): shell/cc_<nombre>.ov
+    Se dibujan en theme/launcher_icons.js (SVG) -> shell/icons_png/cc/cc_<nombre>.png.
+    Incluye cc_bt (Bluetooth) y cc_buds (auriculares) ademas de los 11 que usa el centro de control."""
+    src = os.path.join(OUT, "icons_png", "cc")
+    if not os.path.isdir(src):
+        print("sin shell/icons_png/cc: ejecuta theme/launcher_icons.js"); return
+    n = 0
+    for f in sorted(os.listdir(src)):
+        if f.startswith("cc_") and f.endswith(".png"):
+            im = Image.open(os.path.join(src, f)).convert("RGBA")
+            a = im.getchannel("A")                       # glifo blanco puro: solo cuenta el alfa
+            white = Image.new("RGBA", im.size, (255, 255, 255, 255)); white.putalpha(a)
+            save_ov(white, f[:-4]); n += 1
+    print("glifos cc:", n)
 
 
 def main():
@@ -186,6 +157,7 @@ def main():
     save_ov(chevron(), "chevron")
     save_ov(home_bar(), "home_bar")
     icons()
+    cc_icons()
     default_wall()
     sig = os.path.join(HERE, "..", "docs", "capturas", "_firma_inicio.txt")
     with open(sig) as f, open(os.path.join(OUT, "home.sig"), "w", newline="\n") as o:

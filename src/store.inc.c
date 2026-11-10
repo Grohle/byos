@@ -100,12 +100,12 @@ static void run_ext_app(int a, int ix, int iy)
     render_launcher(img_base, now_ms());
     double t0 = now_ms();
     static uint16_t *black; if (!black) black = calloc(W * H, 2);
+    const uint16_t *blk = black; if (!blk) { memset(img_sheet, 0, HM_FRAME_BYTES); blk = img_sheet; }   /* sin memoria: un bufer comun */
     for (;;) {
-        double t = (now_ms() - t0) / 260.0; if (t > 1) t = 1; double e = ease_out(t);
+        double t = (now_ms() - t0) / 300.0; if (t > 1) t = 1; double e = ease_out(t);   /* igual que el resto de apps */
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
         int x = (int)(ix * (1 - e)), y = (int)(iy * (1 - e));
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, black, x, y, w, h, win_radius(w, h, e));
+        zoom_frame(fr0, img_base, 32 - (int)(8 * e), blk, x, y, w, h, win_radius(w, h, e));
         int ia = (int)(255 * (1 - e * 2.2)); if (ia > 0) blit_scaled(fr0, &apps[a].icon[sz_idx()], x, y, w, h, ia);
         present(); if (t >= 1) break;
     }
@@ -157,8 +157,7 @@ static void run_ext_app(int a, int ix, int iy)
     for (;;) {
         double t = (now_ms() - t0) / 280.0; if (t > 1) t = 1; double e = 1 - ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, img_sheet, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame(fr0, img_base, 32 - (int)(8 * e), img_sheet, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
     /* 99 = la app se cerro sola por falta de memoria (vigilante del Navegador) */
@@ -268,19 +267,20 @@ static int tar_write(const char *out, const char *dir, int skip_ov)
 static void app_backup(const struct hpk_info *in)
 {
     char dir[200], out[300], dd[200]; mkdir(SD_APPS, 0755);
-    snprintf(out, sizeof out, "%s/Copias", SD_APPS); mkdir(out, 0755);
+    /* (antes "Apps/Copias": las copias viejas se quedan ahi; las nuevas, en "Apps/Backups") */
+    snprintf(out, sizeof out, "%s/Backups", SD_APPS); mkdir(out, 0755);
     app_real_dir(in, dir, sizeof dir);
-    snprintf(out, sizeof out, "%s/Copias/%s-%s.hpk", SD_APPS, in->id, in->installed[0] ? in->installed : in->version);
+    snprintf(out, sizeof out, "%s/Backups/%s-%s.hpk", SD_APPS, in->id, in->installed[0] ? in->installed : in->version);
     progress_card(0, 0, -1); progress_card(tr("Copiando…"), 0, 0.3);
     int r = tar_write(out, dir, 1);
     snprintf(dd, sizeof dd, "/usr/data/hibymod/appdata/%s", in->id);
     if (!r && hpk_isdir(dd) && hpk_du(dd) > 0) {
         progress_card(tr("Copiando…"), 0, 0.7);
-        snprintf(out, sizeof out, "%s/Copias/%s-datos.tar", SD_APPS, in->id);
+        snprintf(out, sizeof out, "%s/Backups/%s-data.tar", SD_APPS, in->id);
         r = tar_write(out, dd, 0);
     }
     sync();
-    toast(r ? tr("No se pudo hacer la copia") : tr("Copia guardada en Apps/Copias"));
+    toast(r ? tr("No se pudo hacer la copia") : tr("Copia guardada en Apps/Backups"));
 }
 /* ------------------------------------------------------------------ apps en la tarjeta SD
  * La SD (exfat, fmask 0022, sin noexec) admite ejecutar binarios. Una app "en la SD" se instala
@@ -1294,11 +1294,12 @@ static int st_render_today(uint16_t *d, int y0)
         snprintf(date, sizeof date, "%s %d", tr(dn[tmv.tm_wday]), tmv.tm_mday);
         st_section(d, y + 12, date); y += 22;
     }
-    int nfeat = 0; for (int i = 0; i < st_napp; i++) nfeat += st_apps[i].featured;
+    /* "Hoy" nunca destaca una app que no se puede instalar (en pruebas / bloqueada) */
+    int nfeat = 0; for (int i = 0; i < st_napp; i++) nfeat += st_apps[i].featured && !st_apps[i].unavailable;
     int shown = 0;
     for (int i = 0; i < st_napp; i++) {
         struct st_app *a = &st_apps[i];
-        if (nfeat && !a->featured) continue;
+        if ((nfeat && !a->featured) || a->unavailable) continue;
         int ch = 212;
         if (y + ch > ST_TOP && y < ST_TABY) {
             uint16_t base = a->ic.w ? a->tint : rgb(40, 40, 46);
@@ -1844,8 +1845,7 @@ static void store_app_ui(int ix, int iy)
     for (;;) {
         double t = (now_ms() - t0) / 300.0; if (t > 1) t = 1; double e = ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, st_pageB, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), st_pageB, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
         if (st_icons_pending) st_icons_step(1);
     }
@@ -2008,8 +2008,7 @@ static void store_app_ui(int ix, int iy)
     for (;;) {
         double t = (now_ms() - t0b) / 280.0; if (t > 1) t = 1; double e = 1 - ease_out(t);
         int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
-        for (int i = 0; i < W * H; i++) fr0[i] = dim565(img_base[i], 32 - (int)(8 * e));
-        draw_scaled(fr0, st_pageB, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
+        zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), st_pageB, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
     launcher_present();

@@ -10,6 +10,8 @@
 #                               instalado (el que llama reinicia), 1 si no habia nada que hacer.
 #   hibyos_install.sh install   a mano (ADB): instala aunque la version sea la misma.
 #   hibyos_install.sh status    versiones instalada y de la SD
+#   hibyos_install.sh sysok NOMBRE  0 si /usr/data/hibymod/sys/NOMBRE es un sustituto valido
+#                               de ese script del rootfs (ver "sustitutos" abajo, docs/OTA.md)
 #
 # Garantias: verifica el MANIFEST.md5 antes de tocar nada; cada fichero se copia a .new,
 # se compara y se renombra (los binarios en uso no se rompen); payload_version se escribe
@@ -27,6 +29,8 @@ MOUNTS=${HIBYOS_MOUNTS:-/proc/mounts}
 ROOTFS=${HIBYOS_ROOTFS:-/}
 TMPD=${HIBYOS_TMP:-/tmp/hibymod}
 WAIT=${HIBYOS_WAIT:-15}
+FLAGS=${HIBYOS_FLAGS:-/data}
+SYSD=$HM/sys
 
 PL=$SDM/HiByOS/payload
 LOG=$SDM/HiByOS/install.log
@@ -35,6 +39,33 @@ ALLSUBS="layout/theme2 layout/theme3 litegui/theme2 litegui/theme3"
 PRISTINE=$TMPD/rootfs_ro
 
 sd_ok() { grep -qE "$SD_RE" $MOUNTS 2>/dev/null; }
+
+# ------------------------------------------------------------------ sustitutos (sys/)
+# Los scripts del rootfs solo cambian reflasheando. Con las actualizaciones por Internet
+# (docs/OTA.md) el payload puede traer una version nueva en sys/<nombre>; el script del
+# rootfs la usa solo si: no es modo seguro, no hay $FLAGS/.hibymod_nosys, hay menos de 2
+# arranques fallidos seguidos, y su sha256 es el de sys/MANIFEST.sha256 (que viene en el mismo
+# payload verificado). Cualquier otra cosa (a medias, danado, ausente): el del rootfs.
+sys_ok()
+{
+    [ -z "$HIBYOS_NO_OVERRIDE" ] || return 1
+    if [ -f $FLAGS/.hibymod_safe ] || [ -f $FLAGS/.hibymod_nosys ]; then return 1; fi
+    bf=$(cat $FLAGS/.hibymod_bootfail 2>/dev/null)
+    case "$bf" in ''|*[!0-9]*) bf=0 ;; esac
+    [ $bf -lt 2 ] || return 1
+    [ -f "$SYSD/$1" ] && [ -f $SYSD/MANIFEST.sha256 ] || return 1
+    want=$(awk -v n="$1" '$2 == n { print $1; exit }' $SYSD/MANIFEST.sha256 2>/dev/null)
+    [ ${#want} = 64 ] || return 1
+    [ "$(sha256sum < "$SYSD/$1" 2>/dev/null | cut -d' ' -f1)" = "$want" ]
+}
+# este mismo script: si hay uno mas nuevo y valido instalado, se usa ese
+case "$1" in
+  boot|late|install)
+    if [ "$HIBYOS_SELF" != sys ] && sys_ok hibyos_install.sh; then
+        export HIBYOS_SELF=sys
+        exec /bin/sh $SYSD/hibyos_install.sh "$@"
+    fi ;;
+esac
 
 log()
 {
@@ -157,6 +188,7 @@ dest_of()
         bin/hibymod_disp.so) echo preload/hibymod_disp.so ;;
         bin/*)               echo shell/${1#bin/} ;;
         shell/*|theme/*)     echo $1 ;;
+        sys/*)               echo $1 ;;
         mirror/*)            echo payload_mirror/${1#mirror/} ;;
         *)                   echo "" ;;
     esac
@@ -211,7 +243,7 @@ do_install()
             case "$d" in
                 theme/*) r=${d#theme/}
                          if [ -f "$STOCK/$r" ]; then cp -p "$STOCK/$r" "$TH/$r"; else rm -f "$TH/$r"; fi ;;
-                shell/*|preload/*) rm -f "$HM/$d" ;;
+                shell/*|preload/*|sys/*) rm -f "$HM/$d" ;;
             esac
         done < $HM/payload_files
     fi 2>/dev/null
@@ -220,7 +252,7 @@ do_install()
     # 2. ficheros del payload (binarios con permiso de ejecucion)
     while read -r sum f; do
         d=$(dest_of $f); [ -n "$d" ] || continue
-        mode=; case "$f" in bin/hibymod_disp.so|bin/cacert.pem) mode=644 ;; bin/*) mode=755 ;; esac
+        mode=; case "$f" in bin/hibymod_disp.so|bin/cacert.pem|sys/*) mode=644 ;; bin/*) mode=755 ;; esac
         put "$PL/$f" "$HM/$d" $mode || { fail "no se pudo copiar $f"; return 1; }
     done < $PL/MANIFEST.md5
     # obsoletos del payload_mirror
@@ -313,6 +345,10 @@ case "$1" in
     do_install || exit 1
     echo "reinicia para usar HiByOS $(installed_ver)"
     ;;
+  sysok)
+    sys_ok "$2"
+    exit $?
+    ;;
   status)
     echo "instalada: $(installed_ver || true)"
     sd_ok && echo "en la SD: $(sd_ver)" || echo "SD no montada"
@@ -321,7 +357,7 @@ case "$1" in
     tail -n 5 $LOG 2>/dev/null
     ;;
   *)
-    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

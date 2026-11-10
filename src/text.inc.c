@@ -45,7 +45,16 @@ static int text_init(void)
 /* fuente y glifo de un codigo: la principal o, si no lo tiene, la primera de reserva que si */
 static const stbtt_fontinfo *font_glyph(int cp, int *gi)
 {
-    int g = stbtt_FindGlyphIndex(&font, cp);
+    int g;
+    /* comillas tipograficas ‘ ’ “ ”: en default.otf (CJK) son de ancho completo y en texto
+     * latino se ven como "Don’ t"; las de Korean.ttf / Thai.ttf son proporcionales (como en
+     * Libros). En chino, japones y coreano se quedan las de ancho completo. */
+    if ((cp == 0x2018 || cp == 0x2019 || cp == 0x201C || cp == 0x201D) && ui_lang != LANG_JA && ui_lang != LANG_ZHS && ui_lang != LANG_ZHT && ui_lang != LANG_KO)
+        for (int i = 1; i < FONT_NFB; i++) {
+            if (!font_fb[i].st) { font_fb[i].len = font_map(font_fb[i].file, &font_fb[i].fi); font_fb[i].st = font_fb[i].len ? 1 : -1; }
+            if (font_fb[i].st > 0 && (g = stbtt_FindGlyphIndex(&font_fb[i].fi, cp))) { *gi = g; return &font_fb[i].fi; }
+        }
+    g = stbtt_FindGlyphIndex(&font, cp);
     if (g || cp < 0x80) { *gi = g; return &font; }
     for (int i = 0; i < FONT_NFB; i++) {
         if (!font_fb[i].st) { font_fb[i].len = font_map(font_fb[i].file, &font_fb[i].fi); font_fb[i].st = font_fb[i].len ? 1 : -1; }

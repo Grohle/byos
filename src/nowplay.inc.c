@@ -9,6 +9,7 @@ static void *npx_thread(void *a)
 {
     (void)a;
     static uint16_t cov[128 * 128];
+    thread_nice(5);                       /* caratula: se decodifica aqui */
     for (;;) {
         struct np_info i; memset(&i, 0, sizeof i);
         int r = np_get(&i);

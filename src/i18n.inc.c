@@ -256,7 +256,7 @@ static const char *const TR[][3] = {
     { "Modo Normal", "Normal Mode", "Mode Normal" },
     { "Modo Rendimiento", "Performance Mode", "Mode Performance" },
     { "CC_HELP", "Choose the controls shown in the Control Centre (swipe down from the top).", "Choisissez les commandes du Centre de contrôle (balayez depuis le haut)." },
-    { "POWER_HELP", "Low Power: screen at 30 Hz and brightness capped at 40 %. Normal: 45 Hz, like HiBy's firmware. Performance: screen at 60 Hz and 60 fps animations, for when it's plugged in. In every mode audio has real-time priority: animations never take CPU from it.", "Économie : écran à 30 Hz et luminosité limitée à 40 %. Normal : 45 Hz, comme le firmware HiBy. Performance : écran à 60 Hz et animations à 60 i/s, quand il est branché. Dans tous les modes, l'audio a la priorité temps réel : les animations ne lui prennent jamais de CPU." },
+    { "POWER_HELP", "Low Power: animations at 30 fps and brightness capped at 40 %. Normal: 45 fps, the panel's maximum, like HiBy's firmware. Performance: for now the same as Normal (the screen stays at 45 Hz for safety). In every mode audio has real-time priority: animations never take CPU from it.", "Économie : animations à 30 i/s et luminosité limitée à 40 %. Normal : 45 i/s, le maximum de l'écran, comme le firmware HiBy. Performance : pour l'instant identique à Normal (l'écran reste à 45 Hz par sécurité). Dans tous les modes, l'audio a la priorité temps réel : les animations ne lui prennent jamais de CPU." },
     { "NOCHARGE_HELP", "The HiBy runs from USB power without charging the battery: good for long sessions plugged in (DAC, desk).", "Le HiBy fonctionne sur l'alimentation USB sans charger la batterie : idéal pour de longues sessions branché (DAC, bureau)." },
     { "Arriba, izquierda", "Top, left", "Haut, gauche" },
     { "Arriba, derecha", "Top, right", "Haut, droite" },
@@ -269,7 +269,7 @@ static const char *const TR[][3] = {
     { "¿Desinstalar y borrar sus datos? No se puede deshacer.", "Uninstall and delete its data? This can't be undone.", "Désinstaller et effacer ses données ? Action irréversible." },
     { "Copiando…", "Copying…", "Copie…" },
     { "No se pudo hacer la copia", "The backup failed", "La sauvegarde a échoué" },
-    { "Copia guardada en Apps/Copias", "Backup saved in Apps/Copias", "Sauvegarde enregistrée dans Apps/Copias" },
+    { "Copia guardada en Apps/Backups", "Backup saved in Apps/Backups", "Sauvegarde enregistrée dans Apps/Backups" },
     { "ADB_HELP_OFF", "ADB lets a computer control the HiBy (developer tools). Leave it off if you don't use it.", "ADB permet à un ordinateur de piloter le HiBy (outils de développement). Laissez-le désactivé si vous ne l'utilisez pas." },
     /* idioma y teclado */
     { "espacio", "space", "espace" },
@@ -336,6 +336,7 @@ static const char *const TR[][3] = {
     { "No hay tarjeta SD", "No SD card", "Pas de carte SD" },
     { "Esta app está en la tarjeta SD: insértala para abrirla", "This app is on the SD card: insert it to open the app", "Cette app est sur la carte SD : insérez-la pour l'ouvrir" },
     { "Moviendo…", "Moving…", "Déplacement…" },
+    { "No hay espacio suficiente", "Not enough space", "Espace insuffisant" },
     { "No se pudo mover la app", "Couldn't move the app", "Impossible de déplacer l'app" },
     { "Movida a la tarjeta SD", "Moved to the SD card", "Déplacée sur la carte SD" },
     { "Movida al HiBy", "Moved to the HiBy", "Déplacée sur le HiBy" },
@@ -518,7 +519,7 @@ static const char *tr_es_long(const char *k)
     if (!strcmp(k, "REBOOT_HELP")) return "Algunos cambios se aplican al reiniciar el HiBy.";
     if (!strcmp(k, "ABOUT_HELP")) return "HiByOS es un firmware comunitario y gratuito para el HiBy R3 II, dirigido por Grohle y construido en su mayor parte por agentes de IA. Sin relación con HiBy.";
     if (!strcmp(k, "CC_HELP")) return "Elige los controles del Centro de control (desliza desde arriba).";
-    if (!strcmp(k, "POWER_HELP")) return "Ahorro: pantalla a 30 Hz y brillo como mucho al 40 %. Normal: 45 Hz, como el firmware de HiBy. Rendimiento: pantalla a 60 Hz y animaciones a 60 fps, para cuando vaya enchufado. En todos los modos el audio tiene prioridad de tiempo real: las animaciones nunca le quitan CPU.";
+    if (!strcmp(k, "POWER_HELP")) return "Ahorro: animaciones a 30 fps y brillo como mucho al 40 %. Normal: 45 fps, el máximo del panel, como el firmware de HiBy. Rendimiento: de momento igual que Normal (la pantalla se queda a 45 Hz por seguridad). En todos los modos el audio tiene prioridad de tiempo real: las animaciones nunca le quitan CPU.";
     if (!strcmp(k, "NOCHARGE_HELP")) return "El HiBy funciona con la corriente del USB sin cargar la batería: ideal para sesiones largas enchufado (DAC, escritorio).";
     if (!strcmp(k, "ADB_HELP_OFF")) return "ADB permite que un ordenador controle el HiBy (herramientas de desarrollo). Déjalo desactivado si no lo usas.";
     if (!strcmp(k, "LANG_SYS_HELP")) return "Sigue el idioma elegido en los ajustes del propio HiBy.";

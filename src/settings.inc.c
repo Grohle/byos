@@ -125,7 +125,7 @@ static void find_images(void)
 static volatile int thumbs_busy;
 static void *thumb_thread(void *arg)
 {
-    (void)arg; thumbs_busy = 1;
+    (void)arg; thumbs_busy = 1; thread_nice(10);
     mkdir("/tmp/hibymod/thumbs", 0755);
     for (int i = 0; i < nimg; i++) {
         char out[64]; snprintf(out, sizeof out, "/tmp/hibymod/thumbs/%d.raw", i);

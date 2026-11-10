@@ -38,7 +38,10 @@ static int kb_bar_y(void) { return kb_keys_y0() + kb_rows() * (KR_H + 8) + 6; }
 static int kb_row_y(int r) { return 8 + r * (KR_H + 8); }      /* relativa a kb_keys_y0() */
 
 struct key { int x, y, w, h; const char *lbl; int code; };   /* code: >0 caracter, <0 especial; y relativa */
-enum { K_SHIFT = -1, K_BACK = -2, K_LAYER = -3, K_SPACE = -4, K_ENTER = -5 };
+enum { K_SHIFT = -1, K_BACK = -2, K_LAYER = -3, K_SPACE = -4, K_ENTER = -5, K_HOME = -6 };
+/* K_HOME: deslizar hacia arriba desde el borde inferior (entre el globo y "ocultar"), con el
+ * teclado abierto: el gesto de inicio de iOS. El dedo sigue apoyado; el llamante lo pasa a
+ * own_home_gesture. Quien no lo atiende lo ignora (como antes: no hacia nada). */
 static struct key kbk[64]; static int nkeys;
 static int kb_layer, kb_shift;            /* capa: 0 letras, 1 123, 2 #+= */
 static int kb_caps, kb_shift_auto, kb_pressed = -1;
@@ -801,6 +804,10 @@ static int kb_touch(struct pkt *p, struct ebuf *e, uint16_t *dst, void (*redraw)
             kb_bar_press = 0;
             if (cur_x > W - 90 && cur_y > kb_bar_y() - 30) kb_hide(); else kb_show();
             return 0;
+        }
+        if (y >= 456) {                                /* borde inferior: inicio si sube */
+            double tw = now_ms();
+            while (cur_down && now_ms() - tw < 400) { read_pkt(p, 20); if (y - cur_y > 12) return K_HOME; }
         }
         while (kb_pump(p, 3000)) {}
         return 0;
