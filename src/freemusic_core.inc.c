@@ -16,6 +16,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include "netxml.inc.c"       /* fm_cpy, fm_trim, fm_strip_html, fm_url_*, fx_* (shared with Books) */
 
 #define FM_MAXIT 120       /* results kept per list (thumbnails: 6 KB each) */
 #define FM_MAXF 700        /* files read from an item (the rest is ignored) */
@@ -96,15 +97,6 @@ static const char *fj_skip(const char *p)
     while (*p && !strchr(",}] \t\r\n", *p)) p++;
     return p;
 }
-static void fj_put(char **o, char *end, unsigned cp)
-{
-    char b[4]; int n;
-    if (cp < 0x80) { b[0] = (char)cp; n = 1; }
-    else if (cp < 0x800) { b[0] = (char)(0xC0 | (cp >> 6)); b[1] = (char)(0x80 | (cp & 63)); n = 2; }
-    else if (cp < 0x10000) { b[0] = (char)(0xE0 | (cp >> 12)); b[1] = (char)(0x80 | ((cp >> 6) & 63)); b[2] = (char)(0x80 | (cp & 63)); n = 3; }
-    else { b[0] = (char)(0xF0 | (cp >> 18)); b[1] = (char)(0x80 | ((cp >> 12) & 63)); b[2] = (char)(0x80 | ((cp >> 6) & 63)); b[3] = (char)(0x80 | (cp & 63)); n = 4; }
-    if (*o + n <= end) { memcpy(*o, b, n); *o += n; }
-}
 static unsigned fj_hex4(const char *v)
 {
     unsigned cp = 0;
@@ -179,31 +171,6 @@ static int fj_has(const char *v, const char *needle)
 }
 
 /* ------------------------------------------------------------------ small helpers */
-/* cut a trailing incomplete UTF-8 character */
-static void fm_utf8_fix(char *s)
-{
-    int n = (int)strlen(s), q = n;
-    while (q > 0 && n - q < 4 && ((unsigned char)s[q - 1] & 0xC0) == 0x80) q--;
-    if (q <= 0) return;
-    unsigned char lead = (unsigned char)s[q - 1];
-    if (lead < 0xC0) return;
-    int need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
-    if (n - (q - 1) < need) s[q - 1] = 0;
-}
-/* bounded copy that never leaves half a UTF-8 character */
-static void fm_cpy(char *d, int cap, const char *s)
-{
-    if (cap <= 0) return;
-    int n = (int)strlen(s); if (n > cap - 1) n = cap - 1;
-    memcpy(d, s, n); d[n] = 0;
-    if (n == cap - 1) fm_utf8_fix(d);
-}
-static void fm_trim(char *s)
-{
-    char *a = s; while (*a == ' ') a++;
-    if (a != s) memmove(s, a, strlen(a) + 1);
-    int n = (int)strlen(s); while (n > 0 && s[n - 1] == ' ') s[--n] = 0;
-}
 /* "806", "39.8", "13:26", "1:02:03" -> seconds */
 static float fm_len(const char *s)
 {
@@ -415,27 +382,6 @@ static int fm_ia_parse_search(const char *js, struct fm_item *o, int max, long *
 }
 
 /* ------------------------------------------------------------------ Internet Archive: item */
-static void fm_strip_html(char *s)
-{
-    char *o = s; int in = 0;
-    for (char *p = s; *p; p++) {
-        if (*p == '<') { in = 1; if ((p[1] == 'b' || p[1] == 'B') && (p[2] == 'r' || p[2] == 'R')) *o++ = ' '; if (p[1] == 'p' || p[1] == '/') *o++ = ' '; continue; }
-        if (in) { if (*p == '>') in = 0; continue; }
-        if (*p == '&') {
-            static const struct { const char *e; char c; } E[] = { { "&amp;", '&' }, { "&lt;", '<' }, { "&gt;", '>' }, { "&quot;", '"' }, { "&#39;", '\'' }, { "&nbsp;", ' ' } };
-            int done = 0;
-            for (unsigned i = 0; i < sizeof E / sizeof E[0]; i++) { int l = (int)strlen(E[i].e); if (!strncmp(p, E[i].e, l)) { *o++ = E[i].c; p += l - 1; done = 1; break; } }
-            if (done) continue;
-        }
-        *o++ = *p;
-    }
-    *o = 0;
-    /* collapse spaces */
-    char *w = s; int sp = 1;
-    for (char *p = s; *p; p++) { if (*p == ' ') { if (sp) continue; sp = 1; } else sp = 0; *w++ = *p; }
-    while (w > s && w[-1] == ' ') w--;
-    *w = 0;
-}
 /* the "metadata" object (from /metadata/<id>/metadata = {"result": {...}} or the full item) */
 static int fm_ia_parse_meta(const char *js, struct fm_album *a)
 {

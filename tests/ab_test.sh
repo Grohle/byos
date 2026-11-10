@@ -5,7 +5,7 @@
 #                                    (cola, reanudacion con Range, pausa, espacio, reintentos);
 #                                    necesita ~/hiby/net/hibynet-x86 o out/agent_audiobooks/hibynet-x86
 set -e
-H=/mnt/c/Users/alber/Downloads/Hiby/hibymod
+H=${H:-$(cd "$(dirname "$0")/.." && pwd)}      # this checkout (or a worktree of it)
 gcc -O1 -g -Wall -Wextra -Wno-unused-function -Wno-sign-compare -Wno-unused-parameter -Wno-format-truncation \
   -fsanitize=address,undefined -I$H/src -o /tmp/ab_test $H/tests/ab_test.c
 /tmp/ab_test $H/tests/ab_samples
