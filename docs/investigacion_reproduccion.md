@@ -11,7 +11,7 @@ Fecha: 2026-11-10. **[V]** = verificado en el aparato o en el binario; **[I]** =
 | Lo mismo **sin** la v5 (la que hay ahora) | `/proc/<pid>/fd` + `fdinfo` (posición de lectura del decodificador) | **Funciona ya** [V] |
 | Carátula 128×128 RGB565 | `np_cover()`: imagen incrustada (FLAC/ID3/M4A) o la de la carpeta → `hibywall` → caché | **Funciona ya** [V] (0,28 s sin caché, <5 ms con caché) |
 | Play/pausa, siguiente, anterior | Inyectar la tecla en el evdev del botón físico (`playctl.inc.c`) | Play/pausa **[V]**; siguiente y anterior [I], con el mismo mecanismo |
-| Reproducir un fichero, álbum o lista desde un índice | No hay interfaz externa. Ver §5 | Pendiente (RE) |
+| Reproducir un fichero, álbum o lista desde un índice | No hay interfaz externa. Solución interna: librería v6, orden `'L'` → `investigacion_reproducir_lista.md` | RE hecha; código listo, falta probar en el aparato |
 | Saltar a una posición (seek) | No hay tecla. Pulsación larga de NEXT/PREV [I], o RE (§5) | Pendiente |
 
 ## 1. Qué expone el reproductor (y qué no)
@@ -141,6 +141,8 @@ Probado en el PC con un `hiby_player` falso y la librería compilada para x86: s
   5. Probar sin cortes: grabación de la UI a 44 Hz con música 24/192 sonando.
 
 ## 5. Reproducir un fichero, un álbum o una lista: opciones
+
+> **Actualización**: la opción 1 ya está investigada e implementada (librería v6, orden `'L'`, `pc_play_list()`). Ver `investigacion_reproducir_lista.md`.
 
 No hay ninguna orden externa para eso (§1). Opciones, de más a menos recomendable:
 

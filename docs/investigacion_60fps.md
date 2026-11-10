@@ -273,3 +273,12 @@ grep jzfb /proc/interrupts; sleep 5; grep jzfb /proc/interrupts
 ```
 
 `ingenic_cgu_set_rate` (0x803bf0b4) se leyó con `devmem` de la memoria física 0x3bf0b4 y se desensambló con capstone. Calcula `div = ceil(padre/rate) − 1` y escribe con CE, esperando a BUSY.
+
+## 7. Tearing de `'P'`/`'R'`/`'O'` (corregido en la librería v6, sin instalar)
+
+La regla "escribir y luego presentar" vale para el búfer que **aún no se ve**. Las órdenes del shell escriben en el búfer **visible**, y para ese la regla correcta es la inversa:
+
+1. esperar al fin de fotograma (pan del mismo búfer);
+2. copiar enseguida de arriba abajo; la copia va por delante del barrido.
+
+Detalles y plan de medida: `investigacion_reproducir_lista.md` §8 (`frame_edge()` y `copy_then_ov()` en `src/hibymod_disp.c`).

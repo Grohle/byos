@@ -576,7 +576,8 @@ static int np_run_wall(const char *in, const char *out)
     if (p < 0) return -1;
     if (!p) {
         int n = open("/dev/null", O_WRONLY); if (n >= 0) { dup2(n, 1); dup2(n, 2); }
-        execl(NP_WALLBIN, "hibywall", in, out, "128", "128", (char *)0);
+        /* tope de memoria: una JPEG progresiva grande pide > 8 MB y el OOM mataba al shell */
+        execl("/bin/sh", "sh", "-c", "ulimit -v 7168; exec \"$0\" \"$@\"", NP_WALLBIN, in, out, "128", "128", (char *)0);
         _exit(127);
     }
     int stv = 0;
