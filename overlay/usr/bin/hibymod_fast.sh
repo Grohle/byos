@@ -40,7 +40,7 @@ setup()
     rm -rf $FAST
     # espacio: se necesitan ~22 MB sin comprimir; UBIFS comprime, pero se exige margen
     avail=$(df /usr/data | awk 'NR==2{print $4}')
-    [ "${avail:-0}" -gt 26000 ] || { echo "sin espacio ($avail KB)"; return 1; }
+    [ "${avail:-0}" -gt 21000 ] || { echo "sin espacio ($avail KB)"; return 1; }   # ~17 MB en flash (UBIFS comprime) + margen
     mkdir -p $FAST/lib $FAST/res || return 1
     fail() { echo "copia fallida: $1"; rm -rf $FAST; sync; return 1; }
     copy_check /usr/bin/hiby_player $FAST/hiby_player.tmp || { fail hiby_player; return 1; }

@@ -44,7 +44,7 @@ static void pw_save(void)
 }
 static void pw_apply(void)
 {
-    lcd_hz = pw_mode == PW_PERF ? 60 : pw_mode == PW_SAVE ? 30 : 45; lcd_apply();      /* Ahorro 30, Normal 45, Rendimiento 60 Hz */
+    lcd_hz = pw_mode == PW_PERF ? 48 : pw_mode == PW_SAVE ? 30 : 45; lcd_apply();      /* Ahorro 30, Normal 45, Rendimiento 48,7 Hz (60 Hz: rayas, fuera de especificacion) */
     int bl = sysfs_get(BL_PATH, -1);
     if (pw_mode == PW_SAVE) {
         if (bl > 40) { pw_user_bl = bl; sysfs_put(BL_PATH, 40); }
@@ -73,7 +73,7 @@ static void pw_load(void)
         else if (!strcmp(k, "lcd_hz")) lcd_hz = v == 60 ? 60 : 45;
     }
     if (f) fclose(f);
-    lcd_hz = pw_mode == PW_PERF ? 60 : pw_mode == PW_SAVE ? 30 : 45;
+    lcd_hz = pw_mode == PW_PERF ? 48 : pw_mode == PW_SAVE ? 30 : 45;
     if (pw_mode == PW_SAVE) pw_apply();
     lcd_apply();
 }
@@ -106,7 +106,7 @@ static const char *pw_name(int m) { return m == PW_SAVE ? "Ahorro" : m == PW_PER
 #define LPCDR_PHYS 0x10000064u
 static int lcd_hz = 45;                   /* 30 (Ahorro), 45 (de serie) o 60 (Rendimiento) */
 static volatile uint32_t *lpcdr;
-static uint32_t hz_div(int hz) { return hz >= 60 ? 0x17 : hz <= 20 ? 0x48 : hz <= 24 ? 0x3c : hz <= 30 ? 0x30 : 0x20; }   /* MPLL/(div+1): 60,9 / 44,3 / 29,8 / 24,0 / 19,8 Hz */
+static uint32_t hz_div(int hz) { return hz >= 60 ? 0x17 : hz >= 48 ? 0x1d : hz <= 20 ? 0x48 : hz <= 24 ? 0x3c : hz <= 30 ? 0x30 : 0x20; }   /* MPLL/(div+1): 60,9 / 44,3 / 29,8 / 24,0 / 19,8 Hz */
 static int lcd_want_hz(void)
 {
     int idle = !hz_hold && now_ms() - lcd_last_input > 1500;
