@@ -9,6 +9,7 @@
  *       -> source \t url \t artist \t album \t year
  *   hibynet cover-get URL OUT.jpg [SIZE]      (+ OUT.thumb.raw RGB565 LE 96x96)
  *   hibynet get URL OUT                    (HIBYNET_RESUME=1: continua OUT.part con Range)
+ *   hibynet radio URL DIR NAME [PRESIZE_MB] [PREBUF_KB]   (emisora -> fichero; hibynet_radio.inc.c)
  *
  * stdout: resultados (UTF-8, uno por linea, separados por TAB). stderr: progreso/errores.
  * Codigos de salida: 0 ok, 1 sin resultados / no encontrado, 2 red/HTTP/TLS,
@@ -64,6 +65,7 @@
 #include "stb_image_write.h"
 
 #define UA "HiByOS/0.6 (https://github.com/Grohle/hibyos)"
+static const char *g_ua = UA;     /* HIBYNET_UA lo cambia (la radio se identifica ante su directorio) */
 #define NET_TIMEOUT 15.0          /* s por llamada de red */
 #define API_CAP (512 * 1024)      /* tope de respuesta JSON */
 #define IMG_CAP (16 * 1024 * 1024)/* tope de descarga de imagen */
@@ -435,8 +437,8 @@ static int http_req(const char *method, const char *url0, int follow, sink_fn si
         char hostHdr[300];
         if (u.port == defp) snprintf(hostHdr, sizeof hostHdr, "%s", u.host); else snprintf(hostHdr, sizeof hostHdr, "%s:%d", u.host, u.port);
         int rl = snprintf(req, sizeof req,
-            "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " UA "\r\nAccept: */*\r\n"
-            "Accept-Encoding: identity\r\n%sConnection: close\r\n\r\n", method, u.path, hostHdr, rng);
+            "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nAccept: */*\r\n"
+            "Accept-Encoding: identity\r\n%sConnection: close\r\n\r\n", method, u.path, hostHdr, g_ua, rng);
         if (rl >= (int)sizeof req || conn_write(c, req, rl)) { conn_close(c); free(c); return -1; }
         char line[2048];
         if (conn_line(c, line, sizeof line) < 0) { logf_("sin respuesta de %s", u.host); conn_close(c); free(c); return -1; }
@@ -1195,6 +1197,9 @@ static int cmd_get(int argc, char **argv) {
     return E_OK;
 }
 
+/* ================================================================= radio */
+#include "hibynet_radio.inc.c"
+
 /* ================================================================== main */
 static void usage(void) {
     fputs("uso:\n"
@@ -1202,13 +1207,17 @@ static void usage(void) {
           "  hibynet lyrics-get ID OUT.lrc\n"
           "  hibynet covers ARTIST ALBUM\n"
           "  hibynet cover-get URL OUT.jpg [SIZE]\n"
-          "  hibynet get URL OUT\n", stderr);
+          "  hibynet get URL OUT\n"
+          "  hibynet radio URL DIR NAME [PRESIZE_MB] [PREBUF_KB]\n", stderr);
 }
 
 int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
     g_verbose = getenv("HIBYNET_VERBOSE") != NULL;
     if (getenv("HIBYNET_TIMEOUT")) { double t = atof(getenv("HIBYNET_TIMEOUT")); if (t >= 1 && t <= 600) g_timeout = t; }
+    { const char *ua = getenv("HIBYNET_UA"); int ok = ua && ua[0] && strlen(ua) < 120;
+      for (const char *q = ua; ok && *q; q++) if ((unsigned char)*q < 0x20 || (unsigned char)*q > 0x7e) ok = 0;
+      if (ok) g_ua = ua; }
     const char *ca = getenv("HIBYNET_CA");
     if (ca) snprintf(g_ca, sizeof g_ca, "%s", ca);
     else {
@@ -1219,12 +1228,13 @@ int main(int argc, char **argv) {
     if (argc < 2) { usage(); return E_USAGE; }
     const char *c = argv[1];
     int rc;
-    if (strcmp(c, "get")) alarm(90);              /* red de seguridad global (DNS colgado, etc.) */
+    if (strcmp(c, "get") && strcmp(c, "radio")) alarm(90);             /* red de seguridad global (DNS colgado, etc.) */
     if (!strcmp(c, "lyrics")) rc = cmd_lyrics(argc - 2, argv + 2);
     else if (!strcmp(c, "lyrics-get")) rc = cmd_lyrics_get(argc - 2, argv + 2);
     else if (!strcmp(c, "covers")) rc = cmd_covers(argc - 2, argv + 2);
     else if (!strcmp(c, "cover-get")) rc = cmd_cover_get(argc - 2, argv + 2);
     else if (!strcmp(c, "get")) rc = cmd_get(argc - 2, argv + 2);
+    else if (!strcmp(c, "radio")) rc = cmd_radio(argc - 2, argv + 2);
     else rc = E_USAGE;
     if (rc == E_USAGE) usage();
     fflush(stdout);
