@@ -1069,6 +1069,11 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "--abdl")) return ab_worker_main();   /* descargas de Libros (books_ab.inc.c) */
     signal(SIGPIPE, SIG_IGN);
     logfp = fopen("/tmp/hibymod/shell.log", "a");
+    /* Sobrecompromiso permitido (lo mismo que hibymod_tune.sh del firmware, para quien aun no lo
+     * tenga): en modo heuristico el nucleo rechaza fork() de procesos con pilas de hilos grandes
+     * (adbd, este shell) en cuanto quedan pocos MB libres: "adb shell" -> "error: closed" y los
+     * ayudantes (hibywall, hibynet, hibytag) no arrancan. */
+    { int f = open("/proc/sys/vm/overcommit_memory", O_WRONLY); if (f >= 0) { if (write(f, "1", 1) != 1) lg("overcommit: no se pudo"); close(f); } }
     perf_on = !access("/tmp/hibymod/perf", F_OK);
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);
     if (!st) { lg("sin estado compartido"); return 1; }

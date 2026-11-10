@@ -614,7 +614,8 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
     /* bordes de 24 px; atras tambien desde cerca del borde izquierdo (60 px) si el gesto es
      * claramente hacia la derecha: asi el "atras" antiguo de HiBy nunca llega a dispararse */
     int wide = 0;
-    if (sy >= 456) zone = 1; else if (sy < G_TOP) zone = 3; else if (sx < BK_EDGE) zone = 4; else if (sx >= W - BK_EDGE) zone = 5;
+    int guard = !plane && sy >= G_TOP && sy < 100 && sx >= BK_WIDE && sx < W - BK_WIDE;          /* franja de guarda del panel antiguo */
+    if (sy >= 456) zone = 1; else if (sy < G_TOP || guard) zone = 3; else if (sx < BK_EDGE) zone = 4; else if (sx >= W - BK_EDGE) zone = 5;
     else if (sx < BK_WIDE && G.left == GA_BACK) { zone = 4; wide = 1; }
     else if (sx >= W - BK_WIDE && G.right == GA_BACK) { zone = 5; wide = 1; }
     if (!zone) {
@@ -634,7 +635,11 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
         int dx = p->x - sx, dy = p->y - sy;
         along = zone == 1 ? -dy : zone == 3 ? dy : zone == 4 ? dx : -dx;
         across = zone == 1 || zone == 3 ? abs(dx) : abs(dy);
-        if (along > (wide ? 18 : 12) && along * (wide ? 1 : 2) > across * (wide ? 2 : 1)) { decided = 2; break; }
+        if ((zone == 4 || zone == 5) && !plane && sy < 100 && dy > 16 && dy > abs(dx) * 3 / 2) {
+            /* empezo junto al borde pero va hacia abajo: es el gesto de arriba (nunca el panel antiguo) */
+            zone = 3; act = sx < W / 2 ? G.top : G.top_r; decided = 2; break;
+        }
+        if (along > (wide ? 18 : guard ? 16 : 12) && along * (wide ? 1 : 2) > across * (wide ? 2 : 1)) { decided = 2; break; }
         if ((across > 32 && across > along * 2) || along < -14) { decided = 1; break; }
         if (now_ms() - t0 > 450) { decided = 1; break; }
         if (nh < 64) held[nh++] = *p; else { decided = 1; break; }
