@@ -1262,7 +1262,7 @@ static int nu_open(int sx, int sy, int *arg)
         nu_sheet_anim((float)top, v, 0, 0.40f, 0, 0);
     } else nu_sheet_anim(NU_HM, 0, 0, 0.44f, 0, 0);
     lg("musica -> Reproduciendo propio (%.0f ms)", now_ms() - t0);
-    int r = nu_loop(arg);
+    top_gesture_off++; int r = nu_loop(arg); top_gesture_off--;
     nu_free();
     mu_busy = 0;
     return r;
@@ -1461,7 +1461,7 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
     int arg = -1, r;
     nu_loose = 1;
     for (;;) {
-        r = nu_loop(&arg);
+        top_gesture_off++; r = nu_loop(&arg); top_gesture_off--;
         if (r != NU_HOME || ix >= 0) break;
         /* abierto sobre otra pantalla: la hoja sube siguiendo al dedo y deja ver lo de debajo */
         uint16_t *sh = img_app; memcpy(sh, fr0, HM_FRAME_BYTES);

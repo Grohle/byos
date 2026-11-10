@@ -2344,9 +2344,10 @@ static int ab_run(void)
             while (cur_down && read_pkt(&p, 1000)) {}
             int i2; if (ab_hit_at(sx, sy, &i2) == H_TAB) tabhit = i2; else continue;
         }
-        if (tabhit < 0 && ab_spn[bk_tab] > 1 && back_zone(sx, sy)) {
+        if (tabhit < 0 && back_zone(sx, sy)) {        /* en la raiz de la pestana: salir de la app */
             ab_render(fr0);
             int bk = app_back_gesture(sx, sy);
+            if (bk > 0 && ab_spn[bk_tab] <= 1) return 2;
             if (bk > 0) { ab_pop(1); continue; }
             if (bk < 0) continue;
         }

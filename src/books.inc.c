@@ -1278,7 +1278,9 @@ static void books_app_at(int ix, int iy)
     float vel = 0; struct pkt p;
     for (;;) {
         if (bk_tab) {   /* Audiolibros | Gutenberg: Explorar y Descargas */
-            if (ab_run()) { gone = 1; break; }
+            int ar = ab_run();
+            if (ar == 1) { gone = 1; break; }
+            if (ar == 2) break;                   /* atras en la raiz de la pestana: salir */
             bk_lib_scan();                        /* (puede haber EPUB nuevos de Gutenberg) */
             bk_lib_present(-1); continue;
         }
@@ -1304,6 +1306,12 @@ static void books_app_at(int ix, int iy)
             while (cur_down && read_pkt(&p, 1000)) {}
             if (sx * 3 / W) bk_tab = sx * 3 / W;                /* toque en la barra de pestanas */
             continue;
+        }
+        if (back_zone(sx, sy)) {                       /* bordes: en la Biblioteca (raiz), salir */
+            bk_lib_render(fr0, -1);
+            int bk = app_back_gesture(sx, sy);
+            if (bk > 0) break;
+            if (bk < 0) { bk_lib_present(-1); continue; }
         }
         if (sy >= AB_TABY) {   /* barra de pestanas */
             while (cur_down && read_pkt(&p, 3000)) {}

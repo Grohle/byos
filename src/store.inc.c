@@ -1977,7 +1977,7 @@ static void store_app_ui(int ix, int iy)
                     ts = sy >= 456 ? TS_BOTTOM : TS_TAB; dirty = 1;
                     break;
                 }
-                if (st_detail >= 0 && back_zone(sx, sy)) {
+                if (back_zone(sx, sy)) {                 /* en la raiz: salir de la app */
                     /* borde en la ficha: respuesta inmediata del boton o fila, y despues decide
                      * app_back_gesture si es "atras" (fr0 = la ficha sin pulsar) */
                     st_press_kind = kind; st_press_idx = idx;
@@ -1985,6 +1985,7 @@ static void store_app_ui(int ix, int iy)
                     st_press_kind = 0; st_press_idx = -1; st_render_current();
                     int bk = app_back_gesture(sx, sy);
                     was_down = cur_down;
+                    if (bk > 0 && st_detail < 0) { quit = 1; break; }
                     if (bk > 0) { st_pop_from(0, 1); ts = TS_IDLE; dirty = 1; break; }
                     if (bk < 0) { ts = TS_IDLE; dirty = 1; break; }
                     st_press_kind = kind; st_press_idx = idx;

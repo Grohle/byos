@@ -648,8 +648,9 @@ static void files_app(int ix, int iy)
             if (!bar_h()) continue;          /* con barra de acciones, un toque es para sus botones */
         }
         /* desde un borde: volver (burbuja, como en el resto del sistema) */
-        if (!fs_root() && back_zone(sx, sy)) {
+        if (back_zone(sx, sy)) {                       /* en la raiz: salir de la app */
             int bk = app_back_gesture(sx, sy);
+            if (bk > 0 && fs_root()) break;
             if (bk > 0) { sel_mode = 0; nsel = 0; memset(selmask, 0, sizeof selmask); fs_go(0, -1); continue; }
             if (bk < 0) continue;
         }

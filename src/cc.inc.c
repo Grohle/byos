@@ -299,6 +299,11 @@ static void cc_open_settings(int start)
 
 /* ---- paginas: Centro de control <-> Reproductor (horizontal) e inicio (hacia arriba) ---- */
 static int cc_from_launcher, cc_player_right;   /* de donde venimos; el reproductor esta a la derecha */
+/* abierto desde una app propia (gesto de arriba dentro de la app): la pantalla ya es del shell,
+ * no se captura ni se suelta al reproductor; al cerrar se vuelve a dejar la imagen de la app */
+static int cc_in_app;
+static uint16_t *cc_app_frame;
+static void cc_app_restore(void) { if (cc_app_frame) memcpy(fr0, cc_app_frame, HM_FRAME_BYTES); present(); }
 /* dos pantallas lado a lado: a en x = o, b en x = o + W (o en [-W, 0]) */
 static void cc_hpage(const uint16_t *a, const uint16_t *b, int o)
 {
@@ -347,10 +352,12 @@ static int cc_to_player(const uint16_t *panel, int sx)
         static uint16_t *under; if (!under) under = malloc(HM_FRAME_BYTES);
         if (under) { if (cc_under) memcpy(under, cc_under, HM_FRAME_BYTES); else memcpy(under, panel, HM_FRAME_BYTES); }
         int home = under ? np_from_screen(under) : 0;
+        if (cc_in_app) { cc_app_restore(); return 1; }
         if (cc_from_launcher || home) { if (!cc_from_launcher) { nav_start(NAV_HOME); nav_wait(3000); } if (!launcher_resume()) cmd('R'); }
         else cmd('R');
         return 1;
     }
+    if (cc_in_app) return 0;                              /* dentro de una app: solo el reproductor propio */
     const uint16_t *pl = cc_player_img();
     if (!cc_player_right) nav_start(NAV_TO_PLANE);       /* se adelanta mientras se arrastra */
     struct pkt p; double vel = 0, lt = now_ms(); int lx = sx, o = 0;
@@ -430,9 +437,10 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
 static int cc_prepare(void)
 {
     if (!cc_ic_ok) { for (int i = 0; cc_ic_name[i]; i++) { char n[32]; snprintf(n, sizeof n, "cc_%s", cc_ic_name[i]); load_sprite(n, &cc_ic[i]); } cc_ic_ok = 1; }
-    cc_from_launcher = launcher_on;
+    cc_from_launcher = launcher_on && !cc_in_app;
     uint16_t *under = img_under;
-    if (cc_from_launcher) render_launcher(under, now_ms());
+    if (cc_in_app) memcpy(under, cc_app_frame, HM_FRAME_BYTES);
+    else if (cc_from_launcher) render_launcher(under, now_ms());
     else {
         memcpy(under, visible(), HM_FRAME_BYTES);
         if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
@@ -573,7 +581,8 @@ static int cc_close_drag(const uint16_t *under, uint16_t *panel, const uint16_t 
 {
     (void)under; (void)to_home;
     uint16_t *home = img_app;
-    if (launcher_enabled) render_launcher(home, now_ms()); else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES); else memset(home, 0, HM_FRAME_BYTES);
+    if (cc_in_app) memcpy(home, cc_app_frame, HM_FRAME_BYTES);
+    else if (launcher_enabled) render_launcher(home, now_ms()); else if (have_cache_home) memcpy(home, img_cache_home, HM_FRAME_BYTES); else memset(home, 0, HM_FRAME_BYTES);
     struct pkt p; double vel = 0, lt = now_ms(); int ly = sy; double e = 1;
     while (cur_down) {
         int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
@@ -588,9 +597,10 @@ static int cc_close_drag(const uint16_t *under, uint16_t *panel, const uint16_t 
         for (;;) { double t = (now_ms() - t0) / 160.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 + (1 - e0) * ease_out(t)); present(); if (t >= 1) break; }
         return 0;
     }
-    if (!from_launcher) nav_start(NAV_HOME);                 /* el reproductor va al inicio durante el fundido */
+    if (!from_launcher && !cc_in_app) nav_start(NAV_HOME);  /* el reproductor va al inicio durante el fundido */
     double t0 = now_ms(), e0 = e;
     for (;;) { double t = (now_ms() - t0) / 180.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 * (1 - ease_out(t))); present(); if (t >= 1) break; }
+    if (cc_in_app) { cc_app_restore(); return 1; }
     if (from_launcher) { launcher_present(); return 1; }
     nav_wait(3000); if (!launcher_resume()) cmd('R');
     return 1;
@@ -646,7 +656,9 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
             if (cc_player_right) { cc_hpage(panel, under, 0); double t0 = now_ms();   /* volver al reproductor */
                 for (;;) { double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1; cc_hpage(panel, under, -(int)(W * ease_out(t))); present(); if (t >= 1) break; }
                 cmd('R'); return; }
-            cc_animate(under, panel, 1, 0, 180); cc_open_app("nowplaying"); return;
+            cc_animate(under, panel, 1, 0, 180);
+            if (cc_in_app) { np_from_screen(cc_app_frame); cc_app_restore(); return; }
+            cc_open_app("nowplaying"); return;
         }
         if (hit >= 200) {                                      /* Bluetooth: encender / apagar */
             int on = cc_bt_toggle();
@@ -656,6 +668,11 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
             continue;
         }
         int tile = cc_tiles[hit];
+        if (cc_in_app && (tile == CT_BT || tile == CT_DAC || tile == CT_WIRELESS || tile == CT_FILES || tile == CT_SETTINGS)) {
+            cc_set_caption(tr("Vuelve al inicio para abrirlo"));
+            cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+            continue;
+        }
         switch (tile) {
         case CT_AIRPLANE: {
             const char *why = 0; int r = cc_air_toggle(&why);
@@ -685,7 +702,47 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
     }
     cc_animate(under, panel, 1, 0, 200);
 out:
-    if (from_launcher) launcher_present(); else cmd('R');
+    if (cc_in_app) cc_app_restore();
+    else if (from_launcher) launcher_present(); else cmd('R');
+}
+/* gesto de arriba dentro de una app propia (fr0 = la pantalla de la app): centro de control o
+ * reproductor siguiendo al dedo; al cerrar, la app vuelve a estar como estaba */
+static void own_top_gesture(int sx, int sy)
+{
+    static uint16_t *keep; if (!keep) keep = malloc(HM_FRAME_BYTES);
+    if (!keep) { drain_until_up(); return; }
+    memcpy(keep, fr0, HM_FRAME_BYTES);
+    int act = sx < W / 2 ? G.top : G.top_r;
+    lg("gesto de arriba en app: %s", act == GA_CC ? "centro de control" : act == GA_PLAYER ? "reproductor" : "nada");
+    if (act == GA_CC) {
+        cc_in_app = 1; cc_app_frame = keep; cc_player_right = 0;
+        if (cc_prepare()) cc_session(img_under, img_base, img_sheet, 0, sy);
+        cc_in_app = 0; cc_app_frame = 0;
+    } else if (act == GA_PLAYER) {
+        /* la hoja del reproductor baja siguiendo al dedo; soltada pasado el 40 %, se abre suelto */
+        memcpy(img_under, keep, HM_FRAME_BYTES); have_under = 1;
+        if (!np_card(img_sheet)) memset(img_sheet, 0, HM_FRAME_BYTES);
+        struct pkt p; double vel = 0, lt = now_ms(); int last = sy, rev = 0;
+        for (;;) {
+            int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+            if (got && !p.down) break;
+            double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - last) / (t - lt); last = cur_y; lt = t; }
+            rev = cur_y - sy + 12; if (rev < 0) rev = 0; if (rev > H) rev = H;
+            compose_slide(fr0, img_under, img_sheet, 0, rev - H, 32 - 11 * rev / H); present();
+            if (!cur_down) break;
+            if (!got) msleep(2);
+        }
+        int open = rev > H * 0.4 || vel > 0.35, from = rev, to = open ? H : 0; double t0 = now_ms();
+        for (;;) {
+            double t = (now_ms() - t0) / 240.0; if (t > 1) t = 1;
+            int r = from + (int)((to - from) * ease_out(t));
+            compose_slide(fr0, img_under, img_sheet, 0, r - H, 32 - 11 * r / H); present();
+            if (t >= 1) break;
+        }
+        if (open) np_from_screen(keep);
+    } else drain_until_up();
+    drain_until_up();
+    memcpy(fr0, keep, HM_FRAME_BYTES); present();
 }
 
 /* Now Playing hacia arriba (desde el centro de la pantalla): el panel sube y aparece el inicio */

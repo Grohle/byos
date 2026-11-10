@@ -1692,8 +1692,9 @@ static void music_app(int ix, int iy)
         }
         if (sy >= 456) continue;
         /* desde cualquiera de los dos bordes: atras (gesto comun, con la burbuja) */
-        if (mu_sp > 0 && back_zone(sx, sy)) {
+        if (back_zone(sx, sy)) {                       /* en la raiz: salir de la app */
             int bk = app_back_gesture(sx, sy);
+            if (bk > 0 && mu_sp == 0) break;
             if (bk > 0) { mu_pop(); continue; }
             if (bk < 0) { mu_present(); continue; }
         }

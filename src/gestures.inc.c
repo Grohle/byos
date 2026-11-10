@@ -487,10 +487,14 @@ static void back_gesture(int right, int sx, int sy)
  * claramente horizontal hacia dentro tambien vale desde mas lejos. */
 #define BK_EDGE 34
 #define BK_WIDE 72
-/* 0 nada; 1/2 borde izquierdo/derecho; 3/4 zona ancha izquierda/derecha */
+/* 0 nada; 1/2 borde izquierdo/derecho; 3/4 zona ancha izquierda/derecha; 5 arriba (centro de
+ * control / reproductor, como en las apps de HiBy) */
+static void own_top_gesture(int sx, int sy);               /* cc.inc.c */
+static int top_gesture_off;                                /* dentro de Reproduciendo (nowui) */
 static int back_zone(int sx, int sy)
 {
-    if (sy < 30 || sy >= 456) return 0;
+    if (sy < G_TOP) return top_gesture_off ? 0 : (sx < W / 2 ? G.top : G.top_r) != GA_NONE ? 5 : 0;
+    if (sy >= 456) return 0;
     if (sx < BK_WIDE) return sx < BK_EDGE ? 1 : 3;
     if (sx >= W - BK_WIDE) return sx >= W - BK_EDGE ? 2 : 4;
     return 0;
@@ -503,6 +507,18 @@ static int back_zone(int sx, int sy)
 static int app_back_gesture(int sx, int sy)
 {
     int z = back_zone(sx, sy); if (!z) return 0;
+    if (z == 5) {                                          /* arriba: solo si el dedo baja */
+        struct pkt p; double t0 = now_ms();
+        for (;;) {
+            if (!cur_down) return 0;                           /* toque: para la app (su barra) */
+            int dy = cur_y - sy, dx = abs(cur_x - sx);
+            if (dy > 12 && dy > dx) break;
+            if (dx > 24 || dy < -10 || now_ms() - t0 > 600) return 0;
+            read_pkt(&p, 30);
+        }
+        own_top_gesture(sx, sy);
+        return -1;
+    }
     int right = z == 2 || z == 4, wide = z >= 3;
     struct pkt p; double t0 = now_ms(); int decided = 0;
     while (!decided) {

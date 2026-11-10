@@ -840,7 +840,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
         }
         /* un deslizador recibe el arrastre horizontal; el "atras" solo desde el filo de la pantalla */
         int on_slider = hi >= 0 && rw && rw->type == R_SLIDER && rw->ival && !rw->dis && sx > 20 && sx < W - 20;
-        if (back && !on_slider) {   /* atras deslizando desde cualquiera de los dos bordes (burbuja) */
+        if ((back || sp_self >= 0) && !on_slider) {   /* atras desde los dos bordes (burbuja); en la raiz, al inicio */
             int bk = app_back_gesture(sx, sy);
             if (bk > 0) break;
             if (bk < 0) continue;

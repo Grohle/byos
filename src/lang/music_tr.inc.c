@@ -18,6 +18,8 @@ static const char *const MTR[][LANG_N + 1] = {
       "機内モード オン", "에어플레인 모드 켬", "Tryb samolotowy włączony", "Авиарежим включён", "飞行模式已打开", "เปิดโหมดเครื่องบินแล้ว", "飛航模式已開啟", "Режим польоту увімкнено" },
     { "Modo avión desactivado", "Modo avión desactivado", "Airplane Mode Off", "Mode Avion désactivé", "Flugmodus aus", "Uso in aereo disattivato",
       "機内モード オフ", "에어플레인 모드 끔", "Tryb samolotowy wyłączony", "Авиарежим выключен", "飞行模式已关闭", "ปิดโหมดเครื่องบินแล้ว", "飛航模式已關閉", "Режим польоту вимкнено" },
+    { "Vuelve al inicio para abrirlo", "Vuelve al inicio para abrirlo", "Go to the Home Screen to open it", "Revenez à l’écran d’accueil pour l’ouvrir", "Zum Öffnen zum Home-Bildschirm wechseln", "Torna alla schermata Home per aprirlo",
+      "ホーム画面に戻って開いてください", "홈 화면으로 돌아가서 여세요", "Wróć do ekranu głównego, aby otworzyć", "Вернитесь на экран «Домой», чтобы открыть", "返回主屏幕以打开", "กลับไปที่หน้าจอโฮมเพื่อเปิด", "返回主畫面以開啟", "Поверніться на початковий екран, щоб відкрити" },
     { "Bluetooth activado", "Bluetooth activado", "Bluetooth On", "Bluetooth activé", "Bluetooth ein", "Bluetooth attivo",
       "Bluetooth オン", "Bluetooth 켬", "Bluetooth włączony", "Bluetooth включён", "蓝牙已打开", "เปิดบลูทูธแล้ว", "藍牙已開啟", "Bluetooth увімкнено" },
     { "Bluetooth desactivado", "Bluetooth desactivado", "Bluetooth Off", "Bluetooth désactivé", "Bluetooth aus", "Bluetooth disattivato",

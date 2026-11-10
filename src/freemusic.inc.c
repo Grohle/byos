@@ -2801,12 +2801,13 @@ static void freemusic_app_at(int ix, int iy)
                 pg = fm_stack[fm_sp]; pos = &fm_pos[pg];
                 kind = fm_hit_at(sx, sy, &idx);
                 if (sy >= 456) { ts = FT_BOTTOM; break; }
-                if (fm_sp > 0 && back_zone(sx, sy)) {
+                if (back_zone(sx, sy)) {                 /* en la raiz: salir de la app */
                     fm_press_kind = kind; fm_press_idx = idx;
                     if (kind) { fm_render(); present(); }
                     fm_press_kind = 0; fm_press_idx = -1; fm_render();
                     int bk = app_back_gesture(sx, sy);
                     was_down = cur_down;
+                    if (bk > 0 && fm_sp == 0) { quit = 1; break; }
                     if (bk > 0) { fm_pop_from(0); ts = FT_IDLE; dirty = 1; break; }
                     if (bk < 0) { ts = FT_IDLE; dirty = 1; break; }
                 }

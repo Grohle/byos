@@ -257,12 +257,13 @@ static void radio_app_at(int ix, int iy)
                 sx = cur_x; sy = cur_y; tdown = tmove = now_ms(); ly = sy; vy = 0; moving = 0; ra_vel = 0;
                 kind = fm_hit_at(sx, sy, &idx);
                 if (sy >= 456) { ts = RT_BOTTOM; break; }
-                if (ra_sp > 0 && back_zone(sx, sy)) {
+                if (back_zone(sx, sy)) {                 /* en la raiz: salir de la app */
                     fm_press_kind = kind; fm_press_idx = idx;
                     if (kind) { ra_render(); present(); }
                     fm_press_kind = 0; fm_press_idx = -1; ra_render();
                     int bk = app_back_gesture(sx, sy);
                     was_down = cur_down;
+                    if (bk > 0 && ra_sp == 0) { quit = 1; break; }
                     if (bk > 0) { ra_pop_from(0); ts = RT_IDLE; dirty = 1; break; }
                     if (bk < 0) { ts = RT_IDLE; dirty = 1; break; }
                 }
