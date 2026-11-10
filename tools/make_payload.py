@@ -43,6 +43,8 @@ BINS = {  # payload/bin/<nombre>: fuente
     "hibymix": "bin/hibymix",
     "hibytag": "bin/hibytag",
     "hibymod_disp.so": "bin/hibymod_disp.so",
+    "hibynet": "bin/hibynet",          # letras y caratulas (LRCLIB, iTunes, Cover Art Archive)
+    "cacert.pem": "bin/cacert.pem",    # raices TLS de Mozilla para hibynet
 }
 # fuentes de cada binario (solo para avisar si el binario es mas viejo que el codigo)
 SRCS = {
@@ -51,6 +53,7 @@ SRCS = {
     "hibymix": ["src/hibymix.c"],
     "hibytag": ["src/hibytag.c", "src/hibytag.h"],
     "hibymod_disp.so": ["src/hibymod_disp.c", "src/hm_shared.h"],
+    "hibynet": ["src/hibynet.c"],
 }
 THEME_SUBS = ("layout/theme3", "litegui/theme3")
 # iconos del inicio de fabrica que en modo espejo pasan a ser transparentes
@@ -130,6 +133,8 @@ def main():
         src = os.path.join(ROOT, rel)
         if not os.path.isfile(src):
             sys.exit(f"ERROR: falta {rel} (compilar en WSL con ~/hiby/tools/zbuild_*.sh)")
+        if name.endswith(".pem"):
+            copy(src, os.path.join(pl, "bin", name)); continue
         check_mips(src)
         if newest_src(SRCS[name]) > os.path.getmtime(src) + 1:
             warn.append(f"{rel} es mas antiguo que su codigo fuente (recompilar?)")

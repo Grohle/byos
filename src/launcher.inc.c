@@ -62,14 +62,26 @@ static int sz_idx(void) { return L.icon <= 48 ? 0 : L.icon >= 64 ? 2 : 1; }
 
 static int app_by_id(const char *id) { for (int i = 0; i < NAPPS; i++) if (!strcmp(apps[i].id, id)) return i; return -1; }
 
+static int per_page(void);
+/* como iOS: las apps llenan los huecos desde arriba a la izquierda, pagina a pagina,
+ * y no hay paginas vacias (una segunda pagina solo existe si la primera esta llena) */
+static void lconf_compact(void)
+{
+    int all[MAXPAGES * MAXAPPS], n = 0, pp = per_page(); if (pp > MAXAPPS) pp = MAXAPPS; if (pp < 1) pp = 1;
+    for (int p = 0; p < L.npages; p++) for (int i = 0; i < L.pn[p]; i++) if (L.page[p][i] >= 0) all[n++] = L.page[p][i];
+    memset(L.pn, 0, sizeof L.pn); L.npages = 1;
+    for (int i = 0; i < n; i++) {
+        int p = L.npages - 1;
+        if (L.pn[p] >= pp) { if (L.npages >= MAXPAGES) break; p = L.npages++; }
+        L.page[p][L.pn[p]++] = all[i];
+    }
+}
 static void lconf_default(void)
 {
     memset(&L, 0, sizeof L);
-    L.icon = 56; L.cols = 4; L.npages = 2;
-    const char *p0[] = { "wireless", "books", "dac", "files", "tidal", "qobuz" };
-    for (unsigned i = 0; i < 6; i++) L.page[0][L.pn[0]++] = app_by_id(p0[i]);
-    L.page[1][L.pn[1]++] = app_by_id("nowplaying");
-    L.page[1][L.pn[1]++] = app_by_id("radio");
+    L.icon = 56; L.cols = 4; L.npages = 1;
+    const char *p0[] = { "wireless", "books", "dac", "files", "nowplaying", "radio", "personalize", "appstore", "tidal", "qobuz" };
+    for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_by_id(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
     L.dock[L.dn++] = app_by_id("music");
     L.dock[L.dn++] = app_by_id("settings");
 }
@@ -121,7 +133,7 @@ static void lconf_save(void)
     mirror_dirty = 1; edit_bg_ok = 0;
     FILE *f = fopen(LCONF ".tmp", "w");
     if (!f) return;
-    fprintf(f, "# launcher de hibymod\nicon %d\ncols %d\nwall %s\ndock", L.icon, L.cols, L.wall[0] ? L.wall : "-");
+    fprintf(f, "# launcher de hibymod\nlayout 2\nicon %d\ncols %d\nwall %s\ndock", L.icon, L.cols, L.wall[0] ? L.wall : "-");
     for (int i = 0; i < L.dn; i++) fprintf(f, " %s", apps[L.dock[i]].id);
     for (int p = 0; p < L.npages; p++) {
         if (!L.pn[p]) continue;
@@ -131,6 +143,7 @@ static void lconf_save(void)
     fprintf(f, "\n");
     gestures_conf_save(f);
     cc_conf_save(f);
+    wg_conf_save(f);
     fprintf(f, "lang %s\nkb %d %d %d\n", lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout);
     fclose(f);
     rename(LCONF ".tmp", LCONF);
@@ -141,16 +154,18 @@ static void lconf_load(void)
     lconf_default();
     FILE *f = fopen(LCONF, "r");
     if (!f) return;
-    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0;
+    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0, layout2 = 0;
     int npn[MAXPAGES] = {0}, np[MAXPAGES][MAXAPPS], nd = 0, dk[4];
     while (fgets(line, sizeof line, f)) {
         char *t = strtok(line, " \t\r\n");
         if (!t || t[0] == '#') continue;
-        if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
+        if (!strcmp(t, "layout")) { char *v = strtok(0, " \t\r\n"); layout2 = v && atoi(v) >= 2; }
+        else if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
         else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); if (v) ui_lang = !strcmp(v, "en") ? LANG_EN : !strcmp(v, "fr") ? LANG_FR : LANG_ES; }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
             if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; } }
+        else if (!strcmp(t, "widgets")) wg_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "cc")) cc_conf_line(strtok(0, "\r\n"));
         else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
         else if (!strcmp(t, "wall")) { char *v = strtok(0, "\r\n"); if (v && strcmp(v, "-")) snprintf(L.wall, sizeof L.wall, "%s", v); }
@@ -164,12 +179,18 @@ static void lconf_load(void)
     if (!got_dock && !pages) return;
     L.dn = nd; memcpy(L.dock, dk, sizeof dk);
     L.npages = pages; memcpy(L.pn, npn, sizeof npn); memcpy(L.page, np, sizeof np);
-    /* apps nuevas (no listadas) al final de la ultima pagina */
+    /* apps nuevas (no listadas) en el primer hueco libre al final */
+    int pp = per_page(); if (pp > MAXAPPS) pp = MAXAPPS;
     for (int a = 0; a < NAPPS; a++) if (!seen[a]) {
         if (!L.npages) L.npages = 1;
         int p = L.npages - 1;
-        if (L.pn[p] >= MAXAPPS && L.npages < MAXPAGES) p = L.npages++;
-        if (L.pn[p] < MAXAPPS) L.page[p][L.pn[p]++] = a;
+        if (L.pn[p] >= pp && L.npages < MAXPAGES) { p = L.npages++; L.pn[p] = 0; }
+        if (L.pn[p] < pp) L.page[p][L.pn[p]++] = a;
+    }
+    if (!layout2) lconf_compact();                 /* una vez: todo arriba a la izquierda */
+    for (int p = 0; p < L.npages; p++) if (!L.pn[p] && L.npages > 1) {   /* sin paginas vacias */
+        for (int q = p; q < L.npages - 1; q++) { L.pn[q] = L.pn[q + 1]; memcpy(L.page[q], L.page[q + 1], sizeof L.page[q]); }
+        L.npages--; p--;
     }
 }
 
@@ -422,6 +443,8 @@ static void render_launcher(uint16_t *dst, double t)
         }
     }
     int top_shift = V.edit ? 22 : 0;
+    /* pagina de widgets (izquierda de la primera) */
+    if (V.scroll < 0 && rl_mode != 2) widgets_draw(dst, -W - (int)V.scroll);
     /* paginas visibles */
     int p0 = (int)floorf(V.scroll / W);
     for (int p = p0; p <= p0 + 1; p++) {
@@ -440,7 +463,7 @@ static void render_launcher(uint16_t *dst, double t)
         }
     }
     /* puntos de pagina */
-    if (L.npages > 1 && rl_mode != 2) {
+    if (L.npages > 1 && rl_mode != 2 && V.scroll > -W / 2) {
         int tot = L.npages * 12 - 6, x0 = (W - tot) / 2;
         float cur = V.scroll / W;
         for (int p = 0; p < L.npages; p++) {
@@ -449,8 +472,9 @@ static void render_launcher(uint16_t *dst, double t)
         }
     }
     /* dock */
-    if (rl_mode != 2) blit(dst, &dock_glass, DOCK_X, DOCK_Y, 32, 255);
-    {
+    int dkx = V.scroll < 0 ? (int)-V.scroll : 0;     /* el dock se va con la primera pagina */
+    if (rl_mode != 2 && dkx < W) blit(dst, &dock_glass, DOCK_X + dkx, DOCK_Y, 32, 255);
+    if (dkx < W) {
         int n = L.dn, slot = 0, total = n + (V.drag_app >= 0 && V.drag_dock >= 0 ? 1 : 0);
         for (int i = 0; i < n; i++) if (L.dock[i] == V.drag_app) total--;
         for (int i = 0; i <= n; i++) {
@@ -458,7 +482,7 @@ static void render_launcher(uint16_t *dst, double t)
             if (i == n) break;
             int a = L.dock[i]; if (a == V.drag_app) continue;
             int x, y; dock_xy(slot, total, &x, &y);
-            draw_app_at(dst, a, x, y, 0, t);
+            draw_app_at(dst, a, x + dkx, y, 0, t);
             slot++;
         }
     }
@@ -567,6 +591,7 @@ static void home_publish(void)
 static void launcher_leave(void)
 {
     if (!launcher_on) return;
+    if (widgets_on || V.scroll < 0) { widgets_on = 0; V.scroll = cur_page * W; }   /* el inicio vuelve a su pagina */
     { int h = hud_active; hud_active = 0; V.pressed_app = -1; render_launcher(img_cache_home, now_ms()); hud_active = h; }
     have_cache_home = 1;
     home_publish();

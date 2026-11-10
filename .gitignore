@@ -1,6 +1,6 @@
 # Compilados (se publican como adjuntos del release)
-out/
-bin/
+/out/
+/bin/
 *.o
 __pycache__/
 *.pyc

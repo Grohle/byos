@@ -16,6 +16,7 @@
  *   hibytag batch LISTA campo=valor...          (LISTA: una ruta por linea, "-" = stdin)
  *   hibytag suggest CAMPO PREFIJO [N]
  *   hibytag dbupdate FICHERO...
+ *   hibytag setcover IMG.jpg FICHERO...         (portada incrustada; una linea OK/ERR por fichero)
  * Variables: HIBYTAG_DB (base), HIBYTAG_SD (raiz de la SD = "a:"), HIBYTAG_NODB=1 (no tocar
  * la base al escribir), HIBYTAG_FAILAT=N (pruebas: fallo simulado tras N bytes).
  */
@@ -162,6 +163,8 @@ HT_API const char *ht_strerror(int e)
     case HT_ENOMEM: return "sin memoria";
     case HT_EOPEN: return "no se pudo abrir";
     case HT_EDB: return "error de la base";
+    case HT_ETOOBIG: return "imagen demasiado grande (max. 1 MB)";
+    case HT_EIMAGE: return "la imagen no es un JPEG valido";
     }
     return "error";
 }
@@ -1180,6 +1183,404 @@ HT_API int ht_batch(const char *const *paths, int n, const ht_changes *ch, ht_ba
     return cancel ? HT_ECANCEL : fails;
 }
 
+/* ================================================================== caratula (portada)
+ * Siempre por reescritura completa (temporal + fsync + rename): la imagen se copia en
+ * streaming desde el JPEG (nunca se carga entera), el audio y el resto de etiquetas se copian
+ * byte a byte. Se sustituye solo la portada (FLAC PICTURE tipo 3 / ID3 APIC tipo 3 / M4A covr). */
+typedef struct { int fd; uint32_t len, w, h, depth; } htx_img;
+
+/* valida el JPEG y saca ancho/alto/profundidad del SOFn */
+static int htx_img_open(const char *jp, htx_img *im)
+{
+    memset(im, 0, sizeof *im);
+    im->fd = open(jp, O_RDONLY);
+    if (im->fd < 0) return HT_EOPEN;
+    struct stat st;
+    if (fstat(im->fd, &st) || !S_ISREG(st.st_mode)) return HT_EOPEN;
+    if (st.st_size > HT_COVER_MAX) return HT_ETOOBIG;
+    im->len = (uint32_t)st.st_size;
+    unsigned char b[10];
+    if (im->len < 4 || htx_pread(im->fd, b, 3, 0) || b[0] != 0xFF || b[1] != 0xD8 || b[2] != 0xFF) return HT_EIMAGE;
+    uint64_t p = 2;
+    while (p + 4 <= im->len) {
+        if (htx_pread(im->fd, b, 2, p)) return HT_EIMAGE;
+        if (b[0] != 0xFF) return HT_EIMAGE;
+        if (b[1] == 0xFF) { p++; continue; }                    /* relleno */
+        int m = b[1];
+        if (m == 0xD8 || m == 0x01 || (m >= 0xD0 && m <= 0xD7)) { p += 2; continue; }
+        if (m == 0xD9 || m == 0xDA) return HT_EIMAGE;         /* sin SOF antes de los datos */
+        if (htx_pread(im->fd, b, 2, p + 2)) return HT_EIMAGE;
+        uint32_t l = (uint32_t)b[0] << 8 | b[1];
+        if (l < 2) return HT_EIMAGE;
+        if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
+            if (l < 8 || htx_pread(im->fd, b, 6, p + 4)) return HT_EIMAGE;
+            im->h = (uint32_t)b[1] << 8 | b[2]; im->w = (uint32_t)b[3] << 8 | b[4];
+            im->depth = (uint32_t)b[0] * b[5];
+            if (!im->w || !im->h) return HT_EIMAGE;
+            return HT_OK;
+        }
+        p += 2 + l;
+    }
+    return HT_EIMAGE;
+}
+
+/* copia la imagen al sumidero en trozos (usa el bufer de copia del sumidero) */
+static void htx_put_img(htx_sink *s, const htx_img *im)
+{
+    int src = s->src;
+    s->src = im->fd;
+    sk_copy(s, 0, im->len);
+    s->src = src;
+}
+
+/* ---- FLAC: bloque PICTURE nuevo; se quitan las portadas viejas y el relleno */
+#define HTX_PICHDR 42u   /* tipo, mime(4+10), desc(4), w, h, depth, colores, longitud */
+typedef struct { htx_flac *f; uint64_t fsize; const htx_img *im; const unsigned char *drop; int iv; } htx_fcw;
+
+static void htx_flac_cover_emit(htx_sink *s, void *ctx)
+{
+    htx_fcw *w = ctx;
+    htx_flac *f = w->f;
+    unsigned char b[32];
+    sk_copy(s, 0, f->base + 4);
+    for (int j = 0; j < f->nb; j++) {
+        if (j == w->iv || f->b[j].type == 1 || w->drop[j]) continue;
+        htx_flac_hdr(s, f->b[j].type, 0, f->b[j].len);
+        sk_copy(s, f->b[j].off + 4, f->b[j].len);
+    }
+    htx_flac_hdr(s, 6, 0, HTX_PICHDR + w->im->len);
+    htx_put_be32(b, 3); htx_put_be32(b + 4, 10); sk_put(s, b, 8);
+    sk_put(s, "image/jpeg", 10);
+    htx_put_be32(b, 0); htx_put_be32(b + 4, w->im->w); htx_put_be32(b + 8, w->im->h);
+    htx_put_be32(b + 12, w->im->depth); htx_put_be32(b + 16, 0); htx_put_be32(b + 20, w->im->len);
+    sk_put(s, b, 24);
+    htx_put_img(s, w->im);
+    if (w->iv >= 0) {                 /* el comentario al final, junto al relleno (ediciones en sitio) */
+        htx_flac_hdr(s, 4, 0, f->b[w->iv].len);
+        sk_copy(s, f->b[w->iv].off + 4, f->b[w->iv].len);
+    }
+    htx_flac_hdr(s, 1, 1, HT_PAD);
+    sk_zero(s, HT_PAD);
+    sk_copy(s, f->audio, w->fsize - f->audio);
+}
+
+static int htx_flac_cover(const char *path, int fd, const struct stat *st, uint64_t base, const htx_img *im)
+{
+    htx_fcw w; memset(&w, 0, sizeof w);
+    w.fsize = (uint64_t)st->st_size; w.im = im;
+    w.f = malloc(sizeof *w.f);
+    unsigned char *drop = calloc(HTX_MAXBLK, 1);
+    int e = (!w.f || !drop) ? HT_ENOMEM : htx_flac_parse(fd, base, w.fsize, w.f);
+    if (e) goto out;
+    w.iv = htx_flac_find_vc(w.f);
+    uint64_t ns = w.f->base + 4;
+    for (int j = 0; j < w.f->nb; j++) {
+        htx_blk *b = &w.f->b[j];
+        if (b->type == 6 && b->len >= 4) {
+            unsigned char t[4];
+            if (htx_pread(fd, t, 4, b->off + 4)) { e = HT_EIO; goto out; }
+            drop[j] = htx_be32(t) == 3;
+        }
+        if (b->type != 1 && !drop[j]) ns += 4 + (uint64_t)b->len;   /* incluye el comentario */
+    }
+    ns += 4 + HTX_PICHDR + im->len + 4 + HT_PAD + (w.fsize - w.f->audio);
+    w.drop = drop;
+    e = htx_rewrite(path, fd, st, ns, htx_flac_cover_emit, &w, 0, 0);
+out:
+    free(drop); free(w.f);
+    return e;
+}
+
+/* ---- MP3: trama APIC nueva (tipo 3); se quitan las APIC de portada que se puedan leer */
+typedef struct { htx_id3 *t; uint64_t fsize; const htx_img *im; const unsigned char *drop; int nver; uint32_t body; } htx_mcw;
+
+static void htx_mp3_cover_emit(htx_sink *s, void *ctx)
+{
+    htx_mcw *w = ctx;
+    htx_id3 *t = w->t;
+    unsigned char h[10] = { 'I', 'D', '3', (unsigned char)w->nver, 0, (unsigned char)(t->ver ? t->flags & 0x20 : 0) };
+    htx_put_ss32(h + 6, w->body);
+    sk_put(s, h, 10);
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < t->nf; i++) {
+            if (w->drop[i] || (t->f[i].size > HTX_BIGFRAME) != !pass) continue;
+            sk_copy(s, t->f[i].off, t->f[i].size);
+        }
+        if (pass == 0) {
+            uint32_t dl = 14 + w->im->len;
+            memcpy(h, "APIC", 4);
+            if (w->nver == 4) htx_put_ss32(h + 4, dl); else htx_put_be32(h + 4, dl);
+            h[8] = h[9] = 0;
+            sk_put(s, h, 10);
+            sk_put(s, "\0image/jpeg\0\3\0", 14);   /* Latin-1, mime, portada, sin descripcion */
+            htx_put_img(s, w->im);
+        }
+    }
+    sk_zero(s, HT_PAD);
+    uint64_t a = t->ver ? t->tag_end : 0;
+    sk_copy(s, a, w->fsize - a);                 /* audio + ID3v1 tal cual */
+}
+
+static int htx_mp3_cover(const char *path, int fd, const struct stat *st, const htx_img *im)
+{
+    htx_id3 t;
+    htx_mcw w; memset(&w, 0, sizeof w);
+    w.fsize = (uint64_t)st->st_size; w.t = &t; w.im = im;
+    int e = htx_id3_head(fd, w.fsize, &t);
+    if (e) return e;
+    if (t.ver == 2 || (t.ver == 3 && (t.flags & 0x80))) return HT_EUNSUP;
+    htx_rd r = { fd, 0, 0 };
+    unsigned char *drop = 0;
+    if (t.ver && (e = htx_id3_walk(&r, &t))) goto out;
+    w.nver = t.ver ? t.ver : 3;
+    drop = calloc(t.nf + 1, 1);
+    if (!drop) { e = HT_ENOMEM; goto out; }
+    uint64_t body = 10 + 14 + (uint64_t)im->len + HT_PAD;
+    for (int i = 0; i < t.nf; i++) {
+        unsigned char b[80];
+        size_t n = t.f[i].size - 10 > sizeof b ? sizeof b : t.f[i].size - 10;
+        if (htx_pread(fd, b, 10, t.f[i].off)) { e = HT_EIO; goto out; }
+        if (!memcmp(b, "APIC", 4) && n > 4) {
+            int fl = b[9], skip = 0, ok = 1;
+            if (t.ver == 3) { if (fl & 0xC0) ok = 0; if (fl & 0x20) skip = 1; }
+            else { if (fl & 0x0E) ok = 0; if (fl & 0x40) skip++; if (fl & 0x01) skip += 4; }
+            if (ok && !htx_pread(fd, b, n, t.f[i].off + 10) && (size_t)skip + 2 < n) {
+                const unsigned char *p = b + skip + 1, *z = memchr(p, 0, n - skip - 1);
+                if (z && z + 1 < b + n && z[1] == 3) drop[i] = 1;
+            }
+        }
+        if (!drop[i]) body += t.f[i].size;
+    }
+    if (body >= (1u << 28)) { e = HT_EUNSUP; goto out; }
+    w.body = (uint32_t)body; w.drop = drop;
+    uint64_t a = t.ver ? t.tag_end : 0;
+    e = htx_rewrite(path, fd, st, 10 + body + (w.fsize - a), htx_mp3_cover_emit, &w, 0, 0);
+out:
+    free(drop); free(t.f);
+    return e;
+}
+
+/* ---- M4A/MP4: moov/udta/meta/ilst/covr (data tipo 13 = JPEG). Si moov crece y va antes
+ * de mdat, se corrigen los desplazamientos de stco/co64 (se recorren en streaming). */
+typedef struct { uint64_t off, sz; } htx_box;
+typedef struct {
+    int fd; uint64_t fsize; const htx_img *im;
+    htx_box moov, udta, meta, ilst, covr;      /* sz 0 = no existe */
+    uint64_t moov_n, udta_n, meta_n, ilst_n, covr_n, shift_from; int64_t delta;
+    unsigned char *pb;
+} htx_m4w;
+
+/* cabecera de caja en off (dentro de [off,end)): tipo y tamano; solo cabeceras de 8 bytes */
+static int htx_box_at(int fd, uint64_t off, uint64_t end, uint32_t *type, uint64_t *sz, int strict)
+{
+    unsigned char h[16];
+    if (off + 8 > end || htx_pread(fd, h, 8, off)) return -1;
+    uint64_t s = htx_be32(h);
+    *type = htx_be32(h + 4);
+    if (s == 1) {
+        if (strict || off + 16 > end || htx_pread(fd, h + 8, 8, off + 8)) return -1;
+        s = (uint64_t)htx_be32(h + 8) << 32 | htx_be32(h + 12);
+        if (s < 16) return -1;
+    } else if (s == 0) { if (strict) return -1; s = end - off; }
+    else if (s < 8) return -1;
+    if (off + s > end) return -1;
+    *sz = s;
+    return 0;
+}
+static int htx_box_find(int fd, uint64_t off, uint64_t end, uint32_t type, htx_box *b)
+{
+    uint32_t t; uint64_t s;
+    b->off = b->sz = 0;
+    while (off < end) {
+        if (htx_box_at(fd, off, end, &t, &s, 1)) return HT_EUNSUP;
+        if (t == type) { b->off = off; b->sz = s; return HT_OK; }
+        off += s;
+    }
+    return HT_OK;
+}
+static void htx_box_hdr(htx_sink *s, uint64_t sz, const char *type)
+{
+    unsigned char h[8];
+    htx_put_be32(h, (uint32_t)sz); memcpy(h + 4, type, 4);
+    sk_put(s, h, 8);
+}
+/* stco/co64 con desplazamientos corregidos */
+static void htx_m4a_chunks(htx_sink *s, htx_m4w *w, uint64_t off, uint64_t sz, int wide)
+{
+    unsigned char h[16];
+    if (sz < 16 || htx_pread(w->fd, h, 16, off)) { s->err = HT_EFORMAT; return; }
+    uint64_t cnt = htx_be32(h + 12), es = wide ? 8 : 4;
+    if (16 + cnt * es != sz) { s->err = HT_EUNSUP; return; }
+    sk_put(s, h, 16);
+    uint64_t p = off + 16, left = cnt * es;
+    while (left && !s->err) {
+        size_t k = left > 16384 ? 16384 : (size_t)left;
+        if (htx_pread(w->fd, w->pb, k, p)) { s->err = HT_EIO; return; }
+        for (size_t i = 0; i < k; i += es) {
+            uint64_t v = wide ? (uint64_t)htx_be32(w->pb + i) << 32 | htx_be32(w->pb + i + 4) : htx_be32(w->pb + i);
+            if (v >= w->shift_from) {
+                v = (uint64_t)((int64_t)v + w->delta);
+                if (!wide && v > 0xFFFFFFFFu) { s->err = HT_EUNSUP; return; }
+            }
+            if (wide) { htx_put_be32(w->pb + i, (uint32_t)(v >> 32)); htx_put_be32(w->pb + i + 4, (uint32_t)v); }
+            else htx_put_be32(w->pb + i, (uint32_t)v);
+        }
+        sk_put(s, w->pb, k);
+        p += k; left -= k;
+    }
+}
+/* copia [off,end) bajando por trak/mdia/minf/stbl para corregir stco/co64 */
+static void htx_m4a_tree(htx_sink *s, htx_m4w *w, uint64_t off, uint64_t end)
+{
+    while (off < end && !s->err) {
+        uint32_t t; uint64_t sz;
+        if (htx_box_at(w->fd, off, end, &t, &sz, 0)) { s->err = HT_EFORMAT; return; }
+        if (t == HTX_FCC('t', 'r', 'a', 'k') || t == HTX_FCC('m', 'd', 'i', 'a') ||
+            t == HTX_FCC('m', 'i', 'n', 'f') || t == HTX_FCC('s', 't', 'b', 'l')) {
+            unsigned char h[8];
+            if (htx_pread(w->fd, h, 8, off) || htx_be32(h) != sz) { s->err = HT_EUNSUP; return; }
+            sk_put(s, h, 8);
+            htx_m4a_tree(s, w, off + 8, off + sz);
+        } else if (t == HTX_FCC('s', 't', 'c', 'o') || t == HTX_FCC('c', 'o', '6', '4')) {
+            htx_m4a_chunks(s, w, off, sz, t == HTX_FCC('c', 'o', '6', '4'));
+        } else sk_copy(s, off, sz);
+        off += sz;
+    }
+}
+static void htx_m4a_covr(htx_sink *s, htx_m4w *w)
+{
+    unsigned char b[8];
+    htx_box_hdr(s, w->covr_n, "covr");
+    htx_box_hdr(s, 16 + w->im->len, "data");
+    htx_put_be32(b, 13); htx_put_be32(b + 4, 0); sk_put(s, b, 8);
+    htx_put_img(s, w->im);
+}
+/* copia los hijos de [off,end) salvo skip (y, si se da, llama a fn en su lugar) */
+static void htx_m4a_kids(htx_sink *s, htx_m4w *w, uint64_t off, uint64_t end, uint64_t skip, void (*fn)(htx_sink *, htx_m4w *))
+{
+    while (off < end && !s->err) {
+        uint32_t t; uint64_t sz;
+        if (htx_box_at(w->fd, off, end, &t, &sz, 1)) { s->err = HT_EFORMAT; return; }
+        if (skip && off == skip) { if (fn) fn(s, w); }
+        else sk_copy(s, off, sz);
+        off += sz;
+    }
+}
+static void htx_m4a_ilst(htx_sink *s, htx_m4w *w)
+{
+    htx_box_hdr(s, w->ilst_n, "ilst");
+    if (w->ilst.sz) htx_m4a_kids(s, w, w->ilst.off + 8, w->ilst.off + w->ilst.sz, w->covr.sz ? w->covr.off : 0, 0);
+    htx_m4a_covr(s, w);
+}
+static void htx_m4a_meta(htx_sink *s, htx_m4w *w)
+{
+    htx_box_hdr(s, w->meta_n, "meta");
+    if (w->meta.sz) {
+        sk_copy(s, w->meta.off + 8, 4);
+        htx_m4a_kids(s, w, w->meta.off + 12, w->meta.off + w->meta.sz, w->ilst.sz ? w->ilst.off : 0, htx_m4a_ilst);
+        if (!w->ilst.sz) htx_m4a_ilst(s, w);
+    } else {
+        static const unsigned char hdlr[37] = { 0, 0, 0, 0, 0, 0, 0, 33, 'h', 'd', 'l', 'r', 0, 0, 0, 0, 0, 0, 0, 0,
+                                                'm', 'd', 'i', 'r', 'a', 'p', 'p', 'l', 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        sk_put(s, hdlr, 37);                    /* version/flags de meta + hdlr "mdir/appl" */
+        htx_m4a_ilst(s, w);
+    }
+}
+static void htx_m4a_udta(htx_sink *s, htx_m4w *w)
+{
+    htx_box_hdr(s, w->udta_n, "udta");
+    if (w->udta.sz) {
+        htx_m4a_kids(s, w, w->udta.off + 8, w->udta.off + w->udta.sz, w->meta.sz ? w->meta.off : 0, htx_m4a_meta);
+        if (!w->meta.sz) htx_m4a_meta(s, w);
+    } else htx_m4a_meta(s, w);
+}
+static void htx_m4a_cover_emit(htx_sink *s, void *ctx)
+{
+    htx_m4w *w = ctx;
+    uint64_t mo = w->moov.off, me = mo + w->moov.sz;
+    sk_copy(s, 0, mo);
+    htx_box_hdr(s, w->moov_n, "moov");
+    uint64_t off = mo + 8;
+    while (off < me && !s->err) {
+        uint32_t t; uint64_t sz;
+        if (htx_box_at(w->fd, off, me, &t, &sz, 1)) { s->err = HT_EFORMAT; return; }
+        if (w->udta.sz && off == w->udta.off) htx_m4a_udta(s, w);
+        else if (t == HTX_FCC('t', 'r', 'a', 'k')) htx_m4a_tree(s, w, off, off + sz);
+        else sk_copy(s, off, sz);
+        off += sz;
+    }
+    if (!w->udta.sz) htx_m4a_udta(s, w);
+    sk_copy(s, me, w->fsize - me);
+}
+
+static int htx_m4a_cover(const char *path, int fd, const struct stat *st, const htx_img *im)
+{
+    htx_m4w w; memset(&w, 0, sizeof w);
+    w.fd = fd; w.fsize = (uint64_t)st->st_size; w.im = im;
+    /* cajas de primer nivel: moov (cabecera de 8 bytes) y nada fragmentado */
+    uint64_t off = 0; int nmoov = 0, frag = 0;
+    while (off < w.fsize) {
+        uint32_t t; uint64_t sz;
+        if (htx_box_at(fd, off, w.fsize, &t, &sz, 0)) return HT_EFORMAT;
+        if (t == HTX_FCC('m', 'o', 'o', 'v')) {
+            unsigned char h[4];
+            if (htx_pread(fd, h, 4, off) || htx_be32(h) != sz) return HT_EUNSUP;
+            w.moov.off = off; w.moov.sz = sz; nmoov++;
+        }
+        if (t == HTX_FCC('m', 'o', 'o', 'f') || t == HTX_FCC('s', 'i', 'd', 'x')) frag = 1;
+        off += sz;
+    }
+    if (nmoov != 1) return HT_EFORMAT;
+    uint64_t mo = w.moov.off, me = mo + w.moov.sz;
+    int e;
+    if ((e = htx_box_find(fd, mo + 8, me, HTX_FCC('u', 'd', 't', 'a'), &w.udta))) return e;
+    if (w.udta.sz && (e = htx_box_find(fd, w.udta.off + 8, w.udta.off + w.udta.sz, HTX_FCC('m', 'e', 't', 'a'), &w.meta))) return e;
+    if (w.meta.sz && (e = htx_box_find(fd, w.meta.off + 12, w.meta.off + w.meta.sz, HTX_FCC('i', 'l', 's', 't'), &w.ilst))) return e;
+    if (w.ilst.sz && (e = htx_box_find(fd, w.ilst.off + 8, w.ilst.off + w.ilst.sz, HTX_FCC('c', 'o', 'v', 'r'), &w.covr))) return e;
+    if (w.meta.sz && w.meta.sz < 12) return HT_EFORMAT;
+    w.covr_n = 8 + 16 + (uint64_t)im->len;
+    w.ilst_n = w.ilst.sz ? w.ilst.sz - w.covr.sz + w.covr_n : 8 + w.covr_n;
+    w.meta_n = w.meta.sz ? w.meta.sz - w.ilst.sz + w.ilst_n : 12 + 33 + w.ilst_n;
+    w.udta_n = w.udta.sz ? w.udta.sz - w.meta.sz + w.meta_n : 8 + w.meta_n;
+    w.moov_n = w.moov.sz - w.udta.sz + w.udta_n;
+    if (w.moov_n > 0xFFFFFFFFu) return HT_EUNSUP;
+    w.delta = (int64_t)w.moov_n - (int64_t)w.moov.sz;
+    w.shift_from = me;
+    if (w.delta && me < w.fsize && frag) return HT_EUNSUP;      /* MP4 fragmentado */
+    w.pb = malloc(16384);
+    if (!w.pb) return HT_ENOMEM;
+    e = htx_rewrite(path, fd, st, (uint64_t)((int64_t)w.fsize + w.delta), htx_m4a_cover_emit, &w, 0, 0);
+    free(w.pb);
+    return e;
+}
+
+HT_API int ht_set_cover(const char *path, const char *jpeg_path)
+{
+    htx_img im;
+    int e = htx_img_open(jpeg_path, &im);
+    if (e) { if (im.fd >= 0) close(im.fd); return e; }
+    int fd = open(path, O_RDWR);
+    if (fd < 0) { close(im.fd); return HT_EOPEN; }
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode)) { close(fd); close(im.fd); return HT_EOPEN; }
+    if (strlen(path) < PATH_MAX) {
+        char tmp[PATH_MAX + 32];
+        htx_tmpname(path, tmp, sizeof tmp);
+        unlink(tmp);
+    }
+    uint64_t base;
+    unsigned char m[4] = { 0 };
+    switch (htx_detect(fd, path, (uint64_t)st.st_size, &base)) {
+    case HT_FMT_FLAC: e = htx_flac_cover(path, fd, &st, base, &im); break;
+    case HT_FMT_MP3: e = htx_mp3_cover(path, fd, &st, &im); break;
+    case HT_FMT_M4A: e = htx_m4a_cover(path, fd, &st, &im); break;
+    default:   /* Ogg (Vorbis/Opus): la libreria no reescribe Ogg -> no soportado */
+        e = (!htx_pread(fd, m, 4, 0) && !memcmp(m, "OggS", 4)) ? HT_EUNSUP : HT_EFORMAT;
+    }
+    close(fd); close(im.fd);
+    return e;
+}
+
 /* ================================================================== base del reproductor */
 #ifndef HIBYTAG_NO_DB
 static const char *htx_sd_root(void) { const char *e = getenv("HIBYTAG_SD"); return e && *e ? e : "/usr/data/mnt/sd_0"; }
@@ -1571,7 +1972,7 @@ int main(int argc, char **argv)
     if (fa) ht_test_fail_at = strtoull(fa, 0, 10);
     if (argc < 3) {
         fprintf(stderr, "uso: hibytag get FICHERO... | set FICHERO campo=valor... | batch LISTA campo=valor...\n"
-                        "              | suggest CAMPO PREFIJO [N] | dbupdate FICHERO...\n"
+                        "              | suggest CAMPO PREFIJO [N] | dbupdate FICHERO... | setcover IMG.jpg FICHERO...\n"
                         "campos: title artist album albumartist genre year track disc\n");
         return 1;
     }
@@ -1602,6 +2003,18 @@ int main(int argc, char **argv)
         htm_dbupdate(p, 1);
 #endif
         return 0;
+    }
+    if (!strcmp(argv[1], "setcover")) {
+        if (argc < 4) { fprintf(stderr, "uso: hibytag setcover IMG.jpg FICHERO...\n"); return 1; }
+        int bad = 0;
+        for (int i = 3; i < argc; i++) {
+            int e = ht_set_cover(argv[i], argv[2]);
+            if (e) { printf("ERR %s: %s\n", argv[i], ht_strerror(e)); bad++; }
+            else printf("OK %s\n", argv[i]);
+            fflush(stdout);
+            if (e == HT_ETOOBIG || e == HT_EIMAGE || (e == HT_EOPEN && access(argv[2], R_OK))) { bad += argc - i - 1; break; }
+        }
+        return bad ? 2 : 0;
     }
     if (!strcmp(argv[1], "batch")) {
         ht_changes ch;

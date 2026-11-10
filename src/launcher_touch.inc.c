@@ -277,7 +277,7 @@ static void commit_drop(void)
 /* ------------------------------------------------------------------ desplazamiento de pagina */
 static void animate_scroll_to(int page)
 {
-    if (page < 0) page = 0; if (page >= L.npages) page = L.npages - 1;
+    if (page < -1) page = -1; if (page >= L.npages) page = L.npages - 1;
     float from = V.scroll, to = page * W;
     double t0 = now_ms(); int dur = 260;
     for (;;) {
@@ -286,16 +286,19 @@ static void animate_scroll_to(int page)
         launcher_present();
         if (t >= 1) break;
     }
-    cur_page = page; V.scroll = to;
+    if (page < 0) { widgets_on = 1; cur_page = 0; V.scroll = -W; }
+    else { widgets_on = 0; cur_page = page; V.scroll = to; }
 }
 
 static void launcher_settings(void);
+static void widgets_touch(struct pkt *p);
 
 /* ------------------------------------------------------------------ toque en el launcher */
 /* p: primer paquete (dedo abajo). Gestiona el gesto completo. */
 static void launcher_touch(struct pkt *p)
 {
     int sx = p->x, sy = p->y; double t0 = now_ms();
+    if (widgets_on && sy >= 30) { widgets_touch(p); return; }
     /* arriba del todo: centro de control del reproductor (se le devuelve la pantalla) */
     int top_act = sx < W / 2 ? G.top : G.top_r;           /* mitad izquierda / derecha */
     if (sy < 30 && !V.edit && top_act == GA_PLAYER) {
@@ -374,7 +377,8 @@ static void launcher_touch(struct pkt *p)
         }
         if (moved && abs(cur_x - sx) > abs(cur_y - sy)) {   /* deslizar paginas */
             float s = cur_page * W - (cur_x - sx);
-            if (s < -40) s = -40 + (s + 40) / 3; if (s > (L.npages - 1) * W + 40) s = (L.npages - 1) * W + 40 + (s - (L.npages - 1) * W - 40) / 3;
+            float lo = cur_page == 0 && !V.edit ? -W : -40;          /* a la izquierda: widgets */
+            if (s < lo) s = lo + (s - lo) / 3; if (s > (L.npages - 1) * W + 40) s = (L.npages - 1) * W + 40 + (s - (L.npages - 1) * W - 40) / 3;
             V.scroll = s;
             launcher_present();
         }
@@ -392,6 +396,7 @@ static void launcher_touch(struct pkt *p)
     if (moved && abs(cur_x - sx) > abs(cur_y - sy)) {
         int dx = cur_x - sx, np = cur_page;
         if (dx < -70 || vel < -0.35f) np++; else if (dx > 70 || vel > 0.35f) np--;
+        if (np < 0 && V.edit) np = 0;
         animate_scroll_to(np);
         return;
     }

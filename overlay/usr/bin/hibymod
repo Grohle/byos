@@ -1,0 +1,114 @@
+#!/bin/sh
+# hibymod: herramienta de mantenimiento (pensada para usar por ADB).
+#   hibymod status               estado general
+#   hibymod recovery             estado del sistema de recuperacion y del .upt de la SD
+#   hibymod reinstall --yes      reinstalar el .upt de la SD con el recovery oficial
+#   hibymod safe on|off          modo seguro (tema de fabrica) en el proximo arranque
+#   hibymod theme-dev on|off     cargar el tema desde la SD (hibymod/theme) para pruebas
+#   hibymod adbwifi on|off       ADB por Wi-Fi (puerto 5555)
+#   hibymod debug on|off         monitor de memoria (solo para diagnostico)
+#   hibymod logs                 ultimo informe de fallo
+#
+# Como actualiza este aparato: el sistema principal (kernel+rootfs) lo escribe
+# un sistema de recuperacion independiente (kernel2+rootfs2) que monta el .upt
+# de la raiz de la SD. hibymod nunca modifica el recovery.
+
+. /etc/ota_bin/ota_utils.sh
+
+D=/data
+SD=/data/mnt/sd_0
+
+sd_ok() { grep -qE " (/usr)?/data/mnt/sd_0 " /proc/mounts 2>/dev/null; }
+
+magic()
+{
+    dev=$(mtd_name_to_dev "$1" 2>/dev/null) || { echo none; return; }
+    nanddump -q -s 0 -l 2048 "$dev" 2>/dev/null | head -c 4 | od -An -tx1 | tr -d ' \n'
+}
+
+# recovery arrancable: kernel2 uImage (27051956) y rootfs2 squashfs (68737173)
+recovery_ok()
+{
+    km=$(magic kernel2); rm=$(magic rootfs2)
+    echo "recovery: kernel2=$km rootfs2=$rm"
+    [ "$km" = "27051956" ] && [ "$rm" = "68737173" ]
+}
+
+# .upt valido en la raiz de la SD (imagen ISO9660: "CD001" en el byte 32769)
+sd_upt()
+{
+    sd_ok || { echo "SD no montada (si esta en modo USB, desconectala)"; return 1; }
+    for f in $SD/update.upt $SD/r3ii_2025.upt $SD/*.upt; do
+        [ -f "$f" ] || continue
+        sig=$(dd if="$f" bs=1 skip=32769 count=5 2>/dev/null)
+        if [ "$sig" = "CD001" ]; then echo "upt: $f ($(wc -c < "$f") bytes)"; return 0; fi
+        echo "upt NO valido: $f"
+    done
+    echo "no hay ningun .upt en la raiz de la SD"
+    return 1
+}
+
+case "$1" in
+  status)
+    echo "HiByOS 0.6.0"
+    [ -f $D/.hibymod_safe ] && echo "modo seguro: SI ($(cat $D/.hibymod_safe))" || echo "modo seguro: no"
+    [ -f $D/.hibymod_theme_dev ] && echo "tema: desde la SD (desarrollo)" || echo "tema: interno"
+    cat /tmp/hibymod/theme.txt 2>/dev/null
+    echo "fallos de arranque seguidos: $(cat $D/.hibymod_bootfail 2>/dev/null || echo 0)"
+    [ -f $D/.hibymod_adbwifi ] && echo "adb wifi: activado $(cat /tmp/hibymod/adb_wifi_ip 2>/dev/null)" || echo "adb wifi: no"
+    grep -E '^(MemTotal|MemFree|MemAvailable):' /proc/meminfo
+    ;;
+  recovery)
+    recovery_ok && echo "recovery arrancable" || echo "recovery NO valido"
+    sd_upt
+    ;;
+  reinstall|rollback)
+    if [ "$2" != "--yes" ]; then echo "uso: hibymod reinstall --yes"; exit 1; fi
+    recovery_ok || { echo "abortado: el recovery no parece valido"; exit 1; }
+    sd_upt || { echo "abortado: pon el .upt que quieras instalar en la raiz de la SD"; exit 1; }
+    echo "arrancando el recovery oficial para reinstalar el .upt de la SD..."
+    /usr/bin/bootmode.sh Recovery || { echo "fallo al activar el recovery"; exit 1; }
+    sync; sleep 1; reboot
+    ;;
+  safe)
+    case "$2" in
+      on)  echo manual > $D/.hibymod_safe; sync; echo "modo seguro en el proximo arranque" ;;
+      off) rm -f $D/.hibymod_safe; echo 0 > $D/.hibymod_bootfail; sync; echo "modo seguro desactivado en el proximo arranque" ;;
+      *)   echo "uso: hibymod safe on|off"; exit 1 ;;
+    esac ;;
+  theme-dev)
+    case "$2" in
+      on)  touch $D/.hibymod_theme_dev; sync; echo "el proximo arranque cargara $SD/hibymod/theme" ;;
+      off) rm -f $D/.hibymod_theme_dev; sync; echo "tema interno en el proximo arranque" ;;
+      *)   echo "uso: hibymod theme-dev on|off"; exit 1 ;;
+    esac ;;
+  adbwifi)
+    case "$2" in
+      on)  touch $D/.hibymod_adbwifi; sync; /usr/bin/hibymod_adbwifi.sh >/dev/null 2>&1 &
+           echo "ADB por Wi-Fi activado" ;;
+      off) rm -f $D/.hibymod_adbwifi; sync
+           [ -e /dev/usb-ffs/adb/ep0 ] || killall adbd 2>/dev/null
+           echo "ADB por Wi-Fi desactivado" ;;
+      *)   echo "uso: hibymod adbwifi on|off"; exit 1 ;;
+    esac ;;
+  fast)
+    case "$2" in
+      on)     rm -f $D/.hibymod_nofast; sync; echo "ruta rapida activada (se prepara tras el proximo arranque)" ;;
+      off)    touch $D/.hibymod_nofast; /usr/bin/hibymod_fast.sh remove; echo "ruta rapida desactivada y borrada" ;;
+      status) /usr/bin/hibymod_fast.sh ok && echo "ruta rapida: lista ($(du -s /usr/data/hibymod/fast | cut -f1) KB)" || echo "ruta rapida: no preparada"
+              cat /tmp/hibymod/fast.txt 2>/dev/null; grep reproductor /tmp/hibymod/theme.txt 2>/dev/null ;;
+      *)      echo "uso: hibymod fast on|off|status"; exit 1 ;;
+    esac ;;
+  debug)
+    case "$2" in
+      on)  touch $D/.hibymod_debug; sync; echo "monitor de memoria activo desde el proximo arranque" ;;
+      off) rm -f $D/.hibymod_debug; sync; echo "monitor de memoria desactivado desde el proximo arranque" ;;
+      *)   echo "uso: hibymod debug on|off"; exit 1 ;;
+    esac ;;
+  logs)
+    ls -1t $SD/hibymod/logs/*.txt 2>/dev/null | head -1 | xargs cat 2>/dev/null || cat /tmp/hibymod/last_crash.txt 2>/dev/null || echo "sin informes"
+    ;;
+  *)
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+esac

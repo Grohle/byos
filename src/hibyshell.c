@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <sys/statvfs.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -69,6 +70,10 @@ static void pw_frame_cap(void);
 static void cc_open(int start_y);
 static void cc_conf_line(char *rest);
 static void cc_conf_save(FILE *f);
+static int widgets_on;
+static void widgets_draw(uint16_t *d, int ox);
+static void wg_conf_line(char *rest);
+static void wg_conf_save(FILE *f);
 static void present_rows(int y0, int y1) { dirty_y0 = y0 < 0 ? 0 : y0; dirty_y1 = y1 > H ? H : y1; present(); }
 /* presenta frames[0] y espera a que el panel lo tenga */
 static void present(void)
@@ -754,6 +759,9 @@ static void draw_toast(uint16_t *dst);
 #include "power.inc.c"
 #include "settings_app.inc.c"
 #include "cc.inc.c"
+#include "ota.inc.c"
+#include "lyrics.inc.c"
+#include "widgets.inc.c"
 #include "hpk.h"
 #include "hpk.inc.c"
 #include "store.inc.c"
@@ -885,7 +893,7 @@ static void plane_home_drag(int sy)
 static int launcher_resume(void)
 {
     if (!launcher_enabled || !is_home(fr1)) { launcher_on = 0; return 0; }
-    launcher_on = 1;
+    launcher_on = 1; widgets_on = 0;
     V.scroll = cur_page * W; V.pressed_app = -1; V.drag_app = -1; V.edit = 0;
     launcher_present();
     lg("launcher de vuelta");
@@ -1006,7 +1014,9 @@ int main(int argc, char **argv)
                 if (!is_home(fr1)) { lg("el reproductor cambio de pantalla"); launcher_leave(); }
                 else launcher_statusbar();
             } else if (now_ms() < toast_until + 40 || V.edit) launcher_present();   /* aviso o temblor */
+            else if (widgets_on && (wg_fresh || now_ms() - WD.t > 10000 || (int)(time(0) / 60) != wg_cache_min)) launcher_present();
             else if (mirror_dirty && pr == 0 && !hud_active) mirror_save();      /* en reposo */
+            else if (!wg_cache_ok && pr == 0 && !hud_active && !widgets_on) { if (!WD.t) wg_refresh(); wg_compose(); }   /* widgets listos de antemano */
         } else if (launcher_enabled && !st->capture && !st->held && st->home_hits != home_hits_seen) {
             /* la libreria ya puso la imagen del launcher en un fotograma del inicio: entrar ya */
             home_hits_seen = st->home_hits;

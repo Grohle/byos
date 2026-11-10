@@ -8,7 +8,7 @@
 
 #define TAGBIN ASSETS "/hibytag"
 static int confirm(const char *title, const char *button);
-static void cover_search(const char *path, const char *artist, const char *album);
+static void cover_search(char *const *paths, int n, const char *artist, const char *album);
 static void lyrics_search(const char *path, const char *artist, const char *title, const char *album);
 static const char *const TE_FIELDS[HT_NFIELDS] = { "Título", "Artista", "Álbum", "Artista del álbum", "Género", "Año", "Pista", "Disco" };
 static const char *const TE_SUGG[HT_NFIELDS] = { 0, "artist", "album", "albumartist", "genre", 0, 0, 0 };
@@ -199,7 +199,7 @@ static void tag_editor(char **paths, int n)
             const char *ar = te_dirty[HT_ARTIST] ? te_new[HT_ARTIST] : te_val[HT_ARTIST] ? te_val[HT_ARTIST] : "";
             const char *al = te_dirty[HT_ALBUM] ? te_new[HT_ALBUM] : te_val[HT_ALBUM] ? te_val[HT_ALBUM] : "";
             const char *ti = te_dirty[HT_TITLE] ? te_new[HT_TITLE] : te_val[HT_TITLE] ? te_val[HT_TITLE] : "";
-            if (x < W / 2) cover_search(paths[0], ar, al);
+            if (x < W / 2) cover_search(paths, n, ar, al);
             else if (n == 1) lyrics_search(paths[0], ar, ti, al);
             te_render(fr0, n, -1); present(); continue;
         }

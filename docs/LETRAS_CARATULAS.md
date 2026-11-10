@@ -150,7 +150,9 @@ real `/data/usrlocal_media.db` del aparato. No se reprodujo nada ni se reinició
   - MP3: ID3v2 APIC;
   - M4A: `covr`.
 
-  `hibytag` todavía **no** escribe imágenes, así que queda como tarea pendiente.
+  Para eso está `ht_set_cover(audio, jpeg)` en `src/hibytag.c` y, desde la línea de órdenes, `hibytag setcover IMG.jpg FICHERO...`.
+  Funciona con FLAC, MP3 (ID3v2.3/2.4) y M4A; Ogg/Opus no está soportado.
+  La escritura es atómica y en streaming, y deja el audio intacto byte a byte. La imagen puede pesar como máximo 1 MB.
 - Mientras tanto, la UI de HiByOS debe guardar `cover.jpg` en la carpeta del álbum, que es lo que usan casi todos los
   reproductores y lo que puede leer nuestra propia UI. Junto a él debe guardar `cover.thumb.raw` (la miniatura 96×96 RGB565
   para las listas). Uso: `hibynet cover-get URL "/data/mnt/sd_0/Artista/Álbum/cover.jpg"`.

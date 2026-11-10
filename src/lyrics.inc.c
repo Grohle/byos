@@ -109,19 +109,33 @@ static void cover_render(uint16_t *d, const char *q, int sel)
     lx_nav(d, tr("Cancelar"), tr("Carátula"), tr("Buscar"));
     draw_toast(d);
 }
+static char *const *cv_paths; static int cv_n;
+/* incrusta la portada en cada cancion (escritura segura de hibytag: temporal + fsync + rename) */
 static int cover_save(const char *img, const char *dir)
 {
+    (void)dir;
     const char *ext = strrchr(img, '.');
     if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg"))) { toast(tr("Usa una imagen JPG")); return -1; }
-    char dst[600], bak[620]; snprintf(dst, sizeof dst, "%s/cover.jpg", dir);
-    snprintf(bak, sizeof bak, "%s/cover.jpg.bak", dir);
-    if (!access(dst, F_OK) && access(bak, F_OK)) rename(dst, bak);      /* conserva la anterior una vez */
-    int r = copy_file(img, dst); sync();
-    toast(r ? tr("No se pudo guardar") : tr("Carátula guardada"));
-    return r;
+    progress_card(0, 0, -1);
+    int bad = 0, big = 0;
+    for (int i = 0; i < cv_n; i++) {
+        char sub[48]; snprintf(sub, sizeof sub, tr("%d de %d"), i + 1, cv_n);
+        progress_card(tr("Incrustando carátula"), sub, (double)i / cv_n);
+        int r = ht_set_cover(cv_paths[i], img);
+        if (r) { bad++; if (r == HT_ETOOBIG) big = 1; }
+    }
+    /* biblioteca de HiBy: actualizar las filas de estas canciones */
+    progress_card(tr("Actualizando la biblioteca"), 0, 0.99);
+    char **argv = calloc(cv_n + 3, sizeof(char *)); int na = 2; argv[0] = TAGBIN; argv[1] = "dbupdate";
+    for (int i = 0; i < cv_n; i++) argv[na++] = cv_paths[i];
+    char o[256]; run_capture(argv, o, sizeof o); free(argv);
+    sync();
+    toast(big ? tr("La imagen pasa de 1 MB") : bad == cv_n ? tr("No se pudo guardar") : bad ? tr("Algunas no se pudieron guardar") : tr("Carátula guardada"));
+    return bad == cv_n ? -1 : 0;
 }
-static void cover_search(const char *path, const char *artist, const char *album)
+static void cover_search(char *const *paths, int n, const char *artist, const char *album)
 {
+    const char *path = paths[0]; cv_paths = paths; cv_n = n;
     if (!net_ready()) return;
     char a[128], b[128], q[300], dir[600];
     snprintf(a, sizeof a, "%s", artist ? artist : ""); snprintf(b, sizeof b, "%s", album ? album : "");

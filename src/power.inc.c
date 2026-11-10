@@ -16,6 +16,7 @@
 #define USB_ONLINE "/sys/class/power_supply/usb/online"
 enum { PW_SAVE, PW_NORMAL, PW_PERF };
 static int pw_mode = PW_NORMAL, pw_nocharge, pw_user_bl = -1;
+static void lcd_apply(void); static int lcd_hz;
 static double pw_plug_t, pw_chg_t, pw_tick_t;
 static int pw_online = -1;
 
@@ -62,14 +63,17 @@ static void pw_load(void)
         if (!strcmp(k, "mode") && v >= 0 && v <= 2) pw_mode = v;
         else if (!strcmp(k, "nocharge")) pw_nocharge = v != 0;
         else if (!strcmp(k, "user_bl")) pw_user_bl = v;
+        else if (!strcmp(k, "lcd_hz")) lcd_hz = v == 60 ? 60 : 45;
     }
     if (f) fclose(f);
     if (pw_mode == PW_SAVE) pw_apply();
+    if (lcd_hz != 45) lcd_apply();
 }
 /* llamado en cada vuelta del bucle principal (barato: lee sysfs como mucho 1 vez/s) */
 static void pw_tick(void)
 {
     double t = now_ms(); if (t - pw_tick_t < 1000) return; pw_tick_t = t;
+    if (lcd_hz != 45) lcd_apply();             /* el driver lo restaura al encender la pantalla */
     int on = sysfs_get(USB_ONLINE, 0);
     if (on != pw_online) { pw_online = on; pw_plug_t = t; pw_chg_t = 0; }
     if (pw_nocharge && on && t - pw_plug_t > 7000 && (!pw_chg_t || t - pw_chg_t > 30000)) { sysfs_put(CHG_PATH, 0); pw_chg_t = t; }
@@ -84,3 +88,30 @@ static void pw_frame_cap(void)
     last = now_ms();
 }
 static const char *pw_name(int m) { return m == PW_SAVE ? "Ahorro" : m == PW_PERF ? "Rendimiento" : "Normal"; }
+
+/* ------------------------------------------------------------------ frecuencia de la pantalla
+ * El panel (ST77903) se barre continuamente desde la DDR; HiBy lo configura a 45 Hz
+ * (reloj LCD = MPLL/33, CPM LPCDR 0x10000064 = 0x44000020). Con el divisor /24 da 60,9 Hz
+ * (medido en el aparato: 16,5 ms por fotograma). Secuencia de Ingenic: escribir con CE,
+ * esperar a que BUSY se limpie y quitar CE. El driver puede restaurarlo al encender la
+ * pantalla: pw_tick lo comprueba cada segundo y lo reaplica. docs/investigacion_60fps.md */
+#define LPCDR_PHYS 0x10000064u
+static int lcd_hz = 45;                   /* 45 (de serie) o 60 */
+static volatile uint32_t *lpcdr;
+static uint32_t lcd_div(void) { return lcd_hz == 60 ? 0x17 : 0x20; }
+static void lcd_apply(void)
+{
+    if (!lpcdr) {
+        int f = open("/dev/mem", O_RDWR | O_SYNC); if (f < 0) return;
+        void *m = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, f, LPCDR_PHYS & ~0xFFFu); close(f);
+        if (m == MAP_FAILED) return;
+        lpcdr = (volatile uint32_t *)((char *)m + (LPCDR_PHYS & 0xFFF));
+    }
+    uint32_t v = *lpcdr;
+    if ((v & 0xFF) == lcd_div() || (v & 0xC0000000u) != 0x40000000u) return;   /* ya esta / fuente inesperada: no tocar */
+    uint32_t base = (v & 0xC4000000u);          /* fuente (MPLL) y bit 26 del driver */
+    *lpcdr = base | 0x20000000u | lcd_div();    /* CE */
+    for (int i = 0; i < 1000 && (*lpcdr & 0x10000000u); i++) {}   /* BUSY */
+    *lpcdr = base | lcd_div();
+    lg("pantalla: %d Hz (LPCDR %08x)", lcd_hz, *lpcdr);
+}

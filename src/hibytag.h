@@ -1,4 +1,4 @@
-/* hibytag.h - lectura y escritura de etiquetas (FLAC, MP3/ID3, M4A solo lectura)
+/* hibytag.h - lectura y escritura de etiquetas (FLAC, MP3/ID3, M4A solo lectura + portada)
  * y actualizacion de la base del reproductor (usrlocal_media.db).
  *
  * Dos formas de usarlo:
@@ -27,7 +27,10 @@ enum { HT_TITLE, HT_ARTIST, HT_ALBUM, HT_ALBUMARTIST, HT_GENRE, HT_YEAR, HT_TRAC
 enum { HT_FMT_NONE, HT_FMT_FLAC, HT_FMT_MP3, HT_FMT_M4A };
 /* codigos de error (negativos) */
 enum { HT_OK = 0, HT_EIO = -1, HT_EFORMAT = -2, HT_EUNSUP = -3, HT_ENOSPC = -4,
-       HT_ECANCEL = -5, HT_ENOMEM = -6, HT_EOPEN = -7, HT_EDB = -8 };
+       HT_ECANCEL = -5, HT_ENOMEM = -6, HT_EOPEN = -7, HT_EDB = -8,
+       HT_ETOOBIG = -9, HT_EIMAGE = -10 };
+/* tamano maximo de la imagen de ht_set_cover */
+#define HT_COVER_MAX (1024 * 1024)
 /* como se escribio un fichero */
 enum { HT_MODE_NONE, HT_MODE_INPLACE, HT_MODE_REWRITE };
 
@@ -58,6 +61,14 @@ HT_API int ht_write(const char *path, const ht_changes *ch, ht_progress_fn cb, v
 /* Mismos cambios a n ficheros. res[i] (opcional) recibe el resultado de cada uno.
  * Devuelve cuantos fallaron (0 = todo bien) o HT_ECANCEL si se cancelo. */
 HT_API int ht_batch(const char *const *paths, int n, const ht_changes *ch, ht_batch_fn cb, void *ud, int *res);
+
+/* Pone la portada (JPEG, <= HT_COVER_MAX) sustituyendo la portada que hubiera:
+ * FLAC: bloque PICTURE tipo 3; MP3: ID3v2 APIC tipo 3 (conserva v2.3/v2.4; sin etiqueta crea v2.3);
+ * M4A/MP4: moov/udta/meta/ilst/covr (tipo 13), corrigiendo stco/co64 si moov va antes de mdat.
+ * Ogg y ID3v2.2: HT_EUNSUP. Siempre reescritura completa (temporal + fsync + rename), en
+ * streaming (~100 KB de RAM); el audio y las demas etiquetas quedan byte a byte.
+ * HT_ETOOBIG si la imagen pasa de 1 MB, HT_EIMAGE si no es un JPEG valido. */
+HT_API int ht_set_cover(const char *path, const char *jpeg_path);
 
 /* solo para pruebas: si > 0, la reescritura falla adrede tras copiar estos bytes */
 extern uint64_t ht_test_fail_at;
