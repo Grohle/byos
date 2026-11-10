@@ -467,6 +467,13 @@ static void back_gesture(int right, int sx, int sy)
     if (!armed) { cmd('R'); return; }
     int ok = nav_wait(1500);
     memcpy(neu, fr1, HM_FRAME_BYTES);
+    if (launcher_enabled && !is_home(neu) && (same_page(old, neu) || is_stream_page(neu))) {
+        /* no habia nada a lo que volver (raiz de la app, o la pagina intermedia de Tidal/Qobuz) */
+        lg("atras: raiz de la app -> inicio");
+        stream_launched = 0;
+        nav_start(NAV_HOME); ok = nav_wait(5000);
+        memcpy(neu, fr1, HM_FRAME_BYTES);
+    }
     int home = is_home(neu) && launcher_enabled;
     if (home) render_launcher(neu, now_ms());
     if (ok == 1) back_transition(old, neu, right);
@@ -607,26 +614,35 @@ static int edge_dispatch(struct pkt *p, const uint16_t *v, int plane)
     /* bordes de 24 px; atras tambien desde cerca del borde izquierdo (60 px) si el gesto es
      * claramente hacia la derecha: asi el "atras" antiguo de HiBy nunca llega a dispararse */
     int wide = 0;
-    if (sy >= 456) zone = 1; else if (sy < 30) zone = 3; else if (sx < BK_EDGE) zone = 4; else if (sx >= W - BK_EDGE) zone = 5;
+    if (sy >= 456) zone = 1; else if (sy < G_TOP) zone = 3; else if (sx < BK_EDGE) zone = 4; else if (sx >= W - BK_EDGE) zone = 5;
     else if (sx < BK_WIDE && G.left == GA_BACK) { zone = 4; wide = 1; }
     else if (sx >= W - BK_WIDE && G.right == GA_BACK) { zone = 5; wide = 1; }
-    if (!zone) return 0;
+    if (!zone) {
+        if (sy >= 420 || sy < 44 || sx < 48 || sx >= W - 48) lg("toque cerca del borde %d,%d: sin zona", sx, sy);
+        return 0;
+    }
     int act = zone == 1 ? (plane ? GA_HOME : G.bottom_app) : zone == 3 ? (sx < W / 2 ? G.top : G.top_r) : zone == 4 ? G.left : G.right;
     if (zone == 1 && is_cc(v)) return 0;                     /* cerrar el centro de control: es de HiBy */
-    if (act == GA_NONE) return 0;
+    if (act == GA_NONE && zone != 3) return 0;
     /* retener el toque hasta saber si es el gesto (alejarse del borde) o un toque normal */
-    struct pkt held[16]; int nh = 0; held[nh++] = *p; int decided = 0;
-    while (!decided && read_pkt(p, 1000)) {
+    /* el dedo real suele quedarse un instante en el borde antes de deslizar: se decide por
+     * tiempo (450 ms), no por numero de paquetes (con 16 paquetes, ~130 ms, se perdia) */
+    static struct pkt held[64]; int nh = 0; held[nh++] = *p; int decided = 0, along = 0, across = 0;
+    double t0 = now_ms();
+    while (!decided && read_pkt(p, 600)) {
         if (!p->down) { decided = 1; break; }
         int dx = p->x - sx, dy = p->y - sy;
-        int along = zone == 1 ? -dy : zone == 3 ? dy : zone == 4 ? dx : -dx;
-        int across = zone == 1 || zone == 3 ? abs(dx) : abs(dy);
-        if (along > (wide ? 18 : 12) && along > across * (wide ? 2 : 1)) { decided = 2; break; }
-        if (across > 24 || along < -10) { decided = 1; break; }
-        if (nh < 16) held[nh++] = *p; else { decided = 1; break; }
+        along = zone == 1 ? -dy : zone == 3 ? dy : zone == 4 ? dx : -dx;
+        across = zone == 1 || zone == 3 ? abs(dx) : abs(dy);
+        if (along > (wide ? 18 : 12) && along * (wide ? 1 : 2) > across * (wide ? 2 : 1)) { decided = 2; break; }
+        if ((across > 32 && across > along * 2) || along < -14) { decided = 1; break; }
+        if (now_ms() - t0 > 450) { decided = 1; break; }
+        if (nh < 64) held[nh++] = *p; else { decided = 1; break; }
     }
+    lg("gesto borde z%d %d,%d: %s (%d/%d, %d paq, %.0f ms)", zone, sx, sy, decided == 2 ? "si" : "no", along, across, nh, now_ms() - t0);
     if (decided != 2) { for (int i = 0; i < nh; i++) fwd(&held[i]); if (p->n) fwd(p); return 1; }
     if (plane && zone == 1) { plane_home_drag(sy); drain_until_up(); update_overlay(); return 1; }
+    if (act == GA_NONE) { drain_until_up(); return 1; }     /* arriba sin accion: nunca el panel antiguo */
     if (act == GA_BACK) back_gesture(zone == 5, sx, sy);
     else if (act == GA_HOME) app_switch_gesture(sy, sx);
     else if (act == GA_PLAYER) { if (zone == 1) sheet_open_drag(sy); else player_from_edge(zone == 5 ? 1 : zone == 4 ? 2 : 3, zone == 3 ? sy : sx); }

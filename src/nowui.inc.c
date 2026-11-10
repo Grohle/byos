@@ -1453,7 +1453,33 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
     }
     nu_render(fr0, 1); present();
     lg("reproduciendo (suelto) en %.0f ms", now_ms() - t0);
-    int arg = -1, r = nu_loop(&arg);
+    int arg = -1, r;
+    for (;;) {
+        r = nu_loop(&arg);
+        if (r != NU_HOME || ix >= 0) break;
+        /* abierto sobre otra pantalla: la hoja sube siguiendo al dedo y deja ver lo de debajo */
+        uint16_t *sh = img_app; memcpy(sh, fr0, HM_FRAME_BYTES);
+        struct pkt p; int off = 0, last = cur_y; double vel = 0, lt = now_ms();
+        while (cur_down) {
+            int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+            double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - last) / (t - lt); last = cur_y; lt = t; }
+            off = cur_y - (H - 12); if (off > 0) off = 0; if (off < -H) off = -H;
+            compose_slide(fr0, home, sh, 0, off, 32 - 11 * (H + off) / H);
+            present();
+            if (got && !p.down) break;
+            if (!got) msleep(2);
+        }
+        int close = off < -H / 4 || vel < -0.35, from = off, to = close ? -H : 0; double t0 = now_ms();
+        for (;;) {
+            double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1;
+            int o = from + (int)((to - from) * ease_out(t));
+            compose_slide(fr0, home, sh, 0, o, 32 - 11 * (H + o) / H);
+            present(); if (t >= 1) break;
+        }
+        lg("reproduciendo (suelto): %s hacia arriba", close ? "cerrado" : "vuelve");
+        if (close) { memcpy(fr0, home, HM_FRAME_BYTES); r = NU_CLOSED; break; }
+        nu_render(fr0, 1); present();
+    }
     if (r == NU_HOME) {             /* subir desde la barra: la pagina se encoge hacia el centro */
         memcpy(img_app, fr0, HM_FRAME_BYTES);
         card_to_home(home, img_app, 0, 0, W, H);

@@ -369,11 +369,14 @@ static void settle(uint32_t c0, int first_ms, int quiet_ms)
 }
 static int back_to_home(void)
 {
+    int still = 0;
     for (int i = 0; i < 8; i++) {
         if (is_home(fr1)) return 1;
         uint32_t c = st->cap_frames;
-        inj_tap(22, 48);
+        if (still >= 2) { lg("nav: la flecha no responde; deslizamiento de atras de HiBy"); inj_swipe(2, 240, 230, 240, 8, 120); still = 0; }
+        else inj_tap(22, 48);
         settle(c, 500, 120);
+        if (st->cap_frames == c) still++; else still = 0;
     }
     return is_home(fr1);
 }
@@ -436,6 +439,17 @@ static int nav_wait(int ms)
 /* ------------------------------------------------------------------ tactil real */
 struct pkt { struct input_event ev[24]; int n; int x, y, down; };
 static int cur_x, cur_y, cur_down;
+static unsigned touch_drops;          /* veces que el nucleo descarto eventos (SYN_DROPPED) */
+/* tras SYN_DROPPED: el estado real de la tactil (dedo y posicion) leido del nucleo */
+static void touch_resync(void)
+{
+    unsigned long keys[KEY_MAX / (8 * sizeof(long)) + 1]; memset(keys, 0, sizeof keys);
+    if (ioctl(ts, EVIOCGKEY(sizeof keys), keys) >= 0)
+        cur_down = (keys[BTN_TOUCH / (8 * sizeof(long))] >> (BTN_TOUCH % (8 * sizeof(long)))) & 1;
+    struct input_absinfo ai;
+    if (!ioctl(ts, EVIOCGABS(ABS_MT_POSITION_X), &ai)) cur_x = ai.value;
+    if (!ioctl(ts, EVIOCGABS(ABS_MT_POSITION_Y), &ai)) cur_y = ai.value;
+}
 static int read_pkt(struct pkt *p, int timeout_ms)
 {
     p->n = 0;
@@ -452,6 +466,27 @@ static int read_pkt(struct pkt *p, int timeout_ms)
         if (r <= 0) return 0;
         struct input_event e;
         if (read(ts, &e, sizeof e) != sizeof e) return 0;
+        if (e.type == EV_SYN && e.code == SYN_DROPPED) {
+            /* el nucleo perdio eventos: descartar hasta el siguiente SYN_REPORT y releer el estado;
+             * el paquete que se devuelve lleva ese estado (con la pulsacion si el dedo sigue) */
+            struct input_event d;
+            while (read(ts, &d, sizeof d) == sizeof d && !(d.type == EV_SYN && d.code == SYN_REPORT)) {}
+            int was = cur_down; touch_resync(); touch_drops++;
+            lg("tactil: eventos perdidos (%u), dedo %d en %d,%d", touch_drops, cur_down, cur_x, cur_y);
+            int n = 0;
+            if (cur_down != was) n += mkev(&p->ev[n], EV_KEY, BTN_TOUCH, cur_down);
+            if (cur_down) {
+                n += mkev(&p->ev[n], EV_ABS, ABS_MT_TOUCH_MAJOR, 22);
+                n += mkev(&p->ev[n], EV_ABS, ABS_MT_WIDTH_MAJOR, 22);
+                n += mkev(&p->ev[n], EV_ABS, ABS_MT_POSITION_X, cur_x);
+                n += mkev(&p->ev[n], EV_ABS, ABS_MT_POSITION_Y, cur_y);
+                n += mkev(&p->ev[n], EV_ABS, ABS_MT_TRACKING_ID, 0);
+            }
+            n += mkev(&p->ev[n], EV_SYN, SYN_MT_REPORT, 0);
+            n += mkev(&p->ev[n], EV_SYN, SYN_REPORT, 0);
+            p->n = n; p->x = cur_x; p->y = cur_y; p->down = cur_down;
+            return 1;
+        }
         if (p->n < 24) p->ev[p->n++] = e;
         if (p->n == 1) lcd_boost();                /* refresco completo antes del primer fotograma */
         if (e.type == EV_KEY && e.code == BTN_TOUCH) cur_down = e.value;
@@ -465,6 +500,13 @@ static int read_pkt(struct pkt *p, int timeout_ms)
     }
 }
 static void fwd(const struct pkt *p) { inj(p->ev, p->n); }
+/* misma pagina: menos del 3 % de muestras distintas por debajo de la barra de estado */
+static int same_page(const uint16_t *a, const uint16_t *b)
+{
+    int diff = 0, n = 0;
+    for (int y = 34; y < H; y += 4) for (int x = 2; x < W; x += 4) { n++; if (abs(lum(a[y * W + x]) - lum(b[y * W + x])) > 6) diff++; }
+    return diff * 100 < n * 3;
+}
 
 /* descarta toques hasta que se levante el dedo (tras una animacion) */
 static void drain_until_up(void)
@@ -801,6 +843,12 @@ static void update_overlay(void)
     if (st->capture || st->held || hud_active || launcher_on) return;
     /* mirar la imagen visible sin la capa */
     const uint16_t *v = visible();
+    static int seen_home;
+    if (!seen_home) {
+        struct timespec up; clock_gettime(CLOCK_BOOTTIME, &up);
+        if (launcher_on || is_home(v) || up.tv_sec > 120) seen_home = 1;
+        else { overlay(0, 0, 0); return; }                  /* arranque: nada encima de la animacion */
+    }
     int plane = is_plane(v), cc = is_cc(v);
     /* barra de inicio de iOS en cualquier app (y en Now Playing): deslizar desde ella = inicio */
     if (plane || (!cc && G.bottom_app == GA_HOME)) overlay(&spr_bar, (W - spr_bar.w) / 2, BAR_Y);
@@ -812,6 +860,7 @@ static void update_overlay(void)
 /* ------------------------------------------------------------------ launcher */
 static void draw_toast(uint16_t *dst);
 static int back_zone(int sx, int sy);
+#define G_TOP 48        /* zona de arriba (centro de control / reproductor): el dedo real llega a y 34-39 */
 static int np_card(uint16_t *d);
 static int np_app_run(const uint16_t *home, int ix, int iy);
 static int own_home_gesture(int sx, int sy, int self);
@@ -1091,6 +1140,13 @@ int main(int argc, char **argv)
             int m = music_session();
             if (m != music_on) lg("musica: %s (pid %d)", m ? "si" : "no", player_pid);
             music_on = m; update_overlay(); next_poll = t + 700;
+            /* el panel de control antiguo de HiBy no debe verse nunca: si aparece, se cierra */
+            static double old_cc_t;
+            if (!launcher_on && !st->capture && !st->held && !cur_down && t - old_cc_t > 1500 && is_cc(visible())) {
+                old_cc_t = t; lg("panel antiguo de HiBy en pantalla: cerrandolo");
+                inj_swipe(160, 470, 160, 120, 6, 90);
+                next_poll = t + 400;
+            }
         }
         /* teclas de volumen (rueda) sin capturarlas: el reproductor sigue cambiando el volumen */
         st->shell_beat++;

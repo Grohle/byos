@@ -373,16 +373,16 @@ static int wg_page_on;
 static void launcher_touch(struct pkt *p)
 {
     int sx = p->x, sy = p->y; double t0 = now_ms();
-    if (widgets_on && sy >= 30) { widgets_touch(p); return; }
+    if (widgets_on && sy >= G_TOP) { widgets_touch(p); return; }
     /* arriba del todo: centro de control del reproductor (se le devuelve la pantalla) */
     int top_act = sx < W / 2 ? G.top : G.top_r;           /* mitad izquierda / derecha */
-    if (sy < 30 && !V.edit && top_act == GA_PLAYER) {
+    if (sy < G_TOP && !V.edit && top_act == GA_PLAYER) {
         int moved = 0; while (read_pkt(p, 1000)) { if (!p->down) break; if (p->y - sy > 12) { moved = 1; break; } }
         if (moved) { player_from_edge(3, sy); drain_until_up(); }
         return;
     }
-    if (sy < 30 && !V.edit && top_act == GA_NONE) { while (cur_down && read_pkt(p, 3000)) {} return; }
-    if (sy < 30 && !V.edit) {
+    if (sy < G_TOP && !V.edit && top_act == GA_NONE) { while (cur_down && read_pkt(p, 3000)) {} return; }
+    if (sy < G_TOP && !V.edit) {
         /* centro de control de HiByOS, siguiendo al dedo */
         int moved = 0; while (read_pkt(p, 1000)) { if (!p->down) break; if (p->y - sy > 10) { moved = 1; break; } }
         if (moved) cc_open(sy);
