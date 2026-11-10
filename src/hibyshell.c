@@ -795,8 +795,8 @@ static float ocr_fg(uint16_t p)
  * compara con desplazamientos de +-1 px y gana el de menos pixeles distintos. */
 static int ocr_on(const uint16_t *img, int x, int y) { return ocr_fg(img[y * W + x]) > 0.55f; }
 /* cifras del volumen en la barra de HiByOS (theme/topbar.py: topbar_nv_speaker en x=144) */
-#define VOL_X0 142
-#define VOL_X1 182
+#define VOL_X0 TOPBAR_VOL_X0
+#define VOL_X1 TOPBAR_VOL_X1
 static int ocr_volume(const uint16_t *img)
 {
     if (!img || !has_statusbar(img)) return -1;
@@ -944,6 +944,7 @@ static int open_touch(void)
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
+    if (argc > 1 && !strcmp(argv[1], "--abdl")) return ab_worker_main();   /* descargas de Libros (books_ab.inc.c) */
     signal(SIGPIPE, SIG_IGN);
     logfp = fopen("/tmp/hibymod/shell.log", "a");
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);

@@ -4,7 +4,7 @@
 			"imageview":{
 				"name":"topbar_iv_speaker",
 				"img_path":"topbar\\speaker.png",
-				"x":124,
+				"x":127,
 				"y":5,
 				"imageview":true
 			},
@@ -12,7 +12,7 @@
 				"name":"topbar_nv_speaker",
 				"img_path":"topbar\\",
 				"align_type":"top",
-				"x":144,
+				"x":146,
 				"y":5,
 				"w":32,
 				"h":20,
@@ -22,7 +22,7 @@
 				"name":"topbar_iv_play_status",
 				"img_path":"topbar\\pause.png",
 				"img_focus_path":"topbar\\play.png",
-				"x":64,
+				"x":60,
 				"y":5,
 				"imageview":true
 			},
@@ -35,7 +35,7 @@
 				"img_path_4":"topbar\\usb.png",
 				"img_path_5":"topbar\\a2dp.png",
 				"img_path_6":"topbar\\adb.png",
-				"x":172,
+				"x":177,
 				"y":5,
 				"imageview":true
 			},
@@ -75,7 +75,7 @@
 				"name":"topbar_iv_bt",
 				"img_path":"topbar\\bluetooth_unconnect.png",
 				"img_focus_path":"topbar\\bluetooth.png",
-				"x":212,
+				"x":200,
 				"y":5,
 				"imageview":true
 			},
@@ -83,7 +83,7 @@
 				"name":"topbar_iv_hl",
 				"img_path":"topbar\\hl_disconnect.png",
 				"img_focus_path":"topbar\\hl_connect.png",
-				"x":194,
+				"x":75,
 				"y":5,
 				"imageview":true
 			},
@@ -94,7 +94,7 @@
 				"img_focus_path_1":"topbar\\wifi_connect_1.png",
 				"img_focus_path_2":"topbar\\wifi_connect_2.png",
 				"img_focus_path_3":"topbar\\wifi_connect_3.png",
-				"x":228,
+				"x":215,
 				"y":5,
 				"imageview":true
 			},
@@ -102,9 +102,9 @@
 				"name":"topbar_nv_battery",
 				"img_path":"topbar\\",
 				"align_type":"top",
-				"x":252,
+				"x":238,
 				"y":5,
-				"w":45,
+				"w":38,
 				"h":20,
 				"numview":true
 			},
@@ -114,7 +114,7 @@
 				"img_path_1":"topbar\\battery_charge_bg.png",
 				"img_path_2":"topbar\\battery_low_bg.png",
 				"img_focus_path":"topbar\\battery.png",
-				"x":298,
+				"x":279,
 				"y":5,
 				"imageview":true
 			},
