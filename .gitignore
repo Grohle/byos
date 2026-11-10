@@ -1,0 +1,24 @@
+# Compilados (se publican como adjuntos del release)
+out/
+bin/
+*.o
+__pycache__/
+*.pyc
+
+# Generados por las herramientas
+theme/out/
+theme/work/
+theme/bootanim/fr/
+theme/bootanim/full/
+shell/*_preview.png
+shell/icons_png/
+shell/Pictures/
+
+# Binarios grandes de pruebas
+apps/netsurf-hiby/nsfb
+apps/netsurf-hiby/res/fonts/glyph_data
+apps/harness_vm/out/
+apps/*/*.hpk
+
+# Copia original de los digitos de HiBy (referencia local)
+src/digits_hiby_orig.h

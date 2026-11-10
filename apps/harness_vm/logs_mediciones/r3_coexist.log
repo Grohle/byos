@@ -1,0 +1,63 @@
+### profile=coexist args=
+MemTotal:          56928 kB
+mem_profile coexist: objetivo 10240 kB; ahora: MemAvailable:      10064 kB
+>>> (HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh https://en.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/r3c_wiki.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/r3c_wiki.png (320x480)
+VmPeak:	   23056 kB
+VmHWM:	   20384 kB
+VmRSS:	   16752 kB
+RssAnon:	   13456 kB
+RssFile:	    3296 kB
+VmData:	   14000 kB
+RESULT alive=yes
+MemAvailable inicio=9952kB min=3376kB
+awk invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=memhog,pid=61,uid=0
+Out of memory: Killed process 61 (memhog) total-vm:37168kB, anon-rss:36928kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3408kB avail=8416kB
+t=11.4s rss=16880kB avail=32528kB
+t=16.5s rss=16880kB avail=32512kB
+t=21.6s rss=16752kB avail=32624kB
+t=26.7s rss=16752kB avail=32624kB
+t=31.8s rss=16752kB avail=32592kB
+t=36.9s rss=16752kB avail=32592kB
+t=42.0s rss=16752kB avail=32592kB
+t=47.1s rss=16752kB avail=32592kB
+t=52.2s rss=16752kB avail=32592kB
+t=57.3s rss=16752kB avail=32592kB
+t=62.4s rss=16752kB avail=32592kB
+t=67.5s rss=16752kB avail=32544kB
+t=72.6s rss=16752kB avail=32544kB
+t=77.7s rss=16752kB avail=32544kB
+t=82.8s rss=16752kB avail=32544kB
+t=87.9s rss=16752kB avail=32544kB
+t=93.0s rss=16752kB avail=32544kB
+t=98.0s rss=16752kB avail=32544kB
+t=103.1s rss=16752kB avail=32544kB
+t=108.2s rss=16752kB avail=32544kB
+t=113.3s rss=16752kB avail=32544kB
+t=118.4s rss=16752kB avail=32544kB
+t=123.5s rss=16752kB avail=32544kB
+t=128.6s rss=16752kB avail=32560kB
+t=133.7s rss=16752kB avail=32560kB
+t=138.8s rss=16752kB avail=32560kB
+t=143.9s rss=16752kB avail=32560kB
+t=149.0s rss=16752kB avail=32560kB
+t=154.1s rss=16752kB avail=32560kB
+>>> (HOME=/root sh /hiby/measure.sh 100 /mnt/share/netsurf/run.sh https://text.npr.org/ > /mnt/share/r3c_npr.txt 2>&1 &)
+
+VmPeak:	   13824 kB
+VmHWM:	    5328 kB
+VmRSS:	    5008 kB
+RssAnon:	    1680 kB
+RssFile:	    3328 kB
+VmData:	    2240 kB
+RESULT alive=yes
+MemAvailable inicio=46224kB min=44208kB
+awk invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=memhog,pid=61,uid=0
+Out of memory: Killed process 61 (memhog) total-vm:37168kB, anon-rss:36928kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+0

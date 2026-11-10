@@ -1,0 +1,35 @@
+HiByOS Community License 1.0
+Copyright (c) 2026 Grohle (https://github.com/Grohle)
+
+HiByOS ("the Software") is the source code, scripts, tools, documentation, images
+and firmware builds published in this repository and its releases.
+
+1. Free use. Anyone may use, study, modify and share the Software, in source or
+   binary form, free of charge, for any NON-COMMERCIAL purpose, provided that:
+   a) this licence and the copyright notice above are kept in every copy or
+      substantial portion of the Software;
+   b) modified versions say clearly that they were modified and by whom;
+   c) shared copies and modified versions are distributed under this same licence.
+
+2. Commercial use needs a licence. Selling the Software or modified versions of it,
+   bundling it with a product or service that is sold (for example, devices sold with
+   the Software installed, paid firmware, paid download sites, or paid installation
+   services), or distributing it for money in any other way, is NOT allowed under
+   this licence. It requires a separate commercial licence from the copyright holder.
+   To ask for a commercial or any other special licence, contact Grohle through
+   https://github.com/Grohle (open an issue in this repository).
+
+3. Donations and voluntary support of the author are not commercial use.
+
+4. Third-party components keep their own licences, which take precedence for those
+   components: stb_image, stb_image_write and stb_truetype (public domain / MIT),
+   SQLite (public domain), IJG libjpeg (IJG licence), and any other component named
+   in its source files. HiBy, the HiBy logo and the R3 II are trademarks of their
+   owners. HiByOS is an independent community project, not affiliated with or
+   endorsed by HiBy. The original HiBy firmware is NOT part of the Software and is
+   not licensed by this document.
+
+5. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED. Installing custom firmware can damage the device or the data
+   on it and may void its warranty. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.

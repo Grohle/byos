@@ -1,0 +1,146 @@
+### profile=solo args=
+MemTotal:          56928 kB
+mem_profile solo: objetivo 38912 kB; ahora: MemAvailable:      38816 kB
+>>> cat /proc/meminfo | head -3; ls -la /mnt/share/netsurf
+MemTotal:          56928 kB
+MemFree:           37648 kB
+MemAvailable:      38480 kB
+total 3980
+drwxr-xr-x    3 1000     1000          4096 Nov  9 20:20 .
+drwxr-xr-x    3 1000     1000          4096 Nov  9 20:20 ..
+-rw-r--r--    1 1000     1000           274 Nov  9 20:20 Choices
+-rwxr-xr-x    1 1000     1000       4053184 Nov  9 20:20 nsfb
+drwxr-xr-x    7 1000     1000          4096 Nov  9 20:20 res
+-rwxr-xr-x    1 1000     1000           315 Nov  9 20:20 run.sh
+
+>>> (HOME=/root sh /hiby/measure.sh 100 /mnt/share/netsurf/run.sh http://example.com/ > /mnt/share/m_example.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/nsfb_example.png (320x480)
+VmPeak:	   13824 kB
+VmHWM:	    4096 kB
+VmRSS:	    3872 kB
+RssAnon:	     880 kB
+RssFile:	    2992 kB
+VmData:	    1472 kB
+RESULT alive=yes
+MemAvailable inicio=38336kB min=36576kB
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3872kB avail=37056kB
+t=5.6s rss=3872kB avail=36992kB
+t=10.7s rss=3872kB avail=36992kB
+t=15.8s rss=3872kB avail=36976kB
+t=20.9s rss=3872kB avail=36976kB
+t=26.0s rss=3872kB avail=36976kB
+t=31.2s rss=3872kB avail=36736kB
+t=36.3s rss=3872kB avail=36736kB
+t=41.4s rss=3872kB avail=36736kB
+t=46.5s rss=3872kB avail=36736kB
+t=51.6s rss=3872kB avail=36736kB
+t=56.7s rss=3872kB avail=36736kB
+t=61.8s rss=3872kB avail=36736kB
+t=66.9s rss=3872kB avail=36736kB
+t=72.0s rss=3872kB avail=36592kB
+t=77.1s rss=3872kB avail=36608kB
+t=82.2s rss=3872kB avail=36624kB
+t=87.3s rss=3872kB avail=36672kB
+t=92.4s rss=3872kB avail=36688kB
+t=97.5s rss=3872kB avail=36704kB
+>>> (HOME=/root sh /hiby/measure.sh 200 /mnt/share/netsurf/run.sh 'https://en.wikipedia.org/wiki/Telegram_(software)' > /mnt/share/m_wiki.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/nsfb_wiki1.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/nsfb_wiki2.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/nsfb_wiki_osk.png (320x480)
+RESULT alive=no exit=137
+MemAvailable inicio=38192kB min=0kB
+nsfb invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=nsfb,pid=891,uid=0
+Out of memory: Killed process 891 (nsfb) total-vm:45168kB, anon-rss:39376kB, file-rss:624kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3408kB avail=37136kB
+t=5.8s rss=36016kB avail=5648kB
+t=13.6s rss=39488kB avail=288kB
+t=39.3s rss=39840kB avail=208kB
+t=113.8s rss=40064kB avail=32kB
+>>> (HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh https://lite.cnn.com/ > /mnt/share/m_cnn.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/nsfb_cnn.png (320x480)
+VmPeak:	   13824 kB
+VmHWM:	    6688 kB
+VmRSS:	    6384 kB
+RssAnon:	    3104 kB
+RssFile:	    3280 kB
+VmData:	    3664 kB
+RESULT alive=yes
+MemAvailable inicio=38336kB min=34576kB
+nsfb invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=nsfb,pid=891,uid=0
+Out of memory: Killed process 891 (nsfb) total-vm:45168kB, anon-rss:39376kB, file-rss:624kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3408kB avail=37088kB
+t=5.6s rss=6384kB avail=34768kB
+t=10.7s rss=6384kB avail=34768kB
+t=15.8s rss=6384kB avail=34768kB
+t=20.9s rss=6384kB avail=34768kB
+t=26.0s rss=6384kB avail=34768kB
+t=31.1s rss=6384kB avail=34768kB
+t=36.2s rss=6384kB avail=34768kB
+t=41.3s rss=6384kB avail=34768kB
+t=46.4s rss=6384kB avail=34768kB
+t=51.5s rss=6384kB avail=34768kB
+t=56.6s rss=6384kB avail=34768kB
+t=61.7s rss=6384kB avail=34768kB
+t=66.8s rss=6384kB avail=34768kB
+t=71.9s rss=6384kB avail=34768kB
+t=77.0s rss=6384kB avail=34768kB
+t=82.1s rss=6384kB avail=34768kB
+t=87.2s rss=6384kB avail=34768kB
+t=92.3s rss=6384kB avail=34768kB
+t=97.4s rss=6384kB avail=34768kB
+t=102.5s rss=6384kB avail=34768kB
+t=107.6s rss=6384kB avail=34768kB
+t=112.7s rss=6384kB avail=34768kB
+t=117.8s rss=6384kB avail=34768kB
+t=122.9s rss=6384kB avail=34576kB
+t=128.0s rss=6384kB avail=34576kB
+t=133.1s rss=6384kB avail=34576kB
+t=138.2s rss=6384kB avail=34576kB
+t=143.3s rss=6384kB avail=34576kB
+t=148.4s rss=6384kB avail=34576kB
+>>> (HOME=/root sh /hiby/measure.sh 100 /mnt/share/netsurf/run.sh https://text.npr.org/ > /mnt/share/m_npr.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/nsfb_npr.png (320x480)
+VmPeak:	   13824 kB
+VmHWM:	    5312 kB
+VmRSS:	    4992 kB
+RssAnon:	    1664 kB
+RssFile:	    3328 kB
+VmData:	    2240 kB
+RESULT alive=yes
+MemAvailable inicio=38240kB min=36112kB
+nsfb invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=nsfb,pid=891,uid=0
+Out of memory: Killed process 891 (nsfb) total-vm:45168kB, anon-rss:39376kB, file-rss:624kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3424kB avail=37184kB
+t=5.6s rss=4992kB avail=36304kB
+t=10.7s rss=4992kB avail=36304kB
+t=15.8s rss=4992kB avail=36304kB
+t=20.9s rss=4992kB avail=36304kB
+t=26.0s rss=4992kB avail=36304kB
+t=31.1s rss=4992kB avail=36304kB
+t=36.2s rss=4992kB avail=36304kB
+t=41.3s rss=4992kB avail=36304kB
+t=46.4s rss=4992kB avail=36304kB
+t=51.5s rss=4992kB avail=36304kB
+t=56.6s rss=4992kB avail=36304kB
+t=61.7s rss=4992kB avail=36304kB
+t=66.8s rss=4992kB avail=36304kB
+t=71.9s rss=4992kB avail=36304kB
+t=77.0s rss=4992kB avail=36304kB
+t=82.1s rss=4992kB avail=36112kB
+t=87.2s rss=4992kB avail=36112kB
+t=92.3s rss=4992kB avail=36112kB
+t=97.4s rss=4992kB avail=36112kB
+0

@@ -1,0 +1,4 @@
+(HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh https://en.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/r3c_wiki.txt 2>&1 &)
+HOST: sleep 160; $C shot $VM/out/r3c_wiki.png; grep -v "^t=" $VM/share/r3c_wiki.txt; grep "^t=" $VM/share/r3c_wiki.txt | awk 'NR%10==1'
+(HOME=/root sh /hiby/measure.sh 100 /mnt/share/netsurf/run.sh https://text.npr.org/ > /mnt/share/r3c_npr.txt 2>&1 &)
+HOST: sleep 110; grep -v "^t=" $VM/share/r3c_npr.txt

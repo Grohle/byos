@@ -1,0 +1,77 @@
+### profile=solo args=--icount
+MemTotal:          56928 kB
+mem_profile solo: objetivo 38912 kB; ahora: MemAvailable:      38768 kB
+>>> cd /root; HOME=/root sh /hiby/measure.sh 40 /mnt/share/netsurf/run.sh http://example.com/ | grep "^t=" | head -12
+t=1.4s rss=944kB avail=37856kB
+t=2.7s rss=1584kB avail=37600kB
+t=4.2s rss=2560kB avail=37216kB
+t=5.8s rss=2576kB avail=36880kB
+t=6.9s rss=2592kB avail=36864kB
+t=8.3s rss=3280kB avail=37104kB
+t=9.7s rss=4064kB avail=37008kB
+t=10.8s rss=3872kB avail=36720kB
+t=11.8s rss=3872kB avail=36720kB
+t=12.8s rss=3872kB avail=36720kB
+t=13.8s rss=3872kB avail=36720kB
+t=14.8s rss=3872kB avail=36720kB
+
+>>> cd /root; HOME=/root sh /hiby/measure.sh 60 /mnt/share/netsurf/run.sh https://lite.cnn.com/ | grep "^t=" | head -40
+t=1.4s rss=960kB avail=37552kB
+t=2.8s rss=1584kB avail=37408kB
+t=4.1s rss=2592kB avail=36864kB
+t=5.5s rss=2960kB avail=36928kB
+t=7.0s rss=2992kB avail=36976kB
+t=8.5s rss=2992kB avail=36944kB
+t=10.0s rss=3008kB avail=36944kB
+t=11.4s rss=3008kB avail=36928kB
+t=12.9s rss=3056kB avail=36912kB
+t=14.4s rss=3072kB avail=36880kB
+t=15.8s rss=3088kB avail=36864kB
+t=17.3s rss=3104kB avail=36848kB
+t=18.8s rss=3136kB avail=36832kB
+t=20.2s rss=3136kB avail=36800kB
+t=21.9s rss=3152kB avail=36800kB
+t=23.8s rss=3168kB avail=23824kB
+t=25.7s rss=3216kB avail=31152kB
+t=27.2s rss=3216kB avail=36192kB
+t=28.7s rss=3248kB avail=36192kB
+t=30.1s rss=3280kB avail=36192kB
+t=31.6s rss=3312kB avail=36192kB
+t=33.1s rss=3360kB avail=36192kB
+t=34.5s rss=3392kB avail=36192kB
+t=35.6s rss=3376kB avail=36288kB
+t=36.6s rss=3376kB avail=36256kB
+t=37.6s rss=3376kB avail=36256kB
+t=38.6s rss=3376kB avail=36256kB
+t=39.6s rss=3376kB avail=36256kB
+t=40.6s rss=3376kB avail=36256kB
+t=41.6s rss=3376kB avail=36256kB
+t=42.7s rss=3696kB avail=36512kB
+t=44.2s rss=4192kB avail=36640kB
+t=45.5s rss=4480kB avail=36560kB
+t=46.5s rss=4560kB avail=36512kB
+t=47.5s rss=4560kB avail=36496kB
+t=48.5s rss=4560kB avail=36496kB
+t=49.5s rss=4560kB avail=36496kB
+t=50.5s rss=4560kB avail=36496kB
+t=51.5s rss=4560kB avail=36496kB
+t=52.5s rss=4560kB avail=36496kB
+
+>>> cd /root; time /mnt/share/netsurf/nsfb -f ram -w 320 -h 480 -b 16 about:blank & sleep 20; kill %1
+Traceback (most recent call last):
+  File "/home/alber/hiby/vm/hibyctl.py", line 89, in <module>
+    main()
+  File "/home/alber/hiby/vm/hibyctl.py", line 72, in main
+    sys.exit(cmd(s, f, "sh " + " ".join(a[1:])) or 0)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alber/hiby/vm/hibyctl.py", line 56, in cmd
+    l = readline(f)
+        ^^^^^^^^^^^
+  File "/home/alber/hiby/vm/hibyctl.py", line 21, in readline
+    return f.readline().decode(errors="replace").rstrip("\n")
+           ^^^^^^^^^^^^
+  File "/usr/lib/python3.12/socket.py", line 707, in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+TimeoutError: timed out
+0

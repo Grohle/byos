@@ -1,0 +1,298 @@
+mkdir -p /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+mkdir -p /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+mkdir -p /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/bin
+make install --directory=buildsystem HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/buildsystem'
+mkdir -p /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/share/netsurf-buildsystem/makefiles /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/share/netsurf-buildsystem/testtools /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/share/netsurf-buildsystem/citools
+for M in Makefile.top Makefile.tools Makefile.subdir Makefile.pkgconfig Makefile.clang Makefile.gcc Makefile.norcroft Makefile.open64; do \
+	cp makefiles/$M /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/share/netsurf-buildsystem/makefiles/; \
+done
+for T in testrunner.pl; do \
+	cp testtools/$T /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/share/netsurf-buildsystem/testtools/; \
+done
+for C in jenkins-build.sh; do \
+	cp citools/$C /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/share/netsurf-buildsystem/citools/; \
+done
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/buildsystem'
+make install --directory=libnslog HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnslog'
+install -C  -m 644 include/nslog/nslog.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nslog
+sed -e... libnslog.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnslog.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnslog.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libnslog.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnslog.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnslog'
+make install --directory=libwapcaplet HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libwapcaplet'
+install -C  -m 644 include/libwapcaplet/libwapcaplet.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libwapcaplet
+sed -e... libwapcaplet.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libwapcaplet.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libwapcaplet.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libwapcaplet.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libwapcaplet.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libwapcaplet'
+make install --directory=libparserutils HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libparserutils'
+install -C  -m 644 include/parserutils/errors.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils
+install -C  -m 644 include/parserutils/functypes.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils
+install -C  -m 644 include/parserutils/parserutils.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils
+install -C  -m 644 include/parserutils/types.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils
+install -C  -m 644 include/parserutils/charset/codec.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/charset
+install -C  -m 644 include/parserutils/charset/mibenum.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/charset
+install -C  -m 644 include/parserutils/charset/utf16.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/charset
+install -C  -m 644 include/parserutils/charset/utf8.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/charset
+install -C  -m 644 include/parserutils/input/inputstream.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/input
+install -C  -m 644 include/parserutils/utils/buffer.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/utils
+install -C  -m 644 include/parserutils/utils/stack.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/utils
+install -C  -m 644 include/parserutils/utils/vector.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/parserutils/utils
+sed -e... libparserutils.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libparserutils.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libparserutils.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libparserutils.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libparserutils.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libparserutils'
+make install --directory=libcss HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libcss'
+install -C  -m 644 include/libcss/computed.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/errors.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/font_face.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/fpmath.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/functypes.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/hint.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/libcss.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/properties.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/select.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/stylesheet.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/types.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+install -C  -m 644 include/libcss/unit.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libcss
+sed -e... libcss.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libcss.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libcss.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libcss.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libcss.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libcss'
+make install --directory=libhubbub HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libhubbub'
+install -C  -m 644 include/hubbub/errors.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/hubbub
+install -C  -m 644 include/hubbub/functypes.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/hubbub
+install -C  -m 644 include/hubbub/hubbub.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/hubbub
+install -C  -m 644 include/hubbub/parser.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/hubbub
+install -C  -m 644 include/hubbub/tree.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/hubbub
+install -C  -m 644 include/hubbub/types.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/hubbub
+sed -e... libhubbub.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libhubbub.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libhubbub.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libhubbub.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libhubbub.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libhubbub'
+make install --directory=libdom HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libdom'
+install -C  -m 644 bindings/hubbub/errors.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/bindings/hubbub
+install -C  -m 644 bindings/hubbub/parser.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/bindings/hubbub
+install -C  -m 644 bindings/xml/xmlerror.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/bindings/xml
+install -C  -m 644 bindings/xml/xmlparser.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/bindings/xml
+install -C  -m 644 include/dom/dom.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom
+install -C  -m 644 include/dom/functypes.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom
+install -C  -m 644 include/dom/inttypes.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom
+install -C  -m 644 include/dom/walk.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom
+install -C  -m 644 include/dom/core/attr.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/characterdata.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/cdatasection.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/comment.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/doc_fragment.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/document.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/document_type.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/entity_ref.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/exceptions.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/implementation.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/namednodemap.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/node.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/nodelist.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/tokenlist.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/string.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/pi.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/text.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/core/typeinfo.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/core
+install -C  -m 644 include/dom/events/event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/ui_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/custom_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/mouse_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/keyboard_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/text_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/mouse_wheel_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/mouse_multi_wheel_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/mutation_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/event_target.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/mutation_name_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/events.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/event_listener.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/events/document_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/events
+install -C  -m 644 include/dom/html/html_document.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_collection.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_elements.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_html_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_head_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_link_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_title_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_body_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_meta_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_form_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_button_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_canvas_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_input_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_select_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_text_area_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_option_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_opt_group_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_options_collection.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_hr_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_dlist_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_directory_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_menu_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_fieldset_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_legend_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_div_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_paragraph_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_heading_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_quote_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_pre_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_br_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_label_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_ulist_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_olist_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_li_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_font_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_mod_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_anchor_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_basefont_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_image_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_object_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_param_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_applet_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_area_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_map_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_script_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_tablecaption_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_tablecell_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_tablecol_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_tablesection_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_table_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_tablerow_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_base_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_style_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_frameset_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_frame_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_iframe_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+install -C  -m 644 include/dom/html/html_isindex_element.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/dom/html
+sed -e... libdom.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libdom.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libdom.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libdom.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libdom.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libdom'
+make install --directory=libnsbmp HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsbmp'
+install -C  -m 644 include/libnsbmp.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/
+sed -e... libnsbmp.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsbmp.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsbmp.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libnsbmp.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsbmp.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsbmp'
+make install --directory=libnsgif HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsgif'
+install -C  -m 644 include/nsgif.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+sed -e... libnsgif.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsgif.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsgif.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libnsgif.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsgif.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsgif'
+make install --directory=librosprite HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/librosprite'
+install -C  -m 644 include/librosprite.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+sed -e... librosprite.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/librosprite.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/librosprite.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/librosprite.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/librosprite.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/librosprite'
+make install --directory=libnsutils HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsutils'
+install -C  -m 644 include/nsutils/assert.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nsutils
+install -C  -m 644 include/nsutils/errors.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nsutils
+install -C  -m 644 include/nsutils/base64.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nsutils
+install -C  -m 644 include/nsutils/endian.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nsutils
+install -C  -m 644 include/nsutils/time.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nsutils
+install -C  -m 644 include/nsutils/unistd.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/nsutils
+sed -e... libnsutils.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsutils.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsutils.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libnsutils.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsutils.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsutils'
+make install --directory=libutf8proc HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libutf8proc'
+install -C  -m 644 include/libutf8proc/utf8proc.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include/libutf8proc
+sed -e... libutf8proc.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libutf8proc.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libutf8proc.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libutf8proc.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libutf8proc.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libutf8proc'
+make install --directory=libnspsl HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnspsl'
+install -C  -m 644 include/nspsl.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+sed -e... libnspsl.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnspsl.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnspsl.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libnspsl.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnspsl.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnspsl'
+make install --directory=libsvgtiny HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libsvgtiny'
+install -C  -m 644 include/svgtiny.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+sed -e... libsvgtiny.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libsvgtiny.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libsvgtiny.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libsvgtiny.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libsvgtiny.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libsvgtiny'
+make install --directory=libnsfb HOST=mipsel-hiby PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ WARNFLAGS='-Wall -W -Wno-error' DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsfb'
+ COMPILE: src/surface/hiby.c
+      AR: build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsfb.a
+install -C  -m 644 include/libnsfb.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+install -C  -m 644 include/libnsfb_plot.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+install -C  -m 644 include/libnsfb_plot_util.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+install -C  -m 644 include/libnsfb_event.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+install -C  -m 644 include/libnsfb_cursor.h /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/include
+sed -e... libnsfb.pc.in >build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsfb.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsfb.pc /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib/pkgconfig/libnsfb.pc
+install -C  -m 644 build-x86_64-linux-gnu-mipsel-hiby-release-lib-static/libnsfb.a /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/lib
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/libnsfb'
+make install --directory=nsgenbind HOST=x86_64-linux-gnu PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer Q=@ DESTDIR=
+make[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/nsgenbind'
+install -C  -m 755 build-x86_64-linux-gnu-x86_64-linux-gnu-release-binary/nsgenbind /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/bin
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/nsgenbind'
+make --directory=netsurf PREFIX=/home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer TARGET=framebuffer 
+make[1]: Entering directory '/home/alber/hiby/vm/src/netsurf-all-3.11/netsurf'
+M.CONFIG: JPEG (libjpeg)	enabled       (NETSURF_USE_JPEG := YES)
+M.CONFIG: PDF export (haru)	disabled      (NETSURF_USE_HARU_PDF := NO)
+M.CONFIG: glibc internal iconv	enabled       (NETSURF_USE_LIBICONV_PLUG := YES)
+M.CONFIG: Javascript (Duktape)	disabled      (NETSURF_USE_DUKTAPE := NO)
+PKG.CNFG: CSS (libcss)	enabled
+PKG.CNFG: DOM (libdom)	enabled
+PKG.CNFG: nsutils (libnsutils)	enabled
+M.CONFIG: Curl (libcurl)	enabled       (NETSURF_USE_CURL := YES)
+M.CONFIG: OpenSSL (openssl)	disabled      (NETSURF_USE_OPENSSL := NO)
+M.CONFIG: utf8 (libutf8proc)	enabled       (NETSURF_USE_UTF8PROC := YES)
+M.CONFIG: JPEGXL (libjxl)	auto-disabled (NETSURF_USE_JPEGXL := AUTO)
+M.CONFIG: WEBP (libwebp)	disabled      (NETSURF_USE_WEBP := NO)
+M.CONFIG: PNG (libpng)	enabled       (NETSURF_USE_PNG := YES)
+M.CONFIG: BMP (libnsbmp)	enabled       (NETSURF_USE_BMP := YES)
+M.CONFIG: GIF (libnsgif)	enabled       (NETSURF_USE_GIF := YES)
+M.CONFIG: SVG (libsvgtiny)	disabled      (NETSURF_USE_NSSVG := NO)
+M.CONFIG: Sprite (librosprite)	disabled      (NETSURF_USE_ROSPRITE := NO)
+M.CONFIG: PSL (libnspsl)	auto-enabled  (NETSURF_USE_NSPSL := AUTO)
+M.CONFIG: LOG (libnslog)	auto-enabled  (NETSURF_USE_NSLOG := AUTO)
+PKG.CNFG: libnsfb (libnsfb)	enabled
+PKG.CNFG: Check (check)	disabled
+TESTMENT: unchanged
+    LINK: nsfb
+LINKDEPS: nsfb
+make[1]: Leaving directory '/home/alber/hiby/vm/src/netsurf-all-3.11/netsurf'
+touch /home/alber/hiby/vm/src/netsurf-all-3.11/inst-framebuffer/build-stamp

@@ -1,0 +1,634 @@
+<title>R3 Glass</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a working device at true 320x480 scale on the left, a spec rail on the right that explains how each screen maps to the real firmware. */
+:root{
+  --bg:#eef0f4; --panel:#ffffff; --ink:#15171c; --ink2:#5a6070; --line:#dde1e8; --accent:#0a6cff;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --ui:"MiSans",-apple-system,"SF Pro Text",system-ui,"Segoe UI Variable","Segoe UI",Roboto,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d0f13;--panel:#161920;--ink:#eceef3;--ink2:#9aa1b2;--line:#262a33;--accent:#4c9aff;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d0f13;--panel:#161920;--ink:#eceef3;--ink2:#9aa1b2;--line:#262a33;--accent:#4c9aff;color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--ui);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:auto minmax(0,1fr);gap:40px;align-items:start}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr)}}
+header.top{max-width:1180px;margin:0 auto 18px;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px}
+header.top h1{font-size:26px;letter-spacing:-.02em;margin:0;text-wrap:balance}
+header.top p{margin:0;color:var(--ink2);font-size:14px;max-width:70ch}
+.devcol{display:flex;flex-direction:column;align-items:center;gap:14px;position:sticky;top:16px}
+@media (max-width:860px){.devcol{position:static}}
+.hint{font-size:12px;color:var(--ink2);text-align:center;max-width:380px;line-height:1.5}
+.rail{display:flex;flex-direction:column;gap:18px;min-width:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:0 0 10px;font-weight:600}
+.card h3{font-size:18px;margin:0 0 6px;letter-spacing:-.01em}
+.card p,.card li{font-size:14px;line-height:1.55;color:var(--ink)}
+.card p{margin:0 0 8px}
+.card ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:13px;border:1px solid var(--line);background:transparent;color:var(--ink);padding:6px 11px;border-radius:999px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip:focus-visible,.hw:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.map{font-family:var(--mono);font-size:12px;color:var(--ink2);background:color-mix(in srgb,var(--ink) 5%,transparent);border-radius:8px;padding:8px 10px;margin-top:8px;overflow-x:auto;white-space:nowrap}
+.ctl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px 12px;align-items:center;font-size:14px}
+.ctl label{color:var(--ink2)}
+.sw{display:flex;gap:8px;flex-wrap:wrap}
+.sw button{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.sw button[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 2px var(--panel) inset}
+.tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;padding:2px 7px;border-radius:6px;margin-right:6px;vertical-align:1px}
+.ok{background:color-mix(in srgb,#1aa260 18%,transparent);color:#138a50}
+.pc{background:color-mix(in srgb,#b57900 18%,transparent);color:#9a6700}
+.no{background:color-mix(in srgb,#d0342c 16%,transparent);color:#c0352d}
+:root[data-theme="dark"] .ok{color:#4fd18b}:root[data-theme="dark"] .pc{color:#f0b84a}:root[data-theme="dark"] .no{color:#ff7a73}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{color:#4fd18b}:root:not([data-theme="light"]) .pc{color:#f0b84a}:root:not([data-theme="light"]) .no{color:#ff7a73}}
+
+/* ---------- device ---------- */
+.devbox{position:relative}
+.device{position:absolute;top:0;left:0;transform-origin:0 0;width:352px;height:560px;border-radius:30px;
+  background:linear-gradient(145deg,#3b3f46,#1b1d21 55%,#2a2d33);box-shadow:0 30px 60px -20px rgba(0,0,0,.55),inset 0 1px 1px rgba(255,255,255,.25),inset 0 -2px 3px rgba(0,0,0,.6)}
+.device::after{content:"";position:absolute;inset:4px;border-radius:26px;border:1px solid rgba(255,255,255,.06);pointer-events:none}
+.screen{position:absolute;left:16px;top:24px;width:320px;height:480px;border-radius:8px;overflow:hidden;background:#000;
+  font-family:var(--ui);color:var(--fg);-webkit-user-select:none;user-select:none;touch-action:none;cursor:default;
+  --acc:#0a84ff;--ts:1;font-size:calc(15px*var(--ts))}
+.hw{position:absolute;right:-5px;width:6px;border-radius:0 3px 3px 0;background:linear-gradient(90deg,#15171a,#4a4e56);border:0;padding:0;cursor:pointer}
+.hw:hover{background:linear-gradient(90deg,#15171a,#6a707b)}
+.hw span{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--ink2);white-space:nowrap;font-family:var(--mono);opacity:.85;pointer-events:none}
+.hw.pwr{top:-5px;right:60px;height:6px;width:34px;border-radius:3px 3px 0 0;background:linear-gradient(0deg,#15171a,#4a4e56)}
+.hw.pwr span{left:50%;top:-16px;transform:translateX(-50%)}
+
+/* screen-level tokens per appearance & glass level */
+.screen.dark{--fg:#fff;--fg2:rgba(255,255,255,.62);--fg3:rgba(255,255,255,.38);--sep:rgba(255,255,255,.12);
+  --g1:calc(.16*var(--gk));--g2:calc(.06*var(--gk));--gb:calc(.22*var(--gk));--ghi:calc(.45*var(--gk));--gtint:255,255,255;--shade:0,0,0}
+.screen.light{--fg:#0c0d10;--fg2:rgba(12,13,16,.58);--fg3:rgba(12,13,16,.36);--sep:rgba(12,13,16,.10);
+  --g1:calc(.62*var(--gk));--g2:calc(.38*var(--gk));--gb:calc(.75*var(--gk));--ghi:calc(.95*var(--gk));--gtint:255,255,255;--shade:40,50,80}
+.glass{position:relative;background:linear-gradient(180deg,rgba(var(--gtint),var(--g1)),rgba(var(--gtint),var(--g2)));
+  border:1px solid rgba(var(--gtint),var(--gb));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,var(--ghi)),inset 0 -1px 0 rgba(var(--shade),.12),0 6px 18px rgba(var(--shade),.18)}
+.glass::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(120% 60% at 18% 0%,rgba(255,255,255,calc(.22*var(--gk))),transparent 55%)}
+.glass.solid{background:linear-gradient(180deg,rgba(var(--gtint),calc(var(--g1) + .1)),rgba(var(--gtint),calc(var(--g2) + .1)))}
+
+.stage{position:absolute;inset:0}
+.page{position:absolute;inset:0;overflow:hidden}
+.bgl{position:absolute;inset:0;background-size:cover;background-position:center}
+.bgl.blurbg::after{content:"";position:absolute;inset:0}
+.screen.dark .bgl.blurbg::after{background:linear-gradient(180deg,rgba(0,0,0,.05),rgba(0,0,0,.38))}
+.screen.light .bgl.blurbg::after{background:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,.55))}
+.scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:30px 12px 18px;scrollbar-width:none;touch-action:pan-y}
+.scroll::-webkit-scrollbar{display:none}
+
+/* status bar = topbar.view */
+.sbar{position:absolute;top:0;left:0;right:0;height:24px;z-index:30;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;font-weight:600;letter-spacing:.01em;color:var(--fg);cursor:pointer}
+.sbar .r{display:flex;align-items:center;gap:6px}
+.sbar svg{width:13px;height:13px}
+.batt{display:inline-flex;align-items:center;gap:3px}
+.batt i{display:block;width:20px;height:10px;border:1.4px solid currentColor;border-radius:3px;padding:1px;position:relative}
+.batt i::after{content:"";position:absolute;right:-3.5px;top:2.5px;width:2px;height:3px;background:currentColor;border-radius:0 1px 1px 0}
+.batt b{display:block;height:100%;background:currentColor;border-radius:1px}
+
+/* nav header */
+.nav{display:flex;align-items:center;gap:10px;margin:2px 0 12px}
+.nav h1{font-size:calc(24px*var(--ts));font-weight:700;letter-spacing:-.02em;margin:0;line-height:1.1;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;flex:none;cursor:pointer;color:var(--fg)}
+.ib svg{width:18px;height:18px}
+svg.i{fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+svg.f{fill:currentColor;stroke:none}
+
+/* lists */
+.list{display:flex;flex-direction:column;gap:7px}
+.row{display:flex;align-items:center;gap:11px;min-height:48px;padding:7px 10px;border-radius:16px;cursor:pointer}
+.row:active{transform:scale(.985)}
+.row .tx{flex:1;min-width:0}
+.row .t1{font-size:1em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t2{font-size:.8em;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.row .ch{width:15px;height:15px;color:var(--fg3);flex:none}
+.row .num{width:20px;text-align:center;color:var(--fg2);font-size:.85em;font-variant-numeric:tabular-nums;flex:none}
+.row .dur{color:var(--fg2);font-size:.8em;font-variant-numeric:tabular-nums;flex:none}
+.row.now .t1{color:var(--acc)}
+.ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none;color:#fff}
+.ico svg{width:19px;height:19px}
+.th{width:44px;height:44px;border-radius:9px;background-size:cover;flex:none;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.sec{font-size:.72em;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:12px 6px 2px}
+
+/* launcher */
+.home .hero{margin:6px 4px 14px}
+.home .hero .d{font-size:.8em;color:var(--fg2);font-weight:600;letter-spacing:.02em}
+.home .hero .c{font-size:calc(40px*var(--ts));font-weight:700;letter-spacing:-.04em;line-height:1}
+.home .row{min-height:58px;border-radius:20px}
+.home .ico{width:40px;height:40px;border-radius:12px}
+.home .t1{font-size:1.1em}
+
+/* segmented label strip (category/songlist labels) */
+.seg{display:flex;padding:3px;border-radius:999px;margin:0 0 12px}
+.seg button{flex:1;font:inherit;font-size:.86em;font-weight:600;color:var(--fg2);background:none;border:0;padding:7px 0;border-radius:999px;cursor:pointer;transition:background .2s,color .2s}
+.seg button.on{color:var(--fg);background:rgba(var(--gtint),calc(.28*var(--gk) + .06))}
+.screen.light .seg button.on{background:rgba(255,255,255,.95);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.pager{display:flex;width:200%;transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+.pager>div{width:50%;padding:0 1px}
+
+/* A-Z scrubber */
+.az{position:absolute;right:3px;top:84px;bottom:20px;display:flex;flex-direction:column;justify-content:space-between;align-items:center;font-size:9px;font-weight:700;color:var(--acc);z-index:5;padding:4px 2px;border-radius:10px;cursor:pointer}
+
+/* album header */
+.ahead{display:flex;gap:12px;align-items:flex-end;margin-bottom:12px}
+.ahead .art{width:118px;height:118px;border-radius:14px;background-size:cover;box-shadow:0 10px 24px rgba(0,0,0,.35);flex:none}
+.ahead .t{font-size:1.15em;font-weight:700;letter-spacing:-.01em;line-height:1.15}
+.ahead .a{color:var(--acc);font-weight:600;font-size:.9em;margin-top:3px}
+.ahead .m{color:var(--fg2);font-size:.75em;margin-top:4px}
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.pill{display:flex;align-items:center;justify-content:center;gap:6px;height:40px;border-radius:999px;font-weight:600;font-size:.9em;cursor:pointer;color:var(--acc)}
+.pill svg{width:15px;height:15px}
+
+/* player = playing_plane.view */
+.pl{position:absolute;inset:0;padding:26px 16px 0}
+.pl .top{display:flex;justify-content:space-between;align-items:center;height:36px}
+.pl .src{font-size:.72em;color:var(--fg2);text-align:center;line-height:1.25}
+.pl .src b{display:block;color:var(--fg);font-size:1.05em}
+.cov{width:236px;height:236px;margin:8px auto 0;border-radius:18px;background-size:cover;box-shadow:0 18px 40px rgba(0,0,0,.45);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s;cursor:pointer;position:relative}
+.cov.paused{transform:scale(.88);box-shadow:0 8px 20px rgba(0,0,0,.3)}
+.meta{display:flex;align-items:center;gap:8px;margin-top:14px}
+.meta .tx{flex:1;min-width:0}
+.meta .t1{font-size:1.15em;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.01em}
+.meta .t2{color:var(--fg2);font-size:.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.heart{width:34px;height:34px;display:grid;place-items:center;cursor:pointer;color:var(--fg2)}
+.heart.on{color:#ff375f}
+.heart svg{width:21px;height:21px}
+.bar{margin-top:10px;height:22px;position:relative;cursor:pointer}
+.bar .tr{position:absolute;left:0;right:0;top:9px;height:4px;border-radius:2px;background:rgba(var(--gtint),.22)}
+.screen.light .bar .tr{background:rgba(0,0,0,.12)}
+.bar .fi{position:absolute;left:0;top:9px;height:4px;border-radius:2px;background:var(--fg)}
+.times{display:flex;justify-content:space-between;font-size:.7em;color:var(--fg2);font-variant-numeric:tabular-nums;margin-top:-2px}
+.fmt{font-size:.66em;font-weight:700;letter-spacing:.06em;color:var(--fg2);padding:2px 7px;border-radius:6px;border:1px solid var(--sep)}
+.ctrl{display:flex;align-items:center;justify-content:space-between;margin:8px 4px 0;height:62px;border-radius:999px;padding:0 10px}
+.ctrl .b{width:44px;height:44px;display:grid;place-items:center;cursor:pointer;color:var(--fg)}
+.ctrl .b svg{width:22px;height:22px}
+.ctrl .b.sm svg{width:19px;height:19px;color:var(--fg2)}
+.ctrl .pp{width:52px;height:52px;border-radius:50%;background:var(--fg);color:var(--inv,#000)}
+.screen.dark .ctrl .pp{--inv:#000}.screen.light .ctrl .pp{--inv:#fff}
+.ctrl .pp svg{width:24px;height:24px;color:var(--inv)}
+.lrc{position:absolute;left:16px;right:16px;top:70px;height:236px;overflow:hidden;-webkit-mask-image:linear-gradient(transparent,#000 18%,#000 82%,transparent);mask-image:linear-gradient(transparent,#000 18%,#000 82%,transparent);cursor:pointer}
+.lrc .in{transition:transform .5s cubic-bezier(.2,.8,.2,1)}
+.lrc p{margin:0;padding:6px 2px;font-size:1.15em;font-weight:700;color:var(--fg3);line-height:1.3;transition:color .3s}
+.lrc p.on{color:var(--lc,var(--fg))}
+
+/* sheet = play_menu.dlg */
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.35);z-index:40}
+.sheet{position:absolute;left:8px;right:8px;bottom:8px;border-radius:24px;padding:8px;z-index:41}
+.screen.dark .sheet{background:linear-gradient(180deg,rgba(44,44,50,.92),rgba(28,28,32,.94))}
+.screen.light .sheet{background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(244,245,248,.95))}
+.sheet .row{min-height:44px}
+.sheet .grab{width:36px;height:4px;border-radius:2px;background:var(--fg3);margin:2px auto 8px}
+
+/* control center = pull_down_menu.view */
+.cc{position:absolute;inset:0;z-index:50;padding:30px 12px 12px;display:flex;flex-direction:column;gap:8px}
+.cc .bgl{z-index:-1}
+.cc .bgl::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.38)}
+.screen.light .cc .bgl::after{background:rgba(255,255,255,.4)}
+.ccg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.tile{height:66px;border-radius:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-size:.62em;font-weight:600;color:var(--fg);text-align:center;line-height:1.1}
+.tile svg{width:20px;height:20px}
+.tile .v{font-size:1.25em;font-weight:700}
+.tile.on{background:var(--acc);border-color:transparent;color:#fff;box-shadow:0 6px 16px rgba(0,0,0,.25)}
+.tile.on::before{display:none}
+.ccnp{display:flex;align-items:center;gap:10px;padding:10px;border-radius:22px}
+.ccnp .th{width:46px;height:46px}
+.ccnp .tx{flex:1;min-width:0}
+.ccnp .b{width:34px;height:34px;display:grid;place-items:center;cursor:pointer}
+.ccnp .b svg{width:20px;height:20px}
+.slider{height:44px;border-radius:999px;position:relative;overflow:hidden;cursor:pointer;display:flex;align-items:center;padding:0 14px;gap:10px}
+.slider .lvl{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.9);border-radius:999px 0 0 999px}
+.slider svg{width:18px;height:18px;position:relative;z-index:1;color:#111;mix-blend-mode:normal}
+.slider .val{position:relative;z-index:1;margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;font-size:.85em}
+.ccfoot{display:flex;justify-content:space-between;font-size:.7em;color:var(--fg2);padding:0 4px;margin-top:auto}
+
+/* volume.dlg */
+.hud{position:absolute;right:10px;top:120px;width:44px;height:170px;border-radius:22px;z-index:60;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;overflow:hidden;transition:opacity .25s,transform .25s;pointer-events:none}
+.hud .lv{position:absolute;left:0;right:0;bottom:0;background:#fff;transition:height .15s}
+.hud svg{position:relative;width:18px;height:18px;margin-bottom:10px;color:#111}
+.hud .n{position:absolute;top:10px;font-size:.75em;font-weight:700;color:var(--fg)}
+.hud.off{opacity:0;transform:translateX(16px)}
+
+.offscr{position:absolute;inset:0;background:#000;z-index:90;display:none}
+.toast{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);padding:9px 14px;border-radius:999px;font-size:.78em;font-weight:600;z-index:70;white-space:nowrap;transition:opacity .25s}
+.toast.off{opacity:0}
+.mark{position:absolute;right:8px;top:8px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:800;color:#000;background:#ffd60a}
+.badge{font-size:.62em;font-weight:700;color:var(--acc);border:1px solid currentColor;border-radius:5px;padding:1px 5px;margin-left:6px;vertical-align:1px}
+
+@media (prefers-reduced-motion:reduce){.pager,.cov,.lrc .in,.hud{transition:none}}
+</style>
+
+<header class="top">
+  <h1>R3 Glass</h1>
+  <p>Prototipo navegable de la interfaz para tu HiBy R3 II 2025: a tamaño real de pantalla (320×480), táctil y con los botones laterales funcionando.</p>
+</header>
+
+<div class="wrap">
+  <div class="devcol">
+    <div class="devbox" id="devbox">
+      <div class="device" id="device">
+        <button class="hw" style="top:40px;height:34px" id="hwPwr" aria-label="Encendido"><span>power</span></button>
+        <button class="hw" style="top:92px;height:46px" id="hwVu" aria-label="Subir volumen"><span>vol +</span></button>
+        <button class="hw" style="top:146px;height:46px" id="hwVd" aria-label="Bajar volumen"><span>vol −</span></button>
+        <button class="hw" style="top:222px;height:30px" id="hwPrev" aria-label="Anterior"><span>ant.</span></button>
+        <button class="hw" style="top:258px;height:38px" id="hwPlay" aria-label="Reproducir o pausar"><span>play</span></button>
+        <button class="hw" style="top:302px;height:30px" id="hwNext" aria-label="Siguiente"><span>sig.</span></button>
+        <div class="screen dark" id="scr">
+          <div class="stage" id="stage"></div>
+          <div class="sbar" id="sbar"></div>
+          <div id="layer"></div>
+          <div class="hud glass off" id="hud"><div class="lv" id="hudlv"></div><div class="n" id="hudn"></div><svg class="i" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/></svg></div>
+          <div class="toast glass solid off" id="toast"></div>
+          <div class="offscr" id="off"></div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">Toca para navegar. Desliza desde arriba (o toca la barra de estado) para el centro de control, desde el borde izquierdo para volver y hacia abajo en el reproductor para cerrarlo. Toca la carátula para ver la letra.</div>
+  </div>
+
+  <div class="rail">
+    <section class="card" aria-labelledby="h-jump">
+      <h2 id="h-jump">Pantallas</h2>
+      <div class="chips" id="jump"></div>
+    </section>
+
+    <section class="card" aria-live="polite">
+      <h2>Esta pantalla en el firmware</h2>
+      <h3 id="nT"></h3>
+      <p id="nP"></p>
+      <div class="map" id="nM"></div>
+    </section>
+
+    <section class="card">
+      <h2>Tu tema</h2>
+      <p style="color:var(--ink2);font-size:13px">Claro y oscuro se cambian en el aparato (Ajustes → Tema). El acento, el fondo y la intensidad del cristal se eligen al generar el firmware: el script crea los PNG del tema con esos valores.</p>
+      <div class="ctl">
+        <label>Apariencia</label><div class="chips" id="cMode"></div>
+        <label>Acento</label><div class="sw" id="cAcc"></div>
+        <label>Fondo</label><div class="chips" id="cWall"></div>
+        <label>Cristal</label><div class="chips" id="cGlass"></div>
+        <label>Texto</label><div class="chips" id="cText"></div>
+        <label>Transiciones</label><div class="chips" id="cAnim"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Fluidez: cómo se consigue</h2>
+      <ul>
+        <li><span class="tag ok">SÍ</span>El cristal no se calcula en vivo. El fondo del reproductor es la carátula desenfocada que el propio <code>hiby_player</code> genera una vez y guarda en caché. Los paneles son PNG con transparencia dibujados encima.</li>
+        <li><span class="tag ok">SÍ</span>En el inicio y los menús el fondo es fijo, así que el brillo y el desenfoque del cristal se prerenderizan en la propia imagen. Se ve como cristal real y pintarlo cuesta lo mismo que una imagen normal.</li>
+        <li><span class="tag ok">SÍ</span>Cada PNG se genera al tamaño exacto en píxeles: nada se escala al pintar. Como máximo dos capas transparentes por punto de pantalla.</li>
+        <li><span class="tag pc">PC</span>Carátulas a 320 px con <code>hibymod_covers.py</code>: menos memoria, decodificación más rápida y sin tirones al pasar de canción.</li>
+        <li><span class="tag pc">PC</span>Listas "recomendadas" (Redescubre, Hi-Res…) como listas .m3u inteligentes generadas en el PC; el aparato las muestra en Mis listas.</li>
+        <li><span class="tag no">NO</span>Refracción o desenfoque de lo que se mueve por debajo (listas que se deslizan bajo el cristal): sin GPU no es posible a buena velocidad, así que esas barras usan un tinte más opaco.</li>
+        <li><span class="tag no">NO</span>Animaciones nuevas: las transiciones las hace el motor del reproductor. Puedo hacer que cada pantalla sea barata de pintar, pero no añadir movimientos que el binario no tenga. Usa el botón "Como en el aparato" de arriba para verlo sin animaciones.</li>
+      </ul>
+    </section>
+  </div>
+</div>
+
+<script>
+(()=>{
+/* ---------------- icons ---------------- */
+const P={
+ chev:'M9 6l6 6-6 6', back:'M15 5l-7 7 7 7', down:'M6 9l6 6 6-6',
+ play:'M8 5.5v13l11-6.5z', pause:'M7 5h3.6v14H7zM13.4 5H17v14h-3.6z',
+ next:'M4 6.5v11l7.5-5.5zM12 6.5v11l7.5-5.5zM20 6.5v11', prev:'M20 6.5v11l-7.5-5.5zM12 6.5v11L4.5 12zM4 6.5v11',
+ shuf:'M4 7h3c4 0 6 10 10 10h3M4 17h3c1.6 0 2.8-1.6 3.9-3.6M14 9.6C15 8 16 7 17 7h3M17.5 4.5 20 7l-2.5 2.5M17.5 14.5 20 17l-2.5 2.5',
+ rep:'M5 11V9a3 3 0 013-3h11M16 3l3 3-3 3M19 13v2a3 3 0 01-3 3H5M8 21l-3-3 3-3',
+ rep1:'M5 11V9a3 3 0 013-3h11M16 3l3 3-3 3M19 13v2a3 3 0 01-3 3H5M8 21l-3-3 3-3M11.5 10.5l1.5-1v5',
+ seq:'M4 7h13M4 12h13M4 17h9M17 14l3 3-3 3',
+ heart:'M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z',
+ more:'M6 12h.01M12 12h.01M18 12h.01',
+ bt:'M7 7l10 10-5 4V3l5 4L7 17', wifi:'M2.5 9a14 14 0 0119 0M5.5 12.5a9.5 9.5 0 0113 0M8.5 16a5 5 0 017 0M12 19.5h.01',
+ sun:'M12 8a4 4 0 100 8 4 4 0 000-8zM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+ vol:'M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11',
+ gear:'M12 8.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7zM12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4 5.3 5.3',
+ note:'M9 18V6l10-2v12M9 18a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM19 16a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z',
+ grid:'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z', person:'M12 12a4 4 0 100-8 4 4 0 000 8zM4.5 20a7.5 7.5 0 0115 0',
+ folder:'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z', clock:'M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2',
+ spark:'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
+ flame:'M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.6 2.8-5.6 4-8.8 3.2 1.9 4.2 4.8 3.6 7 1-.4 1.8-1.4 2.2-2.6 1.5 1.4 3.2 3.6 3.2 5.1C18.5 18.6 15.9 21 12 21z',
+ list:'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01', tag:'M3 12V4h8l10 10-8 8zM7.5 7.5h.01',
+ users:'M9 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM2.5 20a6.5 6.5 0 0113 0M16 4.5a3.5 3.5 0 010 6.5M18 14a6 6 0 013.5 6',
+ eq:'M6 4v16M12 4v16M18 4v16M4 14h4M10 8h4M16 16h4', lock:'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 017 0v3',
+ usb:'M12 2v15M9.5 5L12 2l2.5 3M12 14l-4.5-2.5V8.5M12 11.5l4.5-2.5V6.5M12 17a2.2 2.2 0 100 4.4 2.2 2.2 0 000-4.4z',
+ moon:'M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z', cast:'M3 17a4 4 0 014 4M3 13a8 8 0 018 8M3 9.5V6a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2h-5',
+ air:'M6 17H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v9a2 2 0 01-2 2h-1M8 21l4-5 4 5z', link:'M10 14a4.5 4.5 0 006.4 0l3-3a4.5 4.5 0 00-6.4-6.4L11.5 6M14 10a4.5 4.5 0 00-6.4 0l-3 3a4.5 4.5 0 006.4 6.4l1.5-1.5',
+ bal:'M12 4v16M5 8h14M5 8l-2.5 6a3 3 0 005 0zM19 8l-2.5 6a3 3 0 005 0z', fade:'M3 18c5 0 6-12 9-12s4 12 9 12',
+ filt:'M3 6h18l-7 8v5l-4 2v-7z', gap:'M4 12h5M15 12h5M9 8v8M15 8v8', line:'M4 12h9M13 8l4 4-4 4M20 5v14',
+ dac:'M5 4h14v16H5zM9 8h6M12 12a2.5 2.5 0 100 5 2.5 2.5 0 000-5z', book:'M4 5a2 2 0 012-2h13v16H6a2 2 0 00-2 2zM4 19V5M8 7h7',
+ radio:'M4 9h16v11H4zM7 9l10-5M8 15a2 2 0 100-4 2 2 0 000 4zM14 13h3M14 16h3', globe:'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18',
+ paint:'M12 3a9 9 0 100 18c1 0 1.5-.7 1.5-1.5 0-.5-.2-.8-.5-1.1-.3-.3-.5-.7-.5-1.1 0-.8.7-1.5 1.5-1.5H16a5 5 0 005-5c0-4.4-4-7.8-9-7.8zM7.5 12h.01M10 7.5h.01M15 7.5h.01',
+ text:'M4 7V5h16v2M12 5v14M9 19h6', disp:'M4 5h16v11H4zM9 20h6M12 16v4', info:'M12 3a9 9 0 100 18 9 9 0 000-18zM12 11v5M12 7.8h.01',
+ db:'M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+ pulse:'M3 12h4l2.5-6 4 12 2.5-6H21', down2:'M12 4v12M7 11l5 5 5-5M5 20h14', reset:'M4 12a8 8 0 108-8M4 4v5h5',
+ plus:'M12 5v14M5 12h14', trash:'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13', disc:'M12 3a9 9 0 100 18 9 9 0 000-18zM12 10a2 2 0 100 4 2 2 0 000-4z',
+ hp:'M4 15v-3a8 8 0 0116 0v3M4 15h3v5H5a1 1 0 01-1-1zM20 15h-3v5h2a1 1 0 001-1z', check:'M5 12.5l4.5 4.5L19 7.5', lang:'M4 5h9M8.5 3v2M6 5c1 4 4 7 7 8M11 5c-1 4-4 7-7 8M13 21l4-10 4 10M14.5 17.5h5'
+};
+const FILLED=new Set(['play','pause']);
+const ic=(n,cls='')=>`<svg class="${FILLED.has(n)?'f':'i'} ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[n]}"/></svg>`;
+
+/* ---------------- sample library (examples) ---------------- */
+const AL=[
+ {t:'Mareas de Neón',a:'Lúa Vidal',y:2024,g:'Electrónica',fmt:'FLAC',q:'24 bit · 96 kHz',pal:['#0b1d4f','#ff4fa3','#36e2ff'],st:'waves',added:'hace 2 días',
+  tr:['Faro','Mareas de neón','Ciudad de sal','Ola lenta','Noches de agosto','Cristal','Puerto','Ultravioleta','Volver al mar','Bajamar']},
+ {t:'Atlas Nocturno',a:'Sierra Bloom',y:2025,g:'Ambient',fmt:'DSD64',q:'1 bit · 2,8 MHz',pal:['#140a2e','#7b5cff','#ffd36b'],st:'orbit',added:'hace 5 días',
+  tr:['Constelación','Atlas','Mapa de estrellas','Hemisferio sur','Polaris','Nadir','Últimas luces']},
+ {t:'Glasshouse Tapes',a:'The Quiet Engines',y:2023,g:'Indie',fmt:'FLAC',q:'16 bit · 44,1 kHz',pal:['#1f3b2d','#b8e986','#f2f2f2'],st:'grid',added:'hace 2 semanas',
+  tr:['Greenhouse','Quiet Engine','Static Bloom','Window Light','Ferns','Low Hum','Tape Two','Morning Ritual']},
+ {t:'Paper Satellites',a:'Mira Okafor',y:2022,g:'Soul',fmt:'ALAC',q:'24 bit · 48 kHz',pal:['#2b2d6e','#ff7a45','#ffd0a8'],st:'circles',added:'hace 3 semanas',
+  tr:['Paper Satellites','Gold Thread','Radio Silence','Lagos Blue','Slow Burn','Halo','Home Again']},
+ {t:'Hierro y Sal',a:'Los Faros Rotos',y:2021,g:'Rock',fmt:'FLAC',q:'24 bit · 192 kHz',pal:['#1c1c1e','#d94b2b','#e9e4da'],st:'stripes',added:'hace 1 mes',
+  tr:['Hierro','Costa da Morte','Sal en la herida','Galerna','Rompeolas','Naufragio lento','Hierro y sal']},
+ {t:'Slow Orbit',a:'Kenji Arata Trio',y:2020,g:'Jazz',fmt:'FLAC',q:'24 bit · 88,2 kHz',pal:['#0f3d3e','#5fd3bc','#f7f3e3'],st:'orbit',added:'hace 2 meses',
+  tr:['Slow Orbit','Blue Kettle','Kanazawa Rain','Brushes','Late Train','Moonlit Standard']},
+ {t:'Verano Infinito',a:'Cala Norte',y:2024,g:'Pop',fmt:'MP3',q:'320 kbps',pal:['#ff5e62','#ffcc33','#2ec5ff'],st:'sun',added:'hace 3 meses',
+  tr:['Verano infinito','Toalla y arena','Chiringuito','Última ola','Septiembre','Agua salada']},
+ {t:'Blue Hour Sessions',a:'Nadia Ferro',y:2019,g:'Jazz',fmt:'FLAC',q:'24 bit · 96 kHz',pal:['#0a2342','#2ca58d','#84bc9c'],st:'waves',added:'hace 6 meses',
+  tr:['Blue Hour','Velvet','Corner Café','Midnight Tram','Rain on Glass','Last Call']}
+];
+let seed=7;const rnd=()=>((seed=(seed*16807)%2147483647)/2147483647);
+AL.forEach((a,i)=>{a.i=i;a.d=a.tr.map(()=>Math.round(150+rnd()*170));a.plays=a.tr.map(()=>Math.round(rnd()*60));});
+const fmtT=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const LYR=['Se apaga la ciudad detrás del cristal','y el mar dibuja líneas en la arena','tú cuentas olas, yo cuento faros','que nunca vuelven a encenderse igual','','Mareas de neón en la ventana','luces que tiemblan sobre el agua','si me buscas, sigue la corriente','estaré donde rompe la luz','','Y cuando llegue agosto','volveremos al puerto','con la piel llena de sal','y el ruido del mar por dentro'];
+
+/* ---------------- canvas art ---------------- */
+function cover(a){
+  const c=document.createElement('canvas');c.width=c.height=320;const x=c.getContext('2d');const [p0,p1,p2]=a.pal;
+  const g=x.createLinearGradient(0,0,320,320);g.addColorStop(0,p0);g.addColorStop(1,shade(p0,-.35));x.fillStyle=g;x.fillRect(0,0,320,320);
+  seed=a.i*97+13;
+  if(a.st==='waves'){for(let k=0;k<7;k++){x.beginPath();const y0=90+k*26;x.moveTo(0,y0);for(let X=0;X<=320;X+=8)x.lineTo(X,y0+Math.sin(X/38+k)*14*(1+k*.12));x.lineWidth=5-k*.4;x.strokeStyle=k%2?p1:p2;x.globalAlpha=.85-k*.07;x.stroke();}}
+  if(a.st==='orbit'){x.globalAlpha=.7;for(let k=1;k<7;k++){x.beginPath();x.arc(170,170,k*24,0,7);x.strokeStyle=p1;x.lineWidth=1.5;x.stroke();}x.globalAlpha=1;x.beginPath();x.arc(170,170,30,0,7);const rg=x.createRadialGradient(160,160,4,170,170,30);rg.addColorStop(0,'#fff');rg.addColorStop(1,p2);x.fillStyle=rg;x.fill();x.beginPath();x.arc(170+96*Math.cos(a.i),170+96*Math.sin(a.i),9,0,7);x.fillStyle=p1;x.fill();}
+  if(a.st==='grid'){for(let r=0;r<8;r++)for(let q=0;q<8;q++){if(rnd()<.42){x.fillStyle=rnd()<.5?p1:p2;x.globalAlpha=.25+rnd()*.7;x.fillRect(24+q*34,24+r*34,28,28);}}}
+  if(a.st==='circles'){x.globalCompositeOperation='screen';[[110,140,110,p1],[200,180,100,p2],[160,90,70,'#ffffff']].forEach(([X,Y,R,C])=>{x.globalAlpha=.75;x.beginPath();x.arc(X,Y,R,0,7);x.fillStyle=C;x.fill();});x.globalCompositeOperation='source-over';}
+  if(a.st==='stripes'){x.save();x.translate(160,160);x.rotate(-.5);for(let k=-8;k<8;k++){x.fillStyle=k%3===0?p1:p2;x.globalAlpha=k%3===0?.95:.18;x.fillRect(k*30,-260,k%3===0?18:6,520);}x.restore();}
+  if(a.st==='sun'){const s=x.createLinearGradient(0,0,0,320);s.addColorStop(0,p0);s.addColorStop(.6,p1);s.addColorStop(1,p2);x.fillStyle=s;x.fillRect(0,0,320,320);x.globalAlpha=1;x.beginPath();x.arc(160,190,70,0,7);x.fillStyle='#fff6d5';x.fill();x.fillStyle=p2;for(let k=0;k<6;k++)x.fillRect(0,206+k*20,320,4+k*2.5);}
+  x.globalAlpha=1;const v=x.createRadialGradient(160,160,120,160,160,240);v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(0,0,0,.35)');x.fillStyle=v;x.fillRect(0,0,320,320);
+  x.fillStyle='rgba(255,255,255,.88)';x.font='700 15px system-ui,sans-serif';x.fillText(a.a.toUpperCase(),20,292);
+  a.cov=c.toDataURL('image/jpeg',.88);
+  // blurred backdrop: tiny downscale + smooth upscale (the same cheap trick the device cache uses)
+  const t=document.createElement('canvas');t.width=8;t.height=12;const tx=t.getContext('2d');tx.filter='saturate(1.5) brightness(1.15)';tx.drawImage(c,0,0,320,320,0,0,8,12);
+  const b=document.createElement('canvas');b.width=160;b.height=240;const bx=b.getContext('2d');bx.imageSmoothingEnabled=true;bx.imageSmoothingQuality='high';bx.drawImage(t,0,0,160,240);
+  a.blur=b.toDataURL('image/jpeg',.9);
+}
+function shade(h,f){const n=parseInt(h.slice(1),16);let r=n>>16,g=n>>8&255,b=n&255;const t=f<0?0:255,p=Math.abs(f);r=Math.round((t-r)*p+r);g=Math.round((t-g)*p+g);b=Math.round((t-b)*p+b);return `rgb(${r},${g},${b})`;}
+const WALLS={
+ aurora:{dark:['#05070f',[['#1b3cff',.55,.25,.6],['#00c2a8',.45,.8,.45],['#8a2be2',.5,.35,.85]]],light:['#e9eefb',[['#8fb3ff',.6,.2,.6],['#9ff0e0',.55,.85,.4],['#e2c4ff',.6,.3,.9]]]},
+ oceano:{dark:['#03121c',[['#0077b6',.6,.2,.3],['#00b4d8',.4,.85,.7],['#023e8a',.6,.5,.95]]],light:['#e6f4f8',[['#90e0ef',.7,.2,.3],['#bde0fe',.6,.85,.7],['#a2d2ff',.6,.4,.95]]]},
+ brasa:{dark:['#120806',[['#ff5f1f',.5,.85,.2],['#c9184a',.5,.2,.6],['#ffb703',.35,.7,.95]]],light:['#fbefe9',[['#ffc8a2',.7,.85,.2],['#ffb3c1',.6,.2,.6],['#ffe8a3',.6,.7,.95]]]},
+ grafito:{dark:['#0c0d10',[['#3a3f4b',.6,.3,.2],['#262a33',.6,.8,.8],['#4b5160',.4,.5,.55]]],light:['#eceef2',[['#d6dae2',.7,.3,.2],['#f7f8fa',.7,.8,.8],['#c9ced8',.5,.5,.55]]]}
+};
+const wallCache={};
+function wall(name,mode){const k=name+mode;if(wallCache[k])return wallCache[k];const [base,blobs]=WALLS[name][mode];
+  const c=document.createElement('canvas');c.width=160;c.height=240;const x=c.getContext('2d');x.fillStyle=base;x.fillRect(0,0,160,240);
+  blobs.forEach(([col,a,cx,cy])=>{const g=x.createRadialGradient(cx*160,cy*240,0,cx*160,cy*240,150);g.addColorStop(0,hexA(col,a));g.addColorStop(1,hexA(col,0));x.fillStyle=g;x.fillRect(0,0,160,240);});
+  return wallCache[k]=c.toDataURL('image/jpeg',.92);}
+function hexA(h,a){const n=parseInt(h.slice(1),16);return `rgba(${n>>16},${n>>8&255},${n&255},${a})`;}
+
+/* ---------------- state ---------------- */
+const S={stack:[{s:'home'}],cur:{a:0,t:1},playing:true,pos:71,vol:42,fav:new Set(['0-1','3-0']),mode:'sec',musicTab:0,lyrics:false,
+  tiles:{bt:true,wifi:false,dlna:false,air:false,link:false,gain:'Alta',mseb:false,line:false,usb:'Almacen.',bal:'0',gap:true,fade:false,filt:'Rápido',sleep:'Off'},
+  bright:62,anim:true,th:{mode:'dark',acc:'#0a84ff',wall:'aurora',glass:'media',text:'normal'},updMode:'Manual'};
+const ACC=[['#0a84ff','Azul'],['#30d158','Verde'],['#ff9f0a','Ámbar'],['#ff375f','Rosa'],['#bf5af2','Violeta'],['#64d2ff','Cian']];
+const GL={sutil:.6,media:1,intensa:1.45};
+const scr=document.getElementById('scr'),stage=document.getElementById('stage'),layer=document.getElementById('layer');
+const curA=()=>AL[S.cur.a];
+
+/* ---------------- screens ---------------- */
+const rowNav=(icon,col,t1,t2,act)=>`<div class="row glass" data-act="${act}"><div class="ico" style="background:${col}">${ic(icon)}</div><div class="tx"><div class="t1">${t1}</div>${t2?`<div class="t2">${t2}</div>`:''}</div>${ic('chev','ch')}</div>`;
+const header=(t,act)=>`<div class="nav"><div class="ib glass" data-act="back" role="button" aria-label="Volver">${ic('back')}</div><h1>${t}</h1>${act||''}</div>`;
+const albRow=(a,sub)=>`<div class="row glass" data-act="album:${a.i}"><div class="th" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.t}</div><div class="t2">${sub||a.a}</div></div>${ic('chev','ch')}</div>`;
+const trkRow=(a,t,showArt,extra)=>{const now=S.cur.a===a.i&&S.cur.t===t;return `<div class="row ${now?'now ':''}glass" data-act="play:${a.i}:${t}">${showArt?`<div class="th" style="background-image:url(${a.cov});width:40px;height:40px"></div>`:`<div class="num">${now?(S.playing?'♪':'❚❚'):t+1}</div>`}<div class="tx"><div class="t1">${a.tr[t]}</div><div class="t2">${extra||(showArt?a.a:a.fmt+' · '+a.q)}</div></div><div class="dur">${fmtT(a.d[t])}</div></div>`;};
+
+const SCREENS={
+ home:{bg:'wall',note:['Inicio','Pantalla de aplicaciones. Los 6 accesos ya existen; se reordenan como lista vertical, con un reloj grande arriba. El fondo y los paneles de cristal van prerenderizados en una sola imagen, así que dibujar esta pantalla no cuesta más que la original.','hiby_launcher_apps.view · launcher_apps_vg_player / stream_media / wireless / ebook / dac / sysset · topbar.view'],
+  html:()=>`<div class="home"><div class="hero"><div class="d">lunes, 9 de noviembre</div><div class="c">10:42</div></div><div class="list">
+   ${rowNav('note','linear-gradient(135deg,#ff5e62,#ff2d55)','Música','Biblioteca y listas','go:music')}
+   ${rowNav('globe','linear-gradient(135deg,#0a84ff,#5e5ce6)','Streaming','Tidal · Qobuz · Radio','toast:Streaming: misma pantalla, nuevo estilo')}
+   ${rowNav('cast','linear-gradient(135deg,#30d158,#0fb5ae)','Inalámbrico','Bluetooth · DLNA · AirPlay','toast:Inalámbrico: misma pantalla, nuevo estilo')}
+   ${rowNav('book','linear-gradient(135deg,#ff9f0a,#ff6b00)','Libros','Lector de eBooks','toast:Libros: misma pantalla, nuevo estilo')}
+   ${rowNav('dac','linear-gradient(135deg,#8e8e93,#48484a)','DAC USB','Usar como DAC del ordenador','toast:DAC USB: misma pantalla, nuevo estilo')}
+   ${rowNav('gear','linear-gradient(135deg,#636366,#3a3a3c)','Ajustes','','go:settings')}
+  </div></div>`},
+ music:{bg:'wall',note:['Música','La biblioteca y las listas son dos páginas que el firmware ya permite deslizar, con su barra de pestañas. Solo cambian posiciones, iconos y fondos. "Añadidas recientemente" existe en el firmware; aquí pasa a primer plano.','hiby_main_category.view + hiby_main_songlist.view · hiby_category_label / hiby_songlist_label'],
+  html:()=>`${header('Música',`<div class="ib glass" data-act="go:player" aria-label="Ahora suena" role="button">${ic('note')}</div>`)}
+   <div class="seg glass"><button data-act="tab:0" class="${S.musicTab===0?'on':''}">Biblioteca</button><button data-act="tab:1" class="${S.musicTab===1?'on':''}">Listas</button></div>
+   <div style="overflow:hidden"><div class="pager" id="pager" style="transform:translateX(${S.musicTab*-50}%)"><div><div class="list">
+    ${rowNav('note','#ff375f','Todas las canciones',`${AL.reduce((n,a)=>n+a.tr.length,0)} canciones`,'go:songs')}
+    ${rowNav('grid','#ff9f0a','Álbumes',`${AL.length} álbumes`,'go:albums')}
+    ${rowNav('person','#0a84ff','Artistas','','go:artists')}
+    ${rowNav('users','#5e5ce6','Artistas del álbum','','go:artists')}
+    ${rowNav('tag','#30d158','Géneros','','go:genres')}
+    ${rowNav('folder','#8e8e93','Carpetas','Tarjeta SD','go:folders')}
+   </div></div><div><div class="list">
+    ${rowNav('spark','#ff9f0a','Añadidas recientemente',`${AL[0].t} · ${AL[1].t}`,'go:recent')}
+    ${rowNav('heart','#ff375f','Favoritas',`${S.fav.size} canciones`,'go:favs')}
+    ${rowNav('clock','#0a84ff','Recientes','Historial de reproducción','go:history')}
+    ${rowNav('flame','#ff453a','Más escuchadas','Función nativa activada','go:most')}
+    ${rowNav('list','#5e5ce6','Mis listas','4 listas · 3 inteligentes','go:playlists')}
+   </div></div></div></div>`},
+ albums:{bg:'wall',note:['Álbumes','Una lista usa la plantilla de fila del firmware (.listview). Cada fila es un PNG con transparencia y una miniatura de 44 px de la caché de carátulas. Una cuadrícula de portadas no es posible: el componente de lista solo dibuja filas.','vg_listview_album.listview · miniatura de la caché de imágenes (img_table)'],
+  html:()=>`${header('Álbumes')}<div class="list">${AL.slice().sort((x,y)=>x.t.localeCompare(y.t)).map(a=>albRow(a,`${a.a} · ${a.y}`)).join('')}</div>`},
+ album:{bg:'cover',note:['Álbum','Lista de canciones del álbum. El fondo es la carátula desenfocada de la caché. La cabecera grande con botones se hace con la primera fila de la lista; si la plantilla no lo admite, queda como lista normal con miniatura.','vg_listview_album → canciones · img_table.blurred_data'],
+  html:p=>{const a=AL[p];return `${header('')}<div class="ahead"><div class="art" style="background-image:url(${a.cov})"></div><div><div class="t">${a.t}</div><div class="a">${a.a}</div><div class="m">${a.g} · ${a.y}<br>${a.fmt} ${a.q}</div></div></div>
+   <div class="acts"><div class="pill glass" data-act="play:${a.i}:0">${ic('play')}Reproducir</div><div class="pill glass" data-act="play:${a.i}:${Math.floor(a.tr.length/2)}">${ic('shuf')}Aleatorio</div></div>
+   <div class="list">${a.tr.map((_,t)=>trkRow(a,t)).join('')}</div>`}},
+ songs:{bg:'wall',note:['Todas las canciones','Lista completa con el índice A–Z, que el firmware ya tiene (la "#" de la barra de desplazamiento). Con miles de canciones la lista solo pinta las filas visibles; eso lo hace el motor.','vg_listview_all.listview · vg_listview_a_z.view · vg_listview_scrollbar.view'],
+  html:()=>{const all=[];AL.forEach(a=>a.tr.forEach((_,t)=>all.push([a,t])));all.sort((x,y)=>x[0].tr[x[1]].localeCompare(y[0].tr[y[1]]));let last='';
+   return `${header('Canciones')}<div class="az glass">${'#ABCDEFGHIJKLMNÑOPQRSTUVWXYZ'.split('').filter((_,i)=>i%2===0).map(l=>`<span data-act="az:${l}">${l}</span>`).join('')}</div><div class="list" style="padding-right:22px">${all.map(([a,t])=>{const L=a.tr[t][0].toUpperCase();const h=L!==last?`<div class="sec" id="az-${L}">${L}</div>`:'';last=L;return h+trkRow(a,t,true);}).join('')}</div>`}},
+ artists:{bg:'wall',note:['Artistas','Misma plantilla de fila con icono circular. Al tocar un artista se abren sus álbumes.','vg_listview_artist / vg_listview_album_artist / vg_listview_albums_of_an_artist'],
+  html:()=>`${header('Artistas')}<div class="list">${AL.slice().sort((x,y)=>x.a.localeCompare(y.a)).map(a=>`<div class="row glass" data-act="album:${a.i}"><div class="th" style="border-radius:50%;background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.a}</div><div class="t2">1 álbum · ${a.tr.length} canciones</div></div>${ic('chev','ch')}</div>`).join('')}</div>`},
+ genres:{bg:'wall',note:['Géneros','Lista de géneros leída de las etiquetas.','vg_listview_genre / vg_listview_albums_of_a_genre'],
+  html:()=>{const G={};AL.forEach(a=>(G[a.g]=G[a.g]||[]).push(a));const cols=['#ff375f','#0a84ff','#30d158','#ff9f0a','#bf5af2','#64d2ff','#ff453a'];return `${header('Géneros')}<div class="list">${Object.keys(G).sort().map((g,i)=>`<div class="row glass" data-act="album:${G[g][0].i}"><div class="ico" style="background:${cols[i%7]}">${ic('tag')}</div><div class="tx"><div class="t1">${g}</div><div class="t2">${G[g].length} ${G[g].length>1?'álbumes':'álbum'}</div></div>${ic('chev','ch')}</div>`).join('')}</div>`}},
+ folders:{bg:'wall',note:['Carpetas','Explorador de la tarjeta SD.','vg_listview_explorer'],
+  html:()=>`${header('Tarjeta SD')}<div class="list">${['Música','Música/Hi-Res','Podcasts','Audiolibros','hibymod'].map((f,i)=>`<div class="row glass" data-act="${i<2?'go:albums':'toast:Carpeta de ejemplo'}"><div class="ico" style="background:#0a84ff">${ic('folder')}</div><div class="tx"><div class="t1">${f.split('/').pop()}</div><div class="t2">${['248 carpetas','36 carpetas','12 archivos','4 carpetas','logs · boot_history.txt'][i]}</div></div>${ic('chev','ch')}</div>`).join('')}</div>`},
+ recent:{bg:'wall',note:['Añadidas recientemente','Función que ya existe en el firmware: ordena por fecha de alta en la biblioteca. Ahora tiene acceso directo y miniaturas.','vg_listview_recent_add · lg_recent_add_listview · CTIME_TABLE'],
+  html:()=>`${header('Añadidas')}<div class="sec">Esta semana</div><div class="list">${AL.slice(0,2).map(a=>albRow(a,`${a.a} · ${a.added}`)).join('')}</div><div class="sec">Este mes</div><div class="list">${AL.slice(2,5).map(a=>albRow(a,`${a.a} · ${a.added}`)).join('')}</div><div class="sec">Antes</div><div class="list">${AL.slice(5).map(a=>albRow(a,`${a.a} · ${a.added}`)).join('')}</div>`},
+ most:{bg:'wall',note:['Más escuchadas','La función existe (base de datos most_played) y está activada en la configuración de fábrica. Falta confirmar en el aparato desde qué menú se abre; aquí se muestra en Listas.','vg_listview_most_played · lg_most_played_listview · most_played.db'],
+  html:()=>{const all=[];AL.forEach(a=>a.tr.forEach((_,t)=>all.push([a,t,a.plays[t]])));all.sort((x,y)=>y[2]-x[2]);return `${header('Más escuchadas')}<div class="list">${all.slice(0,12).map(([a,t,n])=>trkRow(a,t,true,`${a.a} · ${n} reproducciones`)).join('')}</div>`}},
+ favs:{bg:'wall',note:['Favoritas','Lista de favoritos nativa. El corazón del reproductor la alimenta.','vg_listview_collect · COLLECT_TABLE'],
+  html:()=>`${header('Favoritas')}<div class="list">${[...S.fav].map(k=>{const [a,t]=k.split('-').map(Number);return trkRow(AL[a],t,true);}).join('')||'<p style="color:var(--fg2);text-align:center;margin-top:40px">Toca ♡ en el reproductor para añadir canciones.</p>'}</div>`},
+ history:{bg:'wall',note:['Recientes','Historial nativo de reproducción.','vg_listview_history · HISTORY_TABLE'],
+  html:()=>`${header('Recientes')}<div class="list">${[[0,1],[0,0],[3,2],[5,0],[1,4],[2,2]].map(([a,t])=>trkRow(AL[a],t,true)).join('')}</div>`},
+ playlists:{bg:'wall',note:['Mis listas','Listas .m3u de la tarjeta, nativas. Las marcadas con ✦ las genera el script de PC a partir de tu biblioteca (recomendaciones): el aparato las ve como listas normales, sin parchear nada.','vg_listview_m3u · M3U_TABLE · listas .m3u8 en la SD'],
+  html:()=>`${header('Mis listas',`<div class="ib glass" role="button" aria-label="Nueva lista" data-act="toast:Nueva lista: diálogo nativo">${ic('plus')}</div>`)}
+   <div class="sec">Inteligentes · generadas en el PC</div><div class="list">
+   ${[['Redescubre','Álbumes que no suenan desde hace 6 meses',5],['Joyas Hi-Res','Solo 24 bit y DSD',1],['Mezcla de la semana','Tus más escuchadas + parecidas',3]].map(([n,d,i])=>`<div class="row glass" data-act="album:${i}"><div class="th" style="background-image:url(${AL[i].cov})"></div><div class="tx"><div class="t1">${n}<span class="badge">✦</span></div><div class="t2">${d}</div></div>${ic('chev','ch')}</div>`).join('')}
+   </div><div class="sec">Tuyas</div><div class="list">${[['Viaje en tren',6],['Para leer',7],['Domingo',3],['Gym',4]].map(([n,i])=>`<div class="row glass" data-act="album:${i}"><div class="th" style="background-image:url(${AL[i].cov})"></div><div class="tx"><div class="t1">${n}</div><div class="t2">${12+i*3} canciones</div></div>${ic('chev','ch')}</div>`).join('')}</div>`},
+ player:{bg:'cover',vertical:true,note:['Reproductor','Todos estos elementos existen en el firmware: carátula, título, artista, formato, barra, tiempos, favorito, modo de reproducción, anterior/siguiente y menú ⋯. El fondo es la carátula desenfocada que el reproductor ya guarda en caché, así que el cristal no cuesta nada mientras suena. Al pausar, la carátula se encoge un poco; si el motor no admite esa animación, solo se ve el cambio de estado.','hiby_playing_plane.view · playing_plane_iv_cover / pb / tv_bit_info / iv_collect / iv_play_mode / iv_more / vg_lrc · song_info_vg_bg'],
+  html:()=>{const a=curA(),t=S.cur.t,d=a.d[t];const pm={sec:'seq',rnd:'shuf',all:'rep',one:'rep1'}[S.mode];
+   return `<div class="pl"><div class="top"><div class="ib glass" data-act="back" role="button" aria-label="Cerrar">${ic('down')}</div><div class="src">Reproduciendo de<b>${a.t}</b></div><div class="ib glass" data-act="menu" role="button" aria-label="Más opciones">${ic('more')}</div></div>
+   ${S.lyrics?`<div class="lrc" data-act="lyrics"><div class="in" id="lrcin">${LYR.map((l,i)=>`<p data-i="${i}">${l||'&nbsp;'}</p>`).join('')}</div></div><div style="height:244px"></div>`:`<div class="cov ${S.playing?'':'paused'}" data-act="lyrics" style="background-image:url(${a.cov})"></div>`}
+   <div class="meta"><div class="tx"><div class="t1">${a.tr[t]}</div><div class="t2">${a.a}</div></div><span class="fmt">${a.fmt}</span><div class="heart ${S.fav.has(a.i+'-'+t)?'on':''}" data-act="fav" role="button" aria-label="Favorita">${ic('heart')}</div></div>
+   <div class="bar" data-act="seek"><div class="tr"></div><div class="fi" id="fill" style="width:${S.pos/d*100}%"></div></div>
+   <div class="times"><span id="tpos">${fmtT(S.pos)}</span><span>${a.q}</span><span>−${fmtT(d-S.pos)}</span></div>
+   <div class="ctrl glass"><div class="b sm" data-act="mode" role="button" aria-label="Modo de reproducción">${ic(pm)}</div><div class="b" data-act="prev" role="button" aria-label="Anterior">${ic('prev','f')}</div><div class="b pp" data-act="pp" role="button" aria-label="Reproducir o pausar">${ic(S.playing?'pause':'play')}</div><div class="b" data-act="next" role="button" aria-label="Siguiente">${ic('next','f')}</div><div class="b sm" data-act="go:queue" role="button" aria-label="Cola">${ic('list')}</div></div></div>`}},
+ queue:{bg:'cover',note:['Cola (Lista actual)','Es la "Lista actual" del menú ⋯ del reproductor; aquí también tiene acceso directo desde el botón de lista. Muestra lo que suena y lo que viene después. Reordenar arrastrando no existe en el firmware, así que no se incluye.','play_menu.dlg → play_menu_vg_cur_songlist · VG_LISTVIEW_CUR_SONGLIST'],
+  html:()=>{const a=curA();return `${header('A continuación')}<div class="sec">Ahora suena</div><div class="list">${trkRow(a,S.cur.t,true)}</div><div class="sec">De ${a.t}</div><div class="list">${a.tr.map((_,t)=>t>S.cur.t?trkRow(a,t,true):'').join('')}</div><div class="sec">Después</div><div class="list">${AL[(a.i+1)%AL.length].tr.slice(0,3).map((_,t)=>trkRow(AL[(a.i+1)%AL.length],t,true)).join('')}</div>`}},
+ settings:{bg:'wall',note:['Ajustes','Las opciones son las del firmware (más las que activamos: Modo USB, color de letras). Cada fila es una pastilla de cristal. Las secciones agrupadas tipo iOS se imitan con filas de título; si la lista nativa no lo permite, queda una lista continua.','vg_listview_settings · set_functions.json · sys_set.ini'],
+  html:()=>`${header('Ajustes')}<div class="list">
+   ${rowNav('paint','linear-gradient(135deg,#bf5af2,#5e5ce6)','Tema',S.th.mode==='dark'?'Glass oscuro':'Glass claro','go:theme')}
+   ${rowNav('sun','#0a84ff','Pantalla y brillo','Brillo, tiempo de apagado','toast:Pantalla y brillo: lista nativa')}
+   ${rowNav('text','#8e8e93','Tamaño de letra',S.th.text==='normal'?'Normal':'Grande','fontsize')}
+   <div class="sec">Música</div>
+   ${rowNav('db','#30d158','Modo de actualización',S.updMode,'upd')}
+   ${rowNav('reset','#30d158','Escanear biblioteca','Toca para buscar cambios','toast:Escaneando… (diálogo nativo music_update)')}
+   ${rowNav('eq','#ff9f0a','Reproducción','EQ, ReplayGain, gapless, filtro','toast:Reproducción: lista nativa')}
+   <div class="sec">Sistema</div>
+   ${rowNav('usb','#636366','Modo USB',S.tiles.usb==='ADB'?'ADB (depuración)':'Almacenamiento','usbmode')}
+   ${rowNav('bt','#0a84ff','Bluetooth',S.tiles.bt?'Activado':'Desactivado','toast:Bluetooth: lista nativa')}
+   ${rowNav('lang','#636366','Idioma','Español','toast:Idioma: lista nativa')}
+   ${rowNav('pulse','#ff453a','Diagnóstico hibymod','0 fallos · último arranque limpio','toast:Informes en la SD: hibymod/logs')}
+   ${rowNav('info','#8e8e93','Acerca de','R3 II 2025 · hibymod 0.1','toast:Acerca de: pantalla nativa')}
+  </div>`},
+ theme:{bg:'wall',note:['Tema','El selector de tema es nativo. hibymod sustituye los dos temas de fábrica por Glass oscuro y Glass claro. El color de acento y el fondo vienen ya dentro del tema (panel derecho).','Ajustes → Tema · litegui/theme2 · litegui/theme3 · logo de arranque por tema (mtd5)'],
+  html:()=>`${header('Tema')}<div class="list">${[['dark','Glass oscuro','Fondo profundo, cristal claro'],['light','Glass claro','Fondo luminoso, cristal blanco']].map(([m,n,d])=>`<div class="row glass" data-act="mode:${m}"><div class="th" style="background-image:url(${wall(S.th.wall,m)})"></div><div class="tx"><div class="t1">${n}</div><div class="t2">${d}</div></div>${S.th.mode===m?`<span style="color:var(--acc)">${ic('check','ch')}</span>`:''}</div>`).join('')}</div>
+   <p style="color:var(--fg2);font-size:.78em;line-height:1.45;margin:14px 6px">El acento, el fondo y la intensidad del cristal se eligen al generar el firmware (panel derecho del prototipo).</p>`}
+};
+
+/* ---------------- rendering ---------------- */
+function bgFor(def){return def.bg==='cover'?`<div class="bgl blurbg" style="background-image:url(${curA().blur})"></div>`:`<div class="bgl" style="background-image:url(${wall(S.th.wall,S.th.mode)})"></div>`;}
+function build(entry){const def=SCREENS[entry.s];const pg=document.createElement('div');pg.className='page';pg.dataset.s=entry.s;
+  pg.innerHTML=bgFor(def)+(entry.s==='player'?def.html(entry.p):`<div class="scroll">${def.html(entry.p)}</div>`);
+  const az=pg.querySelector('.az');if(az)pg.appendChild(az);return pg;}
+const top=()=>S.stack[S.stack.length-1];
+function render(dir){const old=stage.lastElementChild;const pg=build(top());
+  if(old&&dir!=='none'){const sc=old.querySelector('.scroll');}
+  stage.appendChild(pg);
+  const v=SCREENS[top().s].vertical||(dir==='back'&&old&&SCREENS[old.dataset.s].vertical);
+  if(old){if(S.anim&&dir&&dir!=='none'){const E='cubic-bezier(.2,.8,.2,1)',D=300;
+      if(dir==='fwd'){pg.animate(v?[{transform:'translateY(100%)'},{transform:'none'}]:[{transform:'translateX(100%)'},{transform:'none'}],{duration:D,easing:E});
+        old.animate(v?[{transform:'none'},{transform:'scale(.94)',opacity:.6}]:[{transform:'none',opacity:1},{transform:'translateX(-30%)',opacity:.4}],{duration:D,easing:E}).onfinish=()=>old.remove();}
+      else{stage.insertBefore(pg,old);
+        old.animate(v?[{transform:'none'},{transform:'translateY(100%)'}]:[{transform:'none'},{transform:'translateX(100%)'}],{duration:D,easing:E}).onfinish=()=>old.remove();
+        pg.animate(v?[{transform:'scale(.94)',opacity:.6},{transform:'none',opacity:1}]:[{transform:'translateX(-30%)',opacity:.4},{transform:'none',opacity:1}],{duration:D,easing:E});}
+    }else old.remove();}
+  if(dir==='none'&&old&&old!==pg){}
+  sbar();note();if(top().s==='player'&&S.lyrics)syncLrc();
+}
+function refresh(){const keep=stage.lastElementChild?.querySelector('.scroll')?.scrollTop||0;stage.innerHTML='';const pg=build(top());stage.appendChild(pg);const sc=pg.querySelector('.scroll');if(sc)sc.scrollTop=keep;sbar();note();if(top().s==='player'&&S.lyrics)syncLrc();}
+function go(s,p){S.stack.push({s,p});render('fwd');}
+function back(){if(layer.innerHTML){closeLayer();return;}if(S.stack.length>1){S.stack.pop();render('back');}}
+function home(){if(layer.innerHTML)closeLayer();if(S.stack.length>1){S.stack=[{s:'home'}];render('back');}}
+
+function sbar(){const t=S.tiles;document.getElementById('sbar').innerHTML=`<span>10:42</span><span class="r">${S.playing?ic('play'):''}${t.bt?ic('bt'):''}${t.wifi?ic('wifi'):''}${ic('hp')}<span class="batt"><i><b style="width:78%"></b></i></span></span>`;}
+
+/* ---------------- overlays ---------------- */
+function openMenu(){layer.innerHTML=`<div class="scrim" data-act="close"></div><div class="sheet glass solid"><div class="grab"></div><div class="list">
+  ${[['list','Lista actual','go:queue'],['plus','Añadir a una lista','toast:Añadida a «Viaje en tren»'],['eq','Ecualizador','toast:Ecualizador: pantalla nativa'],['disc','Ir al álbum','album:'+S.cur.a],['info','Información de la canción','info'],['trash','Eliminar','toast:Confirmación nativa (remove_song.dlg)']].map(([i,t,a])=>`<div class="row" data-act="${a}"><div class="ico" style="background:rgba(var(--gtint),.14);color:var(--fg)">${ic(i)}</div><div class="tx"><div class="t1" style="font-weight:500">${t}</div></div></div>`).join('')}
+  </div></div>`;
+  if(S.anim){layer.querySelector('.sheet').animate([{transform:'translateY(110%)'},{transform:'none'}],{duration:280,easing:'cubic-bezier(.2,.8,.2,1)'});layer.querySelector('.scrim').animate([{opacity:0},{opacity:1}],{duration:200});}
+  setNote('Menú ⋯','Menú del reproductor tal como existe: lista actual, añadir a lista, EQ, ir al álbum, información y eliminar. Se dibuja como una hoja de cristal.','play_menu.dlg · hiby_play_menu.view');}
+function info(){const a=curA(),t=S.cur.t;layer.innerHTML=`<div class="scrim" data-act="close"></div><div class="sheet glass solid" style="padding:14px 16px"><div class="grab"></div>
+  ${[['Título',a.tr[t]],['Artista',a.a],['Álbum',a.t],['Género',a.g],['Año',a.y],['Formato',a.fmt],['Calidad',a.q],['Duración',fmtT(a.d[t])],['Ruta','a:\\Música\\'+a.a+'\\'+a.t]].map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--sep);font-size:.85em"><span style="color:var(--fg2)">${k}</span><span style="text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v}</span></div>`).join('')}</div>`;
+  setNote('Información de la canción','Diálogo nativo con todos los datos del archivo.','playmenu_song_info.dlg');}
+function openCC(){const t=S.tiles,a=curA();
+  const tile=(k,icn,lbl,val)=>{const on=typeof t[k]==='boolean'?t[k]:false;return `<div class="tile glass ${on?'on':''}" data-act="tile:${k}">${val!==undefined?`<span class="v">${val}</span>`:ic(icn)}<span>${lbl}</span></div>`;};
+  layer.innerHTML=`<div class="cc" id="cc"><div class="bgl" style="background-image:url(${a.blur})"></div>
+   <div class="ccnp glass"><div class="th" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1" style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.tr[S.cur.t]}</div><div class="t2" style="color:var(--fg2);font-size:.8em">${a.a}</div></div>
+    <div class="b" data-act="prev">${ic('prev','f')}</div><div class="b" data-act="pp">${ic(S.playing?'pause':'play')}</div><div class="b" data-act="next">${ic('next','f')}</div></div>
+   <div class="ccg">${tile('bt','bt','Bluetooth')}${tile('wifi','wifi','Wi-Fi')}${tile('dlna','cast','DLNA')}${tile('air','air','AirPlay')}
+    ${tile('gain','','Ganancia',t.gain)}${tile('mseb','eq','MSEB')}${tile('line','line','Line out')}${tile('usb','','USB',t.usb)}
+    ${tile('gap','gap','Gapless')}${tile('fade','fade','Fundido')}${tile('filt','','Filtro',t.filt)}${tile('sleep','','Apagado',t.sleep)}</div>
+   <div class="slider glass" data-act="bright" id="brs"><div class="lvl" style="width:${S.bright}%"></div>${ic('sun')}<span class="val">${S.bright}%</span></div>
+   <div class="ccfoot"><span>Volumen ${S.vol}</span><span>HibyLink ${t.link?'activo':'desactivado'}</span><span>Batería 78%</span></div></div>`;
+  if(S.anim)layer.firstElementChild.animate([{transform:'translateY(-100%)'},{transform:'none'}],{duration:320,easing:'cubic-bezier(.2,.8,.2,1)'});
+  setNote('Centro de control','Es el menú desplegable que ya existe, con los mismos 12 interruptores, el brillo y los controles de la canción. El volumen es solo un número porque el firmware no tiene deslizador para él (se usan los botones laterales). Toca los interruptores y arrastra el brillo.','hiby_pull_down_menu.view · pull_down_menu_iv_bt / gain / usb_mode / digital_filter / sleep_switch / bklight_pb / cur_play');}
+function closeLayer(){const el=layer.firstElementChild;if(!el){return;}
+  const cc=layer.querySelector('.cc'),sh=layer.querySelector('.sheet');
+  if(S.anim&&(cc||sh)){const a=(cc||sh).animate([{transform:'none'},{transform:cc?'translateY(-100%)':'translateY(110%)'}],{duration:240,easing:'cubic-bezier(.4,0,.6,1)'});a.onfinish=()=>{layer.innerHTML='';note();};}
+  else{layer.innerHTML='';note();}}
+let hudT;function hud(){const h=document.getElementById('hud');h.classList.remove('off');document.getElementById('hudlv').style.height=S.vol+'%';document.getElementById('hudn').textContent=S.vol;clearTimeout(hudT);hudT=setTimeout(()=>h.classList.add('off'),1300);
+  setNote('Volumen','Aviso de volumen nativo, redibujado como una pastilla de cristal vertical.','volume.dlg');}
+let toT;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.remove('off');clearTimeout(toT);toT=setTimeout(()=>t.classList.add('off'),1600);}
+
+/* ---------------- playback ---------------- */
+function setTrack(a,t){S.cur={a,t};S.pos=0;S.playing=true;}
+function step(d){const a=curA();let t=S.cur.t+d;if(S.mode==='rnd')t=Math.floor(Math.random()*a.tr.length);if(t<0)t=0;if(t>=a.tr.length){setTrack((S.cur.a+1)%AL.length,0);}else setTrack(S.cur.a,t);afterTrack();}
+function afterTrack(){if(layer.querySelector('.cc'))openCCq();if(['player','queue','album'].includes(top().s)||SCREENS[top().s].bg==='cover')refresh();else{sbar();}}
+function openCCq(){openCCnoAnim();}
+function openCCnoAnim(){const a=S.anim;S.anim=false;openCC();S.anim=a;}
+setInterval(()=>{if(!S.playing)return;S.pos++;const d=curA().d[S.cur.t];if(S.pos>=d){step(1);return;}
+  if(top().s==='player'){const f=document.getElementById('fill');if(f){f.style.width=(S.pos/d*100)+'%';document.getElementById('tpos').textContent=fmtT(S.pos);const r=document.querySelector('.times span:last-child');if(r)r.textContent='−'+fmtT(d-S.pos);}if(S.lyrics)syncLrc();}},1000);
+function syncLrc(){const i=Math.floor(S.pos/6)%LYR.length;const inn=document.getElementById('lrcin');if(!inn)return;[...inn.children].forEach((p,k)=>p.classList.toggle('on',k===i));inn.style.transform=`translateY(${-(i*40)+90}px)`;}
+
+/* ---------------- actions ---------------- */
+function act(a,el,ev){const [k,v,w]=a.split(':');
+  switch(k){
+   case 'go':if(layer.innerHTML&&!['queue'].includes(v)){layer.innerHTML='';}if(v==='queue'&&layer.innerHTML)layer.innerHTML='';go(v);break;
+   case 'back':back();break;
+   case 'album':layer.innerHTML='';go('album',+v);break;
+   case 'play':setTrack(+v,+w);go('player');break;
+   case 'tab':S.musicTab=+v;document.querySelectorAll('.seg button').forEach((b,i)=>b.classList.toggle('on',i===S.musicTab));const pg=document.getElementById('pager');if(pg){pg.style.transition=S.anim?'':'none';pg.style.transform=`translateX(${S.musicTab*-50}%)`;}break;
+   case 'pp':S.playing=!S.playing;if(layer.querySelector('.cc'))openCCnoAnim();if(top().s==='player'){const c=document.querySelector('.cov');if(c)c.classList.toggle('paused',!S.playing);const b=document.querySelector('.pp');if(b)b.innerHTML=ic(S.playing?'pause':'play');}sbar();break;
+   case 'next':step(1);break;case 'prev':if(S.pos>3){S.pos=0;refresh();}else step(-1);break;
+   case 'mode':{const o=['sec','all','one','rnd'];S.mode=o[(o.indexOf(S.mode)+1)%4];toast({sec:'Reproducir en orden',all:'Repetir lista',one:'Repetir canción',rnd:'Aleatorio'}[S.mode]);refresh();break;}
+   case 'fav':{const key=S.cur.a+'-'+S.cur.t;S.fav.has(key)?S.fav.delete(key):S.fav.add(key);el.classList.toggle('on');toast(S.fav.has(key)?'Añadida a Favoritas':'Quitada de Favoritas');break;}
+   case 'seek':{const r=el.getBoundingClientRect();S.pos=Math.round((ev.clientX-r.left)/r.width*curA().d[S.cur.t]);refresh();break;}
+   case 'lyrics':S.lyrics=!S.lyrics;refresh();setNote(S.lyrics?'Letra':'Reproductor',S.lyrics?'Letra sincronizada dentro del propio reproductor (zona vg_lrc). Los colores salen del menú "Color de letras" que activamos; la línea actual usa el color de acento.':SCREENS.player.note[1],S.lyrics?'playing_plane_vg_lrc · lyric_color_enable=1 · config.ini lrc_focus_color':SCREENS.player.note[2]);break;
+   case 'menu':openMenu();break;case 'info':info();break;case 'close':closeLayer();break;
+   case 'toast':toast(a.slice(6));break;
+   case 'tile':{const t=S.tiles;const cyc={gain:['Alta','Baja'],usb:['Almacen.','DAC','ADB'],filt:['Rápido','Lento','Corto'],sleep:['Off','15 min','30 min','60 min']};
+     if(cyc[v]){const o=cyc[v];t[v]=o[(o.indexOf(t[v])+1)%o.length];}else t[v]=!t[v];openCCnoAnim();sbar();break;}
+   case 'bright':{const r=el.getBoundingClientRect();S.bright=Math.max(5,Math.min(100,Math.round((ev.clientX-r.left)/r.width*100)));el.querySelector('.lvl').style.width=S.bright+'%';el.querySelector('.val').textContent=S.bright+'%';scr.style.filter=`brightness(${.55+S.bright/100*.45})`;break;}
+   case 'mode2':break;
+   case 'upd':S.updMode=S.updMode==='Manual'?'Automático':'Manual';toast(S.updMode==='Manual'?'Solo escanea cuando tú lo pidas':'Escanea al conectar la tarjeta o el USB');refresh();break;
+   case 'usbmode':{const o=['Almacen.','DAC','ADB'];S.tiles.usb=o[(o.indexOf(S.tiles.usb)+1)%3];toast('Modo USB: '+S.tiles.usb);refresh();break;}
+   case 'fontsize':setTheme('text',S.th.text==='normal'?'grande':'normal');break;
+   case 'az':{const el2=document.getElementById('az-'+v)||[...stage.lastElementChild.querySelectorAll('.sec')].find(s=>s.textContent>=v);if(el2){const sc=el2.closest('.scroll');sc.scrollTo({top:el2.offsetTop-34,behavior:S.anim?'smooth':'auto'});}break;}
+  }
+  if(k==='mode'&&v){}
+}
+// "mode:dark" from theme screen
+const _act=act;act=function(a,el,ev){if(/^mode:(dark|light)$/.test(a)){setTheme('mode',a.split(':')[1]);return;}_act(a,el,ev);};
+
+/* ---------------- input ---------------- */
+let pd=null;
+scr.addEventListener('pointerdown',e=>{const r=scr.getBoundingClientRect(),k=r.width/320;pd={x:(e.clientX-r.left)/k,y:(e.clientY-r.top)/k,t:Date.now(),moved:false,id:e.pointerId,cx:e.clientX,cy:e.clientY};
+  const br=e.target.closest('[data-act="bright"]');if(br){scr.setPointerCapture(e.pointerId);pd.bright=br;act('bright',br,e);}});
+scr.addEventListener('pointermove',e=>{if(!pd)return;if(Math.hypot(e.clientX-pd.cx,e.clientY-pd.cy)>8)pd.moved=true;if(pd.bright)act('bright',pd.bright,e);});
+scr.addEventListener('pointercancel',()=>{pd=null;});
+scr.addEventListener('pointerup',e=>{if(!pd)return;const r=scr.getBoundingClientRect(),k=r.width/320;const dx=(e.clientX-pd.cx)/k,dy=(e.clientY-pd.cy)/k;const p=pd;pd=null;if(p.bright)return;
+  if(p.moved){ if(p.y<30&&dy>40&&!layer.innerHTML){openCC();return;}
+    if(layer.querySelector('.cc')&&dy<-50){closeLayer();return;}
+    if(p.x<22&&dx>50){back();return;}
+    if(top().s==='player'&&dy>70&&Math.abs(dx)<60&&!layer.innerHTML){back();return;}
+    if(top().s==='music'&&Math.abs(dx)>50&&Math.abs(dy)<40){act('tab:'+(dx<0?1:0));return;}
+    return;}
+  const t=e.target.closest('[data-act]');if(t)act(t.dataset.act,t,e);else if(e.target.closest('#sbar'))openCC();});
+document.getElementById('sbar').setAttribute('role','button');
+const hw={hwVu:()=>{S.vol=Math.min(100,S.vol+4);hud();},hwVd:()=>{S.vol=Math.max(0,S.vol-4);hud();},hwPlay:()=>act('pp'),hwNext:()=>act('next'),hwPrev:()=>act('prev'),
+  hwPwr:()=>{const o=document.getElementById('off');o.style.display=o.style.display==='block'?'none':'block';}};
+Object.entries(hw).forEach(([id,f])=>document.getElementById(id).addEventListener('click',f));
+
+/* ---------------- theme & notes ---------------- */
+function applyTheme(){scr.classList.toggle('dark',S.th.mode==='dark');scr.classList.toggle('light',S.th.mode==='light');scr.style.setProperty('--acc',S.th.acc);scr.style.setProperty('--gk',GL[S.th.glass]);scr.style.setProperty('--ts',S.th.text==='grande'?1.12:1);scr.style.setProperty('--lc',S.th.acc);}
+function setTheme(k,v){S.th[k]=v;applyTheme();refresh();if(layer.querySelector('.cc'))openCCnoAnim();drawCtl();}
+function chips(id,opts,cur,fn){const el=document.getElementById(id);el.innerHTML=opts.map(([v,l])=>`<button class="chip" aria-pressed="${v===cur}" data-v="${v}">${l}</button>`).join('');el.onclick=e=>{const b=e.target.closest('button');if(b)fn(b.dataset.v);};}
+function drawCtl(){chips('cMode',[['dark','Oscuro'],['light','Claro']],S.th.mode,v=>setTheme('mode',v));
+  const a=document.getElementById('cAcc');a.innerHTML=ACC.map(([c,n])=>`<button style="background:${c}" aria-label="${n}" title="${n}" aria-pressed="${c===S.th.acc}" data-v="${c}"></button>`).join('');a.onclick=e=>{const b=e.target.closest('button');if(b)setTheme('acc',b.dataset.v);};
+  chips('cWall',[['aurora','Aurora'],['oceano','Océano'],['brasa','Brasa'],['grafito','Grafito']],S.th.wall,v=>setTheme('wall',v));
+  chips('cGlass',[['sutil','Sutil'],['media','Media'],['intensa','Intensa']],S.th.glass,v=>setTheme('glass',v));
+  chips('cText',[['normal','Normal'],['grande','Grande']],S.th.text,v=>setTheme('text',v));
+  chips('cAnim',[['1','Animadas'],['0','Como en el aparato']],S.anim?'1':'0',v=>{S.anim=v==='1';drawCtl();});}
+function setNote(t,p,m){document.getElementById('nT').textContent=t;document.getElementById('nP').textContent=p;document.getElementById('nM').textContent=m;}
+function note(){const n=SCREENS[top().s].note;setNote(...n);
+  document.querySelectorAll('#jump .chip').forEach(b=>b.setAttribute('aria-pressed',b.dataset.s===top().s));}
+const JUMP=[['home','Inicio'],['music','Música'],['albums','Álbumes'],['album','Álbum'],['songs','Canciones'],['recent','Añadidas'],['playlists','Mis listas'],['player','Reproductor'],['lyrics','Letra'],['queue','Cola'],['menu','Menú ⋯'],['cc','Centro de control'],['vol','Volumen'],['settings','Ajustes'],['theme','Tema']];
+document.getElementById('jump').innerHTML=JUMP.map(([s,l])=>`<button class="chip" data-s="${s}" aria-pressed="false">${l}</button>`).join('');
+document.getElementById('jump').onclick=e=>{const b=e.target.closest('button');if(!b)return;const s=b.dataset.s;layer.innerHTML='';
+  const paths={home:[],music:['music'],albums:['music','albums'],album:['music','albums',['album',0]],songs:['music','songs'],recent:['music','recent'],playlists:['music','playlists'],player:['music','albums',['album',0],'player'],lyrics:['music','albums',['album',0],'player'],queue:['music','albums',['album',0],'player','queue'],menu:['music','albums',['album',0],'player'],cc:null,vol:null,settings:['settings'],theme:['settings','theme']};
+  if(s==='cc'){openCC();return;}if(s==='vol'){S.vol=Math.min(100,S.vol+4);hud();return;}
+  S.lyrics=s==='lyrics';S.stack=[{s:'home'}].concat(paths[s].map(x=>Array.isArray(x)?{s:x[0],p:x[1]}:{s:x}));if(s==='music')S.musicTab=0;if(s==='recent'||s==='playlists')S.musicTab=1;
+  refresh();if(s==='menu')openMenu();};
+
+/* ---------------- sizing ---------------- */
+const dev=document.getElementById('device'),box=document.getElementById('devbox');
+function fit(){const W=352,H=560;const avail=Math.min(window.innerWidth-44,520);let k=Math.min(1.25,avail/(W+48));k=Math.max(.6,k);dev.style.transform=`scale(${k})`;box.style.width=(W*k+48*k)+'px';box.style.height=(H*k)+'px';}
+window.addEventListener('resize',fit);fit();
+
+AL.forEach(cover);applyTheme();drawCtl();refresh();
+})();
+</script>

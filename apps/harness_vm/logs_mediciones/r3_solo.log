@@ -1,0 +1,133 @@
+### profile=solo args=
+MemTotal:          56928 kB
+mem_profile solo: objetivo 38912 kB; ahora: MemAvailable:      38816 kB
+>>> (HOME=/root sh /hiby/measure.sh 30 /mnt/share/netsurf/run.sh http://example.com/ > /mnt/share/r3_ex.txt 2>&1 &)
+
+ok
+shot -> /home/alber/hiby/vm/out/r3_osk.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/r3_osk_key.png (320x480)
+>>> (HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh https://en.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/r3_wiki.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/r3_wiki.png (320x480)
+VmPeak:	   23456 kB
+VmHWM:	   19984 kB
+VmRSS:	   16320 kB
+RssAnon:	   12832 kB
+RssFile:	    3488 kB
+VmData:	   13312 kB
+RESULT alive=yes
+MemAvailable inicio=37872kB min=24528kB
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3408kB avail=36944kB
+t=5.7s rss=16448kB avail=24528kB
+t=10.8s rss=16448kB avail=24560kB
+t=15.9s rss=16448kB avail=24576kB
+t=21.0s rss=16320kB avail=24736kB
+t=26.1s rss=16320kB avail=24736kB
+t=31.2s rss=16320kB avail=24736kB
+t=36.3s rss=16320kB avail=24736kB
+t=41.4s rss=16320kB avail=24736kB
+t=46.5s rss=16320kB avail=24736kB
+t=51.6s rss=16320kB avail=24768kB
+t=56.7s rss=16320kB avail=24768kB
+t=61.8s rss=16320kB avail=24768kB
+t=66.9s rss=16320kB avail=24768kB
+t=72.0s rss=16320kB avail=24768kB
+t=77.1s rss=16320kB avail=24768kB
+t=82.1s rss=16320kB avail=24768kB
+t=87.2s rss=16320kB avail=24736kB
+t=92.3s rss=16320kB avail=24736kB
+t=97.4s rss=16320kB avail=24736kB
+t=102.5s rss=16320kB avail=24656kB
+t=107.6s rss=16320kB avail=24672kB
+t=112.7s rss=16320kB avail=24688kB
+t=117.8s rss=16320kB avail=24736kB
+t=122.9s rss=16320kB avail=24736kB
+t=128.0s rss=16320kB avail=24736kB
+t=133.1s rss=16320kB avail=24736kB
+t=138.2s rss=16320kB avail=24736kB
+t=143.3s rss=16320kB avail=24736kB
+t=148.4s rss=16320kB avail=24736kB
+>>> cd /root; HOME=/root sh /hiby/measure.sh 120 links2 -dump https://en.wikipedia.org/wiki/Ingenic_Semiconductor | grep -v "^t="; wc -c /tmp/measure.out
+RESULT alive=no exit=0
+MemAvailable inicio=38192kB min=33568kB
+--- salida (ultimas 15 lineas) ---
+     * Contact Wikipedia
+     * Legal & safety contacts
+     * Code of Conduct
+     * Developers
+     * Statistics
+     * Cookie statement
+     * Mobile view
+     * Wikimedia Foundation
+     * Powered by MediaWiki
+   Search
+   _____________________
+   Search
+   [ ] Toggle the table of contents
+   Ingenic Semiconductor
+   9 languages Add topic
+43780 /tmp/measure.out
+
+>>> cd /root; HOME=/root sh /hiby/measure.sh 120 w3m -dump https://en.wikipedia.org/wiki/Ingenic_Semiconductor | grep -v "^t="
+RESULT alive=no exit=0
+MemAvailable inicio=37392kB min=34288kB
+--- salida (ultimas 15 lineas) ---
+  * Statistics
+  * Cookie statement
+  * Mobile view
+
+  * Wikimedia Foundation
+  * Powered by MediaWiki
+
+Search
+[                    ]
+Search
+[ ] Toggle the table of contents
+Ingenic Semiconductor
+       
+9 languages Add topic
+
+
+>>> cd /root; HOME=/root sh /hiby/measure.sh 60 links2 -dump https://lite.cnn.com/ | grep -v "^t="
+RESULT alive=no exit=0
+MemAvailable inicio=37536kB min=32896kB
+--- salida (ultimas 15 lineas) ---
+       wilderness
+     * Midterm returns show bad news for progressive Democrats
+     * Judge blocks construction of Trump's arch within an hour of its final
+       approval
+     * Jay Rockefeller, former West Virginia governor and US senator who was
+       part of a dynasty, dies at 89
+     * Market turmoil saps enthusiasm for the buzziest IPO of the year
+     * Tesla set to wind down production of Cybertruck
+
+   Go to the full CNN experience
+
+   (c) 2026 Cable News Network. A Warner Bros. Discovery Company. All Rights
+   Reserved.
+
+   Terms of Use | Privacy Policy | Ad Choices | Cookie Settings
+
+>>> cd /root; HOME=/root sh /hiby/measure.sh 200 links2 -dump 'https://en.wikipedia.org/wiki/Telegram_(software)' | grep -v "^t="
+RESULT alive=no exit=0
+MemAvailable inicio=37616kB min=30624kB
+--- salida (ultimas 15 lineas) ---
+     * Contact Wikipedia
+     * Legal & safety contacts
+     * Code of Conduct
+     * Developers
+     * Statistics
+     * Cookie statement
+     * Mobile view
+     * Wikimedia Foundation
+     * Powered by MediaWiki
+   Search
+   _____________________
+   Search
+   [ ] Toggle the table of contents
+   Telegram (software)
+   104 languages Add topic
+
+0

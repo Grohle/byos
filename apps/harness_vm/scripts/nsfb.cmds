@@ -1,0 +1,13 @@
+cat /proc/meminfo | head -3; ls -la /mnt/share/netsurf
+(HOME=/root sh /hiby/measure.sh 100 /mnt/share/netsurf/run.sh http://example.com/ > /mnt/share/m_example.txt 2>&1 &)
+HOST: sleep 70; $C shot $VM/out/nsfb_example.png
+HOST: sleep 40; cat $VM/share/m_example.txt | grep -v "^t=" ; grep "^t=" $VM/share/m_example.txt | awk 'NR%10==1'
+(HOME=/root sh /hiby/measure.sh 200 /mnt/share/netsurf/run.sh 'https://en.wikipedia.org/wiki/Telegram_(software)' > /mnt/share/m_wiki.txt 2>&1 &)
+HOST: sleep 150; $C shot $VM/out/nsfb_wiki1.png; $C swipe 160 400 160 150 400; sleep 15; $C shot $VM/out/nsfb_wiki2.png; $C tap 310 470; sleep 10; $C shot $VM/out/nsfb_wiki_osk.png
+HOST: sleep 30; cat $VM/share/m_wiki.txt | grep -v "^t=" ; grep "^t=" $VM/share/m_wiki.txt | awk 'NR%10==1'
+(HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh https://lite.cnn.com/ > /mnt/share/m_cnn.txt 2>&1 &)
+HOST: sleep 120; $C shot $VM/out/nsfb_cnn.png
+HOST: sleep 35; cat $VM/share/m_cnn.txt | grep -v "^t=" ; grep "^t=" $VM/share/m_cnn.txt | awk 'NR%10==1'
+(HOME=/root sh /hiby/measure.sh 100 /mnt/share/netsurf/run.sh https://text.npr.org/ > /mnt/share/m_npr.txt 2>&1 &)
+HOST: sleep 80; $C shot $VM/out/nsfb_npr.png
+HOST: sleep 25; cat $VM/share/m_npr.txt | grep -v "^t=" ; grep "^t=" $VM/share/m_npr.txt | awk 'NR%10==1'

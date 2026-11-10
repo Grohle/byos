@@ -1,0 +1,8 @@
+(HOME=/root sh /hiby/measure.sh 30 /mnt/share/netsurf/run.sh http://example.com/ > /mnt/share/r3_ex.txt 2>&1 &)
+HOST: sleep 25; $C tap 311 470; sleep 6; $C shot $VM/out/r3_osk.png; $C tap 20 40; sleep 3; $C shot $VM/out/r3_osk_key.png; sleep 10
+(HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh https://en.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/r3_wiki.txt 2>&1 &)
+HOST: sleep 100; $C shot $VM/out/r3_wiki.png; sleep 60; grep -v "^t=" $VM/share/r3_wiki.txt; grep "^t=" $VM/share/r3_wiki.txt | awk 'NR%10==1'
+cd /root; HOME=/root sh /hiby/measure.sh 120 links2 -dump https://en.wikipedia.org/wiki/Ingenic_Semiconductor | grep -v "^t="; wc -c /tmp/measure.out
+cd /root; HOME=/root sh /hiby/measure.sh 120 w3m -dump https://en.wikipedia.org/wiki/Ingenic_Semiconductor | grep -v "^t="
+cd /root; HOME=/root sh /hiby/measure.sh 60 links2 -dump https://lite.cnn.com/ | grep -v "^t="
+cd /root; HOME=/root sh /hiby/measure.sh 200 links2 -dump 'https://en.wikipedia.org/wiki/Telegram_(software)' | grep -v "^t="

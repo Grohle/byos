@@ -1,0 +1,68 @@
+### profile=coexist args=
+MemTotal:          56928 kB
+mem_profile coexist: objetivo 10240 kB; ahora: MemAvailable:      10064 kB
+>>> cat /proc/meminfo | head -3
+MemTotal:          56928 kB
+MemFree:            8912 kB
+MemAvailable:       9760 kB
+
+>>> (HOME=/root sh /hiby/measure.sh 120 /mnt/share/netsurf/run.sh https://lite.cnn.com/ > /mnt/share/c_cnn.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/c_cnn1.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/c_cnn2_scrolled.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/c_cnn3_voldown.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/c_cnn4_link.png (320x480)
+ok
+shot -> /home/alber/hiby/vm/out/c_cnn5_osk.png (320x480)
+t=0.5s rss=3408kB avail=8480kB
+t=10.7s rss=6384kB avail=6192kB
+t=20.9s rss=6384kB avail=6240kB
+t=31.1s rss=6384kB avail=6192kB
+t=41.3s rss=6384kB avail=6240kB
+t=51.5s rss=6384kB avail=5728kB
+t=61.6s rss=6384kB avail=5728kB
+t=101.2s rss=7904kB avail=3488kB
+t=111.4s rss=7984kB avail=3456kB
+t=121.6s rss=7712kB avail=3696kB
+>>> (HOME=/root sh /hiby/measure.sh 90 /mnt/share/netsurf/run.sh https://text.npr.org/ > /mnt/share/c_npr.txt 2>&1 &)
+
+>>> (HOME=/root sh /hiby/measure.sh 120 /mnt/share/netsurf/run.sh https://en.m.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/c_wiki.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/c_mwiki.png (320x480)
+VmPeak:	   15024 kB
+VmHWM:	    6752 kB
+VmRSS:	    6544 kB
+RssAnon:	    3280 kB
+RssFile:	    3264 kB
+VmData:	    3856 kB
+RESULT alive=yes
+MemAvailable inicio=6976kB min=3760kB
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3408kB avail=6272kB
+t=5.7s rss=6544kB avail=3840kB
+t=10.8s rss=6544kB avail=3856kB
+t=15.9s rss=6544kB avail=3840kB
+t=21.0s rss=6544kB avail=3904kB
+t=26.1s rss=6544kB avail=3856kB
+t=31.1s rss=6544kB avail=3776kB
+t=36.2s rss=6544kB avail=3824kB
+t=41.3s rss=6544kB avail=5600kB
+t=46.4s rss=6544kB avail=5600kB
+t=51.5s rss=6544kB avail=5600kB
+t=56.6s rss=6544kB avail=5616kB
+t=61.7s rss=6544kB avail=5408kB
+t=66.8s rss=6544kB avail=5424kB
+t=71.9s rss=6544kB avail=5456kB
+t=77.0s rss=6544kB avail=5472kB
+t=82.1s rss=6544kB avail=5504kB
+t=87.2s rss=6544kB avail=5536kB
+t=92.3s rss=6544kB avail=5536kB
+t=97.4s rss=6544kB avail=5520kB
+t=102.5s rss=6544kB avail=5536kB
+t=107.6s rss=6544kB avail=5536kB
+t=112.7s rss=6544kB avail=5536kB
+t=117.8s rss=6544kB avail=5472kB
+0

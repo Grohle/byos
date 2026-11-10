@@ -1,0 +1,4 @@
+(HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh 'https://en.m.wikipedia.org/wiki/Telegram_(software)' > /mnt/share/s_mwiki_tg.txt 2>&1 &)
+HOST: sleep 120; $C shot $VM/out/s_mwiki_tg.png; sleep 35; grep -v "^t=" $VM/share/s_mwiki_tg.txt; grep "^t=" $VM/share/s_mwiki_tg.txt | awk 'NR%10==1'
+(HOME=/root sh /hiby/measure.sh 120 /mnt/share/netsurf/run.sh https://en.m.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/s_wiki.txt 2>&1 &)
+HOST: sleep 125; grep -v "^t=" $VM/share/s_wiki.txt

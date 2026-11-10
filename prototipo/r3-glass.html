@@ -1,0 +1,801 @@
+<title>R3 Glass</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the device at true 320x480 scale on the left; a spec rail on the right mapping each screen to the real firmware. */
+:root{
+  --bg:#f2f2f7; --panel:#ffffff; --ink:#1c1c1e; --ink2:#6c6c70; --line:#e3e3e8; --accent:#fa2d48;
+  --ui:"Inter",-apple-system,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0d;--panel:#1c1c1e;--ink:#f2f2f7;--ink2:#98989f;--line:#2c2c2e;--accent:#ff4d64;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0b0b0d;--panel:#1c1c1e;--ink:#f2f2f7;--ink2:#98989f;--line:#2c2c2e;--accent:#ff4d64;color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--ui);font-feature-settings:"cv11","ss01";padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 48px;-webkit-font-smoothing:antialiased}
+header.top{max-width:1160px;margin:0 auto 22px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}
+header.top h1{font-size:28px;font-weight:700;letter-spacing:-.025em;margin:0}
+header.top p{margin:0;color:var(--ink2);font-size:14px;max-width:68ch;line-height:1.5}
+.wrap{max-width:1160px;margin:0 auto;display:grid;grid-template-columns:auto minmax(0,1fr);gap:44px;align-items:start}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr)}}
+.devcol{display:flex;flex-direction:column;align-items:center;gap:14px;position:sticky;top:16px}
+@media (max-width:860px){.devcol{position:static}}
+.hint{font-size:12px;color:var(--ink2);text-align:center;max-width:370px;line-height:1.55}
+.rail{display:flex;flex-direction:column;gap:14px;min-width:0}
+.card{background:var(--panel);border-radius:16px;padding:16px 18px;border:1px solid var(--line)}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink2);margin:0 0 10px;font-weight:600}
+.card h3{font-size:19px;margin:0 0 6px;letter-spacing:-.015em;font-weight:650}
+.card p,.card li{font-size:14px;line-height:1.55}
+.card p{margin:0 0 8px}
+.card ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+.card li{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:baseline}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:13px;font-weight:500;border:1px solid var(--line);background:transparent;color:var(--ink);padding:6px 12px;border-radius:999px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.chip:focus-visible,.hw:focus-visible,.sw button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.map{font-family:var(--mono);font-size:11.5px;color:var(--ink2);background:color-mix(in srgb,var(--ink) 5%,transparent);border-radius:8px;padding:8px 10px;margin-top:6px;overflow-x:auto;white-space:nowrap}
+.ctl{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px 12px;align-items:center;font-size:14px}
+.ctl label{color:var(--ink2)}
+.sw{display:flex;gap:9px;flex-wrap:wrap}
+.sw button{width:24px;height:24px;border-radius:50%;border:0;cursor:pointer;padding:0;box-shadow:0 0 0 1px rgba(0,0,0,.08) inset}
+.sw button[aria-pressed="true"]{box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--ink)}
+.tag{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:2px 0;border-radius:5px;text-align:center}
+.ok{background:color-mix(in srgb,#34c759 20%,transparent);color:#1f8f41}
+.pc{background:color-mix(in srgb,#ff9f0a 22%,transparent);color:#a35f00}
+.no{background:color-mix(in srgb,#ff3b30 18%,transparent);color:#c4271e}
+:root[data-theme="dark"] .ok{color:#5be07f}:root[data-theme="dark"] .pc{color:#ffbf4d}:root[data-theme="dark"] .no{color:#ff7b73}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{color:#5be07f}:root:not([data-theme="light"]) .pc{color:#ffbf4d}:root:not([data-theme="light"]) .no{color:#ff7b73}}
+code{font-family:var(--mono);font-size:.9em}
+
+/* ---------------- device ---------------- */
+.devbox{position:relative}
+.device{position:absolute;top:0;left:0;transform-origin:0 0;width:352px;height:548px;border-radius:30px;
+  background:linear-gradient(150deg,#45484f,#1d1f23 52%,#2b2e34);box-shadow:0 34px 70px -24px rgba(0,0,0,.6),inset 0 1px 1px rgba(255,255,255,.28),inset 0 -2px 3px rgba(0,0,0,.6)}
+.device::after{content:"";position:absolute;inset:5px;border-radius:25px;border:1px solid rgba(255,255,255,.05);pointer-events:none}
+.hw{position:absolute;right:-5px;width:6px;border-radius:0 3px 3px 0;background:linear-gradient(90deg,#141618,#4c5058);border:0;padding:0;cursor:pointer}
+.hw:hover{background:linear-gradient(90deg,#141618,#737985)}
+.hw span{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--ink2);white-space:nowrap;font-family:var(--mono);pointer-events:none}
+
+.screen{position:absolute;left:16px;top:22px;width:320px;height:480px;border-radius:6px;overflow:hidden;background:#000;
+  font-family:var(--ui);font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;touch-action:none;cursor:default;
+  --acc:#fa2d48;--gk:1;--ts:1;font-size:calc(15px*var(--ts));color:var(--l1);letter-spacing:-.01em}
+.screen.dark{--bg0:#000;--bgG:#000;--card:#1c1c1e;--l1:#fff;--l2:rgba(235,235,245,.6);--l3:rgba(235,235,245,.3);--sep:rgba(84,84,88,.6);--fill:rgba(118,118,128,.24);
+  --gr:44,44,48;--ga:calc(.86 - .2*var(--gk));--grim:calc(.17*var(--gk));--ghi:calc(.2*var(--gk));--gsh:.4;--kb:#2c2c2e;--key:#6a6a6e;--key2:#464649}
+.screen.light{--bg0:#fff;--bgG:#f2f2f7;--card:#fff;--l1:#000;--l2:rgba(60,60,67,.6);--l3:rgba(60,60,67,.3);--sep:rgba(60,60,67,.29);--fill:rgba(118,118,128,.12);
+  --gr:255,255,255;--ga:calc(.94 - .22*var(--gk));--grim:calc(.7*var(--gk));--ghi:calc(.9*var(--gk));--gsh:.13;--kb:#d4d5db;--key:#fff;--key2:#abafba}
+.onart{--l1:#fff;--l2:rgba(255,255,255,.62);--l3:rgba(255,255,255,.34);--sep:rgba(255,255,255,.16);--fill:rgba(255,255,255,.16);
+  --gr:255,255,255;--ga:calc(.06 + .08*var(--gk));--grim:calc(.26*var(--gk));--ghi:calc(.38*var(--gk));--gsh:.22;color:#fff}
+
+/* Liquid Glass material: a tinted fill, a hairline rim and a specular highlight. All static, nothing is blurred live. */
+.gl{position:relative;background:rgba(var(--gr),var(--ga));box-shadow:inset 0 0 0 .6px rgba(255,255,255,var(--grim)),inset 0 1px 1px rgba(255,255,255,var(--ghi)),0 6px 18px rgba(0,0,0,var(--gsh))}
+.gl::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(160deg,rgba(255,255,255,calc(.14*var(--gk))) 0%,rgba(255,255,255,0) 38%,rgba(255,255,255,0) 72%,rgba(255,255,255,calc(.06*var(--gk))) 100%)}
+
+.stage{position:absolute;inset:0}
+.page{position:absolute;inset:0;overflow:hidden;background:var(--bg0)}
+.page.grouped{background:var(--bgG)}
+.bgl{position:absolute;inset:0;background-size:cover;background-position:center}
+.bgl.bgart::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.12),rgba(0,0,0,.42))}
+.scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:68px 0 24px;scrollbar-width:none;touch-action:pan-y}
+.scroll::-webkit-scrollbar{display:none}
+
+/* status bar */
+.sbar{position:absolute;top:0;left:0;right:0;height:24px;z-index:40;display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 18px;font-size:13px;font-weight:600;letter-spacing:-.01em;color:var(--sbc,var(--l1));cursor:pointer}
+.sbar .r{display:flex;align-items:center;gap:5px}
+.sbar svg{width:13px;height:13px}
+.batt{display:inline-block;width:22px;height:11px;border-radius:3.5px;border:1px solid currentColor;opacity:.95;position:relative;padding:1.5px}
+.batt::after{content:"";position:absolute;right:-3px;top:3px;width:1.5px;height:3.5px;border-radius:0 1px 1px 0;background:currentColor;opacity:.5}
+.batt b{display:block;height:100%;border-radius:1.5px;background:currentColor}
+
+/* nav bar with scroll-edge effect */
+.nb{position:absolute;top:24px;left:0;right:0;height:44px;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:0 12px;pointer-events:none}
+.nb>*{pointer-events:auto}
+.nbt{position:absolute;left:60px;right:60px;text-align:center;font-weight:600;font-size:1em;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.page.scrolled .nbt{opacity:1}
+.edge{position:absolute;top:0;left:0;right:0;height:80px;z-index:15;pointer-events:none;background:linear-gradient(180deg,var(--bg0) 0%,var(--bg0) 30%,transparent);opacity:0;transition:opacity .2s}
+.page.grouped .edge{background:linear-gradient(180deg,var(--bgG) 0%,var(--bgG) 30%,transparent)}
+.page.onart .edge{display:none}
+.page.scrolled .edge{opacity:.96}
+.gb{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--l1)}
+.gb svg{width:17px;height:17px}
+.nbr{display:flex;gap:8px}
+.lt{font-size:calc(29px*var(--ts));font-weight:700;letter-spacing:-.025em;margin:0 16px 10px;line-height:1.1}
+svg.i{fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+svg.f{fill:currentColor;stroke:none}
+
+/* plain lists */
+.r{position:relative;display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px;cursor:pointer}
+.r::after{content:"";position:absolute;bottom:0;right:0;left:var(--in,16px);height:.5px;background:var(--sep)}
+.r:last-child::after{display:none}
+.r:active{background:var(--fill)}
+.r .tx{flex:1;min-width:0;padding:7px 0}
+.r .t1{font-size:1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r .t2{font-size:.82em;color:var(--l2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.r .ch{width:12px;height:12px;color:var(--l3);flex:none;stroke-width:2.6}
+.r .v{color:var(--l2);font-size:.95em;flex:none}
+.r .gi{width:22px;height:22px;color:var(--acc);flex:none}
+.r .num{width:20px;text-align:center;color:var(--l2);font-variant-numeric:tabular-nums;flex:none;font-size:.95em}
+.r .dur{color:var(--l2);font-size:.85em;font-variant-numeric:tabular-nums;flex:none}
+.r.now .t1{color:var(--acc)}
+.art{width:50px;height:50px;border-radius:6px;background-size:cover;flex:none;box-shadow:0 0 0 .5px rgba(0,0,0,.08)}
+.art.sm{width:42px;height:42px;border-radius:5px}
+.art.round{border-radius:50%}
+.mos{display:grid;grid-template-columns:1fr 1fr;width:50px;height:50px;border-radius:6px;overflow:hidden;flex:none}
+.mos i{background-size:cover}
+.bars{display:inline-flex;gap:2px;align-items:flex-end;height:12px;width:20px;justify-content:center;flex:none}
+.bars b{width:3px;background:var(--acc);border-radius:1px;animation:eqb 1s ease-in-out infinite}
+.bars b:nth-child(2){animation-delay:-.4s}.bars b:nth-child(3){animation-delay:-.7s}
+.bars.stop b{animation:none;height:4px}
+@keyframes eqb{0%,100%{height:4px}50%{height:12px}}
+/* grouped (settings) */
+.grp{margin:0 16px;background:var(--card);border-radius:20px;overflow:hidden}
+.grp .r{--in:54px;min-height:46px;padding:0 14px}
+.sq{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#fff;flex:none}
+.sq svg{width:17px;height:17px}
+.foot{color:var(--l2);font-size:.8em;margin:8px 32px 0;line-height:1.4}
+
+/* home screen */
+.home{position:absolute;inset:0}
+.apps{position:absolute;top:44px;left:18px;right:18px;display:grid;grid-template-columns:repeat(4,1fr);row-gap:18px}
+.app{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer}
+.app:active .aic{transform:scale(.92)}
+.aic{width:56px;height:56px;border-radius:13.5px;display:grid;place-items:center;color:#fff;position:relative;transition:transform .15s;
+  box-shadow:inset 0 0 0 .6px rgba(255,255,255,.35),inset 0 1.5px 1px rgba(255,255,255,.45),0 4px 10px rgba(0,0,0,.25)}
+.aic::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(165deg,rgba(255,255,255,.32),rgba(255,255,255,0) 45%,rgba(0,0,0,0) 70%,rgba(0,0,0,.12))}
+.aic svg{width:28px;height:28px;position:relative;z-index:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,.15))}
+.app span{font-size:11px;font-weight:500;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.45);letter-spacing:0}
+.dock{position:absolute;left:10px;right:10px;bottom:10px;height:84px;border-radius:32px;display:flex;justify-content:center;align-items:center;gap:34px}
+.dock .app span{display:none}
+.edit .app .aic{animation:jig .28s ease-in-out infinite alternate}
+.edit .app:nth-child(2n) .aic{animation-delay:-.14s}
+@keyframes jig{from{transform:rotate(-1.6deg)}to{transform:rotate(1.6deg)}}
+.app{position:relative}
+.minus{position:absolute;top:-5px;left:2px;width:20px;height:20px;border-radius:50%;background:rgba(60,60,64,.92);color:#fff;display:grid;place-items:center;z-index:3;box-shadow:0 1px 3px rgba(0,0,0,.4);cursor:pointer}
+.minus::before{content:"";width:9px;height:2px;border-radius:1px;background:#fff}
+.app.drag .aic{opacity:.25}
+.ghost{position:absolute;z-index:80;pointer-events:none;transform:scale(1.12);filter:drop-shadow(0 10px 16px rgba(0,0,0,.45))}
+.edbar{position:absolute;top:26px;left:12px;right:12px;display:flex;justify-content:space-between;z-index:5}
+.edbar .pillb{height:30px;padding:0 14px;border-radius:15px;display:flex;align-items:center;gap:5px;font-size:13px;font-weight:600;cursor:pointer;color:#fff}
+.edbar .pillb svg{width:14px;height:14px}
+.edit .apps{top:66px}
+.dock.drop,.apps.drop{outline:1.5px dashed rgba(255,255,255,.5);outline-offset:4px;border-radius:20px}
+.r .gen{font-size:.78em;font-weight:600;color:var(--acc);flex:none}
+
+/* tab bar (Music) */
+.tabbar{position:absolute;left:14px;bottom:12px;height:54px;width:204px;border-radius:27px;display:flex;padding:4px;z-index:22}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:23px;font-size:10px;font-weight:600;color:var(--l1);cursor:pointer;letter-spacing:0;transition:background .25s,color .25s}
+.tab svg{width:21px;height:21px}
+.tab.on{color:var(--acc);background:var(--fill)}
+.tsearch{position:absolute;right:14px;bottom:12px;width:54px;height:54px;border-radius:50%;display:grid;place-items:center;z-index:22;cursor:pointer;color:var(--l1)}
+.tsearch svg{width:21px;height:21px}
+.pager{position:absolute;inset:0;display:flex;width:200%;transition:transform .34s cubic-bezier(.2,.8,.2,1)}
+.pager>.col{position:relative;width:50%;height:100%}
+.pager .scroll{padding-bottom:84px}
+
+/* album */
+.ahd{display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 24px}
+.ahd .big{width:196px;height:196px;border-radius:10px;background-size:cover;box-shadow:0 14px 30px rgba(0,0,0,.28)}
+.ahd .t{font-size:1.25em;font-weight:700;margin-top:14px;letter-spacing:-.02em;line-height:1.2}
+.ahd .a{font-size:1.1em;color:var(--acc);margin-top:2px;font-weight:500}
+.ahd .m{font-size:.75em;color:var(--l2);margin-top:4px;font-weight:500;letter-spacing:.01em}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 16px 12px}
+.cap{height:42px;border-radius:21px;background:var(--fill);display:flex;align-items:center;justify-content:center;gap:7px;font-weight:600;color:var(--acc);cursor:pointer;font-size:1em}
+.cap svg{width:15px;height:15px}
+.az{position:absolute;right:2px;top:80px;bottom:16px;width:16px;display:flex;flex-direction:column;justify-content:space-between;align-items:center;font-size:9.5px;font-weight:600;color:var(--acc);z-index:18;cursor:pointer;letter-spacing:0}
+
+/* now playing */
+.np{position:absolute;inset:0}
+.grab{position:absolute;top:30px;left:50%;width:36px;height:5px;margin-left:-18px;border-radius:3px;background:var(--l3);cursor:pointer;z-index:2}
+.bigart{position:absolute;left:34px;top:48px;width:252px;height:252px;border-radius:12px;background-size:cover;box-shadow:0 22px 44px rgba(0,0,0,.45);transition:transform .45s cubic-bezier(.3,1.4,.5,1),box-shadow .45s;transform-origin:50% 50%;cursor:pointer}
+.bigart.paused{transform:scale(.84);box-shadow:0 10px 22px rgba(0,0,0,.3)}
+.ttl{position:absolute;left:24px;right:20px;top:314px;display:flex;align-items:center;gap:8px}
+.ttl .tx{flex:1;min-width:0}
+.ttl .t1{font-size:1.2em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.02em}
+.ttl .t2{font-size:1.05em;color:var(--l2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ttl .gb{width:30px;height:30px}
+.ttl .gb svg{width:16px;height:16px}
+.ttl .gb.fav.on svg{fill:currentColor}
+.scrub{position:absolute;left:24px;right:24px;top:362px;height:18px;cursor:pointer}
+.scrub .tr{position:absolute;left:0;right:0;top:7px;height:5px;border-radius:3px;background:rgba(255,255,255,.22);overflow:hidden}
+.scrub .fi{height:100%;background:rgba(255,255,255,.85)}
+.tms{position:absolute;left:24px;right:24px;top:381px;display:flex;justify-content:space-between;align-items:center;font-size:10.5px;font-weight:600;color:var(--l2);font-variant-numeric:tabular-nums;letter-spacing:0}
+.lossless{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;color:var(--l2);background:var(--fill);padding:2px 7px;border-radius:5px;letter-spacing:.02em}
+.lossless svg{width:11px;height:11px}
+.trans{position:absolute;left:0;right:0;top:404px;display:flex;justify-content:center;align-items:center;gap:44px}
+.trans .b{display:grid;place-items:center;cursor:pointer;color:#fff;border-radius:50%;transition:transform .12s}
+.trans .b:active{transform:scale(.88)}
+.trans .b svg{width:32px;height:32px}
+.trans .b.main svg{width:40px;height:40px}
+.npb{position:absolute;left:26px;right:26px;top:452px;display:flex;justify-content:space-between;align-items:center;color:var(--l2)}
+.npb .b{width:26px;height:22px;display:grid;place-items:center;cursor:pointer}
+.npb .b svg{width:18px;height:18px}
+.npb .c{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0}
+.npb .b.sp{font-size:11px;font-weight:700;width:auto;padding:0 6px;border-radius:5px;border:1px solid var(--l3)}
+.lyr{position:absolute;left:0;right:0;top:44px;height:262px;overflow:hidden;-webkit-mask-image:linear-gradient(transparent,#000 14%,#000 80%,transparent);mask-image:linear-gradient(transparent,#000 14%,#000 80%,transparent);cursor:pointer}
+.lyr .in{padding:0 24px;transition:transform .6s cubic-bezier(.2,.8,.2,1)}
+.lyr p{margin:0;padding:7px 0;font-size:calc(21px*var(--ts));font-weight:700;letter-spacing:-.02em;line-height:1.22;color:rgba(255,255,255,.3);transition:color .35s}
+.lyr p.on{color:#fff}
+
+/* menus, sheets */
+.scrim{position:absolute;inset:0;z-index:45}
+.scrim.dim{background:rgba(0,0,0,.3)}
+.pop{position:absolute;right:12px;bottom:178px;width:224px;border-radius:22px;padding:6px 0;z-index:46;transform-origin:92% 100%;color:var(--l1)}
+.screen.dark .pop{--ga:calc(.9 - .12*var(--gk))}
+.pop .it{display:flex;align-items:center;justify-content:space-between;gap:10px;height:38px;padding:0 16px;cursor:pointer;font-size:1em}
+.pop .it:active{background:var(--fill)}
+.pop .it svg{width:17px;height:17px}
+.pop .it.red{color:#ff453a}
+.pop .gap{height:7px;background:rgba(0,0,0,.18);margin:5px 0}
+.screen.light .pop .gap{background:rgba(0,0,0,.06)}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:58px;border-radius:24px 24px 0 0;z-index:46;background:var(--bgG);overflow:hidden;color:var(--l1)}
+.sheet .sgrab{width:36px;height:5px;border-radius:3px;background:var(--l3);margin:7px auto 4px}
+.sheet h4{font-size:1.05em;font-weight:600;margin:4px 0 12px;text-align:center}
+.kv .r{cursor:default}
+.kv .r .v{max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+
+/* control center */
+.cc{position:absolute;inset:0;z-index:50;--u:64px;--g:11px}
+.cc .bgl::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.42)}
+.ccg{position:absolute;left:15.5px;top:34px;display:grid;grid-template-columns:repeat(4,var(--u));grid-auto-rows:var(--u);gap:var(--g)}
+.mod{border-radius:22px;position:relative;overflow:hidden}
+.m22{grid-column:span 2;grid-row:span 2}
+.m12{grid-row:span 2}
+.m21{grid-column:span 2}
+.conn{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;place-items:center;padding:8px}
+.cir{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.18);cursor:pointer;color:#fff;transition:background .2s}
+.cir svg{width:22px;height:22px}
+.cir.on{background:var(--c,#0a84ff)}
+.nowm{padding:12px;display:flex;flex-direction:column;justify-content:space-between}
+.nowm .h{display:flex;gap:8px;align-items:center}
+.nowm .art{width:38px;height:38px;border-radius:7px}
+.nowm .t1{font-size:.8em;font-weight:600;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.nowm .t2{font-size:.72em;color:var(--l2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nowm .c{display:flex;justify-content:space-around;align-items:center}
+.nowm .c div{cursor:pointer;display:grid;place-items:center}
+.nowm .c svg{width:22px;height:22px}
+.nowm .c .main svg{width:26px;height:26px}
+.sq1{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:#fff;transition:background .2s,color .2s}
+.sq1 svg{width:22px;height:22px}
+.sq1 .val{font-size:15px;font-weight:700;letter-spacing:-.02em;line-height:22px}
+.sq1 small{font-size:8.5px;font-weight:600;opacity:.75;letter-spacing:.01em}
+.sq1.on{background:#fff;color:#000;box-shadow:none}
+.sq1.on::after{display:none}
+.vsl{cursor:pointer}
+.vsl .lv{position:absolute;left:0;right:0;bottom:0;background:#fff;transition:height .08s}
+.vsl svg{position:absolute;left:50%;bottom:14px;width:22px;height:22px;margin-left:-11px;color:#6b6b70;z-index:1}
+.vsl .n{position:absolute;top:10px;left:0;right:0;text-align:center;font-size:12px;font-weight:700;color:#fff;z-index:1}
+.inf{display:flex;align-items:center;justify-content:space-around;font-size:11px;font-weight:600;color:var(--l2)}
+.inf b{color:#fff;font-size:15px;display:block;text-align:center;letter-spacing:-.02em}
+
+/* keyboard */
+.kb{position:absolute;left:0;right:0;bottom:0;height:186px;background:var(--kb);z-index:30;padding:8px 3px 6px;display:flex;flex-direction:column;gap:9px}
+.kr{display:flex;gap:5px;justify-content:center}
+.k{height:36px;flex:0 0 26.6px;border-radius:6px;background:var(--key);display:grid;place-items:center;font-size:17px;font-weight:400;color:var(--l1);box-shadow:0 1px 0 rgba(0,0,0,.3);cursor:pointer;letter-spacing:0}
+.k:active{background:var(--key2)}
+.k svg{width:18px;height:18px}
+.k.w{flex:0 0 40px;background:var(--key2);font-size:12px}
+.k.sp{flex:1;font-size:13px}
+.k.go{flex:0 0 72px;background:var(--acc);color:#fff;font-size:13px;font-weight:600}
+.sfield{margin:0 16px 12px;height:38px;border-radius:19px;display:flex;align-items:center;gap:7px;padding:0 12px;color:var(--l2);background:var(--fill);cursor:text}
+.sfield svg{width:16px;height:16px}
+.sfield .q{color:var(--l1);min-width:0;white-space:nowrap;overflow:hidden}
+.sfield .q:empty::before{content:attr(data-ph);color:var(--l2)}
+.caret{display:inline-block;width:2px;height:18px;background:var(--acc);animation:blink 1s steps(1) infinite;margin-left:-5px}
+@keyframes blink{50%{opacity:0}}
+.sh{font-size:1.15em;font-weight:700;margin:14px 16px 4px;letter-spacing:-.02em}
+
+/* banner + volume */
+.banner{position:absolute;left:50%;top:6px;transform:translate(-50%,-70px);height:36px;border-radius:18px;padding:0 14px 0 10px;display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;z-index:70;white-space:nowrap;transition:transform .45s cubic-bezier(.3,1.3,.5,1);color:var(--l1)}
+.banner svg{width:16px;height:16px;color:var(--acc)}
+.banner.on{transform:translate(-50%,0)}
+.vhud{position:absolute;right:5px;top:118px;width:12px;height:150px;border-radius:6px;z-index:70;overflow:hidden;transition:opacity .3s,width .3s,right .3s;opacity:0}
+.vhud.on{opacity:1;width:16px;right:6px}
+.vhud .lv{position:absolute;left:0;right:0;bottom:0;background:#fff;transition:height .12s}
+.screen.light .vhud .lv{background:#1c1c1e}
+.offscr{position:absolute;inset:0;background:#000;z-index:90;display:none}
+
+@media (prefers-reduced-motion:reduce){.pager,.bigart,.lyr .in,.banner{transition:none}.bars b,.caret{animation:none}}
+</style>
+
+<header class="top">
+  <h1>R3 Glass</h1>
+  <p>Interfaz estilo iOS 26 para el HiBy R3 II 2025, a tamaño real (320 × 480). Táctil y con los botones laterales funcionando. Cada pantalla usa solo elementos que existen en el firmware.</p>
+</header>
+
+<div class="wrap">
+  <div class="devcol">
+    <div class="devbox" id="devbox">
+      <div class="device" id="device">
+        <button class="hw" style="top:42px;height:34px" id="hwPwr" aria-label="Encendido"><span>power</span></button>
+        <button class="hw" style="top:96px;height:44px" id="hwVu" aria-label="Subir volumen"><span>vol +</span></button>
+        <button class="hw" style="top:146px;height:44px" id="hwVd" aria-label="Bajar volumen"><span>vol −</span></button>
+        <button class="hw" style="top:222px;height:30px" id="hwPrev" aria-label="Anterior"><span>ant.</span></button>
+        <button class="hw" style="top:258px;height:38px" id="hwPlay" aria-label="Reproducir o pausar"><span>play</span></button>
+        <button class="hw" style="top:302px;height:30px" id="hwNext" aria-label="Siguiente"><span>sig.</span></button>
+        <div class="screen dark" id="scr">
+          <div class="stage" id="stage"></div>
+          <div class="sbar" id="sbar" role="button" aria-label="Abrir centro de control"></div>
+          <div id="layer"></div>
+          <div class="vhud gl" id="vhud"><div class="lv" id="vlv"></div></div>
+          <div class="banner gl" id="banner"></div>
+          <div class="offscr" id="off"></div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">Toca para navegar. Desliza hacia abajo desde la barra de estado para abrir el centro de control, desde el borde izquierdo para volver y hacia abajo en el reproductor para cerrarlo. Toca la carátula para ver la letra.</div>
+  </div>
+
+  <div class="rail">
+    <section class="card" aria-labelledby="h-jump">
+      <h2 id="h-jump">Pantallas</h2>
+      <div class="chips" id="jump"></div>
+    </section>
+
+    <section class="card" aria-live="polite">
+      <h2>Esta pantalla en el firmware</h2>
+      <h3 id="nT"></h3>
+      <p id="nP"></p>
+      <div class="map" id="nM"></div>
+    </section>
+
+    <section class="card">
+      <h2>Tu inicio</h2>
+      <p style="color:var(--ink2);font-size:13px">Mantén pulsado un icono en el inicio para editarlo. Esta es la distribución que leerá el aparato: guárdala como <code>hibymod/home.json</code> en la SD.</p>
+      <div class="map" id="homecfg" style="white-space:pre-wrap"></div>
+      <div class="chips" style="margin-top:8px"><button class="chip" id="cpHome">Copiar</button><button class="chip" id="rsHome">Restablecer</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Tu tema</h2>
+      <p style="color:var(--ink2);font-size:13px">Claro y oscuro se cambian en el aparato (Ajustes → Aspecto). El acento, el fondo de inicio y el cristal se fijan al generar el firmware.</p>
+      <div class="ctl">
+        <label>Aspecto</label><div class="chips" id="cMode"></div>
+        <label>Acento</label><div class="sw" id="cAcc"></div>
+        <label>Fondo de inicio</label><div class="chips" id="cWall"></div>
+        <label>Cristal</label><div class="chips" id="cGlass"></div>
+        <label>Texto</label><div class="chips" id="cText"></div>
+        <label>Transiciones</label><div class="chips" id="cAnim"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Cómo se mantiene fluido</h2>
+      <ul>
+        <li><span class="tag ok">SÍ</span><span>Como en iOS, el contenido va sobre fondo liso y el cristal solo en lo que flota: botones, barra de pestañas, menús y centro de control. Menos capas transparentes = pantallas más rápidas de pintar.</span></li>
+        <li><span class="tag ok">SÍ</span><span>El fondo del reproductor es la carátula desenfocada que <code>hiby_player</code> ya calcula una vez y guarda en caché. El cristal no se calcula en vivo.</span></li>
+        <li><span class="tag ok">SÍ</span><span>Cada pieza de cristal es un PNG al tamaño exacto, con su brillo y su borde ya pintados. No se escala nada al dibujar.</span></li>
+        <li><span class="tag pc">PC</span><span>Carátulas a 320 px con <code>hibymod_covers.py</code> y listas recomendadas (Redescubre, Joyas Hi-Res…) como .m3u generadas en el PC.</span></li>
+        <li><span class="tag no">NO</span><span>Desenfoque real de lo que pasa por debajo del cristal. Sin GPU, las barras flotantes usan un tinte opaco.</span></li>
+        <li><span class="tag no">NO</span><span>Animaciones nuevas. Las transiciones son las del motor del reproductor. Pulsa "Como en el aparato" para ver el prototipo sin ellas.</span></li>
+      </ul>
+    </section>
+  </div>
+</div>
+
+<script>
+(()=>{
+/* ---------------- icons (24px grid) ---------------- */
+const P={
+ chev:'M9 5l7 7-7 7', back:'M15 4.5L7.5 12l7.5 7.5',
+ play:'M7 4.6v14.8c0 .8.9 1.3 1.6.9l12-7.4c.6-.4.6-1.3 0-1.7l-12-7.4C7.9 3.3 7 3.8 7 4.6z',
+ pause:'M6 4.5h4v15H6zM14 4.5h4v15h-4z',
+ next:'M3 6.2v11.6c0 .7.8 1.1 1.4.7L12 13v4.8c0 .7.8 1.1 1.4.7l8.2-5.8c.5-.4.5-1.1 0-1.4L13.4 5.5c-.6-.4-1.4 0-1.4.7V11L4.4 5.5C3.8 5.1 3 5.5 3 6.2z',
+ prev:'M21 6.2v11.6c0 .7-.8 1.1-1.4.7L12 13v4.8c0 .7-.8 1.1-1.4.7l-8.2-5.8c-.5-.4-.5-1.1 0-1.4l8.2-5.8c.6-.4 1.4 0 1.4.7V11l7.6-5.5c.6-.4 1.4 0 1.4.7z',
+ shuf:'M3 7h3.5c4 0 6 10 10 10H21M3 17h3.5c1.6 0 2.8-1.6 3.9-3.6M13.6 9.6C14.6 8 15.6 7 17 7h4M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5',
+ rep:'M4 11V9.5A3.5 3.5 0 017.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 01-3.5 3.5H4M7 21l-3-3 3-3',
+ rep1:'M4 11V9.5A3.5 3.5 0 017.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 01-3.5 3.5H4M7 21l-3-3 3-3M11 10.5l1.5-1v5',
+ seq:'M4 6h12M4 11h12M4 16h7M17 13.5l4 2.5-4 2.5z',
+ heart:'M12 20.5s-8-4.7-8-10.6A4.4 4.4 0 0112 7.3a4.4 4.4 0 018 2.6c0 5.9-8 10.6-8 10.6z',
+ more:'M6.5 12h.01M12 12h.01M17.5 12h.01',
+ bt:'M7 7.5l10 9-5 4.5V3l5 4.5-10 9', wifi:'M2.5 9.2a14.2 14.2 0 0119 0M5.6 12.6a9.8 9.8 0 0112.8 0M8.7 15.9a5.2 5.2 0 016.6 0M12 19.4h.01',
+ sun:'M12 8a4 4 0 100 8 4 4 0 000-8zM12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4',
+ spk2:'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM15.5 9a4.2 4.2 0 010 6M18.2 6.5a8 8 0 010 11',
+ gear:'M12 8.6a3.4 3.4 0 100 6.8 3.4 3.4 0 000-6.8zM19.4 13.5l1.6 1.2-1.8 3.1-1.9-.7a7.5 7.5 0 01-2 1.2l-.3 2H11l-.3-2a7.5 7.5 0 01-2-1.2l-1.9.7-1.8-3.1 1.6-1.2a7.6 7.6 0 010-3l-1.6-1.2 1.8-3.1 1.9.7a7.5 7.5 0 012-1.2l.3-2H15l.3 2a7.5 7.5 0 012 1.2l1.9-.7 1.8 3.1-1.6 1.2a7.6 7.6 0 010 3z',
+ note:'M9 17.5V6.2l11-2.2v11.3M9 17.5a2.7 2.7 0 11-5.4 0 2.7 2.7 0 015.4 0zM20 15.3a2.7 2.7 0 11-5.4 0 2.7 2.7 0 015.4 0z',
+ album:'M12 3a9 9 0 100 18 9 9 0 000-18zM12 9.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z',
+ mic:'M12 3.5a3 3 0 00-3 3V12a3 3 0 006 0V6.5a3 3 0 00-3-3zM6 11.5a6 6 0 0012 0M12 17.5v3',
+ folder:'M3 7.2A2.2 2.2 0 015.2 5h3.6l2 2.2h8a2.2 2.2 0 012.2 2.2v7.4A2.2 2.2 0 0118.8 19H5.2A2.2 2.2 0 013 16.8z',
+ clock:'M12 3.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM12 7.5V12l3 2',
+ spark:'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z',
+ chart:'M4 20V10M10 20V4M16 20v-7M22 20H2',
+ list:'M8.5 6h12M8.5 12h12M8.5 18h12M4 6h.01M4 12h.01M4 18h.01', listplay:'M3.5 6h11M3.5 11h11M3.5 16h6M15 14v6.5l5.5-3.25z',
+ tag:'M3.5 12V4.5h7.5l9.5 9.5-7.5 7.5zM7.8 7.8h.01', users:'M9 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM2.5 20a6.5 6.5 0 0113 0M16 4.6a3.5 3.5 0 010 6.3M17.5 14a6 6 0 014 6',
+ search:'M10.5 4a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM20 20l-4.8-4.8',
+ eq:'M5 4v16M12 4v16M19 4v16M3 15h4M10 8.5h4M17 13h4',
+ usb:'M12 2.5v14M9.8 5.2L12 2.5l2.2 2.7M12 13.5l-4.5-2.3V8.6M12 11l4.5-2.3V6.5M12 16.5a2.2 2.2 0 100 4.4 2.2 2.2 0 000-4.4z',
+ moon:'M20 14.6A8 8 0 019.4 4a8 8 0 1010.6 10.6z', cast:'M3 17a4 4 0 014 4M3 13a8 8 0 018 8M3 9.5V6.2C3 5 4 4 5.2 4h13.6C20 4 21 5 21 6.2v11.6c0 1.2-1 2.2-2.2 2.2H14',
+ air:'M6.5 17H5.2A2.2 2.2 0 013 14.8V6.2C3 5 4 4 5.2 4h13.6C20 4 21 5 21 6.2v8.6c0 1.2-1 2.2-2.2 2.2h-1.3M7.5 21l4.5-5.5 4.5 5.5z',
+ link:'M10 14a4.5 4.5 0 006.4 0l3-3a4.5 4.5 0 00-6.4-6.4L11.5 6M14 10a4.5 4.5 0 00-6.4 0l-3 3a4.5 4.5 0 006.4 6.4l1.5-1.5',
+ fade:'M3 18c5 0 6-12 9-12s4 12 9 12', gap:'M3 12h5.5M15.5 12H21M9.5 7.5v9M14.5 7.5v9', line:'M3.5 12h10M10 8l4 4-4 4M19.5 5v14',
+ dac:'M5 3.5h14v17H5zM9 7.5h6M12 11.5a3 3 0 100 6 3 3 0 000-6z', book:'M4.5 5.5A2 2 0 016.5 3.5h13v15h-13a2 2 0 00-2 2zM4.5 20.5v-15M8.5 7.5h7',
+ globe:'M12 3.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM3.5 12h17M12 3.5c3 3.3 3 13.7 0 17M12 3.5c-3 3.3-3 13.7 0 17',
+ paint:'M12 3.5a8.5 8.5 0 100 17c1 0 1.5-.7 1.5-1.4 0-.5-.2-.8-.5-1.1-.3-.3-.5-.7-.5-1.1 0-.8.7-1.4 1.5-1.4h1.8a4.8 4.8 0 004.8-4.8c0-4.2-3.8-7.2-8.6-7.2zM7.5 12.2h.01M9.7 8h.01M14.3 8h.01',
+ textsz:'M3.5 18l4-11 4 11M5 14h5M14 18l3-8 3 8M15.2 15.3h3.6', info:'M12 3.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM12 11v5.2M12 7.8h.01',
+ db:'M12 3.5c4.4 0 8 1.2 8 2.8s-3.6 2.8-8 2.8-8-1.2-8-2.8 3.6-2.8 8-2.8zM4 6.3v11.4c0 1.6 3.6 2.8 8 2.8s8-1.2 8-2.8V6.3M4 12c0 1.6 3.6 2.8 8 2.8s8-1.2 8-2.8',
+ pulse:'M3 12h4l2.5-6 4 12 2.5-6H21', reset:'M4.5 12a7.5 7.5 0 107.5-7.5H8M10.5 1.5L7.5 4.5l3 3',
+ plus:'M12 5v14M5 12h14', trash:'M4.5 6.5h15M9.5 6.5V4h5v2.5M6.5 6.5l1 13.5h9l1-13.5', addl:'M3.5 6h11M3.5 11h11M3.5 16h7M18 13v8M14 17h8',
+ quote:'M5 6.5h14a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 17.5h-8.5l-4 3v-3H5A1.5 1.5 0 013.5 16V8A1.5 1.5 0 015 6.5zM8 11h.01M12 11h.01M16 11h.01',
+ hp:'M4 15v-3a8 8 0 0116 0v3M4 15h3.2v5.5H5a1 1 0 01-1-1zM20 15h-3.2v5.5H19a1 1 0 001-1z', check:'M5 12.5l4.5 4.5L19 7.5',
+ lang:'M4 5h9M8.5 3v2M6 5c1 4 4 7 7 8M11 5c-1 4-4 7-7 8M13 21l4-10 4 10M14.5 17.5h5', del:'M9 5h11v14H9l-6-7zM12.5 9.5l5 5M17.5 9.5l-5 5', shift:'M12 4l8 8h-4.5v7h-7v-7H4z',
+ wave:'M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2'
+};
+// gear drawn from geometry (8 teeth) so it reads as a real settings cog
+P.gear=(()=>{const n=8,R=9.8,r=7.2,cx=12,cy=12;let d='';for(let i=0;i<n;i++){const a=i*2*Math.PI/n;
+  [[r,a-.36],[R,a-.2],[R,a+.2],[r,a+.36]].forEach(([rad,t],j)=>{d+=(i===0&&j===0?'M':'L')+(cx+rad*Math.cos(t)).toFixed(2)+' '+(cy+rad*Math.sin(t)).toFixed(2);});}
+  return d+'zM12 8.6a3.4 3.4 0 100 6.8 3.4 3.4 0 000-6.8z';})();
+P.radio='M4 9.5h16v10H4zM7.5 9.5l9-5M8.5 16.5a2 2 0 100-4 2 2 0 000 4zM14 13h3M14 16h3';
+P.wand='M4 20L15 9M14 4v2M19 9h2M17.5 5.5l1.4-1.4M12 2.5h0M20 13.5h0M13 7l4 4';
+P.cloud='M7 18.5h10.5a3.8 3.8 0 00.6-7.6A5.6 5.6 0 007.3 9.4 4.6 4.6 0 007 18.5z';
+P.minus='M6 12h12';
+const FILLED=new Set(['play','pause','next','prev']);
+const ic=(n,c='')=>`<svg class="${FILLED.has(n)?'f':'i'} ${c}" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[n]}"/></svg>`;
+
+/* ---------------- sample library (examples) ---------------- */
+const AL=[
+ {t:'Mareas de Neón',a:'Lúa Vidal',y:2024,g:'Electrónica',fmt:'FLAC',q:'24 bit / 96 kHz',pal:['#0b1d4f','#ff4fa3','#36e2ff'],st:'waves',added:'hace 2 días',
+  tr:['Faro','Mareas de neón','Ciudad de sal','Ola lenta','Noches de agosto','Cristal','Puerto','Ultravioleta','Volver al mar','Bajamar']},
+ {t:'Atlas Nocturno',a:'Sierra Bloom',y:2025,g:'Ambient',fmt:'DSD64',q:'2,8 MHz',pal:['#140a2e','#7b5cff','#ffd36b'],st:'orbit',added:'hace 5 días',
+  tr:['Constelación','Atlas','Mapa de estrellas','Hemisferio sur','Polaris','Nadir','Últimas luces']},
+ {t:'Glasshouse Tapes',a:'The Quiet Engines',y:2023,g:'Indie',fmt:'FLAC',q:'16 bit / 44,1 kHz',pal:['#1f3b2d','#b8e986','#f2f2f2'],st:'grid',added:'hace 2 semanas',
+  tr:['Greenhouse','Quiet Engine','Static Bloom','Window Light','Ferns','Low Hum','Tape Two','Morning Ritual']},
+ {t:'Paper Satellites',a:'Mira Okafor',y:2022,g:'Soul',fmt:'ALAC',q:'24 bit / 48 kHz',pal:['#2b2d6e','#ff7a45','#ffd0a8'],st:'circles',added:'hace 3 semanas',
+  tr:['Paper Satellites','Gold Thread','Radio Silence','Lagos Blue','Slow Burn','Halo','Home Again']},
+ {t:'Hierro y Sal',a:'Los Faros Rotos',y:2021,g:'Rock',fmt:'FLAC',q:'24 bit / 192 kHz',pal:['#1c1c1e','#d94b2b','#e9e4da'],st:'stripes',added:'hace 1 mes',
+  tr:['Hierro','Costa da Morte','Sal en la herida','Galerna','Rompeolas','Naufragio lento','Hierro y sal']},
+ {t:'Slow Orbit',a:'Kenji Arata Trio',y:2020,g:'Jazz',fmt:'FLAC',q:'24 bit / 88,2 kHz',pal:['#0f3d3e','#5fd3bc','#f7f3e3'],st:'orbit',added:'hace 2 meses',
+  tr:['Slow Orbit','Blue Kettle','Kanazawa Rain','Brushes','Late Train','Moonlit Standard']},
+ {t:'Verano Infinito',a:'Cala Norte',y:2024,g:'Pop',fmt:'MP3',q:'320 kbps',pal:['#ff5e62','#ffcc33','#2ec5ff'],st:'sun',added:'hace 3 meses',
+  tr:['Verano infinito','Toalla y arena','Chiringuito','Última ola','Septiembre','Agua salada']},
+ {t:'Blue Hour Sessions',a:'Nadia Ferro',y:2019,g:'Jazz',fmt:'FLAC',q:'24 bit / 96 kHz',pal:['#0a2342','#2ca58d','#84bc9c'],st:'waves',added:'hace 6 meses',
+  tr:['Blue Hour','Velvet','Corner Café','Midnight Tram','Rain on Glass','Last Call']}
+];
+let seed=7;const rnd=()=>((seed=(seed*16807)%2147483647)/2147483647);
+AL.forEach((a,i)=>{a.i=i;a.d=a.tr.map(()=>Math.round(150+rnd()*170));a.plays=a.tr.map(()=>Math.round(rnd()*60));});
+const fmtT=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const hiRes=a=>/24 bit|DSD|MHz/.test(a.q+a.fmt);
+const LYR=['Se apaga la ciudad detrás del cristal','y el mar dibuja líneas en la arena','tú cuentas olas, yo cuento faros','que nunca vuelven a encenderse igual','Mareas de neón en la ventana','luces que tiemblan sobre el agua','si me buscas, sigue la corriente','estaré donde rompe la luz','Y cuando llegue agosto','volveremos al puerto','con la piel llena de sal','y el ruido del mar por dentro'];
+
+/* ---------------- canvas art ---------------- */
+function shade(h,f){const n=parseInt(h.slice(1),16);let r=n>>16,g=n>>8&255,b=n&255;const t=f<0?0:255,p=Math.abs(f);return `rgb(${Math.round((t-r)*p+r)},${Math.round((t-g)*p+g)},${Math.round((t-b)*p+b)})`;}
+function cover(a){
+  const c=document.createElement('canvas');c.width=c.height=320;const x=c.getContext('2d');const [p0,p1,p2]=a.pal;
+  const g=x.createLinearGradient(0,0,320,320);g.addColorStop(0,p0);g.addColorStop(1,shade(p0,-.35));x.fillStyle=g;x.fillRect(0,0,320,320);seed=a.i*97+13;
+  if(a.st==='waves'){for(let k=0;k<7;k++){x.beginPath();const y0=90+k*26;x.moveTo(0,y0);for(let X=0;X<=320;X+=8)x.lineTo(X,y0+Math.sin(X/38+k)*14*(1+k*.12));x.lineWidth=5-k*.4;x.strokeStyle=k%2?p1:p2;x.globalAlpha=.85-k*.07;x.stroke();}}
+  if(a.st==='orbit'){x.globalAlpha=.7;for(let k=1;k<7;k++){x.beginPath();x.arc(170,170,k*24,0,7);x.strokeStyle=p1;x.lineWidth=1.5;x.stroke();}x.globalAlpha=1;x.beginPath();x.arc(170,170,30,0,7);const rg=x.createRadialGradient(160,160,4,170,170,30);rg.addColorStop(0,'#fff');rg.addColorStop(1,p2);x.fillStyle=rg;x.fill();x.beginPath();x.arc(170+96*Math.cos(a.i),170+96*Math.sin(a.i),9,0,7);x.fillStyle=p1;x.fill();}
+  if(a.st==='grid'){for(let r=0;r<8;r++)for(let q=0;q<8;q++){if(rnd()<.42){x.fillStyle=rnd()<.5?p1:p2;x.globalAlpha=.25+rnd()*.7;x.fillRect(24+q*34,24+r*34,28,28);}}}
+  if(a.st==='circles'){x.globalCompositeOperation='screen';[[110,140,110,p1],[200,180,100,p2],[160,90,70,'#ffffff']].forEach(([X,Y,R,C])=>{x.globalAlpha=.75;x.beginPath();x.arc(X,Y,R,0,7);x.fillStyle=C;x.fill();});x.globalCompositeOperation='source-over';}
+  if(a.st==='stripes'){x.save();x.translate(160,160);x.rotate(-.5);for(let k=-8;k<8;k++){x.fillStyle=k%3===0?p1:p2;x.globalAlpha=k%3===0?.95:.18;x.fillRect(k*30,-260,k%3===0?18:6,520);}x.restore();}
+  if(a.st==='sun'){const s=x.createLinearGradient(0,0,0,320);s.addColorStop(0,p0);s.addColorStop(.6,p1);s.addColorStop(1,p2);x.fillStyle=s;x.fillRect(0,0,320,320);x.globalAlpha=1;x.beginPath();x.arc(160,190,70,0,7);x.fillStyle='#fff6d5';x.fill();x.fillStyle=p2;for(let k=0;k<6;k++)x.fillRect(0,206+k*20,320,4+k*2.5);}
+  x.globalAlpha=1;x.fillStyle='rgba(255,255,255,.9)';x.font='600 13px Inter,system-ui,sans-serif';x.fillText(a.a.toUpperCase(),20,296);
+  a.cov=c.toDataURL('image/jpeg',.9);
+  const t=document.createElement('canvas');t.width=8;t.height=12;const tx=t.getContext('2d');tx.filter='saturate(1.6) brightness(1.1)';tx.drawImage(c,0,0,320,320,0,0,8,12);
+  const b=document.createElement('canvas');b.width=160;b.height=240;const bx=b.getContext('2d');bx.imageSmoothingEnabled=true;bx.imageSmoothingQuality='high';bx.drawImage(t,0,0,160,240);
+  a.blur=b.toDataURL('image/jpeg',.9);
+}
+const WALLS={
+ aurora:{dark:['#05061a',[['#3b5bff',.75,.15,.25],['#00d4b0',.55,.9,.55],['#a43bff',.7,.25,.85],['#ff4fa3',.35,.85,.1]]],light:['#dfe6ff',[['#7fa2ff',.75,.15,.25],['#7ff0d8',.65,.9,.55],['#d39cff',.7,.25,.85],['#ffb3d6',.5,.85,.1]]]},
+ oceano:{dark:['#02101c',[['#0077b6',.8,.1,.3],['#00c2e0',.55,.9,.7],['#1d3fa0',.7,.4,.95]]],light:['#e3f3fa',[['#7fd6ef',.8,.1,.3],['#a9d8ff',.7,.9,.7],['#8fb8ff',.6,.4,.95]]]},
+ brasa:{dark:['#140805',[['#ff6a1f',.7,.9,.15],['#d6194f',.65,.15,.6],['#ffb703',.45,.7,.95]]],light:['#fdeee6',[['#ffb58a',.8,.9,.15],['#ff9db4',.7,.15,.6],['#ffe08a',.7,.7,.95]]]},
+ grafito:{dark:['#0b0c0f',[['#4a5060',.7,.2,.2],['#2a2e38',.7,.85,.8],['#5c6274',.45,.55,.55]]],light:['#e9ebef',[['#c9ced8',.8,.2,.2],['#f8f9fb',.8,.85,.8],['#b9bfcb',.6,.55,.55]]]}
+};
+const wallCache={};
+function hexA(h,a){const n=parseInt(h.slice(1),16);return `rgba(${n>>16},${n>>8&255},${n&255},${a})`;}
+function wall(name,mode){const k=name+mode;if(wallCache[k])return wallCache[k];const [base,blobs]=WALLS[name][mode];
+  const c=document.createElement('canvas');c.width=160;c.height=240;const x=c.getContext('2d');x.fillStyle=base;x.fillRect(0,0,160,240);
+  blobs.forEach(([col,al,cx,cy])=>{const g=x.createRadialGradient(cx*160,cy*240,0,cx*160,cy*240,140);g.addColorStop(0,hexA(col,al));g.addColorStop(1,hexA(col,0));x.fillStyle=g;x.fillRect(0,0,160,240);});
+  return wallCache[k]=c.toDataURL('image/jpeg',.92);}
+
+/* ---------------- state ---------------- */
+const S={stack:[{s:'home'}],cur:{a:0,t:1},playing:true,pos:71,vol:42,fav:new Set(['0-1','3-0','5-2']),mode:'sec',tab:0,lyrics:false,speed:'1x',q:'',kb:false,
+  t:{bt:true,wifi:false,air:false,dlna:false,link:false,gain:'Alta',mseb:false,line:false,usb:'Alm.',bal:'0',gap:true,fade:false,filt:'Ráp.',sleep:'Off'},
+  bright:62,anim:true,th:{mode:'dark',acc:'#fa2d48',wall:'aurora',glass:'media',text:'normal'},upd:'Manual',
+  edit:false,home:{grid:['wireless','books','dac'],dock:['music','settings'],hidden:['stream']},mixAt:null};
+const APPS={
+ music:{n:'Música',i:'note',g:'linear-gradient(160deg,#ff6b81,#fa1e45)',a:'go:music'},
+ settings:{n:'Ajustes',i:'gear',g:'linear-gradient(160deg,#c7c7cc,#6e6e73)',a:'go:settings'},
+ wireless:{n:'Inalámbrico',i:'cast',g:'linear-gradient(160deg,#5ef08a,#14a64a)',a:'toast:Inalámbrico: Bluetooth, DLNA, AirPlay, red local'},
+ books:{n:'Libros',i:'book',g:'linear-gradient(160deg,#ffbf47,#ff7a00)',a:'toast:Libros: misma pantalla con este estilo'},
+ dac:{n:'DAC USB',i:'dac',g:'linear-gradient(160deg,#a5a5ad,#55555c)',a:'toast:DAC USB: misma pantalla con este estilo'},
+ stream:{n:'Streaming',i:'globe',g:'linear-gradient(160deg,#5ac8fa,#0a60ff)',a:'toast:Solo contiene Tidal y Qobuz: oculto por defecto'}
+};
+try{const h=JSON.parse(localStorage.getItem('r3g-home')||'null');if(h&&h.grid&&h.dock&&h.hidden&&[...h.grid,...h.dock,...h.hidden].length===6)S.home=h;}catch(e){}
+function saveHome(){try{localStorage.setItem('r3g-home',JSON.stringify(S.home));}catch(e){}drawHomeCfg();}
+const ACC=[['#fa2d48','Rojo Música'],['#0a84ff','Azul'],['#30d158','Verde'],['#ff9f0a','Naranja'],['#bf5af2','Morado'],['#64d2ff','Cian']];
+const GL={sutil:.6,media:1,intensa:1.5};
+const scr=document.getElementById('scr'),stage=document.getElementById('stage'),layer=document.getElementById('layer');
+const curA=()=>AL[S.cur.a];
+
+/* ---------------- building blocks ---------------- */
+const nav=(title,right='',noBack)=>`<div class="edge"></div><div class="nb">${noBack?'<span></span>':`<div class="gb gl" data-act="back" role="button" aria-label="Volver">${ic('back')}</div>`}<div class="nbt">${title}</div><div class="nbr">${right}</div></div>`;
+const gbtn=(icon,act,label)=>`<div class="gb gl" data-act="${act}" role="button" aria-label="${label}">${ic(icon)}</div>`;
+const rowI=(icon,label,act,val)=>`<div class="r" style="--in:50px" data-act="${act}">${ic(icon,'gi')}<div class="tx"><div class="t1">${label}</div></div>${val!==undefined?`<span class="v">${val}</span>`:''}${ic('chev','ch')}</div>`;
+const nowMark=(a,t)=>S.cur.a===a.i&&S.cur.t===t;
+const bars=()=>`<span class="bars ${S.playing?'':'stop'}"><b></b><b></b><b></b></span>`;
+const trkNum=(a,t)=>`<div class="r ${nowMark(a,t)?'now':''}" style="--in:48px" data-act="play:${a.i}:${t}">${nowMark(a,t)?bars():`<span class="num">${t+1}</span>`}<div class="tx"><div class="t1">${a.tr[t]}</div></div><span class="dur">${fmtT(a.d[t])}</span></div>`;
+const trkArt=(a,t,sub)=>`<div class="r ${nowMark(a,t)?'now':''}" style="--in:70px" data-act="play:${a.i}:${t}"><div class="art sm" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.tr[t]}</div><div class="t2">${sub||a.a}</div></div>${nowMark(a,t)?bars():''}</div>`;
+const albR=(a,sub)=>`<div class="r" style="--in:78px" data-act="album:${a.i}"><div class="art" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.t}</div><div class="t2">${sub||a.a}</div></div>${ic('chev','ch')}</div>`;
+const mos=ids=>`<div class="mos">${ids.map(i=>`<i style="background-image:url(${AL[i].cov})"></i>`).join('')}</div>`;
+const sqI=(icon,col,label,act,val)=>`<div class="r" data-act="${act}"><div class="sq" style="background:${col}">${ic(icon)}</div><div class="tx"><div class="t1">${label}</div></div>${val?`<span class="v">${val}</span>`:''}${ic('chev','ch')}</div>`;
+
+/* ---------------- screens ---------------- */
+const SCREENS={
+ home:{kind:'wall',note:['Inicio','Es la pantalla de aplicaciones del firmware. Mantén pulsado un icono para editar: arrástralo para moverlo entre la cuadrícula y el dock (hasta 4), toca − para ocultarlo y + para recuperarlo. En el aparato la posición de cada icono es un dato del panel: hibymod lee tu distribución de hibymod/home.json en la SD al arrancar. Streaming está oculto porque solo contiene Tidal y Qobuz.','hiby_launcher_apps.view · launcher_apps_vg_player / stream_media / wireless / ebook / dac / sysset · hibymod/home.json'],
+  html:()=>{const app=id=>{const a=APPS[id];return `<div class="app" data-app="${id}" ${S.edit?'':`data-act="${a.a}"`}>${S.edit&&id!=='music'&&id!=='settings'?`<div class="minus" data-act="hide:${id}" role="button" aria-label="Ocultar ${a.n}"></div>`:''}<div class="aic" style="background:${a.g}">${ic(a.i)}</div><span>${a.n}</span></div>`;};
+   return `<div class="home ${S.edit?'edit':''}">${S.edit?`<div class="edbar"><div class="pillb gl" data-act="addapps">${ic('plus')}Añadir</div><div class="pillb gl" data-act="editdone">Listo</div></div>`:''}
+   <div class="apps" data-zone="grid">${S.home.grid.map(app).join('')}</div><div class="dock gl" data-zone="dock">${S.home.dock.map(app).join('')}</div></div>`}},
+ music:{kind:'plain',note:['Música','Biblioteca y Listas ya son dos páginas que el firmware desliza. Su barra de etiquetas se lleva abajo como barra de pestañas flotante, igual que en Música de iOS 26. La lupa abre la búsqueda, que también existe.','hiby_main_category.view + hiby_main_songlist.view · hiby_category_label / hiby_songlist_label · hiby_music_search.view'],
+  html:()=>`<div class="pager" id="pager" style="transform:translateX(${S.tab*-50}%)">
+   <div class="col"><div class="scroll"><h1 class="lt">Biblioteca</h1><div>
+    ${rowI('note','Canciones','go:songs',AL.reduce((n,a)=>n+a.tr.length,0))}${rowI('album','Álbumes','go:albums',AL.length)}${rowI('mic','Artistas','go:artists')}${rowI('users','Artistas del álbum','go:artists')}${rowI('tag','Géneros','go:genres')}${rowI('folder','Carpetas','go:folders')}
+   </div></div></div>
+   <div class="col"><div class="scroll"><h1 class="lt">Listas</h1><div>
+    ${rowI('spark','Añadidas recientemente','go:recent')}${rowI('heart','Favoritas','go:favs',S.fav.size)}${rowI('clock','Recientes','go:history')}${rowI('chart','Más escuchadas','go:most')}${rowI('list','Mis listas','go:playlists',7)}
+   </div></div></div></div>
+   ${nav(S.tab?'Listas':'Biblioteca')}
+   <div class="tabbar gl"><div class="tab ${S.tab===0?'on':''}" data-act="tab:0">${ic('album')}Biblioteca</div><div class="tab ${S.tab===1?'on':''}" data-act="tab:1">${ic('list')}Listas</div></div>
+   <div class="tsearch gl" data-act="go:search" role="button" aria-label="Buscar">${ic('search')}</div>`},
+ albums:{kind:'plain',note:['Álbumes','Usa la plantilla de fila del firmware: una lista con portada de 50 px y separador fino, como en las listas de iOS. La cuadrícula de portadas de iOS no es posible, porque el componente de lista solo dibuja filas.','vg_listview_album.listview · miniatura de la caché de imágenes (img_table)'],
+  html:()=>`${nav('Álbumes')}<div class="scroll"><h1 class="lt">Álbumes</h1>${AL.slice().sort((x,y)=>x.t.localeCompare(y.t)).map(a=>albR(a)).join('')}</div>`},
+ album:{kind:'plain',note:['Álbum','Lista de canciones del álbum. La cabecera con portada y los botones Reproducir y Aleatorio es la primera fila de la lista. Si la plantilla del aparato no admite una fila distinta, queda la lista con la miniatura arriba.','vg_listview_album → canciones del álbum'],
+  html:p=>{const a=AL[p];const mins=Math.round(a.d.reduce((s,x)=>s+x,0)/60);return `${nav(a.t,gbtn('more','toast:Menú del álbum','Más'))}<div class="scroll">
+   <div class="ahd"><div class="big" style="background-image:url(${a.cov})"></div><div class="t">${a.t}</div><div class="a">${a.a}</div><div class="m">${a.g} · ${a.y} · ${hiRes(a)?'Hi-Res ':''}${a.fmt}</div></div>
+   <div class="btns"><div class="cap" data-act="play:${a.i}:0">${ic('play')}Reproducir</div><div class="cap" data-act="play:${a.i}:${Math.floor(a.tr.length/2)}">${ic('shuf')}Aleatorio</div></div>
+   <div style="border-top:.5px solid var(--sep);margin-left:16px"></div>
+   ${a.tr.map((_,t)=>trkNum(a,t)).join('')}
+   <p class="foot" style="margin:12px 16px 0">${a.tr.length} canciones, ${mins} minutos<br>${a.fmt} · ${a.q}</p></div>`}},
+ songs:{kind:'plain',note:['Canciones','Lista completa con el índice A–Z que el firmware ya tiene. Con miles de canciones el motor solo pinta las filas visibles.','vg_listview_all.listview · vg_listview_a_z.view · vg_listview_scrollbar.view'],
+  html:()=>{const all=[];AL.forEach(a=>a.tr.forEach((_,t)=>all.push([a,t])));all.sort((x,y)=>x[0].tr[x[1]].localeCompare(y[0].tr[y[1]]));const seen=new Set();
+   return `${nav('Canciones')}<div class="az">${'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ#'.split('').filter((_,i)=>i%2===0).map(l=>`<span data-act="az:${l}">${l}</span>`).join('')}</div><div class="scroll"><h1 class="lt">Canciones</h1><div style="padding-right:12px">${all.map(([a,t])=>{const L=a.tr[t][0].toUpperCase();const id=seen.has(L)?'':` id="az-${L}"`;seen.add(L);return `<div${id}>${trkArt(a,t)}</div>`;}).join('')}</div></div>`}},
+ artists:{kind:'plain',note:['Artistas','Misma plantilla de fila, con la imagen en círculo como en iOS.','vg_listview_artist / vg_listview_album_artist / vg_listview_albums_of_an_artist'],
+  html:()=>`${nav('Artistas')}<div class="scroll"><h1 class="lt">Artistas</h1>${AL.slice().sort((x,y)=>x.a.localeCompare(y.a)).map(a=>`<div class="r" style="--in:78px" data-act="album:${a.i}"><div class="art round" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.a}</div></div>${ic('chev','ch')}</div>`).join('')}</div>`},
+ genres:{kind:'plain',note:['Géneros','Lista de géneros leída de las etiquetas.','vg_listview_genre / vg_listview_albums_of_a_genre'],
+  html:()=>{const G={};AL.forEach(a=>(G[a.g]=G[a.g]||[]).push(a));return `${nav('Géneros')}<div class="scroll"><h1 class="lt">Géneros</h1>${Object.keys(G).sort().map(g=>`<div class="r" style="--in:78px" data-act="album:${G[g][0].i}">${mos([G[g][0].i,(G[g][1]||G[g][0]).i,(G[g][0].i+3)%8,(G[g][0].i+5)%8])}<div class="tx"><div class="t1">${g}</div><div class="t2">${G[g].length} ${G[g].length>1?'álbumes':'álbum'}</div></div>${ic('chev','ch')}</div>`).join('')}</div>`}},
+ folders:{kind:'plain',note:['Carpetas','Explorador de la tarjeta SD.','vg_listview_explorer'],
+  html:()=>`${nav('Tarjeta SD')}<div class="scroll"><h1 class="lt">Tarjeta SD</h1>${[['Música','248 carpetas','go:albums'],['Hi-Res','36 carpetas','go:albums'],['Podcasts','12 archivos','toast:Carpeta de ejemplo'],['Audiolibros','4 carpetas','toast:Carpeta de ejemplo'],['hibymod','Informes de diagnóstico','toast:hibymod/logs y boot_history.txt']].map(([n,d,a])=>`<div class="r" style="--in:50px" data-act="${a}">${ic('folder','gi')}<div class="tx"><div class="t1">${n}</div><div class="t2">${d}</div></div>${ic('chev','ch')}</div>`).join('')}</div>`},
+ recent:{kind:'plain',note:['Añadidas recientemente','La lista ya existe en el firmware y ordena por fecha de alta. Ahora tiene acceso directo. Sale como lista continua, sin agrupar por semanas, porque la vista nativa no tiene secciones.','vg_listview_recent_add · lg_recent_add_listview · CTIME_TABLE'],
+  html:()=>`${nav('Añadidas')}<div class="scroll"><h1 class="lt">Añadidas</h1>${AL.map(a=>albR(a,`${a.a} · ${a.added}`)).join('')}</div>`},
+ most:{kind:'plain',note:['Más escuchadas','La función existe (base de datos most_played) y viene activada de fábrica. Falta confirmar en el aparato desde qué menú se abre.','vg_listview_most_played · lg_most_played_listview · most_played.db'],
+  html:()=>{const all=[];AL.forEach(a=>a.tr.forEach((_,t)=>all.push([a,t,a.plays[t]])));all.sort((x,y)=>y[2]-x[2]);return `${nav('Más escuchadas')}<div class="scroll"><h1 class="lt">Más escuchadas</h1>${all.slice(0,14).map(([a,t,n])=>trkArt(a,t,`${a.a} · ${n} reproducciones`)).join('')}</div>`}},
+ favs:{kind:'plain',note:['Favoritas','Lista de favoritas nativa. Se llena con el corazón del reproductor.','vg_listview_collect · COLLECT_TABLE'],
+  html:()=>`${nav('Favoritas')}<div class="scroll"><h1 class="lt">Favoritas</h1>${[...S.fav].map(k=>{const [a,t]=k.split('-').map(Number);return trkArt(AL[a],t);}).join('')||`<p class="foot" style="text-align:center;margin-top:40px">Toca ♡ en el reproductor para añadir canciones.</p>`}</div>`},
+ history:{kind:'plain',note:['Recientes','Historial de reproducción nativo.','vg_listview_history · HISTORY_TABLE'],
+  html:()=>`${nav('Recientes')}<div class="scroll"><h1 class="lt">Recientes</h1>${[[0,1],[0,0],[3,2],[5,0],[1,4],[2,2],[7,1]].map(([a,t])=>trkArt(AL[a],t)).join('')}</div>`},
+ playlists:{kind:'plain',note:['Mis listas','Las mezclas se generan solo cuando abres "Generar mezclas": un pequeño programa nativo espera bloqueado (0 % de CPU) a que el reproductor abra esa lista. Entonces lee tu biblioteca, lo más escuchado, favoritas e historial, y reescribe las listas en menos de un segundo, con prioridad mínima para no cortar el audio. No hay nada en segundo plano. Radio y Navidrome son listas con direcciones de streaming que reproduce el propio reproductor.','hibymix (C, binario estático MIPS) · inotify sobre hibymod/listas/*.m3u8 · usrlocal_media.db + most_played.db (solo lectura)'],
+  html:()=>`${nav('Mis listas',gbtn('plus','toast:Nueva lista (diálogo nativo)','Nueva lista'))}<div class="scroll"><h1 class="lt">Mis listas</h1>
+   <div class="r" style="--in:78px" data-act="genmix"><div class="art" style="display:grid;place-items:center;background:var(--fill);color:var(--acc)">${ic('wand')}</div><div class="tx"><div class="t1" style="color:var(--acc);font-weight:600">Generar mezclas</div><div class="t2">${S.mixAt?'Última: '+S.mixAt+' · 0,4 s':'Ábrela para crear mezclas nuevas'}</div></div></div>
+   ${[['Mezcla para ti','Tus artistas y géneros, con descubrimientos',[0,3,6,1]],['Radio: '+curA().a,'Parecidas a lo que suena ahora',[S.cur.a,(S.cur.a+5)%8,(S.cur.a+2)%8,(S.cur.a+7)%8]],['Redescubre','Te gustaban y llevan meses sin sonar',[5,7,2,4]],['Recién llegadas','Añadidas y aún sin escuchar',[0,1,2,3]],['Joyas Hi-Res','Lo mejor en 24 bit y DSD',[1,4,0,5]]].map(([n,d,ids])=>`<div class="r" style="--in:78px" data-act="album:${ids[0]}">${mos(ids)}<div class="tx"><div class="t1">${n}</div><div class="t2">${d}</div></div>${S.mixAt?'<span class="gen">nueva</span>':''}${ic('chev','ch')}</div>`).join('')}
+   <div class="r" style="--in:78px" data-act="toast:Radio Browser: emisoras abiertas, reproducción nativa"><div class="art" style="display:grid;place-items:center;background:linear-gradient(160deg,#ff9f0a,#ff375f);color:#fff">${ic('radio')}</div><div class="tx"><div class="t1">Radio · España</div><div class="t2">42 emisoras · Radio Browser</div></div>${ic('chev','ch')}</div>
+   <div class="r" style="--in:78px" data-act="toast:Navidrome/Subsonic: streaming desde tu servidor"><div class="art" style="display:grid;place-items:center;background:linear-gradient(160deg,#64d2ff,#0a84ff);color:#fff">${ic('cloud')}</div><div class="tx"><div class="t1">Navidrome · Novedades</div><div class="t2">Tu servidor en casa · streaming</div></div>${ic('chev','ch')}</div>
+   ${[['Viaje en tren',6,18],['Para leer',7,24],['Domingo',3,12]].map(([n,i,c])=>`<div class="r" style="--in:78px" data-act="album:${i}"><div class="art" style="background-image:url(${AL[i].cov})"></div><div class="tx"><div class="t1">${n}</div><div class="t2">${c} canciones</div></div>${ic('chev','ch')}</div>`).join('')}</div>`},
+ search:{kind:'plain',note:['Buscar','La búsqueda y su teclado en pantalla ya existen en el firmware, con "búsquedas recientes" incluidas. Se rediseñan con el campo en cápsula y el teclado de estilo iOS.','hiby_music_search.view · hiby_search_label.view · hiby_keyboard.view · search_record'],
+  html:()=>{const q=S.q.toLowerCase();let res='';
+   if(q){const songs=[],albs=[],arts=[];AL.forEach(a=>{if(a.t.toLowerCase().includes(q))albs.push(a);if(a.a.toLowerCase().includes(q))arts.push(a);a.tr.forEach((n,t)=>{if(n.toLowerCase().includes(q))songs.push([a,t]);});});
+     res=[...arts.map(a=>`<div class="r" style="--in:70px" data-act="album:${a.i}"><div class="art sm round" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.a}</div><div class="t2">Artista</div></div>${ic('chev','ch')}</div>`),
+       ...albs.map(a=>`<div class="r" style="--in:70px" data-act="album:${a.i}"><div class="art sm" style="background-image:url(${a.cov})"></div><div class="tx"><div class="t1">${a.t}</div><div class="t2">Álbum · ${a.a}</div></div>${ic('chev','ch')}</div>`),
+       ...songs.slice(0,8).map(([a,t])=>trkArt(a,t,`Canción · ${a.a}`))].join('')||`<p class="foot" style="text-align:center;margin-top:24px">Sin resultados para «${S.q}»</p>`;}
+   else res=`<div class="sh">Búsquedas recientes</div>${['Lúa Vidal','Slow Orbit','jazz'].map(s=>`<div class="r" style="--in:50px" data-act="q:${s}">${ic('clock','gi')}<div class="tx"><div class="t1">${s}</div></div></div>`).join('')}`;
+   return `${nav('Buscar')}<div class="scroll" style="padding-bottom:${S.kb?200:24}px"><h1 class="lt">Buscar</h1><div class="sfield" data-act="kb">${ic('search')}<span class="q" data-ph="Canciones, álbumes, artistas">${S.q}</span>${S.kb?'<span class="caret"></span>':''}</div><div>${res}</div></div>${S.kb?kbd():''}`}},
+ player:{kind:'art',vertical:true,note:['Reproductor','Todos los elementos existen en el firmware: carátula, título, artista, favorito, menú ⋯, barra, tiempos, calidad, anterior/reproducir/siguiente, modo de reproducción, número de pista y velocidad. El fondo es la carátula desenfocada que el reproductor guarda en caché. Al pausar, la carátula se encoge como en iOS; si el motor no anima, cambia sin transición.','hiby_playing_plane.view · iv_cover / tv_music_title / tv_music_artist / iv_collect / iv_more / pb / tv_bit_info / iv_play_mode / tv_song_count / iv_playspeed · song_info_vg_bg'],
+  html:()=>{const a=curA(),t=S.cur.t,d=a.d[t];const pm={sec:'seq',rnd:'shuf',all:'rep',one:'rep1'}[S.mode];
+   return `<div class="np"><div class="grab" data-act="back" role="button" aria-label="Cerrar"></div>
+   ${S.lyrics?`<div class="lyr" data-act="lyrics"><div class="in" id="lrcin">${LYR.map((l,i)=>`<p data-i="${i}">${l}</p>`).join('')}</div></div>`:`<div class="bigart ${S.playing?'':'paused'}" data-act="lyrics" style="background-image:url(${a.cov})"></div>`}
+   <div class="ttl"><div class="tx"><div class="t1">${a.tr[t]}</div><div class="t2">${a.a}</div></div><div class="gb gl fav ${S.fav.has(a.i+'-'+t)?'on':''}" data-act="fav" role="button" aria-label="Favorita">${ic('heart')}</div><div class="gb gl" data-act="menu" role="button" aria-label="Más opciones">${ic('more')}</div></div>
+   <div class="scrub" data-act="seek"><div class="tr"><div class="fi" id="fill" style="width:${S.pos/d*100}%"></div></div></div>
+   <div class="tms"><span id="tpos">${fmtT(S.pos)}</span><span class="lossless">${ic('wave')}${hiRes(a)?'Hi-Res ':''}${a.fmt} · ${a.q}</span><span id="trem">−${fmtT(d-S.pos)}</span></div>
+   <div class="trans"><div class="b" data-act="prev" role="button" aria-label="Anterior">${ic('prev')}</div><div class="b main" data-act="pp" role="button" aria-label="Reproducir o pausar">${ic(S.playing?'pause':'play')}</div><div class="b" data-act="next" role="button" aria-label="Siguiente">${ic('next')}</div></div>
+   <div class="npb"><div class="b" data-act="mode" role="button" aria-label="Modo de reproducción">${ic(pm)}</div><span class="c">${t+1} de ${a.tr.length}</span><div class="b sp" data-act="speed" role="button" aria-label="Velocidad">${S.speed}</div></div></div>`}},
+ queue:{kind:'art',note:['Lista actual','Es la lista de reproducción actual del menú ⋯, dibujada sobre la carátula desenfocada como la cola de iOS. Reordenar arrastrando no existe en el firmware, así que no se incluye.','play_menu.dlg → play_menu_vg_cur_songlist · VG_LISTVIEW_CUR_SONGLIST'],
+  html:()=>{const a=curA(),n=AL[(a.i+1)%8];return `${nav('Lista actual')}<div class="scroll"><h1 class="lt">Lista actual</h1><div class="sh" style="font-size:.95em;margin-top:2px;color:var(--l2)">Sonando</div>${trkArt(a,S.cur.t)}<div class="sh" style="font-size:.95em;color:var(--l2)">A continuación</div>${a.tr.map((_,t)=>t>S.cur.t?trkArt(a,t):'').join('')}${n.tr.slice(0,3).map((_,t)=>trkArt(n,t)).join('')}</div>`}},
+ settings:{kind:'grouped',note:['Ajustes','Las opciones son las del firmware, más las que activamos (Modo USB, color de letra). Van en un solo bloque agrupado con iconos de color, como Ajustes de iOS. Si la lista nativa no permite redondear los extremos del bloque, se queda con esquinas rectas.','vg_listview_settings · set_functions.json · sys_set.ini'],
+  html:()=>`${nav('Ajustes')}<div class="scroll"><h1 class="lt">Ajustes</h1><div class="grp">
+   ${sqI('paint','#5e5ce6','Aspecto','go:theme',S.th.mode==='dark'?'Oscuro':'Claro')}
+   ${sqI('sun','#0a84ff','Pantalla y brillo','toast:Lista nativa de pantalla')}
+   ${sqI('textsz','#0a84ff','Tamaño del texto','fontsize',S.th.text==='normal'?'Normal':'Grande')}
+   ${sqI('db','#34c759','Escaneo','upd',S.upd)}
+   ${sqI('reset','#34c759','Buscar música nueva','toast:Escaneando la tarjeta…')}
+   ${sqI('eq','#ff9500','Reproducción','toast:Lista nativa de reproducción','EQ, gapless')}
+   ${sqI('quote','#ff2d55','Color de la letra','toast:Menú nativo activado por hibymod')}
+   ${sqI('usb','#8e8e93','Modo USB','usbmode',S.t.usb==='ADB'?'ADB':S.t.usb==='DAC'?'DAC':'Disco')}
+   ${sqI('bt','#0a84ff','Bluetooth','toast:Lista nativa de Bluetooth',S.t.bt?'Sí':'No')}
+   ${sqI('lang','#8e8e93','Idioma','toast:Lista nativa de idioma','Español')}
+   ${sqI('pulse','#ff3b30','Diagnóstico','toast:Informes en la SD: hibymod/logs','Sin fallos')}
+   ${sqI('info','#8e8e93','Información','toast:Pantalla nativa de información','hibymod 0.1')}
+  </div><p class="foot">Con el escaneo en Manual no vuelve a escanear cada vez que conectas el USB.</p></div>`},
+ theme:{kind:'grouped',note:['Aspecto','El selector de tema es nativo. hibymod sustituye los dos temas de fábrica por "Claro" y "Oscuro" de este diseño. El acento y el fondo van ya dentro de cada tema.','Ajustes → Tema · litegui/theme2 · litegui/theme3 · logo de arranque por tema (mtd5)'],
+  html:()=>{const opt=(m,n)=>`<div data-act="mode:${m}" style="display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer"><div style="width:72px;height:118px;border-radius:12px;background:url(${wall(S.th.wall,m)}) center/cover;box-shadow:0 0 0 .5px var(--sep),0 4px 10px rgba(0,0,0,.2);position:relative;overflow:hidden"><div style="position:absolute;left:6px;right:6px;bottom:6px;height:16px;border-radius:8px;background:${m==='dark'?'rgba(50,50,55,.75)':'rgba(255,255,255,.75)'}"></div></div><span style="font-size:.85em">${n}</span><span style="width:20px;height:20px;border-radius:50%;display:grid;place-items:center;${S.th.mode===m?'background:var(--acc);color:#fff':'box-shadow:inset 0 0 0 1.5px var(--l3)'}">${S.th.mode===m?ic('check'):''}</span></div>`;
+   return `${nav('Aspecto')}<div class="scroll"><h1 class="lt">Aspecto</h1><div class="grp" style="padding:16px 0;display:flex;justify-content:space-evenly">${opt('light','Claro')}${opt('dark','Oscuro')}</div><p class="foot">El color de acento, el fondo de inicio y la intensidad del cristal se eligen al generar el firmware.</p></div>`}}
+};
+function kbd(){const rows=['qwertyuiop','asdfghjklñ','zxcvbnm'];const keys=r=>[...r].map(c=>`<div class="k" data-act="key:${c}">${c}</div>`).join('');
+  return `<div class="kb" id="kb"><div class="kr">${keys(rows[0])}</div><div class="kr">${keys(rows[1])}</div>
+  <div class="kr"><div class="k w" data-act="kb">${ic('shift')}</div>${keys(rows[2])}<div class="k w" data-act="key:DEL">${ic('del')}</div></div>
+  <div class="kr"><div class="k w" data-act="kb">123</div><div class="k sp" data-act="key: ">espacio</div><div class="k go" data-act="kb">buscar</div></div></div>`;}
+
+/* ---------------- render ---------------- */
+function build(e){const def=SCREENS[e.s];const pg=document.createElement('div');pg.className='page'+(def.kind==='grouped'?' grouped':'')+(def.kind==='art'?' onart':'');pg.dataset.s=e.s;
+  const bg=def.kind==='wall'?`<div class="bgl" style="background-image:url(${wall(S.th.wall,S.th.mode)})"></div>`:def.kind==='art'?`<div class="bgl bgart" style="background-image:url(${curA().blur})"></div>`:'';
+  pg.innerHTML=bg+def.html(e.p);return pg;}
+const top=()=>S.stack[S.stack.length-1];
+const E='cubic-bezier(.22,.9,.24,1)',D=340;
+function render(dir){const old=stage.lastElementChild;const pg=build(top());stage.appendChild(pg);
+  const v=SCREENS[top().s].vertical||(dir==='back'&&old&&SCREENS[old.dataset.s].vertical);
+  if(old){if(S.anim&&dir){if(dir==='fwd'){pg.animate(v?[{transform:'translateY(100%)'},{transform:'none'}]:[{transform:'translateX(100%)'},{transform:'none'}],{duration:D,easing:E});
+        old.animate(v?[{transform:'none',filter:'brightness(1)'},{transform:'scale(.93)',filter:'brightness(.6)'}]:[{transform:'none',filter:'brightness(1)'},{transform:'translateX(-28%)',filter:'brightness(.75)'}],{duration:D,easing:E}).onfinish=()=>old.remove();}
+      else{stage.insertBefore(pg,old);old.animate(v?[{transform:'none'},{transform:'translateY(100%)'}]:[{transform:'none'},{transform:'translateX(100%)'}],{duration:D,easing:E}).onfinish=()=>old.remove();
+        pg.animate(v?[{transform:'scale(.93)',filter:'brightness(.6)'},{transform:'none',filter:'brightness(1)'}]:[{transform:'translateX(-28%)',filter:'brightness(.75)'},{transform:'none',filter:'brightness(1)'}],{duration:D,easing:E});}}
+    else old.remove();}
+  after();}
+function refresh(){const keep=[...(stage.lastElementChild?.querySelectorAll('.scroll')||[])].map(s=>s.scrollTop);stage.innerHTML='';const pg=build(top());stage.appendChild(pg);pg.querySelectorAll('.scroll').forEach((s,i)=>{s.scrollTop=keep[i]||0;});after();}
+function after(){sbar();note();const pg=stage.lastElementChild;pg.querySelectorAll('.scroll').forEach(onScroll);if(top().s==='player'&&S.lyrics)syncLrc();}
+function onScroll(s){const pg=s.closest('.page');if(pg)pg.classList.toggle('scrolled',s.scrollTop>30);}
+stage.addEventListener('scroll',e=>{if(e.target.classList&&e.target.classList.contains('scroll'))onScroll(e.target);},true);
+function go(s,p){S.stack.push({s,p});render('fwd');}
+function back(){if(layer.innerHTML){closeLayer();return;}if(top().s==='search'&&S.kb){S.kb=false;refresh();return;}if(S.stack.length>1){S.stack.pop();render('back');}}
+
+function sbar(){const t=S.t,k=SCREENS[top().s].kind;const el=document.getElementById('sbar');
+  const white=k==='art'||(k==='wall'&&S.th.mode==='dark')||!!layer.querySelector('.cc');
+  el.style.setProperty('--sbc',white?'#fff':(k==='wall'?'#000':'var(--l1)'));
+  el.innerHTML=`<span>10:42</span><span class="r">${t.bt?ic('bt'):''}${t.wifi?ic('wifi'):''}${ic('hp')}<span class="batt"><b style="width:78%"></b></span></span>`;}
+
+/* ---------------- overlays ---------------- */
+function openMenu(){layer.innerHTML=`<div class="scrim" data-act="close"></div><div class="pop gl" id="pop">
+  <div class="it" data-act="go:queue">Lista actual${ic('listplay')}</div><div class="it" data-act="banner:Añadida a «Viaje en tren»|check">Añadir a una lista${ic('addl')}</div>
+  <div class="gap"></div><div class="it" data-act="banner:Ecualizador (pantalla nativa)|eq">Ecualizador${ic('eq')}</div><div class="it" data-act="album:${S.cur.a}">Ir al álbum${ic('album')}</div><div class="it" data-act="info">Información${ic('info')}</div>
+  <div class="gap"></div><div class="it red" data-act="banner:Pide confirmación (remove_song.dlg)|trash">Eliminar de la biblioteca${ic('trash')}</div></div>`;
+  if(S.anim)document.getElementById('pop').animate([{transform:'scale(.2)',opacity:0},{transform:'scale(1.02)',opacity:1,offset:.7},{transform:'none',opacity:1}],{duration:320,easing:'cubic-bezier(.2,.9,.3,1)'});
+  setNote('Menú ⋯','Es el menú del reproductor que ya existe: lista actual, añadir a una lista, EQ, ir al álbum, información y eliminar. Se dibuja como el menú contextual de iOS 26: cristal, iconos a la derecha y la acción destructiva en rojo.','play_menu.dlg · hiby_play_menu.view');}
+function info(){const a=curA(),t=S.cur.t;layer.innerHTML=`<div class="scrim dim" data-act="close"></div><div class="sheet" id="sheet"><div class="sgrab"></div><h4>Información</h4><div class="grp kv">
+  ${[['Título',a.tr[t]],['Artista',a.a],['Álbum',a.t],['Género',a.g],['Año',a.y],['Formato',a.fmt],['Calidad',a.q],['Duración',fmtT(a.d[t])],['Ruta',`a:\\Música\\${a.a}\\${a.t}`]].map(([k,v])=>`<div class="r" style="--in:14px;padding:0 14px"><div class="tx"><div class="t1">${k}</div></div><span class="v">${v}</span></div>`).join('')}</div></div>`;
+  if(S.anim)document.getElementById('sheet').animate([{transform:'translateY(100%)'},{transform:'none'}],{duration:360,easing:E});
+  setNote('Información de la canción','Diálogo nativo con los datos del archivo, presentado como una hoja de iOS.','playmenu_song_info.dlg');}
+function openCC(anim){const t=S.t,a=curA();
+  const sq=(k,icon,label,val)=>{const on=typeof t[k]==='boolean'&&t[k];return `<div class="mod sq1 gl ${on?'on':''}" data-act="tile:${k}" role="button" aria-label="${label}">${val!==undefined?`<span class="val">${val}</span>`:ic(icon)}<small>${label}</small></div>`;};
+  const cir=(k,icon,col,label)=>`<div class="cir ${t[k]?'on':''}" style="--c:${col}" data-act="tile:${k}" role="button" aria-label="${label}">${ic(icon)}</div>`;
+  layer.innerHTML=`<div class="cc onart" id="cc"><div class="bgl" style="background-image:url(${a.blur})"></div><div class="ccg">
+   <div class="mod m22 gl conn">${cir('bt','bt','#0a84ff','Bluetooth')}${cir('wifi','wifi','#0a84ff','Wi-Fi')}${cir('air','air','#0a84ff','AirPlay')}${cir('dlna','cast','#34c759','DLNA')}</div>
+   <div class="mod m22 gl nowm"><div class="h"><div class="art" style="background-image:url(${a.cov})"></div><div style="min-width:0"><div class="t1">${a.tr[S.cur.t]}</div><div class="t2">${a.a}</div></div></div>
+     <div class="c"><div data-act="prev">${ic('prev')}</div><div class="main" data-act="pp">${ic(S.playing?'pause':'play')}</div><div data-act="next">${ic('next')}</div></div></div>
+   <div class="mod m12 gl vsl" data-act="bright" role="slider" aria-label="Brillo" aria-valuenow="${S.bright}"><div class="lv" style="height:${S.bright}%"></div>${ic('sun')}</div>
+   <div class="mod m12 gl vsl" style="cursor:default" aria-label="Volumen"><div class="lv" style="height:${S.vol}%"></div><span class="n">${S.vol}</span>${ic('spk2')}</div>
+   ${sq('gain','','Ganancia',t.gain)}${sq('gap','gap','Gapless')}${sq('fade','fade','Fundido')}${sq('mseb','eq','MSEB')}
+   ${sq('line','line','Line out')}${sq('usb','','USB',t.usb)}${sq('filt','','Filtro',t.filt)}${sq('sleep','moon','Apagado',t.sleep==='Off'?undefined:t.sleep)}
+   ${sq('link','link','HibyLink')}${sq('bal','','Balance',t.bal)}<div class="mod m21 gl inf"><span><b>78%</b>Batería</span><span><b>10:42</b>lun 9 nov</span></div>
+  </div></div>`;
+  if(S.anim&&anim)layer.firstElementChild.animate([{opacity:0,transform:'scale(1.06)'},{opacity:1,transform:'none'}],{duration:280,easing:E});
+  sbar();
+  setNote('Centro de control','Es el menú desplegable que ya existe: los 14 controles, el brillo, la batería, la hora y los controles de reproducción. Se reparten en módulos como el Centro de control de iOS. El volumen solo muestra el nivel, porque el firmware no tiene deslizador (se cambia con los botones laterales).','hiby_pull_down_menu.view · iv_bt / wifi / airplay / dlna / gain / usb_mode / digital_filter / sleep_switch / bklight_pb / nv_speaker / cur_play');}
+function closeLayer(){const cc=layer.querySelector('.cc'),pop=layer.querySelector('.pop'),sh=layer.querySelector('.sheet');
+  const done=()=>{layer.innerHTML='';sbar();note();};
+  if(!S.anim){done();return;}
+  if(cc)cc.animate([{opacity:1},{opacity:0,transform:'scale(1.06)'}],{duration:220,easing:E}).onfinish=done;
+  else if(pop)pop.animate([{opacity:1},{opacity:0,transform:'scale(.6)'}],{duration:180}).onfinish=done;
+  else if(sh)sh.animate([{transform:'none'},{transform:'translateY(100%)'}],{duration:260,easing:E}).onfinish=done;
+  else done();}
+let vT;function vhud(){const h=document.getElementById('vhud');h.classList.add('on');document.getElementById('vlv').style.height=S.vol+'%';clearTimeout(vT);vT=setTimeout(()=>h.classList.remove('on'),1400);
+  if(layer.querySelector('.cc'))openCC(false);
+  setNote('Volumen','Aviso de volumen nativo. Se dibuja como la barra fina de iOS junto a los botones físicos.','volume.dlg');}
+let bT;function banner(msg,icon='info'){const b=document.getElementById('banner');b.innerHTML=ic(P[icon]?icon:'info')+msg;b.classList.add('on');clearTimeout(bT);bT=setTimeout(()=>b.classList.remove('on'),1700);}
+
+/* ---------------- playback ---------------- */
+function setTrack(a,t){S.cur={a,t};S.pos=0;S.playing=true;}
+function step(d){const a=curA();let t=S.cur.t+d;if(S.mode==='rnd')t=Math.floor(Math.random()*a.tr.length);if(t<0)t=0;if(t>=a.tr.length)setTrack((S.cur.a+1)%AL.length,0);else setTrack(S.cur.a,t);
+  if(layer.querySelector('.cc'))openCC(false);if(top().s!=='home')refresh();else sbar();}
+setInterval(()=>{if(!S.playing)return;S.pos++;const d=curA().d[S.cur.t];if(S.pos>=d){step(1);return;}
+  if(top().s==='player'){const f=document.getElementById('fill');if(f){f.style.width=(S.pos/d*100)+'%';document.getElementById('tpos').textContent=fmtT(S.pos);document.getElementById('trem').textContent='−'+fmtT(d-S.pos);}if(S.lyrics)syncLrc();}},1000);
+function syncLrc(){const inn=document.getElementById('lrcin');if(!inn)return;const i=Math.floor(S.pos/6)%LYR.length;[...inn.children].forEach((p,k)=>p.classList.toggle('on',k===i));inn.style.transform=`translateY(${-inn.children[i].offsetTop+70}px)`;}
+
+/* ---------------- actions ---------------- */
+function act(a,el,ev){const i=a.indexOf(':');const k=i<0?a:a.slice(0,i),v=i<0?'':a.slice(i+1);
+  if(k==='mode'&&(v==='dark'||v==='light')){setTheme('mode',v);return;}
+  switch(k){
+   case 'go':if(layer.innerHTML)layer.innerHTML='';if(v==='search'){S.q='';S.kb=false;}go(v);break;
+   case 'back':back();break;
+   case 'album':layer.innerHTML='';go('album',+v);break;
+   case 'play':{const [x,y]=v.split(':').map(Number);setTrack(x,y);if(top().s==='queue'||top().s==='player')refresh();else go('player');break;}
+   case 'tab':{S.tab=+v;const pg=document.getElementById('pager');if(pg){pg.style.transition=S.anim?'':'none';pg.style.transform=`translateX(${S.tab*-50}%)`;}document.querySelectorAll('.tab').forEach((b,j)=>b.classList.toggle('on',j===S.tab));const nb=stage.lastElementChild.querySelector('.nbt');if(nb)nb.textContent=S.tab?'Listas':'Biblioteca';break;}
+   case 'pp':S.playing=!S.playing;if(layer.querySelector('.cc'))openCC(false);if(top().s==='player'){const c=document.querySelector('.bigart');if(c)c.classList.toggle('paused',!S.playing);const b=document.querySelector('.trans .main');if(b)b.innerHTML=ic(S.playing?'pause':'play');}else if(top().s!=='home')refresh();sbar();break;
+   case 'next':step(1);break;case 'prev':if(S.pos>3){S.pos=0;refresh();}else step(-1);break;
+   case 'mode':{const o=['sec','all','one','rnd'];S.mode=o[(o.indexOf(S.mode)+1)%4];banner({sec:'En orden',all:'Repetir lista',one:'Repetir canción',rnd:'Aleatorio'}[S.mode],{sec:'seq',all:'rep',one:'rep1',rnd:'shuf'}[S.mode]);refresh();break;}
+   case 'speed':{const o=['1x','1.25x','1.5x','2x','0.5x','0.75x'];S.speed=o[(o.indexOf(S.speed)+1)%o.length];el.textContent=S.speed;break;}
+   case 'fav':{const key=S.cur.a+'-'+S.cur.t;S.fav.has(key)?S.fav.delete(key):S.fav.add(key);el.classList.toggle('on');banner(S.fav.has(key)?'Añadida a Favoritas':'Quitada de Favoritas','heart');break;}
+   case 'seek':{const r=el.getBoundingClientRect();S.pos=Math.max(0,Math.round((ev.clientX-r.left)/r.width*curA().d[S.cur.t]));refresh();break;}
+   case 'lyrics':S.lyrics=!S.lyrics;refresh();if(S.lyrics)setNote('Letra','Letra sincronizada dentro del propio reproductor (zona vg_lrc), con el estilo de iOS: líneas grandes en negrita y la actual en blanco. El color sale del menú "Color de la letra", que activamos.','playing_plane_vg_lrc · lyric_color_enable=1 · config.ini lrc_focus_color / lrc_focus_size');break;
+   case 'menu':openMenu();break;case 'info':info();break;case 'close':closeLayer();break;
+   case 'toast':banner(v);break;
+   case 'banner':{const [m,icn]=v.split('|');closeLayer();banner(m,icn);break;}
+   case 'tile':{const t=S.t;const cyc={gain:['Alta','Baja'],usb:['Alm.','DAC','ADB'],filt:['Ráp.','Lento','Corto'],sleep:['Off','15m','30m','60m'],bal:['0','L2','R2']};
+     if(cyc[v]){const o=cyc[v];t[v]=o[(o.indexOf(t[v])+1)%o.length];}else t[v]=!t[v];openCC(false);break;}
+   case 'bright':{const r=el.getBoundingClientRect();S.bright=Math.max(5,Math.min(100,Math.round((r.bottom-ev.clientY)/r.height*100)));el.querySelector('.lv').style.height=S.bright+'%';scr.style.filter=`brightness(${.5+S.bright/100*.5})`;break;}
+   case 'upd':S.upd=S.upd==='Manual'?'Automático':'Manual';banner(S.upd==='Manual'?'Solo escanea cuando tú lo pidas':'Escanea al conectar tarjeta o USB','db');refresh();break;
+   case 'usbmode':{const o=['Alm.','DAC','ADB'];S.t.usb=o[(o.indexOf(S.t.usb)+1)%3];banner('Modo USB: '+{'Alm.':'Almacenamiento',DAC:'DAC',ADB:'ADB'}[S.t.usb],'usb');refresh();break;}
+   case 'fontsize':setTheme('text',S.th.text==='normal'?'grande':'normal');break;
+   case 'kb':S.kb=!S.kb;refresh();break;
+   case 'key':if(v==='DEL')S.q=S.q.slice(0,-1);else S.q+=v;refresh();break;
+   case 'q':S.q=v;S.kb=false;refresh();break;
+   case 'genmix':{const d=new Date();S.mixAt=d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');banner('5 mezclas generadas en 0,4 s','wand');refresh();break;}
+   case 'hide':{const h=S.home;if(v==='music'||v==='settings'){banner('Música y Ajustes no se pueden ocultar','info');break;}h.grid=h.grid.filter(x=>x!==v);h.dock=h.dock.filter(x=>x!==v);h.hidden.push(v);saveHome();refresh();break;}
+   case 'addapps':{const h=S.home;if(!h.hidden.length){banner('No hay apps ocultas','info');break;}
+     layer.innerHTML=`<div class="scrim dim" data-act="close"></div><div class="sheet" id="sheet" style="top:auto;height:auto;padding-bottom:16px"><div class="sgrab"></div><h4>Añadir al inicio</h4><div class="grp">${h.hidden.map(id=>`<div class="r" style="--in:58px" data-act="unhide:${id}"><div class="sq" style="background:${APPS[id].g}">${ic(APPS[id].i)}</div><div class="tx"><div class="t1">${APPS[id].n}</div></div>${ic('plus','ch')}</div>`).join('')}</div></div>`;
+     if(S.anim)document.getElementById('sheet').animate([{transform:'translateY(100%)'},{transform:'none'}],{duration:320,easing:E});break;}
+   case 'unhide':{const h=S.home;h.hidden=h.hidden.filter(x=>x!==v);h.grid.push(v);saveHome();layer.innerHTML='';refresh();break;}
+   case 'editdone':S.edit=false;refresh();banner('Inicio guardado','check');break;
+   case 'az':{const pg=stage.lastElementChild;let el2=pg.querySelector('#az-'+v);if(!el2){const ids=[...pg.querySelectorAll('[id^="az-"]')];el2=ids.find(x=>x.id.slice(3)>=v)||ids[ids.length-1];}if(el2){pg.querySelector('.scroll').scrollTo({top:el2.offsetTop-70,behavior:S.anim?'smooth':'auto'});}break;}
+  }}
+
+/* ---------------- input ---------------- */
+let pd=null;
+let lpT=null;
+const toScr=e=>{const r=scr.getBoundingClientRect(),k=r.width/320;return [(e.clientX-r.left)/k,(e.clientY-r.top)/k];};
+scr.addEventListener('pointerdown',e=>{const r=scr.getBoundingClientRect(),k=r.width/320;pd={x:(e.clientX-r.left)/k,y:(e.clientY-r.top)/k,moved:false,cx:e.clientX,cy:e.clientY};
+  const br=e.target.closest('[data-act="bright"]');if(br){scr.setPointerCapture(e.pointerId);pd.bright=br;act('bright',br,e);}
+  const app=e.target.closest('.app');
+  if(app&&top().s==='home'&&!layer.innerHTML){
+    if(!S.edit){clearTimeout(lpT);lpT=setTimeout(()=>{if(pd&&!pd.moved){S.edit=true;pd=null;refresh();banner('Arrastra para mover · − para ocultar','grid');}},480);}
+    else if(!e.target.closest('.minus')){pd.app=app;scr.setPointerCapture(e.pointerId);}
+  }});
+scr.addEventListener('pointermove',e=>{if(!pd)return;if(Math.hypot(e.clientX-pd.cx,e.clientY-pd.cy)>8){pd.moved=true;clearTimeout(lpT);}if(pd.bright)act('bright',pd.bright,e);
+  if(pd.app&&pd.moved){const [x,y]=toScr(e);
+    if(!pd.ghost){pd.ghost=pd.app.querySelector('.aic').cloneNode(true);pd.ghost.classList.add('ghost');scr.appendChild(pd.ghost);pd.app.classList.add('drag');}
+    pd.ghost.style.left=(x-28)+'px';pd.ghost.style.top=(y-28)+'px';
+    pd.ghost.style.display='none';const under=document.elementFromPoint(e.clientX,e.clientY);pd.ghost.style.display='';
+    scr.querySelectorAll('[data-zone]').forEach(z=>z.classList.toggle('drop',!!under&&z.contains(under)));}});
+scr.addEventListener('pointercancel',()=>{if(pd&&pd.ghost)pd.ghost.remove();pd=null;clearTimeout(lpT);});
+scr.addEventListener('pointerup',e=>{clearTimeout(lpT);if(!pd)return;
+  if(pd.app&&pd.ghost){const p=pd;pd=null;p.ghost.remove();const id=p.app.dataset.app;const under=document.elementFromPoint(e.clientX,e.clientY);
+    const zone=under&&under.closest('[data-zone]');const tgt=under&&under.closest('.app');const h=S.home;
+    if(zone){const zn=zone.dataset.zone;if(zn==='dock'&&!h.dock.includes(id)&&h.dock.length>=4){banner('El dock admite 4 apps','info');refresh();return;}
+      h.grid=h.grid.filter(x=>x!==id);h.dock=h.dock.filter(x=>x!==id);const arr=h[zn];let idx=arr.length;
+      if(tgt&&tgt.dataset.app!==id){idx=arr.indexOf(tgt.dataset.app);if(idx<0)idx=arr.length;}
+      arr.splice(idx,0,id);saveHome();}
+    refresh();return;}
+  const r=scr.getBoundingClientRect(),k=r.width/320;const dx=(e.clientX-pd.cx)/k,dy=(e.clientY-pd.cy)/k;const p=pd;pd=null;if(p.bright)return;
+  if(p.moved){if(p.y<30&&dy>40&&!layer.innerHTML){openCC(true);return;}
+    if(layer.querySelector('.cc')&&dy<-50){closeLayer();return;}
+    if(p.x<22&&dx>50){back();return;}
+    if(SCREENS[top().s].vertical&&dy>70&&Math.abs(dx)<60&&!layer.innerHTML){back();return;}
+    if(top().s==='music'&&Math.abs(dx)>50&&Math.abs(dy)<40){act('tab:'+(dx<0?1:0));return;}
+    return;}
+  const t=e.target.closest('[data-act]');if(t)act(t.dataset.act,t,e);else if(e.target.closest('#sbar'))openCC(true);});
+const hw={hwVu:()=>{S.vol=Math.min(100,S.vol+4);vhud();},hwVd:()=>{S.vol=Math.max(0,S.vol-4);vhud();},hwPlay:()=>act('pp'),hwNext:()=>act('next'),hwPrev:()=>act('prev'),
+  hwPwr:()=>{const o=document.getElementById('off');o.style.display=o.style.display==='block'?'none':'block';}};
+Object.entries(hw).forEach(([id,f])=>document.getElementById(id).addEventListener('click',f));
+
+/* ---------------- theme & notes ---------------- */
+function applyTheme(){scr.classList.toggle('dark',S.th.mode==='dark');scr.classList.toggle('light',S.th.mode==='light');scr.style.setProperty('--acc',S.th.acc);scr.style.setProperty('--gk',GL[S.th.glass]);scr.style.setProperty('--ts',S.th.text==='grande'?1.1:1);}
+function setTheme(k,v){S.th[k]=v;applyTheme();refresh();if(layer.querySelector('.cc'))openCC(false);drawCtl();}
+function chips(id,opts,cur,fn){const el=document.getElementById(id);el.innerHTML=opts.map(([v,l])=>`<button class="chip" aria-pressed="${v===cur}" data-v="${v}">${l}</button>`).join('');el.onclick=e=>{const b=e.target.closest('button');if(b)fn(b.dataset.v);};}
+function drawCtl(){chips('cMode',[['dark','Oscuro'],['light','Claro']],S.th.mode,v=>setTheme('mode',v));
+  const a=document.getElementById('cAcc');a.innerHTML=ACC.map(([c,n])=>`<button style="background:${c}" aria-label="${n}" title="${n}" aria-pressed="${c===S.th.acc}" data-v="${c}"></button>`).join('');a.onclick=e=>{const b=e.target.closest('button');if(b)setTheme('acc',b.dataset.v);};
+  chips('cWall',[['aurora','Aurora'],['oceano','Océano'],['brasa','Brasa'],['grafito','Grafito']],S.th.wall,v=>setTheme('wall',v));
+  chips('cGlass',[['sutil','Sutil'],['media','Media'],['intensa','Intensa']],S.th.glass,v=>setTheme('glass',v));
+  chips('cText',[['normal','Normal'],['grande','Grande']],S.th.text,v=>setTheme('text',v));
+  chips('cAnim',[['1','Animadas'],['0','Como en el aparato']],S.anim?'1':'0',v=>{S.anim=v==='1';drawCtl();});}
+function setNote(t,p,m){document.getElementById('nT').textContent=t;document.getElementById('nP').textContent=p;document.getElementById('nM').textContent=m;}
+function note(){setNote(...SCREENS[top().s].note);}
+const JUMP=[['home','Inicio'],['homeedit','Editar inicio'],['music','Biblioteca'],['lists','Listas'],['albums','Álbumes'],['album','Álbum'],['songs','Canciones'],['recent','Añadidas'],['playlists','Mis listas'],['search','Buscar'],['player','Reproductor'],['lyrics','Letra'],['queue','Lista actual'],['menu','Menú ⋯'],['info','Información'],['cc','Centro de control'],['vol','Volumen'],['settings','Ajustes'],['theme','Aspecto']];
+document.getElementById('jump').innerHTML=JUMP.map(([s,l])=>`<button class="chip" data-s="${s}" aria-pressed="${s==='home'}">${l}</button>`).join('');
+document.getElementById('jump').onclick=e=>{const b=e.target.closest('button');if(!b)return;const s=b.dataset.s;layer.innerHTML='';
+  const P2=['music','albums',['album',0],'player'];
+  S.edit=s==='homeedit';
+  const paths={home:[],homeedit:[],music:['music'],lists:['music'],albums:['music','albums'],album:['music','albums',['album',0]],songs:['music','songs'],recent:['music','recent'],playlists:['music','playlists'],search:['music','search'],player:P2,lyrics:P2,queue:[...P2,'queue'],menu:P2,info:P2,settings:['settings'],theme:['settings','theme']};
+  document.querySelectorAll('#jump .chip').forEach(c=>c.setAttribute('aria-pressed',c===b));
+  if(s==='cc'){openCC(true);return;}if(s==='vol'){S.vol=Math.min(100,S.vol+4);vhud();return;}
+  S.lyrics=s==='lyrics';S.tab=(s==='lists'||s==='recent'||s==='playlists')?1:0;if(s==='search'){S.q='';S.kb=true;}
+  S.stack=[{s:'home'}].concat(paths[s].map(x=>Array.isArray(x)?{s:x[0],p:x[1]}:{s:x}));refresh();
+  if(s==='menu')openMenu();if(s==='info')info();};
+
+/* ---------------- sizing ---------------- */
+const dev=document.getElementById('device'),box=document.getElementById('devbox');
+function fit(){const W=352,H=548;const avail=Math.min(window.innerWidth-44,540);let k=Math.min(1.3,avail/(W+48));k=Math.max(.6,k);dev.style.transform=`scale(${k})`;box.style.width=((W+48)*k)+'px';box.style.height=(H*k)+'px';}
+window.addEventListener('resize',fit);fit();
+
+function drawHomeCfg(){const el=document.getElementById('homecfg');if(el)el.textContent=JSON.stringify({version:1,grid:S.home.grid,dock:S.home.dock,hidden:S.home.hidden});}
+document.getElementById('cpHome').onclick=()=>{const t=document.getElementById('homecfg').textContent;
+  const ok=()=>banner('Copiado','check');
+  try{navigator.clipboard.writeText(t).then(ok,()=>{const s=getSelection(),r=document.createRange();r.selectNodeContents(document.getElementById('homecfg'));s.removeAllRanges();s.addRange(r);});}catch(e){}};
+document.getElementById('rsHome').onclick=()=>{S.home={grid:['wireless','books','dac'],dock:['music','settings'],hidden:['stream']};S.edit=false;saveHome();refresh();};
+drawHomeCfg();
+AL.forEach(cover);applyTheme();drawCtl();refresh();
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{AL.forEach(cover);refresh();});
+})();
+</script>

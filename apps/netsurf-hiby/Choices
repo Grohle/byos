@@ -1,0 +1,14 @@
+fb_osk:1
+fb_toolbar_size:28
+fb_furniture_size:16
+fb_depth:16
+window_width:320
+window_height:480
+memory_cache_size:1048576
+disc_cache_size:0
+max_fetchers:3
+max_fetchers_per_host:2
+max_cached_fetch_handles:2
+enable_javascript:0
+block_advertisements:1
+homepage_url:about:blank

@@ -1,0 +1,618 @@
+/* launcher.inc.c - inicio propio de hibyshell (incluido desde hibyshell.c).
+ *
+ * Mientras el reproductor esta en su pantalla de inicio, el shell la cubre (modo captura) con
+ * este launcher: varias paginas que se deslizan, dock de cristal, puntos de pagina, iconos y
+ * etiquetas a tamano configurable, edicion estilo iOS (pulsacion larga, temblor, arrastrar a
+ * otra posicion, al dock o a otra pagina) y apertura de apps con zoom desde el icono.
+ * Las apps de HiBy se abren tocando por debajo su icono en el inicio de fabrica (invisible);
+ * la barra de estado (hora, bateria, volumen) es la del reproductor, copiada en vivo.
+ * Configuracion: /usr/data/hibymod/shell/launcher.conf (texto). */
+
+#define LCONF ASSETS "/launcher.conf"
+#define MAXAPPS 16
+#define MAXPAGES 6
+#define DOCK_X 10
+#define DOCK_W 300
+#define DOCK_H 84
+#define DOCK_Y (H - 18 - DOCK_H)          /* 18 px abajo: espacio para la flecha de musica */
+#define GRID_TOP 46
+#define DOTS_Y (DOCK_Y - 13)
+
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT };
+struct hpk_info;
+/* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
+static double toast_until;
+static uint16_t img_app[W * H], img_base[W * H];
+struct lapp {
+    const char *id, *label; int act, ax, ay;
+    struct sprite icon[3];          /* 48, 56, 64 */
+    struct sprite lbl;
+    const char *names3[3];          /* apps instaladas: nombre en es/en/fr */
+    struct hpk_info *ext;           /* apps instaladas (.hpk) */
+};
+static struct lapp apps[40] = {
+    { "music",      "Música",        ACT_TAP,    116, 425 },
+    { "settings",   "Ajustes",       ACT_TAP,    202, 425 },
+    { "wireless",   "Inalámbrico",   ACT_TAP,     46,  74 },
+    { "books",      "Libros",        ACT_TAP,    117,  74 },
+    { "dac",        "DAC USB",       ACT_TAP,    188,  74 },
+    { "tidal",      "Tidal",         ACT_STREAM,   0,   0 },
+    { "qobuz",      "Qobuz",         ACT_STREAM,   1,   0 },
+    { "nowplaying", "Reproduciendo", ACT_PLANE,    0,   0 },
+    { "files",      "Archivos",      ACT_FILES,    0,   0 },
+    { "radio",      "Radio",         ACT_SOON,     0,   0 },
+    { "personalize", "Personalizar", ACT_SETTINGS, 0,   0 },
+    { "appstore",   "Apps",          ACT_STORE,    0,   0 },
+};
+static int napps = 12;              /* internas + instaladas (register_installed_apps) */
+#define NAPPS napps
+static const char *app_label(int a) { return apps[a].names3[ui_lang] && apps[a].names3[ui_lang][0] ? apps[a].names3[ui_lang] : tr(apps[a].label); }
+
+static struct {
+    int icon, cols;
+    int npages, pn[MAXPAGES], page[MAXPAGES][MAXAPPS];
+    int dn, dock[4];
+    char wall[200];
+} L;
+
+static int launcher_enabled = 1, cur_page;
+static uint16_t wall[W * H];
+static struct sprite dock_glass;
+static int sz_idx(void) { return L.icon <= 48 ? 0 : L.icon >= 64 ? 2 : 1; }
+
+static int app_by_id(const char *id) { for (int i = 0; i < NAPPS; i++) if (!strcmp(apps[i].id, id)) return i; return -1; }
+
+static void lconf_default(void)
+{
+    memset(&L, 0, sizeof L);
+    L.icon = 56; L.cols = 4; L.npages = 2;
+    const char *p0[] = { "wireless", "books", "dac", "files", "tidal", "qobuz" };
+    for (unsigned i = 0; i < 6; i++) L.page[0][L.pn[0]++] = app_by_id(p0[i]);
+    L.page[1][L.pn[1]++] = app_by_id("nowplaying");
+    L.page[1][L.pn[1]++] = app_by_id("radio");
+    L.dock[L.dn++] = app_by_id("music");
+    L.dock[L.dn++] = app_by_id("settings");
+}
+
+/* ------------------------------------------------------------------ espejo del inicio */
+/* El inicio de fabrica tiene como fondo launcher/mirror.png (sus iconos son transparentes):
+ * es la pagina 1 de este launcher, para que al volver deslizando desde una app lo que asoma
+ * sea identico. HiBy carga esa imagen al arrancar: se regenera al cambiar el inicio. */
+#define STBIW_ASSERT(x)
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+#define MIRROR_PNG "/usr/data/hibymod/theme/litegui/theme3/launcher/mirror.png"
+static void render_launcher(uint16_t *dst, double t);
+static int mirror_dirty;
+static void mirror_save(void);
+
+/* Firma del inicio de fabrica = puntos del espejo: centros de iconos de la pagina 1 y del
+ * dock (unicos aunque el fondo sea negro) + dos puntos de fondo. HiBy carga el espejo al
+ * arrancar, asi que la firma nueva ("next") se activa en el SIGUIENTE arranque (boot_id). */
+static void boot_id(char *b, int n)
+{
+    b[0] = 0; int f = open("/proc/sys/kernel/random/boot_id", O_RDONLY);
+    if (f >= 0) { int k = read(f, b, n - 1); if (k > 0) b[k] = 0; close(f); }
+    for (char *c = b; *c; c++) if (*c == '\n') *c = 0;
+}
+static void cell_xy(int idx, int *x, int *y);
+static void dock_xy(int idx, int n, int *x, int *y);
+static void mirror_sig_write(const uint16_t *img)
+{
+    int pts[8][2], n = 0;
+    for (int i = 0; i < L.pn[0] && n < 3; i++) { int x, y; cell_xy(i, &x, &y); pts[n][0] = x + L.icon / 2; pts[n][1] = y + L.icon / 4; n++; }
+    for (int i = 0; i < L.dn && n < 5; i++) { int x, y; dock_xy(i, L.dn, &x, &y); pts[n][0] = x + L.icon / 2; pts[n][1] = y + L.icon / 4; n++; }
+    pts[n][0] = 6; pts[n][1] = DOCK_Y - 30; n++;              /* fondo (borde izquierdo) */
+    pts[n][0] = W - 6; pts[n][1] = DOCK_Y - 60; n++;          /* fondo (borde derecho) */
+    char bid[64]; boot_id(bid, sizeof bid);
+    FILE *f = fopen(ASSETS "/mirror.next.sig", "w"); if (!f) return;
+    fprintf(f, "%s\n", bid);
+    for (int i = 0; i < n; i++) {
+        uint16_t p = img[pts[i][1] * W + pts[i][0]];
+        fprintf(f, "%d %d %d %d %d 26\n", pts[i][0], pts[i][1], (p >> 11) * 255 / 31, ((p >> 5) & 63) * 255 / 63, (p & 31) * 255 / 31);
+    }
+    fclose(f);
+}
+
+static int edit_bg_ok;
+static void lconf_save(void)
+{
+    mirror_dirty = 1; edit_bg_ok = 0;
+    FILE *f = fopen(LCONF ".tmp", "w");
+    if (!f) return;
+    fprintf(f, "# launcher de hibymod\nicon %d\ncols %d\nwall %s\ndock", L.icon, L.cols, L.wall[0] ? L.wall : "-");
+    for (int i = 0; i < L.dn; i++) fprintf(f, " %s", apps[L.dock[i]].id);
+    for (int p = 0; p < L.npages; p++) {
+        if (!L.pn[p]) continue;
+        fprintf(f, "\npage");
+        for (int i = 0; i < L.pn[p]; i++) fprintf(f, " %s", apps[L.page[p][i]].id);
+    }
+    fprintf(f, "\n");
+    gestures_conf_save(f);
+    cc_conf_save(f);
+    fprintf(f, "lang %s\nkb %d %d %d\n", lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout);
+    fclose(f);
+    rename(LCONF ".tmp", LCONF);
+}
+
+static void lconf_load(void)
+{
+    lconf_default();
+    FILE *f = fopen(LCONF, "r");
+    if (!f) return;
+    char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0;
+    int npn[MAXPAGES] = {0}, np[MAXPAGES][MAXAPPS], nd = 0, dk[4];
+    while (fgets(line, sizeof line, f)) {
+        char *t = strtok(line, " \t\r\n");
+        if (!t || t[0] == '#') continue;
+        if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
+        else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
+        else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); if (v) ui_lang = !strcmp(v, "en") ? LANG_EN : !strcmp(v, "fr") ? LANG_FR : LANG_ES; }
+        else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
+            if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; } }
+        else if (!strcmp(t, "cc")) cc_conf_line(strtok(0, "\r\n"));
+        else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
+        else if (!strcmp(t, "wall")) { char *v = strtok(0, "\r\n"); if (v && strcmp(v, "-")) snprintf(L.wall, sizeof L.wall, "%s", v); }
+        else if (!strcmp(t, "dock")) { got_dock = 1; while ((t = strtok(0, " \t\r\n"))) { int a = app_by_id(t); if (a >= 0 && !seen[a] && nd < 4) { dk[nd++] = a; seen[a] = 1; } } }
+        else if (!strcmp(t, "page") && pages < MAXPAGES) {
+            while ((t = strtok(0, " \t\r\n"))) { int a = app_by_id(t); if (a >= 0 && !seen[a] && npn[pages] < MAXAPPS) { np[pages][npn[pages]++] = a; seen[a] = 1; } }
+            if (npn[pages]) pages++;
+        }
+    }
+    fclose(f);
+    if (!got_dock && !pages) return;
+    L.dn = nd; memcpy(L.dock, dk, sizeof dk);
+    L.npages = pages; memcpy(L.pn, npn, sizeof npn); memcpy(L.page, np, sizeof np);
+    /* apps nuevas (no listadas) al final de la ultima pagina */
+    for (int a = 0; a < NAPPS; a++) if (!seen[a]) {
+        if (!L.npages) L.npages = 1;
+        int p = L.npages - 1;
+        if (L.pn[p] >= MAXAPPS && L.npages < MAXPAGES) p = L.npages++;
+        if (L.pn[p] < MAXAPPS) L.page[p][L.pn[p]++] = a;
+    }
+}
+
+/* ------------------------------------------------------------------ geometria */
+static int per_page(void)
+{
+    int rowh = L.icon + 5 + 14 + 16;
+    int rows = (DOTS_Y - 8 - GRID_TOP + 16) / rowh;
+    return rows * L.cols;
+}
+static void cell_xy(int idx, int *x, int *y)
+{
+    int cw = (W - 36) / L.cols, col = idx % L.cols, row = idx / L.cols;
+    *x = 18 + col * cw + (cw - L.icon) / 2;
+    *y = GRID_TOP + row * (L.icon + 5 + 14 + 16);
+}
+static void dock_xy(int idx, int n, int *x, int *y)
+{
+    int gap = n >= 4 ? 18 : 34, tot = n * L.icon + (n - 1) * gap;
+    *x = (W - tot) / 2 + idx * (L.icon + gap);
+    *y = DOCK_Y + (DOCK_H - L.icon) / 2;
+}
+
+/* ------------------------------------------------------------------ dibujo */
+static void blit(uint16_t *dst, const struct sprite *s, int x, int y, int k, int alpha)
+{
+    if (!s || !s->w) return;
+    for (int r = 0; r < s->h; r++) {
+        int yy = y + r; if (yy < 0 || yy >= H) continue;
+        uint16_t *row = dst + yy * W;
+        const uint16_t *src = s->rgb + r * s->w; const uint8_t *al = s->a + r * s->w;
+        for (int i = 0; i < s->w; i++) {
+            int xx = x + i; if (xx < 0 || xx >= W) continue;
+            unsigned a = al[i] * alpha / 255; if (!a) continue;
+            unsigned c = k < 32 ? dim565(src[i], k) : src[i];
+            if (a >= 250) { row[xx] = c; continue; }
+            unsigned d = row[xx], na = 255 - a;
+            row[xx] = (uint16_t)((((c >> 11) * a + (d >> 11) * na) / 255) << 11 | (((((c >> 5) & 63) * a + ((d >> 5) & 63) * na) / 255) << 5) | (((c & 31) * a + (d & 31) * na) / 255));
+        }
+    }
+}
+static void fill_circle(uint16_t *dst, float cx, float cy, float r, uint16_t col, int alpha)
+{
+    for (int y = (int)(cy - r - 1); y <= (int)(cy + r + 1); y++) {
+        if (y < 0 || y >= H) continue;
+        for (int x = (int)(cx - r - 1); x <= (int)(cx + r + 1); x++) {
+            if (x < 0 || x >= W) continue;
+            float d = sqrtf((x + .5f - cx) * (x + .5f - cx) + (y + .5f - cy) * (y + .5f - cy));
+            float cov = r + .5f - d; if (cov <= 0) continue; if (cov > 1) cov = 1;
+            unsigned a = (unsigned)(alpha * cov), na = 255 - a, d0 = dst[y * W + x];
+            dst[y * W + x] = (uint16_t)((((col >> 11) * a + (d0 >> 11) * na) / 255) << 11 | (((((col >> 5) & 63) * a + ((d0 >> 5) & 63) * na) / 255) << 5) | (((col & 31) * a + (d0 & 31) * na) / 255));
+        }
+    }
+}
+/* rectangulo redondeado relleno (con suavizado) */
+static void fill_rrect(uint16_t *dst, int x0, int y0, int w, int h, float r, uint16_t col, int alpha)
+{
+    for (int y = y0; y < y0 + h; y++) {
+        if (y < 0 || y >= H) continue;
+        for (int x = x0; x < x0 + w; x++) {
+            if (x < 0 || x >= W) continue;
+            float px = x + .5f - x0, py = y + .5f - y0;
+            float qx = fabsf(px - w / 2.f) - (w / 2.f - r), qy = fabsf(py - h / 2.f) - (h / 2.f - r);
+            float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
+            float d = sqrtf(ox * ox + oy * oy) + (qx > qy ? (qx < 0 ? qx : 0) : (qy < 0 ? qy : 0)) - r;
+            float cov = .5f - d; if (cov <= 0) continue; if (cov > 1) cov = 1;
+            unsigned a = (unsigned)(alpha * cov), na = 255 - a, d0 = dst[y * W + x];
+            dst[y * W + x] = (uint16_t)((((col >> 11) * a + (d0 >> 11) * na) / 255) << 11 | (((((col >> 5) & 63) * a + ((d0 >> 5) & 63) * na) / 255) << 5) | (((col & 31) * a + (d0 & 31) * na) / 255));
+        }
+    }
+}
+
+/* cristal del dock: fondo desenfocado + velo claro + borde, con esquinas redondeadas */
+static void build_dock_glass(void)
+{
+    int w = DOCK_W, h = DOCK_H;
+    if (!dock_glass.rgb) { dock_glass.rgb = malloc(w * h * 2); dock_glass.a = malloc(w * h); }
+    dock_glass.w = w; dock_glass.h = h;
+    static int acc[3][DOCK_W * DOCK_H];
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+        uint16_t p = wall[(DOCK_Y + y) * W + DOCK_X + x];
+        acc[0][y * w + x] = (p >> 11) << 3; acc[1][y * w + x] = ((p >> 5) & 63) << 2; acc[2][y * w + x] = (p & 31) << 3;
+    }
+    static int tmp[DOCK_W * DOCK_H];
+    const int R = 7;
+    for (int pass = 0; pass < 2; pass++) for (int c = 0; c < 3; c++) {
+        for (int y = 0; y < h; y++) { int s = 0, n = 0;   /* horizontal */
+            for (int x = -R; x < w; x++) {
+                if (x + R < w) { s += acc[c][y * w + x + R]; n++; }
+                if (x - R - 1 >= 0) { s -= acc[c][y * w + x - R - 1]; n--; }
+                if (x >= 0) tmp[y * w + x] = s / n;
+            } }
+        for (int x = 0; x < w; x++) { int s = 0, n = 0;    /* vertical */
+            for (int y = -R; y < h; y++) {
+                if (y + R < h) { s += tmp[(y + R) * w + x]; n++; }
+                if (y - R - 1 >= 0) { s -= tmp[(y - R - 1) * w + x]; n--; }
+                if (y >= 0) acc[c][y * w + x] = s / n;
+            } }
+    }
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+        int i = y * w + x;
+        int r = acc[0][i] + (255 - acc[0][i]) * 22 / 100, g = acc[1][i] + (255 - acc[1][i]) * 22 / 100, b = acc[2][i] + (255 - acc[2][i]) * 22 / 100;
+        dock_glass.rgb[i] = rgb(r, g, b);
+        /* esquinas redondeadas r=32 y borde claro de 1 px */
+        float px = x + .5f, py = y + .5f, rr = 32;
+        float qx = fabsf(px - w / 2.f) - (w / 2.f - rr), qy = fabsf(py - h / 2.f) - (h / 2.f - rr);
+        float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
+        float d = sqrtf(ox * ox + oy * oy) + (qx > qy ? (qx < 0 ? qx : 0) : (qy < 0 ? qy : 0)) - rr;
+        float cov = .5f - d; if (cov < 0) cov = 0; if (cov > 1) cov = 1;
+        if (d > -1.3f && cov > 0) { int k = 70; dock_glass.rgb[i] = rgb(r + (255 - r) * k / 255, g + (255 - g) * k / 255, b + (255 - b) * k / 255); }
+        dock_glass.a[i] = (uint8_t)(255 * cov);
+    }
+}
+
+static int load_wall(void)
+{
+    const char *p = ASSETS "/wall_custom.raw";
+    int f = L.wall[0] ? open(p, O_RDONLY) : -1;
+    if (f < 0) f = open(ASSETS "/wall.raw", O_RDONLY);
+    if (f < 0) { for (int i = 0; i < W * H; i++) wall[i] = rgb(40, 30, 90); build_dock_glass(); return 0; }
+    ssize_t n = read(f, wall, sizeof wall); close(f);
+    build_dock_glass();
+    mirror_dirty = 1; edit_bg_ok = 0;
+    return n == (ssize_t)sizeof wall;
+}
+
+static int load_icons(void)
+{
+    static const int sizes[3] = { 48, 56, 64 };
+    for (int a = 0; a < NAPPS; a++) {
+        for (int s = 0; s < 3; s++) {
+            free(apps[a].icon[s].rgb); free(apps[a].icon[s].a); memset(&apps[a].icon[s], 0, sizeof apps[a].icon[s]);
+            char n[96]; if (apps[a].act == ACT_EXT) snprintf(n, sizeof n, "../apps/%s/icon_%d", apps[a].id + 2, sizes[s]); else snprintf(n, sizeof n, "icons/%s_%d", apps[a].id, sizes[s]);
+            load_sprite(n, &apps[a].icon[s]);
+        }
+        text_sprite(&apps[a].lbl, app_label(a), 12.5f, 0xFFFF, 1);
+    }
+    return 1;
+}
+
+/* estado de interaccion que afecta al dibujo */
+static struct {
+    int pressed_app;           /* app pulsada (oscurecida), -1 ninguna */
+    float scroll;              /* desplazamiento horizontal en px (pagina * W) */
+    int edit;                  /* modo edicion (temblor) */
+    int drag_app, drag_x, drag_y, drag_slot_page, drag_slot, drag_dock;  /* arrastre */
+} V = { -1, 0, 0, -1, 0, 0, -1, -1, -1 };
+
+static struct sprite pill_done, pill_cfg;
+static void draw_pill(uint16_t *dst, int x, int y, const struct sprite *lbl, int w)
+{
+    fill_rrect(dst, x, y, w, 30, 15, rgb(255, 255, 255), 64);
+    blit(dst, lbl, x + (w - lbl->w) / 2, y + (30 - lbl->h) / 2, 32, 255);
+}
+
+/* posicion de una app en la pagina p al dibujar (con hueco del arrastre) */
+/* Icono girado "ang" radianes alrededor de su centro, con muestreo bilineal en coma fija
+ * (bordes suaves, sin saltos de pixel): el temblor del modo edicion de iOS. */
+static void blit_rotated(uint16_t *dst, const struct sprite *s, int x0, int y0, float ang, int alpha)
+{
+    if (!s || !s->w) return;
+    int w = s->w, h = s->h, pad = 3;
+    float c = cosf(ang), sn = sinf(ang), cx = w / 2.f, cy = h / 2.f;
+    int fc = (int)(c * 65536), fs = (int)(sn * 65536);
+    for (int dy = -pad; dy < h + pad; dy++) {
+        int yy = y0 + dy; if (yy < 0 || yy >= H) continue;
+        uint16_t *row = dst + yy * W;
+        float ry = dy + .5f - cy;
+        /* coordenadas de origen en 16.16 para el primer pixel de la fila */
+        float rx0 = -pad + .5f - cx;
+        int sx = (int)((rx0 * c + ry * sn + cx - .5f) * 65536), sy = (int)((-rx0 * sn + ry * c + cy - .5f) * 65536);
+        for (int dx = -pad; dx < w + pad; dx++, sx += fc, sy -= fs) {
+            int xx = x0 + dx; if (xx < 0 || xx >= W) continue;
+            int ix = sx >> 16, iy = sy >> 16;
+            if (ix < -1 || iy < -1 || ix >= w || iy >= h) continue;
+            unsigned fx = (sx >> 8) & 255, fy = (sy >> 8) & 255;
+            unsigned acc_a = 0, ar = 0, ag = 0, ab = 0;
+            for (int k = 0; k < 4; k++) {
+                int px = ix + (k & 1), py = iy + (k >> 1);
+                unsigned wgt = ((k & 1) ? fx : 256 - fx) * ((k >> 1) ? fy : 256 - fy);   /* 0..65536 */
+                if (px < 0 || py < 0 || px >= w || py >= h || !wgt) continue;
+                unsigned a = s->a[py * w + px] * wgt >> 8;                            /* 0..65280 */
+                if (!a) continue;
+                uint16_t p = s->rgb[py * w + px];
+                acc_a += a; ar += (p >> 11) * a; ag += ((p >> 5) & 63) * a; ab += (p & 31) * a;
+            }
+            if (!acc_a) continue;
+            unsigned aa = (acc_a >> 8) * alpha / 255; if (aa > 255) aa = 255;
+            uint16_t col = (uint16_t)((ar / acc_a) << 11 | (ag / acc_a) << 5 | (ab / acc_a));
+            unsigned d = row[xx], na = 255 - aa;
+            row[xx] = aa >= 252 ? col : (uint16_t)((((col >> 11) * aa + (d >> 11) * na) / 255) << 11 | (((((col >> 5) & 63) * aa + ((d >> 5) & 63) * na) / 255) << 5) | (((col & 31) * aa + (d & 31) * na) / 255));
+        }
+    }
+}
+
+/* modo de dibujo del launcher: 0 todo, 1 sin iconos (fondo del modo edicion), 2 solo iconos */
+static int rl_mode;
+static void draw_app_at(uint16_t *dst, int a, int x, int y, int show_label, double t)
+{
+    const struct sprite *ic = &apps[a].icon[sz_idx()];
+    if (rl_mode == 1) {
+        if (show_label && apps[a].lbl.w && a != V.drag_app) { const struct sprite *l = &apps[a].lbl; blit(dst, l, x + (L.icon - l->w) / 2, y + L.icon + 3, 32, 255); }
+        return;
+    }
+    int k = (a == V.pressed_app) ? 22 : 32;
+    int alpha = (a == V.drag_app) ? 64 : 255;
+    if (V.edit && a != V.drag_app) {
+        /* temblor de iOS: giro senoidal de +-1,5 grados (periodo ~0,26 s), desfasado por icono */
+        float ang = 0.026f * sinf((float)(t / 260.0 * 6.2831853) + a * 1.9f);
+        blit_rotated(dst, ic, x, y, ang, alpha);
+    } else blit(dst, ic, x, y, k, alpha);
+    if (rl_mode != 2 && show_label && apps[a].lbl.w && alpha == 255) {
+        const struct sprite *l = &apps[a].lbl;
+        blit(dst, l, x + (L.icon - l->w) / 2, y + L.icon + 3, 32, 255);
+    }
+}
+
+/* barra de estado transparente (ver render_launcher) sobre el fondo, filas 0-29 */
+static void compose_statusbar(uint16_t *dst)
+{
+    memcpy(dst, wall, 30 * W * 2);
+    for (int y = 0; y < 30; y++) {
+        uint16_t *d = dst + y * W; const uint16_t *s = fr1 + y * W;
+        int k = 22 + y * 10 / 30;
+        for (int x = 0; x < W; x++) {
+            uint16_t p = s[x];
+            unsigned r = p >> 11, g = (p >> 5) & 63, b = p & 31;
+            unsigned a = r * 2 > g ? r * 2 : g; if (b * 2 > a) a = b * 2;
+            uint16_t bg = dim565(d[x], k);
+            if (!a) { d[x] = bg; continue; }
+            unsigned na = 63 - a;
+            unsigned br = (bg >> 11) * na / 63 + r, bgc = ((bg >> 5) & 63) * na / 63 + g, bb = (bg & 31) * na / 63 + b;
+            if (br > 31) br = 31; if (bgc > 63) bgc = 63; if (bb > 31) bb = 31;
+            d[x] = (uint16_t)(br << 11 | bgc << 5 | bb);
+        }
+    }
+}
+
+static void render_launcher(uint16_t *dst, double t)
+{
+    /* fondo a pantalla completa y barra de estado TRANSPARENTE: la del reproductor es negra
+     * opaca con iconos/texto encima, asi que su brillo es la cobertura (alfa premultiplicado):
+     * resultado = fondo * (1 - a) + pixel. La franja se oscurece un poco para leerse siempre. */
+    if (rl_mode != 2) {
+        memcpy(dst + 30 * W, wall + 30 * W, (H - 30) * W * 2);
+        compose_statusbar(dst);
+        if (V.edit) {
+            draw_pill(dst, 12, 34, &pill_cfg, 92);
+            draw_pill(dst, W - 12 - 70, 34, &pill_done, 70);
+        }
+    }
+    int top_shift = V.edit ? 22 : 0;
+    /* paginas visibles */
+    int p0 = (int)floorf(V.scroll / W);
+    for (int p = p0; p <= p0 + 1; p++) {
+        if (p < 0 || p >= L.npages) continue;
+        int ox = p * W - (int)V.scroll;
+        int n = L.pn[p], slot = 0;
+        for (int i = 0; i <= n; i++) {
+            /* hueco donde caeria la app arrastrada */
+            if (V.drag_app >= 0 && V.drag_dock < 0 && p == V.drag_slot_page && slot == V.drag_slot) slot++;
+            if (i == n) break;
+            int a = L.page[p][i];
+            if (a == V.drag_app) continue;
+            int x, y; cell_xy(slot, &x, &y);
+            draw_app_at(dst, a, x + ox, y + top_shift, 1, t);
+            slot++;
+        }
+    }
+    /* puntos de pagina */
+    if (L.npages > 1 && rl_mode != 2) {
+        int tot = L.npages * 12 - 6, x0 = (W - tot) / 2;
+        float cur = V.scroll / W;
+        for (int p = 0; p < L.npages; p++) {
+            float d = fabsf(cur - p); if (d > 1) d = 1;
+            fill_circle(dst, x0 + p * 12 + 3, DOTS_Y, 3.2f, 0xFFFF, (int)(255 - 150 * d));
+        }
+    }
+    /* dock */
+    if (rl_mode != 2) blit(dst, &dock_glass, DOCK_X, DOCK_Y, 32, 255);
+    {
+        int n = L.dn, slot = 0, total = n + (V.drag_app >= 0 && V.drag_dock >= 0 ? 1 : 0);
+        for (int i = 0; i < n; i++) if (L.dock[i] == V.drag_app) total--;
+        for (int i = 0; i <= n; i++) {
+            if (V.drag_app >= 0 && V.drag_dock >= 0 && slot == V.drag_dock) slot++;
+            if (i == n) break;
+            int a = L.dock[i]; if (a == V.drag_app) continue;
+            int x, y; dock_xy(slot, total, &x, &y);
+            draw_app_at(dst, a, x, y, 0, t);
+            slot++;
+        }
+    }
+    /* app arrastrada, sobre todo y con sombra */
+    if (V.drag_app >= 0) {
+        int x = V.drag_x - L.icon / 2, y = V.drag_y - L.icon / 2 - 10;
+        fill_rrect(dst, x + 2, y + 6, L.icon, L.icon, L.icon * 0.2237f, 0, 70);
+        blit(dst, &apps[V.drag_app].icon[sz_idx()], x, y, 32, 255);
+    }
+    /* flecha de musica y aviso de volumen (en modo captura la libreria no pone capas) */
+    if (music_on && G.chevron && !V.edit && rl_mode != 2) blend_sprite(dst, &spr_chev, (W - spr_chev.w) / 2, CHEV_Y);
+    draw_toast(dst);
+}
+
+/* Imagen "limpia" del launcher (sin aviso de volumen) en img_cache_home: el aviso y la
+ * barra de estado se actualizan despues copiando y presentando solo sus filas. */
+static int lclean_ok;
+static int edit_bg_ok;          /* fondo guardado del modo edicion (invalidado al cambiar el inicio) */
+static void launcher_present(void)
+{
+    static double acc_r, acc_p; static int nfr; static double t_last;
+    double t0 = now_ms();
+    /* modo edicion en reposo: fondo guardado (img_app) + solo los iconos que tiemblan */
+    static uint32_t edit_bg_cap;
+    if (V.edit && V.drag_app < 0 && V.scroll == cur_page * W && !hud_active && t0 >= toast_until) {
+        if (!edit_bg_ok || edit_bg_cap != st->cap_frames) {
+            rl_mode = 1; render_launcher(img_app, t0); rl_mode = 0;
+            edit_bg_ok = 1; edit_bg_cap = st->cap_frames;
+        }
+        memcpy(fr0, img_app, HM_FRAME_BYTES);
+        rl_mode = 2; render_launcher(fr0, t0); rl_mode = 0;
+        lclean_ok = 0;
+        double t1 = now_ms(); present(); double t2 = now_ms();
+        acc_r += t1 - t0; acc_p += t2 - t1; nfr++;
+        if (t2 - t_last > 3000) { if (nfr > 20) lg("perfil launcher (edicion): %d fot, dibujo %.1f ms, presentar %.1f ms", nfr, acc_r / nfr, acc_p / nfr); acc_r = acc_p = 0; nfr = 0; t_last = t2; }
+        return;
+    }
+    edit_bg_ok = 0;
+    render_launcher(img_cache_home, t0); have_cache_home = 1; lclean_ok = 1;
+    memcpy(fr0, img_cache_home, HM_FRAME_BYTES);
+    if (hud_active) blend_sprite(fr0, &spr_hud, HUD_X, HUD_Y);
+    double t1 = now_ms();
+    present();
+    double t2 = now_ms();
+    /* perfil: cada ~3 s con animacion continua, tiempo medio de dibujo y de presentacion */
+    acc_r += t1 - t0; acc_p += t2 - t1; nfr++;
+    if (t2 - t_last > 3000) { if (nfr > 20) lg("perfil launcher: %d fot, dibujo %.1f ms, presentar %.1f ms", nfr, acc_r / nfr, acc_p / nfr); acc_r = acc_p = 0; nfr = 0; t_last = t2; }
+}
+static void launcher_present_hud(void)
+{
+    if (!lclean_ok || V.edit || V.drag_app >= 0) { launcher_present(); return; }
+    memcpy(fr0 + HUD_Y * W, img_cache_home + HUD_Y * W, HUD_H * W * 2);
+    if (hud_active) blend_sprite(fr0, &spr_hud, HUD_X, HUD_Y);
+    present_rows(HUD_Y, HUD_Y + HUD_H);
+}
+static void launcher_statusbar(void)
+{
+    if (!lclean_ok) { launcher_present(); return; }
+    compose_statusbar(img_cache_home);
+    memcpy(fr0, img_cache_home, 30 * W * 2);
+    present_rows(0, 30);
+}
+
+/* ------------------------------------------------------------------ entrar / salir */
+static void launcher_enter_ex(int instant);
+static void launcher_enter(void) { launcher_enter_ex(0); }
+static void launcher_enter_ex(int instant)
+{
+    if (launcher_on || !launcher_enabled) return;
+    st->ov_on = 0; ov_cur = 0;
+    cmd('C');
+    double t = now_ms();
+    while (!st->capture && now_ms() - t < 200) msleep(2);
+    if (!st->capture) return;
+    memcpy(fr0, fr0_shm, HM_FRAME_BYTES);        /* la imagen congelada (inicio de fabrica) */
+    launcher_on = 1;
+    V.scroll = cur_page * W; V.pressed_app = -1; V.drag_app = -1; V.edit = 0;
+    if (instant) { launcher_present(); lg("launcher activo (directo)"); return; }
+    /* fundido corto desde el inicio de fabrica */
+    uint16_t *from = img_under, *to = img_sheet;          /* reutilizados: no hay hoja abierta */
+    have_under = 0;
+    memcpy(from, fr0, W * H * 2);
+    render_launcher(to, now_ms());
+    for (int s = 1; s <= 4; s++) {
+        int a = s * 64; if (a > 255) a = 255;
+        for (int i = 0; i < W * H; i++) {
+            unsigned c = to[i], d = from[i], na = 255 - a;
+            fr0[i] = (uint16_t)((((c >> 11) * a + (d >> 11) * na) / 255) << 11 | (((((c >> 5) & 63) * a + ((d >> 5) & 63) * na) / 255) << 5) | (((c & 31) * a + (d & 31) * na) / 255));
+        }
+        present();
+    }
+    launcher_present();
+    lg("launcher activo");
+}
+
+/* imagen del launcher para la libreria (sustituye al inicio de fabrica al volver):
+ * filas 0-29 = fondo sin barra (la libreria compone encima la barra transparente) */
+static uint16_t *home_shm;
+static void home_publish(void)
+{
+    if (!home_shm || !have_cache_home) return;
+    memcpy(home_shm + 30 * W, img_cache_home + 30 * W, (H - 30) * W * 2);
+    memcpy(home_shm, wall, 30 * W * 2);
+}
+
+static void launcher_leave(void)
+{
+    if (!launcher_on) return;
+    { int h = hud_active; hud_active = 0; V.pressed_app = -1; render_launcher(img_cache_home, now_ms()); hud_active = h; }
+    have_cache_home = 1;
+    home_publish();
+    launcher_on = 0; V.edit = 0; V.drag_app = -1; V.pressed_app = -1;
+    cmd('R');
+    lg("launcher fuera");
+}
+
+static void mirror_save(void)
+{
+    if (access("/usr/data/hibymod/theme/litegui/theme3/launcher", F_OK)) return;
+    float s = V.scroll; int e = V.edit, pa = V.pressed_app, da = V.drag_app, mo = music_on, ha = hud_active;
+    V.scroll = 0; V.edit = 0; V.pressed_app = -1; V.drag_app = -1; music_on = 0; hud_active = 0;
+    render_launcher(img_sheet, now_ms());
+    V.scroll = s; V.edit = e; V.pressed_app = pa; V.drag_app = da; music_on = mo; hud_active = ha;
+    have_under = 0;                                    /* img_sheet reutilizado */
+    unsigned char *rgbb = malloc(W * (H - 30) * 3);
+    if (!rgbb) return;
+    for (int i = 0; i < W * (H - 30); i++) {
+        uint16_t p = img_sheet[30 * W + i];
+        rgbb[i * 3] = (uint8_t)((p >> 11) * 255 / 31); rgbb[i * 3 + 1] = (uint8_t)(((p >> 5) & 63) * 255 / 63); rgbb[i * 3 + 2] = (uint8_t)((p & 31) * 255 / 31);
+    }
+    stbi_write_png_compression_level = 3;
+    int len = 0;
+    unsigned char *png = stbi_write_png_to_mem(rgbb, W * 3, W, H - 30, 3, &len);
+    free(rgbb);
+    mirror_dirty = 0;
+    if (!png) return;
+    /* solo se escribe si cambio (la flash no se gasta en cada arranque) */
+    int same = 0, f = open(MIRROR_PNG, O_RDONLY);
+    if (f >= 0) {
+        struct stat sb;
+        if (!fstat(f, &sb) && sb.st_size == len) {
+            unsigned char *old = malloc(len);
+            if (old && read(f, old, len) == len && !memcmp(old, png, len)) same = 1;
+            free(old);
+        }
+        close(f);
+    }
+    if (!same) {
+        f = open(MIRROR_PNG ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (f >= 0 && write(f, png, len) == len && !fsync(f) && !close(f)) {
+            rename(MIRROR_PNG ".tmp", MIRROR_PNG);
+            mirror_sig_write(img_sheet);
+            lg("espejo del inicio actualizado (se vera tras reiniciar)");
+        } else if (f >= 0) close(f);
+    } else if (access(ASSETS "/mirror.sig", F_OK) && access(ASSETS "/mirror.next.sig", F_OK)) mirror_sig_write(img_sheet);
+    STBIW_FREE(png);
+}

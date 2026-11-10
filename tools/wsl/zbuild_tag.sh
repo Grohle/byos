@@ -1,0 +1,11 @@
+#!/bin/bash
+# hibytag: estatico (musl, coma flotante por hardware) con SQLite (sin extensiones, sin hilos)
+set -e
+S=/mnt/c/Users/alber/Downloads/Hiby/hibymod/src
+~/hiby/venv/bin/python -m ziglang cc -target mipsel-linux-musleabihf -mcpu=mips32r2 -Os -static -s \
+  -I$HOME/hiby/third -w -DHIBYTAG_MAIN \
+  -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_OMIT_DEPRECATED \
+  -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_CACHE_SIZE=-256 \
+  -o /mnt/c/Users/alber/Downloads/Hiby/hibymod/bin/hibytag $S/hibytag.c $HOME/hiby/third/sqlite3.c
+ls -la /mnt/c/Users/alber/Downloads/Hiby/hibymod/bin/hibytag
+file /mnt/c/Users/alber/Downloads/Hiby/hibymod/bin/hibytag

@@ -1,0 +1,32 @@
+### profile=solo args=
+MemTotal:          56928 kB
+mem_profile solo: objetivo 38912 kB; ahora: MemAvailable:      38816 kB
+>>> (HOME=/root sh /hiby/measure.sh 150 /mnt/share/netsurf/run.sh 'https://en.m.wikipedia.org/wiki/Telegram_(software)' > /mnt/share/s_mwiki_tg.txt 2>&1 &)
+
+shot -> /home/alber/hiby/vm/out/s_mwiki_tg.png (320x480)
+RESULT alive=no exit=137
+MemAvailable inicio=38624kB min=0kB
+nsfb invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=nsfb,pid=69,uid=0
+Out of memory: Killed process 69 (nsfb) total-vm:44464kB, anon-rss:39376kB, file-rss:624kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+t=0.5s rss=3408kB avail=37200kB
+t=5.8s rss=34576kB avail=7264kB
+t=12.6s rss=39168kB avail=496kB
+t=32.7s rss=39664kB avail=352kB
+t=90.9s rss=39952kB avail=16kB
+>>> (HOME=/root sh /hiby/measure.sh 120 /mnt/share/netsurf/run.sh https://en.m.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/s_wiki.txt 2>&1 &)
+
+VmPeak:	   15024 kB
+VmHWM:	    6848 kB
+VmRSS:	    6608 kB
+RssAnon:	    3280 kB
+RssFile:	    3328 kB
+VmData:	    3856 kB
+RESULT alive=yes
+MemAvailable inicio=38160kB min=34464kB
+nsfb invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),global_oom,task_memcg=/,task=nsfb,pid=69,uid=0
+Out of memory: Killed process 69 (nsfb) total-vm:44464kB, anon-rss:39376kB, file-rss:624kB, shmem-rss:0kB, UID:0 pgtables:48kB oom_score_adj:0
+--- salida (ultimas 15 lineas) ---
+0

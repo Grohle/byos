@@ -1,0 +1,9 @@
+cat /proc/meminfo | head -3
+(HOME=/root sh /hiby/measure.sh 120 /mnt/share/netsurf/run.sh https://lite.cnn.com/ > /mnt/share/c_cnn.txt 2>&1 &)
+HOST: sleep 45; $C shot $VM/out/c_cnn1.png; $C swipe 160 400 160 100 500; sleep 8; $C shot $VM/out/c_cnn2_scrolled.png; $C key VOLUMEDOWN; sleep 8; $C shot $VM/out/c_cnn3_voldown.png
+HOST: $C tap 120 200; sleep 30; $C shot $VM/out/c_cnn4_link.png; $C tap 311 470; sleep 8; $C shot $VM/out/c_cnn5_osk.png
+HOST: sleep 30; grep -v "^t=" $VM/share/c_cnn.txt; grep "^t=" $VM/share/c_cnn.txt | awk 'NR%20==1'
+(HOME=/root sh /hiby/measure.sh 90 /mnt/share/netsurf/run.sh https://text.npr.org/ > /mnt/share/c_npr.txt 2>&1 &)
+HOST: sleep 95; grep -v "^t=" $VM/share/c_npr.txt
+(HOME=/root sh /hiby/measure.sh 120 /mnt/share/netsurf/run.sh https://en.m.wikipedia.org/wiki/Ingenic_Semiconductor > /mnt/share/c_wiki.txt 2>&1 &)
+HOST: sleep 60; $C shot $VM/out/c_mwiki.png; sleep 65; grep -v "^t=" $VM/share/c_wiki.txt; grep "^t=" $VM/share/c_wiki.txt | awk 'NR%10==1'

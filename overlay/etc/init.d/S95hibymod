@@ -1,0 +1,81 @@
+#!/bin/sh
+# hibymod: tareas de arranque una vez montada la SD.
+#  - Historial de arranques y deteccion de apagados no limpios.
+#  - Ordenes por fichero en la SD (carpeta hibymod/), utiles si la interfaz falla:
+#      REINSTALAR -> el recovery oficial reinstala el .upt de la raiz de la SD
+#                    (pon ahi el oficial para volver a fabrica). ROLLBACK = alias
+#      SAFE      -> modo seguro (tema de fabrica)
+#      NORMAL    -> sale del modo seguro
+#      ADB_WIFI  -> activa ADB por Wi-Fi
+#    Cada fichero se renombra a *.hecho al aplicarse, para no repetirse.
+#  - ADB por Wi-Fi si esta activado.
+
+MARK=/data/.hibymod_running
+SD=/data/mnt/sd_0
+H=$SD/hibymod
+
+done_file() { mv -f "$H/$1" "$H/$1.hecho" 2>/dev/null; sync; }
+
+boot_tasks()
+{
+    prev="clean"
+    [ -f $MARK ] && prev="UNCLEAN (panic/watchdog/bateria/apagado forzado)"
+    echo "$(cut -d' ' -f1 /proc/uptime)" > $MARK
+    sync
+
+    i=0
+    while [ $i -lt 60 ]; do
+        grep -qE " (/usr)?/data/mnt/sd_0 " /proc/mounts 2>/dev/null && break
+        sleep 1
+        i=$((i + 1))
+    done
+
+    if grep -qE " (/usr)?/data/mnt/sd_0 " /proc/mounts 2>/dev/null; then
+        mkdir -p $H 2>/dev/null
+        echo "$(date 2>/dev/null) | anterior: $prev | $(/usr/bin/hibymod status 2>/dev/null | sed -n '2p;5p' | tr '\n' ' ') | reset: $(cat /proc/jz/reset/reset 2>/dev/null | tr '\n' ' ')" >> $H/boot_history.txt 2>/dev/null
+        [ "$prev" != "clean" ] && dmesg 2>/dev/null | tail -60 > $H/logs_last_unclean_boot_dmesg.txt 2>/dev/null
+
+        if [ -f $H/ADB_WIFI ]; then touch /data/.hibymod_adbwifi; done_file ADB_WIFI; fi
+        if [ -f $H/SIN_LAUNCHER ]; then touch /data/.hibymod_nopreload; rm -f /usr/data/hibymod/preload_ok; done_file SIN_LAUNCHER; sync; reboot; return; fi
+        if [ -f $H/CON_LAUNCHER ]; then rm -f /data/.hibymod_nopreload; touch /usr/data/hibymod/preload_ok; done_file CON_LAUNCHER; sync; reboot; return; fi
+        if [ -f $H/SIN_SHELL ]; then touch /usr/data/hibymod/no_shell; done_file SIN_SHELL; sync; reboot; return; fi
+        if [ -f $H/CON_SHELL ]; then rm -f /usr/data/hibymod/no_shell; done_file CON_SHELL; sync; reboot; return; fi
+        if [ -f $H/NORMAL ]; then rm -f /data/.hibymod_safe; echo 0 > /data/.hibymod_bootfail; done_file NORMAL; sync; reboot; return; fi
+        if [ -f $H/SAFE ] && [ ! -f /data/.hibymod_safe ]; then echo "sd" > /data/.hibymod_safe; done_file SAFE; sync; reboot; return; fi
+        for f in REINSTALAR ROLLBACK; do
+            if [ -f $H/$f ]; then
+                done_file $f
+                /usr/bin/hibymod reinstall --yes > $H/reinstalar.txt 2>&1
+            fi
+        done
+        sync
+    fi
+
+    # ADB: modo USB (Personalizar > Desarrollador) o Wi-Fi
+    if [ "$(cat /data/.hibymod_adbmode 2>/dev/null)" = usb ]; then
+        ( sleep 8; /usr/bin/hibymod_adb.sh usb ) &
+    elif [ -f /data/.hibymod_adbwifi ]; then
+        /usr/bin/hibymod_adbwifi.sh &
+    fi
+
+    # ruta rapida: preparar la copia en /usr/data para el siguiente arranque
+    if [ ! -f /data/.hibymod_safe ] && [ ! -f /data/.hibymod_nofast ] && ! /usr/bin/hibymod_fast.sh ok; then
+        ( sleep 60; nice -n 19 /usr/bin/hibymod_fast.sh setup > /tmp/hibymod/fast.txt 2>&1 ) &
+    fi
+}
+
+case "$1" in
+  start)
+	boot_tasks &
+	;;
+  stop)
+	rm -f $MARK
+	# apagado/reinicio ordenado: no cuenta como arranque fallido
+	[ -f /tmp/hibymod/crash_reboot ] || echo 0 > /data/.hibymod_bootfail
+	sync
+	;;
+  *)
+	exit 0
+esac
+
+exit 0
