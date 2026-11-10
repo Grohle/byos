@@ -649,7 +649,7 @@ static void kb_full(void) { kb_ov_on = 0; kb_rd(kb_dst, kb_pressed); present(); 
 /* anima una variable de geometria con ease-out (con el redibujado del llamante: el contenido sigue) */
 static void kb_anim(int *v, int to, int ms)
 {
-    int from = *v, n = 0; double t0 = now_ms(), rs = 0, rmax = 0, ks = 0;
+    int from = *v, n = 0; double t0 = now_ms() - 16, rs = 0, rmax = 0, ks = 0;
     for (;;) {
         double t = (now_ms() - t0) / ms; if (t > 1) t = 1;
         *v = from + (int)lround((to - from) * ease_out(t));

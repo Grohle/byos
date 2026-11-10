@@ -14,7 +14,7 @@ struct srow {
     int gesture;                       /* CHOICE de gesto: borde (para la animacion) */
 };
 struct ssec { const char *header, *footer; struct srow rows[8]; int n; };
-struct spage { const char *title; struct ssec secs[5]; int nsec; int hero; };   /* hero: alto de la cabecera con el logo */
+struct spage { const char *title; struct ssec secs[5]; int nsec; int hero; void (*hero_fn)(uint16_t *d, int y, int h); };   /* hero: alto de la cabecera (logo, o hero_fn la dibuja) */
 
 #define NAVH 64           /* barra de navegacion (bajo la barra de estado) */
 #define ROWH 44
@@ -102,7 +102,8 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
 {
     for (int i = 0; i < W * H; i++) d[i] = 0;
     int y = NAVH + 30 + 12 - (int)sp_scroll + pg->hero, gi = 0;
-    if (pg->hero) {
+    if (pg->hero && pg->hero_fn) pg->hero_fn(d, y - pg->hero, pg->hero);
+    else if (pg->hero) {
         static struct sprite logo; if (!logo.w) load_sprite("hibyos_logo", &logo);
         int ly = y - pg->hero + (pg->hero - 16 - logo.h) / 2;
         if (logo.w && ly >= NAVH + 30 - logo.h) blit(d, &logo, (W - logo.w) / 2, ly, 32, 255);
@@ -133,9 +134,10 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
                 }
             } else {
                 if (v) draw_text(d, vx - vw, ry + 28, v, 15, rgb(142, 142, 147), 128, NAVH + 30, H);
-                if (chev && ry + 16 >= NAVH + 30) for (int i = 0; i < 6; i++) {
-                    int cx = W - 16 - 18 + i - 2; d[(ry + 16 + i) * W + cx] = rgb(90, 90, 96); d[(ry + 28 - i) * W + cx] = rgb(90, 90, 96);
-                    d[(ry + 16 + i) * W + cx + 1] = rgb(90, 90, 96); d[(ry + 28 - i) * W + cx + 1] = rgb(90, 90, 96);
+                if (chev && ry + 16 >= NAVH + 30) for (int i = 0; i < 6; i++) {   /* (recortado abajo: no escribir fuera) */
+                    int cx = W - 16 - 18 + i - 2, y1 = ry + 16 + i, y2 = ry + 28 - i;
+                    if (y1 < H) { d[y1 * W + cx] = rgb(90, 90, 96); d[y1 * W + cx + 1] = rgb(90, 90, 96); }
+                    if (y2 < H) { d[y2 * W + cx] = rgb(90, 90, 96); d[y2 * W + cx + 1] = rgb(90, 90, 96); }
                 }
             }
         }
@@ -214,6 +216,8 @@ static void gesture_demo(uint16_t *d, int cx, int y0, int edge, int act, double 
 }
 
 /* ------------------------------------------------------------------ paginas */
+static int set_labels, set_dots, set_dockbg, set_dim, set_wgpage;
+static int wg_page_on, wg_cache_ok, home_prev_ok;
 static int set_lang_idx, set_icon_idx, set_cols_idx, set_kb_h = 1, set_kb_num = 0, set_kb_layout = 0, set_adb_mode;
 static int g_bottom_app_i, g_bottom_home_i, g_top_i, g_topr_i, g_left_i, g_right_i, g_chev;
 static const char *const O_ICON[] = { "Pequeños", "Normales", "Grandes" };
@@ -239,6 +243,7 @@ static void sync_from_state(void)
     g_bottom_app_i = idx_of(V_G_BOTTOM_APP, 4, G.bottom_app); g_bottom_home_i = idx_of(V_G_BOTTOM_HOME, 4, G.bottom_home);
     g_top_i = idx_of(V_G_TOP, 3, G.top); g_topr_i = idx_of(V_G_TOP, 3, G.top_r); g_left_i = idx_of(V_G_LEFT, 4, G.left); g_right_i = idx_of(V_G_RIGHT, 4, G.right);
     g_chev = G.chevron;
+    set_labels = L.labels; set_dots = L.dots; set_dockbg = L.dockbg; set_dim = L.dim; set_wgpage = wg_page_on;
     FILE *f = fopen("/data/.hibymod_adbmode", "r"); char m[16] = "";
     if (f) { if (!fgets(m, sizeof m, f)) m[0] = 0; fclose(f); } else if (!access("/data/.hibymod_adbwifi", F_OK)) strcpy(m, "wifi");
     set_adb_mode = !strncmp(m, "usb", 3) ? 2 : !strncmp(m, "wifi", 4) ? 1 : 0;
@@ -252,7 +257,26 @@ static void apply_lang(void)
     relabel_apps(); lconf_save();
 }
 static const char *v_lang(void) { return LANG_NAMES[lang_ok(ui_lang) ? ui_lang : LANG_EN]; }
-static void apply_home(void) { L.icon = 48 + 8 * set_icon_idx; L.cols = 3 + set_cols_idx; lconf_save(); }
+/* reacomodar si ahora caben menos apps por pagina */
+static void home_reflow(void)
+{
+    int pp = per_page();
+    for (int pg = 0; pg < L.npages; pg++) while (L.pn[pg] > pp) {
+        if (pg + 1 >= L.npages) { if (L.npages >= MAXPAGES) break; L.pn[L.npages++] = 0; }
+        int last = L.page[pg][--L.pn[pg]];
+        memmove(&L.page[pg + 1][1], &L.page[pg + 1][0], L.pn[pg + 1] * sizeof(int)); L.page[pg + 1][0] = last; L.pn[pg + 1]++;
+    }
+    if (cur_page >= L.npages) cur_page = L.npages - 1;
+}
+static void apply_home(void) { L.icon = 48 + 8 * set_icon_idx; L.cols = 3 + set_cols_idx; home_reflow(); home_prev_ok = 0; lconf_save(); }
+static void apply_look(void)
+{
+    int dim = L.dim != set_dim;
+    L.labels = set_labels; L.dots = set_dots; L.dockbg = set_dockbg; L.dim = set_dim;
+    if (dim) load_wall();
+    if (wg_page_on != set_wgpage) { wg_page_on = set_wgpage; if (!wg_page_on && (widgets_on || V.scroll < 0)) { widgets_on = 0; V.scroll = cur_page * W; } }
+    wg_cache_ok = 0; home_prev_ok = 0; lconf_save();
+}
 static void apply_gestures(void)
 {
     G.bottom_app = V_G_BOTTOM_APP[g_bottom_app_i]; G.bottom_home = V_G_BOTTOM_HOME[g_bottom_home_i];
@@ -273,7 +297,20 @@ static void act_reset(void)
 {
     if (!confirm(tr("¿Restablecer el inicio? Se pierde la colocación de las apps."), tr("Restablecer"))) return;
     lconf_default(); unlink(ASSETS "/wall_custom.raw"); load_wall(); cur_page = 0; V.scroll = 0; lconf_save();
+    sync_from_state(); wg_cache_ok = 0; home_prev_ok = 0;
 }
+static void act_wallpaper_h(void) { wallpaper_picker(); home_prev_ok = 0; wg_cache_ok = 0; }
+static const char *v_wall(void)
+{
+    if (!L.wall[0]) return "Aurora";
+    static char b[64]; const char *n = strrchr(L.wall, '/'); snprintf(b, sizeof b, "%s", n ? n + 1 : L.wall);
+    char *e = strrchr(b, '.'); if (e && e != b) *e = 0; return b;
+}
+static void page_gestures(struct spage *p);
+static void nav_gestures_h(void) { open_page(page_gestures, "Inicio"); }
+static void wg_edit_from_settings(void), nav_wg_list(void);
+static const char *v_wg_count(void);
+static void home_hero(uint16_t *d, int y, int h);
 static char sv_buf[8][64];
 static const char *v_adb_addr(void)
 {
@@ -303,9 +340,9 @@ static void open_page(void (*build)(struct spage *), const char *back);
 static void nav_general(void) { open_page(page_general, "Personalizar"); }
 static void page_lang(struct spage *p);
 static void nav_lang(void) { open_page(page_lang, "General"); }
-static void nav_home(void) { open_page(page_home, "Personalizar"); }
+static void nav_home(void) { home_prev_ok = 0; open_page(page_home, "Personalizar"); }
 static void nav_gestures(void) { open_page(page_gestures, "Personalizar"); }
-static void nav_kb(void) { open_page(page_kb, "Personalizar"); }
+static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; set_kb_layout = kb_cfg_layout; open_page(page_kb, "Personalizar"); }
 static void nav_dev(void) { open_page(page_dev, "Personalizar"); }
 static void nav_about(void) { open_page(page_about, "Personalizar"); }
 static void nav_audio(void);
@@ -342,15 +379,26 @@ static void page_lang(struct spage *p)
     }
     p->nsec = 3;
 }
+/* Pantalla de inicio (Personalizar > Inicio y la pildora "Ajustes" del modo edicion) */
 static void page_home(struct spage *p)
 {
     *p = (struct spage){ "Inicio" };
-    p->secs[0] = (struct ssec){ 0, 0, { ROW("Tamaño de iconos", R_CHOICE, &set_icon_idx, O_ICON, 3, apply_home, 0, 0),
-                                        ROW("Columnas", R_CHOICE, &set_cols_idx, O_COLS, 3, apply_home, 0, 0),
-                                        ROW("Fondo de pantalla", R_NAV, 0, 0, 0, act_wallpaper, 0, 0),
-                                        ROW("Flecha de música en el inicio", R_TOGGLE, &g_chev, 0, 0, apply_gestures, 0, 0) }, 4 };
-    p->secs[1] = (struct ssec){ 0, 0, { ROW("Restablecer inicio", R_ACTION, 0, 0, 0, act_reset, 0, 0) }, 1 };
-    p->nsec = 2;
+    p->hero = 186; p->hero_fn = home_hero;
+    p->secs[0] = (struct ssec){ "DISEÑO", 0, { ROW("Tamaño de iconos", R_CHOICE, &set_icon_idx, O_ICON, 3, apply_home, 0, 0),
+                                               ROW("Columnas", R_CHOICE, &set_cols_idx, O_COLS, 3, apply_home, 0, 0),
+                                               ROW("Nombres de las apps", R_TOGGLE, &set_labels, 0, 0, apply_look, 0, 0),
+                                               ROW("Puntos de página", R_TOGGLE, &set_dots, 0, 0, apply_look, 0, 0) }, 4 };
+    p->secs[1] = (struct ssec){ "FONDO", 0, { ROW("Fondo de pantalla", R_NAV, 0, 0, 0, act_wallpaper_h, v_wall, 0),
+                                              ROW("Oscurecer fondo", R_TOGGLE, &set_dim, 0, 0, apply_look, 0, 0) }, 2 };
+    p->secs[2] = (struct ssec){ "WIDGETS", "Mantén pulsado un widget para moverlo o quitarlo, como las apps.", {
+                                              ROW("Página de widgets", R_TOGGLE, &set_wgpage, 0, 0, apply_look, 0, 0),
+                                              ROW("Editar widgets", R_NAV, 0, 0, 0, wg_edit_from_settings, 0, 0),
+                                              ROW("Widgets", R_NAV, 0, 0, 0, nav_wg_list, v_wg_count, 0) }, 3 };
+    p->secs[3] = (struct ssec){ "DOCK Y GESTOS", 0, { ROW("Fondo del dock", R_TOGGLE, &set_dockbg, 0, 0, apply_look, 0, 0),
+                                                      ROW("Flecha de música en el inicio", R_TOGGLE, &g_chev, 0, 0, apply_gestures, 0, 0),
+                                                      ROW("Gestos", R_NAV, 0, 0, 0, nav_gestures_h, 0, 0) }, 3 };
+    p->secs[4] = (struct ssec){ 0, 0, { ROW("Restablecer inicio", R_ACTION, 0, 0, 0, act_reset, 0, 0) }, 1 };
+    p->nsec = 5;
 }
 static void page_gestures(struct spage *p)
 {
@@ -591,7 +639,10 @@ static void open_page(void (*build)(struct spage *), const char *back)
 {
     struct spage pg; build(&pg);
     float saved = sp_scroll; sp_scroll = 0;
-    if (back) { sp_render(img_base, &pg, -1, back); fs_transition(fr0, img_base, 1, 0); }
+    if (back) {   /* fs_transition no puede leer de fr0 mientras escribe en el: copia antes */
+        memcpy(img_under, fr0, HM_FRAME_BYTES); have_under = 0;
+        sp_render(img_base, &pg, -1, back); fs_transition(img_under, img_base, 1, 0);
+    }
     float vel = 0;
     for (;;) {
         build(&pg);

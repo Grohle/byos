@@ -18,7 +18,7 @@
 #define GRID_TOP 46
 #define DOTS_Y (DOCK_Y - 13)
 
-enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT };
+enum { ACT_TAP, ACT_PLANE, ACT_STREAM, ACT_FILES, ACT_SOON, ACT_SETTINGS, ACT_STORE, ACT_EXT, ACT_MUSIC };
 struct hpk_info;
 /* definidas en launcher_touch.inc.c (definiciones provisionales de C, mismo objeto) */
 static double toast_until;
@@ -31,7 +31,7 @@ struct lapp {
     struct hpk_info *ext;           /* apps instaladas (.hpk) */
 };
 static struct lapp apps[40] = {
-    { "music",      "Música",        ACT_TAP,    116, 425 },
+    { "music",      "Música",        ACT_MUSIC,  116, 425 },   /* app propia; (ax, ay) = la de fabrica */
     { "settings",   "Ajustes",       ACT_TAP,    202, 425 },
     { "wireless",   "Inalámbrico",   ACT_TAP,     46,  74 },
     { "books",      "Libros",        ACT_TAP,    117,  74 },
@@ -130,6 +130,7 @@ static void mirror_sig_write(const uint16_t *img)
 }
 
 static int edit_bg_ok;
+static int wg_part_y0, wg_part_y1;   /* widgets.inc.c */
 static void lconf_save(void)
 {
     mirror_dirty = 1; edit_bg_ok = 0;
@@ -544,8 +545,14 @@ static void launcher_present(void)
     render_launcher(img_cache_home, t0); have_cache_home = 1; lclean_ok = 1;
     memcpy(fr0, img_cache_home, HM_FRAME_BYTES);
     if (hud_active) blend_sprite(fr0, &spr_hud, HUD_X, HUD_Y);
+    /* widgets: si solo cambiaron unas tarjetas (datos nuevos) y lo ultimo presentado fue esta
+     * misma pagina, se presentan solo sus filas */
+    static uint32_t lp_presents;
+    if (wg_part_y1 > wg_part_y0 && widgets_on && V.scroll == -W && !hud_active && t0 >= toast_until + 40 && st->presents == lp_presents) { dirty_y0 = wg_part_y0; dirty_y1 = wg_part_y1; }
+    wg_part_y0 = wg_part_y1 = 0;
     double t1 = now_ms();
     present();
+    lp_presents = st->presents;
     double t2 = now_ms();
     /* perfil: cada ~3 s con animacion continua, tiempo medio de dibujo y de presentacion */
     acc_r += t1 - t0; acc_p += t2 - t1; nfr++;

@@ -3,6 +3,7 @@ static void files_app(int ix, int iy);
 static void settings_app(int ix, int iy);
 static void store_app(int ix, int iy);
 static void run_ext_app(int a, int ix, int iy);
+static void music_app(int ix, int iy);
 
 /* ------------------------------------------------------------------ aviso breve (toast) */
 static struct sprite toast_lbl; static double toast_until;
@@ -45,7 +46,7 @@ static int open_app_nav(void)   /* en el hilo de navegacion; pantalla congelada 
 {
     struct lapp *ap = &apps[nav_app];
     uint32_t c = st->cap_frames;
-    if (ap->act == ACT_TAP) { inj_tap(ap->ax, ap->ay); return wait_left_home(2500); }
+    if (ap->act == ACT_TAP || ap->act == ACT_MUSIC) { inj_tap(ap->ax, ap->ay); return wait_left_home(2500); }
     if (ap->act == ACT_STREAM) {
         inj_tap(319, 479);                                   /* "Stream media" (oculto en el tema) */
         if (!wait_left_home(2500)) return 0;
@@ -142,6 +143,7 @@ static void blit_scaled(uint16_t *dst, const struct sprite *s, int rx, int ry, i
 static void launch_app(int a, int ix, int iy)
 {
     struct lapp *ap = &apps[a];
+    if (ap->act == ACT_MUSIC) { V.pressed_app = -1; music_app(ix, iy); return; }
     if (ap->act == ACT_FILES) { V.pressed_app = -1; files_app(ix, iy); return; }
     if (ap->act == ACT_SETTINGS) { V.pressed_app = -1; settings_app(ix, iy); return; }
     if (ap->act == ACT_STORE) { V.pressed_app = -1; store_app(ix, iy); return; }
@@ -293,6 +295,7 @@ static void animate_scroll_to(int page)
 static void launcher_settings(void);
 static void home_switcher(int sy);
 static void widgets_touch(struct pkt *p);
+static int wg_page_on;
 
 /* ------------------------------------------------------------------ toque en el launcher */
 /* p: primer paquete (dedo abajo). Gestiona el gesto completo. */
@@ -336,7 +339,7 @@ static void launcher_touch(struct pkt *p)
     if (V.edit && sy >= 30 && sy < 70) {
         while (cur_down && read_pkt(p, 3000)) {}
         if (sx > W - 90) { V.edit = 0; lconf_save(); launcher_present(); return; }
-        if (sx < 110) { V.edit = 0; settings_app(W / 2 - L.icon / 2, 40); return; }
+        if (sx < 110) { V.edit = 0; launcher_settings(); return; }
         return;
     }
     int ix, iy, dock, idx;
@@ -379,7 +382,7 @@ static void launcher_touch(struct pkt *p)
         }
         if (moved && abs(cur_x - sx) > abs(cur_y - sy)) {   /* deslizar paginas */
             float s = cur_page * W - (cur_x - sx);
-            float lo = cur_page == 0 && !V.edit ? -W : -40;          /* a la izquierda: widgets */
+            float lo = cur_page == 0 && !V.edit && wg_page_on ? -W : -40;          /* a la izquierda: widgets */
             if (s < lo) s = lo + (s - lo) / 3; if (s > (L.npages - 1) * W + 40) s = (L.npages - 1) * W + 40 + (s - (L.npages - 1) * W - 40) / 3;
             V.scroll = s;
             launcher_present();

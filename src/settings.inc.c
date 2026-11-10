@@ -1,5 +1,5 @@
-/* settings.inc.c - hoja "Inicio" del launcher (tamano de iconos, columnas, fondo) y selector
- * de fondos con miniaturas de las imagenes de la SD. */
+/* settings.inc.c - ajustes del inicio ("Pantalla de inicio", vista previa) y selector de fondos
+ * con miniaturas de las imagenes de la SD. */
 #include <spawn.h>
 #include <sys/wait.h>
 extern char **environ;
@@ -14,84 +14,79 @@ static int run_wall(const char *in, const char *out, int w, int h)
     return WIFEXITED(stt) ? WEXITSTATUS(stt) : -1;
 }
 
-/* ------------------------------------------------------------------ hoja de ajustes */
-static struct sprite s_title, s_done, s_icons, s_cols, s_wall, s_reset, s_choose;
-static struct sprite s_opt_icon[3], s_opt_col[3];
-#define SHEET_Y 150
-
-static void seg(uint16_t *dst, int x, int y, int w, int n, int sel, struct sprite *labels)
+/* ------------------------------------------------------------------ ajustes del inicio */
+/* "Pantalla de inicio": pagina de Ajustes (settings_app) que se abre desde la pildora
+ * "Ajustes" del modo edicion y desde Personalizar > Inicio. Cabecera con la vista previa del
+ * inicio y de la pagina de widgets (miniaturas 96x144 rehechas al cambiar algo). */
+static struct sprite s_title;          /* (hoja antigua; relabel_apps la libera) */
+static int home_prev_ok;
+static uint16_t hp_home[98 * 146], hp_wg[98 * 146];   /* miniatura con filo, ya sobre el fondo negro de Ajustes */
+static void wg_compose(void);
+static uint8_t *wg_rrmask(int w, int h, float r, float inset);
+static int wg_page_on, wg_cache_ok;
+static float wg_scroll;
+static uint16_t *wg_cache;
+static void hp_shrink(const uint16_t *src, uint16_t *dst)
 {
-    fill_rrect(dst, x, y, w, 32, 9, rgb(118, 118, 128), 60);
-    int cw = w / n;
-    fill_rrect(dst, x + sel * cw + 2, y + 2, cw - 4, 28, 7, rgb(99, 99, 102), 255);
-    for (int i = 0; i < n; i++) blit(dst, &labels[i], x + i * cw + (cw - labels[i].w) / 2, y + (32 - labels[i].h) / 2, 32, 255);
+    static uint8_t *mo, *mi;
+    if (!mo) { mo = wg_rrmask(98, 146, 13, 0); mi = wg_rrmask(96, 144, 12, 0); }
+    for (int y = 0; y < 146; y++) for (int x = 0; x < 98; x++) dst[y * 98 + x] = mo ? mix565(rgb(72, 72, 76), 0, mo[y * 98 + x]) : 0;
+    for (int y = 0; y < 144; y++) for (int x = 0; x < 96; x++) {
+        int xa = x * W / 96, xb = (x + 1) * W / 96, ya = y * H / 144, yb = (y + 1) * H / 144, r = 0, g = 0, b = 0, n = 0;
+        for (int yy = ya; yy < yb; yy++) for (int xx = xa; xx < xb; xx++) { uint16_t q = src[yy * W + xx]; r += q >> 11; g += (q >> 5) & 63; b += q & 31; n++; }
+        uint16_t c = (uint16_t)((r / n) << 11 | (g / n) << 5 | (b / n)), *o = &dst[(y + 1) * 98 + x + 1];
+        *o = mi ? mix565(c, *o, mi[y * 96 + x]) : c;
+    }
 }
-
-static void render_settings(uint16_t *dst, int sheet_y)
+static void home_prev_build(void)
 {
-    render_launcher(dst, now_ms());
-    for (int i = 0; i < W * H; i++) dst[i] = dim565(dst[i], 16);
-    int y = sheet_y;
-    fill_rrect(dst, 0, y, W, H - y + 20, 16, rgb(28, 28, 30), 250);
-    fill_rrect(dst, W / 2 - 18, y + 6, 36, 5, 2.5f, rgb(90, 90, 96), 255);
-    blit(dst, &s_title, (W - s_title.w) / 2, y + 16, 32, 255);
-    blit(dst, &s_done, W - 16 - s_done.w, y + 16, 32, 255);
-    blit(dst, &s_icons, 18, y + 58, 32, 255);
-    seg(dst, 18, y + 80, W - 36, 3, sz_idx(), s_opt_icon);
-    blit(dst, &s_cols, 18, y + 124, 32, 255);
-    seg(dst, 18, y + 146, W - 36, 3, L.cols - 3, s_opt_col);
-    blit(dst, &s_wall, 18, y + 190, 32, 255);
-    /* miniatura del fondo actual + boton elegir */
-    static uint16_t th[48 * 72];
-    for (int yy = 0; yy < 72; yy++) for (int xx = 0; xx < 48; xx++) th[yy * 48 + xx] = wall[(yy * H / 72) * W + xx * W / 48];
-    for (int yy = 0; yy < 72; yy++) { int dy = y + 212 + yy; if (dy < H) memcpy(dst + dy * W + 18, th + yy * 48, 96); }
-    fill_rrect(dst, 78, y + 232, W - 96, 34, 10, rgb(44, 44, 48), 255);
-    blit(dst, &s_choose, 78 + (W - 96 - s_choose.w) / 2, y + 232 + (34 - s_choose.h) / 2, 32, 255);
-    blit(dst, &s_reset, (W - s_reset.w) / 2, y + 296, 32, 255);
+    float s = V.scroll; int e = V.edit, pa = V.pressed_app, da = V.drag_app, ha = hud_active;
+    V.scroll = 0; V.edit = 0; V.pressed_app = -1; V.drag_app = -1; hud_active = 0;
+    render_launcher(img_sheet, now_ms());
+    V.scroll = s; V.edit = e; V.pressed_app = pa; V.drag_app = da; hud_active = ha;
+    hp_shrink(img_sheet, hp_home);
+    float ws = wg_scroll; wg_scroll = 0; wg_compose(); wg_scroll = ws;
+    if (wg_cache) { memcpy(wg_cache, img_sheet, 30 * W * 2); hp_shrink(wg_cache, hp_wg); }
+    wg_cache_ok = 0; have_under = 0;                   /* img_sheet reutilizado */
+    home_prev_ok = 1;
+}
+static void hp_blit(uint16_t *d, const uint16_t *src, int x0, int y0, int dim)
+{
+    for (int y = 0; y < 146; y++) {
+        int Y = y0 + y; if (Y < 0 || Y >= H) continue;
+        if (!dim) { memcpy(d + Y * W + x0, src + y * 98, 98 * 2); continue; }
+        for (int x = 0; x < 98; x++) d[Y * W + x0 + x] = dim565(src[y * 98 + x], 12);
+    }
+}
+static void home_hero(uint16_t *d, int y, int h)
+{
+    (void)h;
+    if (!home_prev_ok) home_prev_build();
+    int x1 = W / 2 - 98 - 15, x2 = W / 2 + 15, ty = y + 10;
+    hp_blit(d, hp_home, x1, ty, 0);
+    hp_blit(d, hp_wg, x2, ty, !wg_page_on);
+    const char *a = tr("Inicio"), *b = wg_page_on ? tr("Widgets") : tr("Desactivado");
+    int aw = tw_n(a, 13, -1), bw = tw_n(b, 13, -1); if (aw > 110) aw = 110; if (bw > 110) bw = 110;
+    draw_text(d, x1 + 49 - aw / 2, ty + 146 + 21, a, 13, rgb(142, 142, 147), 110, 0, H);
+    draw_text(d, x2 + 49 - bw / 2, ty + 146 + 21, b, 13, rgb(142, 142, 147), 110, 0, H);
 }
 
 static void wallpaper_picker(void);
-
+static void sync_from_state(void);
+struct spage;
+static void page_home(struct spage *p);
+static void open_page(void (*build)(struct spage *), const char *back);
+static void fs_transition(const uint16_t *from, const uint16_t *to, int dir, float start);
+/* desde la pildora "Ajustes" del modo edicion del inicio */
 static void launcher_settings(void)
 {
-    if (!s_title.w) {
-        text_sprite(&s_title, tr("Inicio"), 16.f, 0xFFFF, 0);
-        text_sprite(&s_done, tr("Listo"), 15.f, rgb(10, 132, 255), 0);
-        text_sprite(&s_icons, tr("Tamaño de iconos"), 13.f, rgb(152, 152, 159), 0);
-        text_sprite(&s_cols, tr("Columnas"), 13.f, rgb(152, 152, 159), 0);
-        text_sprite(&s_wall, tr("Fondo de pantalla"), 13.f, rgb(152, 152, 159), 0);
-        text_sprite(&s_reset, tr("Restablecer inicio"), 15.f, rgb(255, 69, 58), 0);
-        text_sprite(&s_choose, tr("Elegir de la SD…"), 14.f, 0xFFFF, 0);
-        const char *oi[3] = { tr("Pequeños"), tr("Normales"), tr("Grandes") }, *oc[3] = { "3", "4", "5" };
-        for (int i = 0; i < 3; i++) { text_sprite(&s_opt_icon[i], oi[i], 13.f, 0xFFFF, 0); text_sprite(&s_opt_col[i], oc[i], 13.f, 0xFFFF, 0); }
-    }
-    /* sube la hoja */
-    double t0 = now_ms();
-    for (;;) { double t = (now_ms() - t0) / 240; if (t > 1) t = 1; render_settings(fr0, SHEET_Y + (int)((H - SHEET_Y) * (1 - ease_out(t)))); present(); if (t >= 1) break; }
-    struct pkt p;
-    for (;;) {
-        if (!read_pkt(&p, 300)) continue;
-        if (!p.down) continue;
-        int x = p.x, y = p.y - SHEET_Y;
-        while (cur_down && read_pkt(&p, 3000)) {}
-        if (y < 0 || (y < 44 && x > W - 90)) break;          /* fuera de la hoja o "Listo" */
-        if (y >= 80 && y < 112) { int i = (x - 18) * 3 / (W - 36); if (i < 0) i = 0; if (i > 2) i = 2; L.icon = 48 + 8 * i; }
-        else if (y >= 146 && y < 178) { int i = (x - 18) * 3 / (W - 36); if (i < 0) i = 0; if (i > 2) i = 2; L.cols = 3 + i; }
-        else if (y >= 212 && y < 284) { wallpaper_picker(); }
-        else if (y >= 288 && y < 320) { lconf_default(); unlink(ASSETS "/wall_custom.raw"); load_wall(); cur_page = 0; V.scroll = 0; }
-        /* reacomodar si ahora caben menos por pagina */
-        int pp = per_page();
-        for (int pg = 0; pg < L.npages; pg++) while (L.pn[pg] > pp && L.npages <= MAXPAGES) {
-            int last = L.page[pg][--L.pn[pg]];
-            if (pg + 1 >= L.npages) { if (L.npages >= MAXPAGES) { L.pn[pg]++; break; } L.pn[L.npages++] = 0; }
-            memmove(&L.page[pg + 1][1], &L.page[pg + 1][0], L.pn[pg + 1] * sizeof(int)); L.page[pg + 1][0] = last; L.pn[pg + 1]++;
-        }
-        lconf_save();
-        render_settings(fr0, SHEET_Y); present();
-    }
-    t0 = now_ms();
-    for (;;) { double t = (now_ms() - t0) / 200; if (t > 1) t = 1; render_settings(fr0, SHEET_Y + (int)((H - SHEET_Y) * ease_out(t))); present(); if (t >= 1) break; }
-    lconf_save();
+    V.edit = 0; V.drag_app = -1; V.pressed_app = -1; lconf_save();
+    sync_from_state(); home_prev_ok = 0;
+    open_page(page_home, "Atrás");               /* entra desde la derecha sobre el inicio */
+    memcpy(img_app, img_under, HM_FRAME_BYTES);  /* open_page deja su ultima imagen en img_under */
+    render_launcher(img_base, now_ms());
+    fs_transition(img_app, img_base, -1, 0);
+    drain_until_up();
     launcher_present();
 }
 

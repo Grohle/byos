@@ -6,6 +6,8 @@
  *                               /usr/data/mnt/sd_0/..., "Artista - Titulo" o parte del titulo)
  *   hibymix radio-artist NOMBRE   radio sembrada por un artista
  *   hibymix remove             quita las mezclas de hibymod de la base (los .m3u se quedan)
+ *   hibymix lib | playlists | playlist TIPO ARG   consultas de solo lectura para la app Musica
+ *                              (formato junto a lib_dump)
  * Opciones (en cualquier posicion):
  *   --list        no escribe nada: imprime "ruta<TAB>artista<TAB>titulo" por pista (la ruta tal
  *                 como esta en la base, a:\...); el titulo de la mezcla sale por stderr
@@ -548,6 +550,200 @@ static int radio(sqlite3 *db, const char *q, int by_artist)
     return emit(db, title, out, k);
 }
 
+/* ---------- consultas de solo lectura para la app Musica (lineas con tabuladores) ----------
+ *   hibymix lib         A<TAB>titulo<TAB>artista<TAB>ano<TAB>pistas<TAB>ctime_max<TAB>genero
+ *                       T<TAB>album<TAB>disco<TAB>pista<TAB>seg<TAB>titulo<TAB>artista<TAB>ruta
+ *                       (albumes por titulo; pistas agrupadas por album, disco y numero; "album" es
+ *                        el indice de la linea A, desde 0; ruta tal como esta en la base, a:\...)
+ *   hibymix playlists   P<TAB>tipo<TAB>arg<TAB>nombre<TAB>n   (tipo fav | m3u | pl)
+ *   hibymix playlist TIPO ARG   una ruta por linea (como en la base) */
+struct lt { const char *path, *name, *artist, *album, *aa, *genre; int year, disc, trk, dur; long ctime; int alb; };
+static struct lt *LT; static int nLT;
+struct la { const char *title, *artist, *genre, *dir; int year, n, first; long ctime; };
+static struct la *LA; static int nLA;
+static const char *dirpart(const char *p)        /* carpeta (copia en la arena) */
+{
+    const char *e = strrchr(p, '\\'); if (!e) e = strrchr(p, '/');
+    if (!e) return "";
+    char b[600]; int n = (int)(e - p); if (n > 599) n = 599; memcpy(b, p, n); b[n] = 0;
+    return dupz((const unsigned char *)b);
+}
+static int cmp_lt_key(const void *x, const void *y)
+{
+    const struct lt *a = x, *b = y;
+    int c = strcasecmp(a->album, b->album); if (c) return c;
+    c = strcasecmp(a->aa, b->aa); if (c) return c;
+    if (a->disc != b->disc) return a->disc - b->disc;
+    if (a->trk != b->trk) return a->trk - b->trk;
+    return strcasecmp(a->path, b->path);
+}
+static const char *sortkey(const char *s)        /* "The Beatles" -> "Beatles"; sin comillas ni signos delante */
+{
+    while (*s && (unsigned char)*s < 0x80 && !((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9'))) s++;
+    if (!strncasecmp(s, "the ", 4)) return s + 4;
+    return s;
+}
+static int lettergrp(const char *s) { unsigned char c = (unsigned char)*s; return (c >= '0' && c <= '9') || !c ? 1 : 0; }   /* como iOS: "#" al final */
+static int cmp_la(const void *x, const void *y)
+{
+    const struct la *a = x, *b = y;
+    const char *ka = sortkey(a->title), *kb = sortkey(b->title);
+    int c = lettergrp(ka) - lettergrp(kb); if (c) return c;
+    c = strcasecmp(ka, kb); if (c) return c;
+    return strcasecmp(a->artist, b->artist);
+}
+static int same_album(const struct lt *a, const struct lt *b)
+{
+    return !strcasecmp(a->album, b->album) && !strcasecmp(a->aa, b->aa);
+}
+static int lib_dump(sqlite3 *db)
+{
+    sqlite3_stmt *st; int cap = 64;
+    if (!sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM MEDIA_TABLE", -1, &st, 0)) { if (sqlite3_step(st) == SQLITE_ROW) cap = sqlite3_column_int(st, 0) + 64; sqlite3_finalize(st); }
+    if (sqlite3_prepare_v2(db, "SELECT path, name, artist, album, album_artist, genre, year, dis_id, ck_id, size, bit_rate, ctime, begin_time, end_time FROM MEDIA_TABLE WHERE has_child_file = 0 OR has_child_file IS NULL", -1, &st, 0)) return 2;
+    LT = malloc(cap * sizeof *LT);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        if (nLT >= cap) { cap *= 2; LT = realloc(LT, cap * sizeof *LT); }
+        struct lt *t = &LT[nLT]; memset(t, 0, sizeof *t);
+        t->path = dupz(sqlite3_column_text(st, 0)); if (!t->path[0]) continue;
+        t->name = dupz(sqlite3_column_text(st, 1)); t->artist = dupz(sqlite3_column_text(st, 2));
+        t->album = dupz(sqlite3_column_text(st, 3));
+        const char *aa = (const char *)sqlite3_column_text(st, 4);
+        t->aa = aa && aa[0] && strcmp(aa, t->artist) ? dupz((const unsigned char *)aa) : t->artist;
+        const char *g = (const char *)sqlite3_column_text(st, 5);
+        t->genre = !g || !g[0] || !strcasecmp(g, "Unknown") ? "" : dupz((const unsigned char *)g);
+        t->year = sqlite3_column_int(st, 6); t->disc = sqlite3_column_int(st, 7); t->trk = sqlite3_column_int(st, 8);
+        long long size = sqlite3_column_int64(st, 9), br = sqlite3_column_int64(st, 10);
+        long long bt = sqlite3_column_int64(st, 12), et = sqlite3_column_int64(st, 13);
+        t->dur = et > bt && et > 0 ? (int)((et - bt) / 1000) : br > 0 ? (int)(size * 8 / br) : 0;   /* cue: ms */
+        t->ctime = (long)sqlite3_column_int64(st, 11);
+        if (!t->album[0] || !strcasecmp(t->album, "Unknown")) t->album = "";   /* sin album: por carpeta */
+        nLT++;
+    }
+    sqlite3_finalize(st);
+    /* sin album: el nombre de la carpeta */
+    for (int i = 0; i < nLT; i++) if (!LT[i].album[0]) { const char *d = dirpart(LT[i].path), *b = strrchr(d, '\\'); LT[i].album = b ? b + 1 : d; }
+    qsort(LT, nLT, sizeof *LT, cmp_lt_key);
+    LA = malloc((nLT + 1) * sizeof *LA);
+    for (int i = 0, j; i < nLT; i = j) {
+        struct la *a = &LA[nLA]; memset(a, 0, sizeof *a);
+        a->title = LT[i].album; a->artist = LT[i].aa; a->first = i;
+        for (j = i; j < nLT && same_album(&LT[j], &LT[i]); j++) {
+            LT[j].alb = nLA;
+            if (LT[j].year > a->year) a->year = LT[j].year;
+            if (LT[j].ctime > a->ctime) a->ctime = LT[j].ctime;
+            if (!a->genre && LT[j].genre[0]) a->genre = LT[j].genre;
+        }
+        a->n = j - i; nLA++;
+    }
+    /* orden de los albumes por titulo; se renumeran */
+    int *rank = malloc((nLA + 1) * sizeof *rank);
+    struct la *S = malloc((nLA + 1) * sizeof *S); memcpy(S, LA, nLA * sizeof *S);
+    for (int i = 0; i < nLA; i++) S[i].dir = (const char *)(long)i;   /* recuerda el indice original */
+    qsort(S, nLA, sizeof *S, cmp_la);
+    for (int i = 0; i < nLA; i++) rank[(int)(long)S[i].dir] = i;
+    for (int i = 0; i < nLA; i++) {
+        const struct la *a = &S[i];
+        printf("A\t"); putclean(stdout, a->title); putchar('\t'); putclean(stdout, a->artist);
+        printf("\t%d\t%d\t%ld\t", a->year, a->n, a->ctime); putclean(stdout, a->genre ? a->genre : ""); putchar('\n');
+    }
+    /* pistas en el orden de los albumes */
+    for (int i = 0; i < nLA; i++) {
+        const struct la *a = &S[i];
+        for (int k = a->first; k < a->first + a->n; k++) {
+            const struct lt *t = &LT[k];
+            printf("T\t%d\t%d\t%d\t%d\t", rank[t->alb], t->disc, t->trk, t->dur);
+            putclean(stdout, t->name); putchar('\t'); putclean(stdout, t->artist); putchar('\t'); putclean(stdout, t->path); putchar('\n');
+        }
+    }
+    free(rank); free(S);
+    return 0;
+}
+static void print_paths(sqlite3 *db, const char *sql, const char *arg)
+{
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(db, sql, -1, &st, 0)) return;
+    if (arg) sqlite3_bind_text(st, 1, arg, -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(st) == SQLITE_ROW) { const char *p = (const char *)sqlite3_column_text(st, 0); if (p && p[0]) { putclean(stdout, p); putchar('\n'); } }
+    sqlite3_finalize(st);
+}
+static int table_exists(sqlite3 *db, const char *name)
+{
+    sqlite3_stmt *st; int ok = 0;
+    if (!sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", -1, &st, 0)) {
+        sqlite3_bind_text(st, 1, name, -1, SQLITE_STATIC); ok = sqlite3_step(st) == SQLITE_ROW; sqlite3_finalize(st);
+    }
+    return ok;
+}
+static int playlists(sqlite3 *db)
+{
+    sqlite3_stmt *st; int n = 0;
+    if (!sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM COLLECT_TABLE", -1, &st, 0)) { if (sqlite3_step(st) == SQLITE_ROW) n = sqlite3_column_int(st, 0); sqlite3_finalize(st); }
+    printf("P\tfav\t-\t%s\t%d\n", L3("Favoritos", "Favourites", "Favoris"), n);
+    if (!sqlite3_prepare_v2(db, "SELECT id, name, cn FROM PLAYLIST_TABLE ORDER BY name", -1, &st, 0)) {
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            char t[32]; snprintf(t, sizeof t, "list_tb_%d", sqlite3_column_int(st, 0));
+            if (sqlite3_column_int(st, 0) <= 1 || !table_exists(db, t)) continue;   /* list_tb_1 = la cola */
+            const char *nm = (const char *)sqlite3_column_text(st, 1);
+            printf("P\tpl\t%d\t", sqlite3_column_int(st, 0)); putclean(stdout, nm ? nm : "?"); printf("\t%d\n", sqlite3_column_int(st, 2));
+        }
+        sqlite3_finalize(st);
+    }
+    if (!sqlite3_prepare_v2(db, "SELECT path, name FROM M3U_TABLE ORDER BY name", -1, &st, 0)) {
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            const char *p = (const char *)sqlite3_column_text(st, 0), *nm = (const char *)sqlite3_column_text(st, 1);
+            if (!p || !p[0]) continue;
+            char b[256]; snprintf(b, sizeof b, "%s", nm && nm[0] ? nm : p);
+            char *d = strrchr(b, '.'); if (d && (!strcasecmp(d, ".m3u") || !strcasecmp(d, ".m3u8"))) *d = 0;
+            printf("P\tm3u\t"); putclean(stdout, p); putchar('\t'); putclean(stdout, b); printf("\t0\n");
+        }
+        sqlite3_finalize(st);
+    }
+    return 0;
+}
+static int playlist(sqlite3 *db, const char *kind, const char *arg)
+{
+    if (!strcmp(kind, "fav")) { print_paths(db, "SELECT path FROM COLLECT_TABLE ORDER BY rowid", 0); return 0; }
+    if (!strcmp(kind, "pl")) {
+        int id = atoi(arg); char t[32], q[96]; snprintf(t, sizeof t, "list_tb_%d", id);
+        if (id <= 1 || !table_exists(db, t)) return 3;
+        snprintf(q, sizeof q, "SELECT path FROM %s ORDER BY rowid", t); print_paths(db, q, 0); return 0;
+    }
+    if (!strcmp(kind, "m3u")) {             /* a:\Carpeta\lista.m3u -> /usr/data/mnt/sd_0/Carpeta/lista.m3u */
+        char fp[1024], dir[1024]; const char *p = arg;
+        if (p[0] && p[1] == ':' && is_path_char(p[2])) p += 3;
+        snprintf(fp, sizeof fp, "/usr/data/mnt/sd_0/%s", p);
+        for (char *c = fp; *c; c++) if (*c == '\\') *c = '/';
+        snprintf(dir, sizeof dir, "%s", fp); char *s = strrchr(dir, '/'); if (s) *s = 0;
+        FILE *f = fopen(fp, "r"); if (!f) return 3;
+        char l[1024];
+        while (fgets(l, sizeof l, f)) {
+            l[strcspn(l, "\r\n")] = 0;
+            char *x = l; if ((unsigned char)x[0] == 0xEF && (unsigned char)x[1] == 0xBB && (unsigned char)x[2] == 0xBF) x += 3;
+            if (!x[0] || x[0] == '#') continue;
+            for (char *c = x; *c; c++) if (*c == '\\') *c = '/';
+            /* resolver ../ y ./ respecto a la carpeta de la lista; salida como en la base (a:\...) */
+            char abs[2100];
+            if (x[0] == '/') snprintf(abs, sizeof abs, "%s", x);
+            else if (x[1] == ':' && x[2] == '/') snprintf(abs, sizeof abs, "/usr/data/mnt/sd_0/%s", x + 3);
+            else snprintf(abs, sizeof abs, "%s/%s", dir, x);
+            char out[2100]; int n = 0; const char *r = abs;
+            while (*r && n < (int)sizeof out - 2) {
+                if (r[0] == '/' && r[1] == '.' && r[2] == '.' && (r[3] == '/' || !r[3])) { while (n > 0 && out[n - 1] != '/') n--; if (n > 0) n--; r += 3; continue; }
+                if (r[0] == '/' && r[1] == '.' && (r[2] == '/' || !r[2])) { r += 2; continue; }
+                out[n++] = *r++;
+            }
+            out[n] = 0;
+            const char *rel = !strncmp(out, "/usr/data/mnt/sd_0/", 19) ? out + 19 : !strncmp(out, "/data/mnt/sd_0/", 15) ? out + 15 : 0;
+            if (!rel) continue;
+            printf("a:\\"); for (const char *c = rel; *c; c++) putchar(*c == '/' ? '\\' : *c); putchar('\n');
+        }
+        fclose(f);
+        return 0;
+    }
+    return 2;
+}
+
 int main(int argc, char **argv)
 {
     const char *pos[4] = {0}; int np = 0;
@@ -562,10 +758,17 @@ int main(int argc, char **argv)
     if (!np) { fprintf(stderr, "uso: hibymix probe | make TIPO | radio RUTA | radio-artist NOMBRE | remove  [--list] [--out FICHERO] [--lang es|en|fr]\n"); return 1; }
     if (getenv("HIBYMIX_DB")) DB = getenv("HIBYMIX_DB");
     if (getenv("HIBYMIX_DIR")) MIXDIR = getenv("HIBYMIX_DIR");
-    int ro = listmode || outpath || !strcmp(pos[0], "stats");
+    int query = !strcmp(pos[0], "lib") || !strcmp(pos[0], "playlists") || !strcmp(pos[0], "playlist");
+    int ro = listmode || outpath || !strcmp(pos[0], "stats") || query;
     sqlite3 *db;
     if (sqlite3_open_v2(DB, &db, ro ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE, 0)) { fprintf(stderr, "no se pudo abrir la base\n"); return 2; }
     sqlite3_busy_timeout(db, 4000);
+    if (query) {
+        static char obuf[65536]; setvbuf(stdout, obuf, _IOFBF, sizeof obuf);
+        int r = !strcmp(pos[0], "lib") ? lib_dump(db) : !strcmp(pos[0], "playlists") ? playlists(db) : np >= 3 ? playlist(db, pos[1], pos[2]) : 1;
+        fflush(stdout); sqlite3_close(db);
+        return r;
+    }
     if (!strcmp(pos[0], "stats")) {          /* para los widgets: una linea por dato, separada por tabuladores */
         const char *q[][2] = {
             { "count", "SELECT COUNT(*), COUNT(DISTINCT album), COUNT(DISTINCT artist), (SELECT COUNT(*) FROM COLLECT_TABLE), COALESCE(SUM(size),0) FROM MEDIA_TABLE WHERE has_child_file = 0 OR has_child_file IS NULL" },

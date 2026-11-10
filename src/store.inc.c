@@ -77,10 +77,14 @@ static void player_pause(void)
     }
 }
 
+/* apps que el shell no abre aunque esten instaladas (en pruebas: pueden bloquear el aparato) */
+static const char *const app_blocked_ids[] = { "org.hibymod.navegador", 0 };
+static int app_blocked(const char *id) { for (int k = 0; app_blocked_ids[k]; k++) if (!strcmp(id, app_blocked_ids[k])) return 1; return 0; }
 static void run_ext_app(int a, int ix, int iy)
 {
     struct hpk_info *pk = apps[a].ext;
     if (!pk) return;
+    if (app_blocked(pk->id)) { toast(tr("Esta app está en pruebas y todavía no se puede abrir")); launcher_present(); return; }
     /* apps en la tarjeta SD: el talon de /usr/data apunta a la ruta real */
     if (app_sd_missing(pk)) { toast(tr("Esta app está en la tarjeta SD: insértala para abrirla")); launcher_present(); return; }
     char adir[256]; app_real_dir(pk, adir, sizeof adir);
@@ -447,7 +451,7 @@ static void installed_detail(int i)
 
 struct st_repo { char url[256], name[48]; int napps, err, busy; double fetched; };
 struct st_app {
-    int repo, featured, ram_kb, stop_player;
+    int repo, featured, ram_kb, stop_player, unavailable;   /* unavailable: "available": false (en pruebas) */
     char id[HPK_ID_MAX + 1], version[HPK_VER_MAX], min[HPK_VER_MAX], sha[65], author[48], category[24];
     char name[48], desc[200], lname[48], ldesc[200];      /* l*: en minusculas, para buscar */
     char icon_url[256], hpk_url[256];
@@ -700,9 +704,11 @@ static void st_parse_repo(int r)
         sj_str(sj_get(o, "ram_kb"), t, 32); a.ram_kb = atoi(t);
         sj_str(sj_get(o, "stop_player"), t, 32); a.stop_player = !strcmp(t, "true") || atoi(t) > 0;
         sj_str(sj_get(o, "featured"), t, 32); a.featured = !strcmp(t, "true") || atoi(t) > 0;
+        sj_str(sj_get(o, "available"), t, 32); a.unavailable = !strcmp(t, "false") || !strcmp(t, "0") || app_blocked(a.id);
         /* lo que el instalador no comprueba hasta descargar se valida ya (si no, no se muestra) */
         long sv[3];
-        if (!hpk_valid_id(a.id) || hpk_semver(a.version, sv) || !st_url_ok(a.hpk_url) || !st_hex64(a.sha) || !a.name[0]) continue;
+        if (!hpk_valid_id(a.id) || hpk_semver(a.version, sv) || !a.name[0]) continue;
+        if (!a.unavailable && (!st_url_ok(a.hpk_url) || !st_hex64(a.sha))) continue;
         int dup = st_app_find(a.id);
         if (dup >= 0) continue;            /* el repositorio anterior (el de HiByOS primero) manda */
         st_lower(a.name, a.lname, sizeof a.lname); st_lower(a.desc, a.ldesc, sizeof a.ldesc);
@@ -863,13 +869,14 @@ static double st_dl_frac(void)
 }
 
 /* ------------------------------------------------------------------ estado de cada app */
-enum { S_GET, S_UPDATE, S_OPEN, S_LOADING, S_INSTALLING, S_NEWER };
+enum { S_GET, S_UPDATE, S_OPEN, S_LOADING, S_INSTALLING, S_NEWER, S_TESTING };
 static const struct hpk_info *st_installed(const char *id) { for (int k = 0; k < ninst; k++) if (!strcmp(inst[k].id, id)) return &inst[k]; return 0; }
 static int st_state(int i)
 {
     struct st_app *a = &st_apps[i];
     if (i == st_inst_app) return S_INSTALLING;
     if (i == st_dl_app) return S_LOADING;
+    if (a->unavailable) return S_TESTING;
     const struct hpk_info *in = st_installed(a->id);
     if (in) return hpk_vercmp(a->version, in->installed[0] ? in->installed : in->version) > 0 ? S_UPDATE : S_OPEN;
     if (hpk_vercmp(a->min, HPK_HIBYMOD_VERSION) > 0) return S_NEWER;
@@ -989,12 +996,12 @@ static void st_ring(uint16_t *d, int cx, int cy, float frac, double t, int spin)
 static int st_pill(uint16_t *d, int xr, int y, int state, double frac, int filled)
 {
     if (state == S_LOADING || state == S_INSTALLING) { st_ring(d, xr - 16, y + 14, (float)frac, now_ms(), state == S_INSTALLING && frac <= 0.01); return 32; }
-    const char *t = state == S_GET || state == S_NEWER ? tr("OBTENER") : state == S_UPDATE ? tr("ACTUALIZAR") : tr("ABRIR");
+    const char *t = state == S_TESTING ? tr("EN PRUEBAS") : state == S_GET || state == S_NEWER ? tr("OBTENER") : state == S_UPDATE ? tr("ACTUALIZAR") : tr("ABRIR");
     int pw = tw_n(t, 13, -1) + 30; if (pw < 74) pw = 74;
     int blue = filled == 1 && state != S_OPEN, glass = filled == 2;   /* 2: sobre tarjeta de color */
     if (glass) fill_rrect(d, xr - pw, y, pw, 28, 14, 0xFFFF, 64);
     else fill_rrect(d, xr - pw, y, pw, 28, 14, blue ? rgb(10, 132, 255) : rgb(44, 44, 48), 255);
-    draw_text(d, xr - pw + (pw - tw_n(t, 13, -1)) / 2, y + 19, t, 13, blue || glass ? 0xFFFF : state == S_NEWER ? rgb(99, 99, 102) : rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
+    draw_text(d, xr - pw + (pw - tw_n(t, 13, -1)) / 2, y + 19, t, 13, blue || glass ? 0xFFFF : state == S_NEWER || state == S_TESTING ? rgb(99, 99, 102) : rgb(10, 132, 255), 0, ST_TOP, ST_TABY);
     return pw;
 }
 static void st_icon_box(uint16_t *d, const struct sprite *ic, int x, int y, int s)
@@ -1288,16 +1295,17 @@ static void st_render_detail(uint16_t *d, int rec)
     int s = st_state(st_detail);
     if (s == S_LOADING || s == S_INSTALLING) st_ring(d, 126 + 16, y + 78, (float)(s == S_INSTALLING ? st_inst_frac : st_dl_frac()), now_ms(), s == S_INSTALLING && st_inst_frac <= 0.01);
     else {
-        const char *t = s == S_UPDATE ? tr("ACTUALIZAR") : s == S_OPEN ? tr("ABRIR") : tr("OBTENER");
+        const char *t = s == S_TESTING ? tr("EN PRUEBAS") : s == S_UPDATE ? tr("ACTUALIZAR") : s == S_OPEN ? tr("ABRIR") : tr("OBTENER");
         int pw = tw_n(t, 14, -1) + 34; if (pw < 84) pw = 84;
         int press = st_press_kind == HT_PILL;
-        uint16_t bg = s == S_OPEN ? rgb(44, 44, 48) : s == S_NEWER ? rgb(44, 44, 48) : rgb(10, 132, 255);
+        uint16_t bg = s == S_OPEN || s == S_NEWER || s == S_TESTING ? rgb(44, 44, 48) : rgb(10, 132, 255);
         if (press) bg = dim565(bg, 22);
         fill_rrect(d, 126, y + 64, pw, 30, 15, bg, 255);
-        draw_text(d, 126 + (pw - tw_n(t, 14, -1)) / 2, y + 84, t, 14, s == S_OPEN ? rgb(10, 132, 255) : s == S_NEWER ? rgb(99, 99, 102) : 0xFFFF, 0, ST_TOP, ST_TABY);
+        draw_text(d, 126 + (pw - tw_n(t, 14, -1)) / 2, y + 84, t, 14, s == S_OPEN ? rgb(10, 132, 255) : s == S_NEWER || s == S_TESTING ? rgb(99, 99, 102) : 0xFFFF, 0, ST_TOP, ST_TABY);
         st_hit_add(120, y + 58, 126 + pw + 8, y + 100, HT_PILL, st_detail);
     }
     if (s == S_NEWER) draw_text(d, 126, y + 112, tr("Necesita una versión más nueva de HiByOS"), 11, rgb(255, 159, 10), W - 140, ST_TOP, ST_TABY);
+    if (s == S_TESTING) draw_text(d, 126, y + 112, tr("En pruebas: todavía no se puede instalar"), 11, rgb(255, 159, 10), W - 140, ST_TOP, ST_TABY);
     y += 124;
     /* franja de datos: tamano, version, memoria */
     for (int x = 16; x < W - 16; x++) if (y >= ST_TOP && y < ST_TABY) d[y * W + x] = rgb(38, 38, 40);
@@ -1382,6 +1390,7 @@ static void st_action_pill(int i, int *quit)
     if (s == S_LOADING) { st_job_kill(&st_dl); unlink(st_dl.out); st_dl_app = -1; return; }   /* tocar el anillo cancela */
     if (s == S_INSTALLING) return;
     if (s == S_NEWER) { toast(tr("Necesita una versión más nueva de HiByOS")); return; }
+    if (s == S_TESTING) { toast(tr("En pruebas: todavía no se puede instalar")); return; }
     const struct hpk_info *in = st_installed(st_apps[i].id);
     if (s == S_OPEN) {
         if (in && app_sd_missing(in)) { toast(tr("Esta app está en la tarjeta SD: insértala para abrirla")); return; }

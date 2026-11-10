@@ -3,6 +3,11 @@
  *   hibyplay raw                 volcado de hm_state.np_* (libreria v5)
  *   hibyplay toggle|play|pause|next|prev
  *   hibyplay cover [RUTA] OUT.raw  caratula 128x128 RGB565 LE (por defecto, la que suena)
+ *   hibyplay list [-i N] [-t TITULO] [-m MODO] [-u] FICHERO...   reproducir esa lista desde N
+ *   hibyplay listpath RUTA_DE_LISTA N   reproducir una lista que ya tiene el reproductor
+ *                                       (clave de MANAGER_TABLE, p. ej. 'album_artist\ABBA')
+ *   hibyplay listpath check | drop      comprobar firmas y estado sin tocar nada | borrar nuestras tablas
+ *     (necesitan hibymod_disp.so v6; MODO 0 orden, 1 repetir pista, 2 aleatorio, 3 repetir lista)
  * Compilar: tools/build_hibyplay.sh (musl estatico, hard-float). */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -69,6 +74,34 @@ int main(int argc, char **argv)
         printf("%s -> %s\n", in, out);
         return 0;
     }
+    if (!strcmp(c, "list") || !strcmp(c, "listpath")) {
+        struct pc_list_res res;
+        int id;
+        unlink(PC_RES);
+        if (!strcmp(c, "listpath")) {
+            if (argc < 3) goto usage;
+            if (!strcmp(argv[2], "check")) id = pc_list_check_send();
+            else if (!strcmp(argv[2], "drop")) id = pc_list_drop_send();
+            else if (argc < 4) goto usage;
+            else id = pc_listpath_send(argv[2], atoi(argv[3]));
+        } else {
+            int a = 2, idx = 0, mode = -1, uns = 0; const char *title = 0;
+            for (; a < argc && argv[a][0] == '-' && argv[a][1]; a++) {
+                if (!strcmp(argv[a], "-i") && a + 1 < argc) idx = atoi(argv[++a]);
+                else if (!strcmp(argv[a], "-t") && a + 1 < argc) title = argv[++a];
+                else if (!strcmp(argv[a], "-m") && a + 1 < argc) mode = atoi(argv[++a]);
+                else if (!strcmp(argv[a], "-u")) uns = 1;
+                else goto usage;
+            }
+            if (a >= argc) goto usage;
+            if (uns) mode = (mode < 0 ? 0xff : mode) | PC_UNSCANNED;
+            id = pc_list_send((const char *const *)argv + a, argc - a, idx, title, mode);
+        }
+        int r = pc_list_wait(id, 6000, &res);
+        if (id < 0 || r == -ETIMEDOUT) { fprintf(stderr, "%s: %s\n", c, strerror(id < 0 ? -id : ETIMEDOUT)); return 1; }
+        printf("id=%d rc=%d rows=%d index=%d slot=%d ms=%d %s\n", res.id, res.rc, res.rows, res.index, res.slot, res.ms, res.msg);
+        return res.rc ? 1 : 0;
+    }
     int r = 1;
     if (!strcmp(c, "toggle")) r = pc_toggle();
     else if (!strcmp(c, "play")) r = pc_play();
@@ -80,6 +113,7 @@ int main(int argc, char **argv)
     if (r == 1) printf("%s: ya estaba asi\n", c);
     return 0;
 usage:
-    fprintf(stderr, "uso: hibyplay status [-w MS] | raw | toggle | play | pause | next | prev | cover [RUTA] OUT.raw\n");
+    fprintf(stderr, "uso: hibyplay status [-w MS] | raw | toggle | play | pause | next | prev | cover [RUTA] OUT.raw\n"
+                    "       | list [-i N] [-t TITULO] [-m MODO] [-u] FICHERO... | listpath RUTA_DE_LISTA N | listpath check | listpath drop\n");
     return 2;
 }
