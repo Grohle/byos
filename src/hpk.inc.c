@@ -545,13 +545,16 @@ static void hpk_icon_render(const unsigned char *src, int sw, int sh, int s, uin
         float k = ca / 255.f;
         cr *= k; cg *= k; cb *= k;
         float pxc = x + .5f, pyc = y + .5f;
-        float g = pyc < s * .5f ? .30f * (1 - pyc / (s * .5f)) : 0;          /* brillo superior */
-        cr += (255 - cr) * g; cg += (255 - cg) * g; cb += (255 - cb) * g;
+        (void)pyc;                                    /* sin brillo superior: como los iconos del sistema */
         float outer = hpk_rrcov(pxc, pyc, 0, 0, s, s, r);
         float ring = outer - hpk_rrcov(pxc, pyc, 1, 1, s - 1, s - 1, r - 1);
-        float st = (ring > 0 ? ring : 0) * .28f;                              /* borde */
+        float st = (ring > 0 ? ring : 0) * (pyc < s * .5f ? .10f : 0);          /* filo de luz solo arriba */
         cr += (255 - cr) * st; cg += (255 - cg) * st; cb += (255 - cb) * st;
-        int R = (int)(cr * 31 / 255 + .5f), G = (int)(cg * 63 / 255 + .5f), B = (int)(cb * 31 / 255 + .5f);
+        /* tramado ordenado 4x4 (como tools/shell_assets.py): sin bandas en el panel de 16 bits */
+        static const float BAY[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+        float dth = (BAY[(y & 3) * 4 + (x & 3)] + .5f) / 16.f - .5f;
+        int R = (int)(cr * 31 / 255 + .5f + dth), G = (int)(cg * 63 / 255 + .5f + dth), B = (int)(cb * 31 / 255 + .5f + dth);
+        if (R < 0) R = 0; if (R > 31) R = 31; if (G < 0) G = 0; if (G > 63) G = 63; if (B < 0) B = 0; if (B > 31) B = 31;
         rgb[y * s + x] = (uint16_t)(R << 11 | G << 5 | B);
         a[y * s + x] = (uint8_t)(outer * 255 + .5f);
     }

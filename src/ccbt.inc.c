@@ -51,7 +51,7 @@ static void cc_bt_module(uint16_t *d, int x, int y, int w, int h, int pressed)
     else cc_rrect(d, cx - cr, cy - cr, 2 * cr, 2 * cr, (float)cr, rgb(255, 255, 255), 46);
     if (pressed == 2) cc_rrect(d, cx - cr, cy - cr, 2 * cr, 2 * cr, (float)cr, 0xFFFF, 50);
     if (con) buds_glyph(d, (float)cx, (float)cy, 0.48f, s.family, 4, y, y + h);
-    else ccbt_rune(d, (float)cx, (float)cy, 1.0f, 0xFFFF);
+    else { const struct sprite *g = cc_icon("bt"); if (g && g->w) blit(d, g, cx - g->w / 2, cy - g->h / 2, 32, 255); else ccbt_rune(d, (float)cx, (float)cy, 1.0f, 0xFFFF); }
     /* texto */
     int tx = cx + cr + 10, tw = x + w - 10 - tx;
     const char *t1 = con ? s.name : tr("Bluetooth");

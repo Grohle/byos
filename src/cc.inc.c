@@ -52,8 +52,8 @@ static void cc_tile_rect(int slot, int *x, int *y) { int w; cc_tile_geom(slot, x
 #define BR_X (CC_M + 2 * (CC_T + CC_G))
 #define BR_H (2 * CC_T + CC_G)
 
-static struct sprite cc_ic[12]; static int cc_ic_ok;
-static const char *const cc_ic_name[12] = { "plug", "leaf", "gauge", "bolt", "usb", "sliders", "wifi", "wave", "folder", "gear", "sun", 0 };
+static struct sprite cc_ic[14]; static int cc_ic_ok;
+static const char *const cc_ic_name[14] = { "plug", "leaf", "gauge", "bolt", "usb", "sliders", "wifi", "wave", "folder", "gear", "sun", "bt", "buds", 0 };
 static const struct sprite *cc_icon(const char *n) { for (int i = 0; cc_ic_name[i]; i++) if (!strcmp(n, cc_ic_name[i])) return &cc_ic[i]; return 0; }
 
 static void cc_bt_module(uint16_t *d, int x, int y, int w, int h, int pressed);   /* ccbt.inc.c */
