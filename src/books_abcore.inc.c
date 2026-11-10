@@ -37,6 +37,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
+#include "netxml.inc.c"       /* fm_url_*, fx_* (shared with Vinyl): the OPDS catalogs */
 
 extern char **environ;
 
@@ -571,6 +572,408 @@ static int ab_gut_detail_parse(const char *path, char *desc, int cap)
     return ok ? 0 : -1;
 }
 
+/* ================================================================== OPDS catalogs added by the user */
+/* Besides Project Gutenberg (built in, above) Books can browse any OPDS 1.x catalog (Atom):
+ * Calibre-Web, COPS, Kavita, Komga, textos.info, Wolne Lektury... (apps/books/README.md,
+ * "Catalogs"). What the servers really send (tests/ab_samples/opds_*.xml, captured 2026-11-10):
+ *  - navigation entries: a <link type="application/atom+xml..."> with rel "subsection", an
+ *    opds-spec.org rel or no rel at all; acquisition entries: a link with rel
+ *    ".../acquisition[/open-access]" and type application/epub+zip. An entry can carry both
+ *    (Wolne Lektury): the book wins;
+ *  - hrefs relative to the feed URL, absolute paths, http:// links on https:// sites;
+ *  - covers: rel ".../image/thumbnail", ".../image", the older ".../thumbnail" and ".../cover",
+ *    or a data: URI (ignored);
+ *  - rel="next" before or after the entries; rel="search" pointing either to an Atom template
+ *    with {searchTerms} or to an OpenSearch description that has to be fetched and read;
+ *  - blank lines before <feed>, text/html content types, stray text between entries, feeds of
+ *    more than 300 KB, ISO-8859-1.
+ * Everything is bounded: a page is read up to OPDS_READ bytes and keeps up to OPDS_MAXE entries
+ * and OPDS_POOL bytes of text; what does not fit is dropped (opds_feed.cut). The parser is the
+ * forgiving fx_* reader of netxml.inc.c: malformed or truncated XML only yields fewer entries.
+ * Not supported: OPDS 2.0 (JSON), HTTP authentication (hibynet has none), formats other than EPUB. */
+#define OPDS_READ (320 * 1024)
+#define OPDS_MAXE 640
+#define OPDS_POOL (128 * 1024)
+#define OPDS_URL 500
+#define OPDS_EPUB_URL 380          /* a download URL has to fit in ab_qe.url */
+enum { OE_NAV, OE_BOOK, OE_NOEPUB };   /* a folder, a book with an EPUB, a book without one */
+struct opds_e { uint64_t h; int title, author, href, cover, image, sum; uint8_t kind; };   /* offsets in pool (0 = "") */
+struct opds_feed {
+    char title[96];
+    char next[OPDS_URL];           /* rel="next" (absolute) or "" */
+    char search[OPDS_URL];         /* rel="search": a template with {searchTerms} (search_tpl) or the */
+    int search_tpl;                /* URL of an OpenSearch description (opds_osd_parse) */
+    int n, nbook, nnav;
+    int cut;                       /* 1: the page did not fit (bytes, entries or text) */
+    int used;
+    struct opds_e e[OPDS_MAXE];
+    char pool[OPDS_POOL];
+};
+static const char *opds_s(const struct opds_feed *f, int off) { return off > 0 && off < f->used ? f->pool + off : ""; }
+/* a string that is safe to draw: valid UTF-8 only (bad bytes -> '?'), no control characters */
+static void opds_scrub(char *s)
+{
+    unsigned char *p = (unsigned char *)s;
+    while (*p) {
+        int l, c = ab_u8_1(p, &l);
+        if (c < 0) { *p++ = '?'; continue; }
+        if (c < 0x20 || c == 0x7F) *p = ' ';
+        p += l;
+    }
+}
+static int opds_put(struct opds_feed *f, const char *s)
+{
+    int l = (int)strlen(s); if (!l) return 0;
+    if (f->used + l + 1 > OPDS_POOL) return -1;
+    int o = f->used; memcpy(f->pool + o, s, l + 1); f->used += l + 1;
+    return o;
+}
+static int opds_put_text(struct opds_feed *f, char *s) { opds_scrub(s); ab_trim(s); return opds_put(f, s); }
+/* at most max bytes, cut at a word and closed with an ellipsis (the buffer holds max + 1) */
+static void opds_cut(char *s, int max)
+{
+    int n = (int)strlen(s); if (n <= max || max < 8) return;
+    int k = max - 3; while (k > max / 2 && s[k] != ' ') k--;
+    while (k > 0 && ((unsigned char)s[k] & 0xC0) == 0x80) k--;
+    while (k > 0 && s[k - 1] == ' ') k--;
+    memcpy(s + k, "\xE2\x80\xA6", 4);
+}
+/* href of a link -> absolute URL ("" when it is not something hibynet can fetch: data:, too long...) */
+static void opds_abs(const char *base, const char *href, char *o, int cap)
+{
+    *o = 0;
+    char h[OPDS_URL + 100]; fm_cpy(h, sizeof h, href); ab_trim(h);
+    if (!h[0] || !strncasecmp(h, "data:", 5) || !strncasecmp(h, "javascript:", 11) || !strncasecmp(h, "mailto:", 7)) return;
+    char u[OPDS_URL + 200]; fm_url_join(base, h, u, sizeof u);
+    /* what a URL cannot carry as is (spaces, quotes, accents: "kw.Children's literature/") goes percent-encoded;
+     * the braces of a search template stay */
+    char t[OPDS_URL + 200]; int k = 0;
+    for (const unsigned char *p = (const unsigned char *)u; *p && k < (int)sizeof t - 4; p++) {
+        if (*p <= ' ' || *p >= 0x7F || strchr("\"'<>\\^`|", *p)) k += sprintf(t + k, "%%%02X", *p);
+        else t[k++] = (char)*p;
+    }
+    t[k] = 0;
+    if (k >= cap || !fm_url_ok(t)) return;
+    memcpy(o, t, k + 1);
+}
+static int opds_rel_in(const char *rel, const char *const *list) { for (; *list; list++) if (!strcasecmp(rel, *list)) return 1; return 0; }
+static int opds_is_epub(const char *type, const char *href)
+{
+    if (!strncasecmp(type, "application/epub", 16)) return 1;
+    if (type[0] && strcasecmp(type, "application/octet-stream")) return 0;
+    const char *q = href + strcspn(href, "?#");
+    return q - href > 5 && !strncasecmp(q - 5, ".epub", 5);
+}
+/* attributes of the <link> at t; 0 when it has no usable href */
+static int opds_link(const char *t, const char *e, char *rel, int rcap, char *type, int tcap, char *href, int hcap)
+{
+    if (!fx_attr(t, e, "href", href, hcap) || !href[0] || (int)strlen(href) >= hcap - 1) return 0;
+    fx_attr(t, e, "rel", rel, rcap); fx_attr(t, e, "type", type, tcap);
+    return 1;
+}
+/* one <entry>: 1 kept, 0 skipped (nothing to open or download), -1 no room left */
+static int opds_entry(struct opds_feed *f, const char *base, const char *cs, const char *ce)
+{
+    static const char *const not_nav[] = { "self", "search", "start", "up", "next", "previous", "prev", "first", "last", "replies", "edit", "icon", 0 };
+    if (f->n >= OPDS_MAXE) return -1;
+    char epub[OPDS_EPUB_URL] = "", nav[OPDS_URL] = "", nav2[OPDS_URL] = "", thumb[OPDS_URL] = "", image[OPDS_URL] = "";
+    int acq = 0;
+    const char *p = cs, *t, *a, *b;
+    while (p < ce && fx_elem(p, ce, "link", &t, 0, 0)) {
+        const char *gt = fx_gt(t, ce); if (!gt) break;
+        p = gt + 1;
+        char rel[160], type[120], href[OPDS_URL + 80];
+        if (!opds_link(t, ce, rel, sizeof rel, type, sizeof type, href, sizeof href)) continue;
+        /* a "cover" of a few hundred bytes is the generic icon of the site (Wolne Lektury), not a cover */
+        char len[16]; int tiny = fx_attr(t, ce, "length", len, sizeof len) && isdigit((unsigned char)len[0]) && atoi(len) < 2048;
+        if (strcasestr(rel, "opds-spec.org/acquisition") || !strcasecmp(rel, "enclosure")) {
+            /* buy, borrow, subscribe and sample are not a free download of the whole book */
+            int open = !strcasecmp(rel, "http://opds-spec.org/acquisition") || strcasestr(rel, "/open-access") || !strcasecmp(rel, "enclosure");
+            if (strcasecmp(rel, "enclosure")) acq = 1;
+            if (open && !epub[0] && opds_is_epub(type, href)) { opds_abs(base, href, epub, sizeof epub); if (epub[0]) acq = 1; }
+        } else if (strcasestr(rel, "opds-spec.org/image/thumbnail") || strcasestr(rel, "opds-spec.org/thumbnail") || strcasestr(rel, "x-stanza-cover-image-thumbnail")) {
+            if (!thumb[0] && !tiny && !strcasestr(type, "svg") && !strcasestr(type, "webp") && !strcasestr(type, "avif")) opds_abs(base, href, thumb, sizeof thumb);
+        } else if (strcasestr(rel, "opds-spec.org/image") || strcasestr(rel, "opds-spec.org/cover") || strcasestr(rel, "x-stanza-cover-image")) {
+            if (!image[0] && !tiny && !strcasestr(type, "svg") && !strcasestr(type, "webp") && !strcasestr(type, "avif")) opds_abs(base, href, image, sizeof image);
+        } else if (!strncasecmp(type, "application/atom+xml", 20) && !opds_rel_in(rel, not_nav)) {
+            /* the full entry of a book ("alternate", type=entry) and "related" lists only when there is nothing better */
+            int weak = !strcasecmp(rel, "alternate") || !strcasecmp(rel, "related") || strcasestr(type, "type=entry") != 0;
+            char *dst = weak ? nav2 : nav;
+            if (!dst[0]) opds_abs(base, href, dst, OPDS_URL);
+        }
+    }
+    int kind; const char *href;
+    if (epub[0]) { kind = OE_BOOK; href = epub; }
+    else if (acq) { kind = OE_NOEPUB; href = ""; }
+    else if (nav[0] || nav2[0]) { kind = OE_NAV; href = nav[0] ? nav : nav2; }
+    else return 0;
+    char title[200]; fx_child(cs, ce, "title", title, sizeof title);
+    char author[200] = ""; int na = 0;
+    p = cs;
+    while (na < 3 && (p = fx_elem(p, ce, "author", &t, &a, &b))) {
+        char nm[120]; fx_child(a, b, "name", nm, sizeof nm);
+        ab_author_norm(nm);                                     /* "Thackeray, William Makepeace" */
+        if (!nm[0]) continue;
+        int l = (int)strlen(author);
+        if (l + (int)strlen(nm) + 3 < (int)sizeof author) { snprintf(author + l, sizeof author - l, "%s%s", l ? ", " : "", nm); na++; }
+    }
+    if (!author[0] && !fx_child(cs, ce, "dc:creator", author, 120)) fx_child(cs, ce, "dcterms:creator", author, 120);
+    char sum[2400];
+    if (!fx_child(cs, ce, "summary", sum, sizeof sum) || !sum[0]) fx_child(cs, ce, "content", sum, sizeof sum);
+    opds_cut(sum, kind == OE_NAV ? 140 : 690);
+    char id[300]; fx_child(cs, ce, "id", id, sizeof id);
+    int u0 = f->used; struct opds_e *x = &f->e[f->n]; memset(x, 0, sizeof *x);
+    x->kind = (uint8_t)kind;
+    x->h = ab_hash(kind == OE_BOOK ? epub : id[0] ? id : title);   /* the same file is the same book in every feed */
+    const char *cv = thumb[0] ? thumb : image, *im = image[0] ? image : thumb;
+    if ((x->title = opds_put_text(f, title)) < 0 || (x->author = opds_put_text(f, author)) < 0 || (x->sum = opds_put_text(f, sum)) < 0 ||
+        (x->href = opds_put(f, href)) < 0 || (x->cover = opds_put(f, cv)) < 0 || (x->image = strcmp(cv, im) ? opds_put(f, im) : x->cover) < 0) { f->used = u0; return -1; }
+    if (!x->title) { f->used = u0; return 0; }
+    f->n++; if (kind == OE_NAV) f->nnav++; else f->nbook++;
+    return 1;
+}
+/* links of the feed itself (outside the entries): next page and search */
+static void opds_feed_links(struct opds_feed *f, const char *base, const char *s, const char *e)
+{
+    const char *p = s, *t;
+    while (p < e && fx_elem(p, e, "link", &t, 0, 0)) {
+        const char *gt = fx_gt(t, e); if (!gt) break;
+        p = gt + 1;
+        char rel[160], type[120], href[OPDS_URL + 80];
+        if (!opds_link(t, e, rel, sizeof rel, type, sizeof type, href, sizeof href)) continue;
+        if (!strcasecmp(rel, "next")) { if (!f->next[0]) opds_abs(base, href, f->next, sizeof f->next); }
+        else if (!strcasecmp(rel, "search")) {
+            char u[OPDS_URL]; opds_abs(base, href, u, sizeof u);
+            if (!u[0]) continue;
+            if (strstr(u, "{searchTerms")) { if (!f->search_tpl) { memcpy(f->search, u, strlen(u) + 1); f->search_tpl = 1; } }
+            else if (strcasestr(type, "opensearchdescription") && !f->search[0]) memcpy(f->search, u, strlen(u) + 1);
+        }
+    }
+}
+static void opds_feed_reset(struct opds_feed *f)
+{
+    f->title[0] = f->next[0] = f->search[0] = 0; f->search_tpl = 0;
+    f->n = f->nbook = f->nnav = f->cut = 0; f->used = 1; f->pool[0] = 0;
+}
+/* one page of a catalog (NUL-terminated text; base = the URL it came from). append: add its entries
+ * to the ones f already has (a rel="next" page). Returns the number of entries added, or -1 when
+ * the text is not an Atom feed (nor the entry document of a book) at all. */
+static int opds_parse_buf(const char *b, const char *base, struct opds_feed *f, int append)
+{
+    if (!append) opds_feed_reset(f);
+    f->next[0] = 0;
+    int n0 = f->n;
+    const char *e = b + strlen(b), *t, *fs, *fe, *cs, *ce;
+    if (!fx_elem(b, e, "feed", &t, &fs, &fe)) {
+        if (!fx_elem(b, e, "entry", &t, &cs, &ce)) return -1;
+        if (ce >= e || opds_entry(f, base, cs, ce) < 0) f->cut = 1;
+        return f->n - n0;
+    }
+    const char *p = fs, *gap = fs; int first = 1;
+    while (p <= fe) {
+        const char *nx = fx_elem(p, fe, "entry", &t, &cs, &ce);
+        const char *ge = nx ? t : fe;
+        if (first && !append) { char tt[200]; fx_child(gap, ge, "title", tt, sizeof tt); opds_scrub(tt); ab_trim(tt); fm_cpy(f->title, sizeof f->title, tt); }
+        first = 0;
+        opds_feed_links(f, base, gap, ge);
+        if (!nx) break;
+        if (ce >= fe) { f->cut = 1; break; }                    /* the last entry is not closed: a truncated page */
+        if (opds_entry(f, base, cs, ce) < 0) { f->cut = 1; break; }
+        p = gap = nx;
+    }
+    return f->n - n0;
+}
+/* ISO-8859-1 / Windows-1252 documents (the XML declaration says so) -> UTF-8, in a new buffer */
+static char *opds_to_utf8(char *b)
+{
+    char head[160]; int k = 0; while (k < (int)sizeof head - 1 && b[k] && b[k] != '>') { head[k] = b[k]; k++; }
+    head[k] = 0;
+    const char *enc = strcasestr(head, "encoding=");
+    if (!strstr(head, "<?xml") || !enc || !(strcasestr(enc, "8859-1") || strcasestr(enc, "8859-15") || strcasestr(enc, "1252") || strcasestr(enc, "latin"))) return b;
+    size_t n = strlen(b); char *o = malloc(2 * n + 1); if (!o) return b;
+    size_t j = 0;
+    for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)b[i]; if (c < 0x80) o[j++] = (char)c; else { o[j++] = (char)(0xC0 | (c >> 6)); o[j++] = (char)(0x80 | (c & 63)); } }
+    o[j] = 0; free(b);
+    return o;
+}
+/* the file hibynet saved -> text ready for the parsers (0: cannot be read). *full: it filled the cap */
+static char *opds_load(const char *path, int *full)
+{
+    char *b = ab_read_small(path, OPDS_READ); if (!b) return 0;
+    if (full) *full = (int)strlen(b) >= OPDS_READ;
+    if (!strncmp(b, "\xEF\xBB\xBF", 3)) memmove(b, b + 3, strlen(b + 3) + 1);
+    return opds_to_utf8(b);
+}
+static int opds_parse(const char *path, const char *base, struct opds_feed *f, int append)
+{
+    int full = 0; char *b = opds_load(path, &full);
+    if (!b) { if (!append) opds_feed_reset(f); return -1; }
+    int r = opds_parse_buf(b, base, f, append);
+    if (r >= 0 && full) f->cut = 1;
+    free(b);
+    return r;
+}
+/* OpenSearch description -> the Atom search template (absolute; relative ones are resolved against
+ * the URL of the description, as COPS needs). 0 ok / -1 it offers no Atom results */
+static int opds_osd_parse_buf(const char *b, const char *desc_url, char *tpl, int cap)
+{
+    *tpl = 0;
+    const char *e = b + strlen(b), *p = b, *t; int best = 0;
+    while (p < e && fx_elem(p, e, "Url", &t, 0, 0)) {
+        const char *gt = fx_gt(t, e); if (!gt) break;
+        p = gt + 1;
+        char type[120], rel[60], tp[OPDS_URL + 80];
+        if (!fx_attr(t, e, "template", tp, sizeof tp) || !strstr(tp, "{searchTerms") || (int)strlen(tp) >= (int)sizeof tp - 1) continue;
+        fx_attr(t, e, "type", type, sizeof type); fx_attr(t, e, "rel", rel, sizeof rel);
+        if (strncasecmp(type, "application/atom+xml", 20) || (rel[0] && strcasecmp(rel, "results"))) continue;
+        int sc = strcasestr(type, "opds") ? 2 : 1;
+        if (sc <= best) continue;
+        char u[OPDS_URL]; opds_abs(desc_url, tp, u, sizeof u);
+        if (u[0] && (int)strlen(u) < cap) { memcpy(tpl, u, strlen(u) + 1); best = sc; }
+    }
+    return best ? 0 : -1;
+}
+static int opds_osd_parse(const char *path, const char *desc_url, char *tpl, int cap)
+{
+    *tpl = 0;
+    char *b = opds_load(path, 0); if (!b) return -1;
+    int r = opds_osd_parse_buf(b, desc_url, tpl, cap);
+    free(b);
+    return r;
+}
+/* search template + what the user typed -> URL. {searchTerms} is the text; the other OpenSearch
+ * parameters get their default when they are mandatory and nothing when optional ("{x?}") or
+ * unknown ("{atom:author}"). */
+static void opds_search_url(const char *tpl, const char *terms, char *o, int cap)
+{
+    int k = 0; *o = 0;
+    char q[200]; fm_cpy(q, sizeof q, terms ? terms : ""); ab_trim(q);
+    for (const char *p = tpl; *p; ) {
+        const char *cl = *p == '{' ? strchr(p, '}') : 0;
+        if (!cl) { if (k >= cap - 1) { *o = 0; return; } o[k++] = *p++; continue; }
+        char name[40]; int nl = (int)(cl - p - 1); if (nl > (int)sizeof name - 1) nl = (int)sizeof name - 1;
+        memcpy(name, p + 1, nl); name[nl] = 0;
+        int opt = nl > 0 && name[nl - 1] == '?'; if (opt) name[nl - 1] = 0;
+        char val[700] = "";
+        if (!strcmp(name, "searchTerms")) ab_urlenc(q, val, sizeof val, 0);
+        else if (!opt) {
+            if (!strcmp(name, "startPage") || !strcmp(name, "startIndex")) strcpy(val, "1");
+            else if (!strcmp(name, "count")) strcpy(val, "25");
+            else if (!strcmp(name, "language")) strcpy(val, "*");
+            else if (!strcmp(name, "inputEncoding") || !strcmp(name, "outputEncoding")) strcpy(val, "UTF-8");
+        }
+        int vl = (int)strlen(val); if (k + vl > cap - 1) { *o = 0; return; }
+        memcpy(o + k, val, vl); k += vl;
+        p = cl + 1;
+    }
+    o[k] = 0;
+}
+/* a web page instead of a feed: the catalog it advertises with
+ * <link type="application/atom+xml;profile=opds-catalog" href=...> (Calibre-Web, COPS... do). */
+static int opds_discover_buf(const char *b, const char *base, char *o, int cap)
+{
+    *o = 0;
+    const char *e = b + strlen(b), *p = b, *t; int best = 0;
+    while (p < e && fx_elem(p, e, "link", &t, 0, 0)) {
+        const char *gt = fx_gt(t, e); if (!gt) break;
+        p = gt + 1;
+        char rel[160], type[120], href[OPDS_URL + 80];
+        if (!opds_link(t, e, rel, sizeof rel, type, sizeof type, href, sizeof href) || strncasecmp(type, "application/atom+xml", 20)) continue;
+        int sc = strcasestr(type, "opds") ? 2 : strcasestr(href, "opds") ? 1 : 0;
+        if (sc <= best) continue;
+        char u[OPDS_URL]; opds_abs(base, href, u, sizeof u);
+        if (u[0] && strcmp(u, base) && (int)strlen(u) < cap) { memcpy(o, u, strlen(u) + 1); best = sc; }
+    }
+    return best ? 0 : -1;
+}
+/* id of a book of a catalog in gut.lst, the download queue and the thumbnail cache ("o" + hash;
+ * the ids of Project Gutenberg are numbers) */
+static void opds_book_id(uint64_t h, char *o, int cap) { snprintf(o, cap, "o%016llx", (unsigned long long)h); }
+static int opds_is_book_id(const char *id) { return id[0] == 'o' && strlen(id) == 17; }
+
+/* ---------------------------------------------- the list of catalogs */
+#define OPDS_MAXCAT 12
+struct opds_cat { char url[OPDS_URL], name[64], tpl[OPDS_URL]; int st; };   /* st: 0 not tested yet, 1 answered, 2 failed */
+/* What the user typed -> the catalog URL. No scheme: https:// (http:// for an address of the local
+ * network, where Calibre-Web or Kavita usually run without TLS); opds:// is http://. A
+ * "user:password@" part is dropped: hibynet has no HTTP authentication, and no password may end
+ * up in the catalog file. 0 ok / -1 not a URL. *guessed: the scheme was not typed. */
+static int opds_url_norm(const char *in, char *o, int cap, int *guessed)
+{
+    *o = 0; if (guessed) *guessed = 0;
+    char t[OPDS_URL + 40]; fm_cpy(t, sizeof t, in); ab_trim(t);
+    if (!t[0] || strlen(t) >= OPDS_URL - 10) return -1;
+    char u[OPDS_URL + 60];
+    const char *sc = strstr(t, "://");
+    if (!strncasecmp(t, "opds://", 7)) snprintf(u, sizeof u, "http://%s", t + 7);
+    else if (sc && sc - t <= 5) snprintf(u, sizeof u, "%s", t);
+    else {
+        int local = !strncasecmp(t, "localhost", 9) || isdigit((unsigned char)t[0]);
+        const char *he = t + strcspn(t, "/?#:");
+        if (he - t > 6 && !strncasecmp(he - 6, ".local", 6)) local = 1;
+        if (he - t > 4 && !strncasecmp(he - 4, ".lan", 4)) local = 1;
+        if (!memchr(t, '.', he - t)) local = 1;
+        snprintf(u, sizeof u, "%s%s", local ? "http://" : "https://", t);
+        if (guessed) *guessed = 1;
+    }
+    char *h = strstr(u, "://"); if (!h) return -1;
+    for (char *q = u; q < h; q++) *q = (char)tolower((unsigned char)*q);
+    h += 3;
+    char *he = h + strcspn(h, "/?#"), *at = 0;
+    for (char *q = h; q < he; q++) if (*q == '@') at = q;
+    if (at) memmove(h, at + 1, strlen(at + 1) + 1);
+    if (!fm_url_ok(u) || !isalnum((unsigned char)*h) || (int)strlen(u) >= cap) return -1;
+    memcpy(o, u, strlen(u) + 1);
+    return 0;
+}
+/* The file (BK_DIR/catalogs.tsv), tab separated, one record per line:
+ *   cur <TAB> url                                   the catalog in use (no line: Project Gutenberg)
+ *   cat <TAB> url <TAB> status <TAB> name <TAB> search template
+ * Unknown lines are ignored. text is modified. Returns the number of catalogs. */
+static int opds_cats_parse(char *text, struct opds_cat *c, int max, char *cur, int curcap)
+{
+    int n = 0; *cur = 0;
+    for (char *l = text; l && *l; ) {
+        char *nl = strchr(l, '\n'); if (nl) *nl = 0;
+        int ll = (int)strlen(l); if (ll && l[ll - 1] == '\r') l[ll - 1] = 0;
+        char *fld[5] = { 0, 0, 0, 0, 0 }; int nf = 0;
+        for (char *q = l; nf < 5; ) { fld[nf++] = q; char *tb = strchr(q, '\t'); if (!tb) break; *tb = 0; q = tb + 1; }
+        if (nf >= 2 && !strcmp(fld[0], "cur")) fm_cpy(cur, curcap, fld[1]);
+        else if (nf >= 2 && !strcmp(fld[0], "cat") && n < max && fm_url_ok(fld[1]) && strlen(fld[1]) < OPDS_URL) {
+            int dup = 0; for (int i = 0; i < n; i++) if (!strcasecmp(c[i].url, fld[1])) dup = 1;
+            if (!dup) {
+                struct opds_cat *x = &c[n++]; memset(x, 0, sizeof *x);
+                memcpy(x->url, fld[1], strlen(fld[1]) + 1);
+                x->st = nf > 2 ? atoi(fld[2]) : 0; if (x->st < 0 || x->st > 2) x->st = 0;
+                if (nf > 3) { fm_cpy(x->name, sizeof x->name, fld[3]); opds_scrub(x->name); ab_trim(x->name); }
+                if (!x->name[0]) fm_url_host(x->url, x->name, sizeof x->name);
+                if (nf > 4 && strstr(fld[4], "{searchTerms") && fm_url_ok(fld[4]) && strlen(fld[4]) < OPDS_URL) memcpy(x->tpl, fld[4], strlen(fld[4]) + 1);
+            }
+        }
+        l = nl ? nl + 1 : 0;
+    }
+    if (*cur) { int ok = 0; for (int i = 0; i < n; i++) if (!strcmp(c[i].url, cur)) ok = 1; if (!ok) *cur = 0; }
+    return n;
+}
+static int opds_cats_format(const struct opds_cat *c, int n, const char *cur, char *o, int cap)
+{
+    int k = 0; *o = 0;
+    if (cur && *cur) k += snprintf(o + k, cap - k, "cur\t%s\n", cur);
+    for (int i = 0; i < n && k < cap - 1; i++) k += snprintf(o + k, cap - k, "cat\t%s\t%d\t%s\t%s\n", c[i].url, c[i].st, c[i].name, c[i].tpl);
+    if (k > cap - 1) k = cap - 1;
+    return k;
+}
+/* Suggested catalogs (one tap to add). Only free, legal libraries that answered on 2026-11-10 with
+ * valid OPDS and EPUB downloads that need no account (apps/books/README.md has the details).
+ * The app still checks each one when it is added. */
+static const struct { const char *name, *url, *note; } OPDS_SUGGEST[] = {
+    { "textos.info", "https://www.textos.info/catalogo.atom", "Español" },
+    { "Ebooks libres et gratuits", "https://www.ebooksgratuits.com/opds/", "Français" },
+    { "Wolne Lektury", "https://wolnelektury.pl/opds/", "Polski" },
+    { "Magyar Elektronikus Könyvtár", "https://mek.oszk.hu/opds/", "Magyar" },
+    { "unglue.it", "https://unglue.it/api/opds/", "English · Creative Commons" },
+};
+#define OPDS_NSUGGEST ((int)(sizeof OPDS_SUGGEST / sizeof OPDS_SUGGEST[0]))
 /* ================================================================== ficha de un audiolibro */
 #define AB_MAXSEC 400
 struct ab_sec { char title[96], remote[160], file[140]; long long size; int dur, track; };

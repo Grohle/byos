@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:app="http://www.w3.org/2007/app" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/" xml:lang="fr" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns="http://www.w3.org/2005/Atom">
+   <id>https://www.ebooksgratuits.com/opds/feed.php</id>
+   <link type="text/html" href="https://www.ebooksgratuits.com/ebooks.php" rel="alternate"/>
+   <link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php" rel="self"/>
+   <link type="application/opensearchdescription+xml" href="/opds/opensearch.xml" rel="search" title="Rechercher sur Ebooksgratuits"/>
+   <title>Liste des ebooks</title>
+  <published>2026-11-10T05:04:05Z</published>
+  <icon>https://www.ebooksgratuits.com/favicon.png</icon>
+  <author>
+    <name>Ebooks libres et gratuits - Catalogue des livres</name>
+    <uri>https://www.ebooksgratuits.com</uri>
+    <email>contact@ebooksgratuits.com</email>
+  </author>
+  <link type="application/atom+xml" href="/opds/feed.php" rel="start" title="OPDS Catalog"/>
+
+<opensearch:totalResults>3268</opensearch:totalResults>
+<opensearch:itemsPerPage>100</opensearch:itemsPerPage>
+<link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php?page=1" rel="next" title="Next Page"/>
+   <entry>
+      <title>Henry Esmond </title>
+      <id>https://www.ebooksgratuits.com/details.php?book=3529</id>
+      <author>
+         <name>Thackeray, William Makepeace</name>
+         <uri>https://www.ebooksgratuits.com/ebooks.php?auteur=Thackeray_William+Makepeace</uri>
+      </author>
+      <published>2026-11-01T00:00:00-07:00</published>
+      <dcterms:language>fr</dcterms:language>
+      <link type="text/html" href="https://www.ebooksgratuits.com/details.php?book=3529" rel="alternate" title="Voir sur ebooksgratuits.com" />
+      <link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php?mode=author&amp;id=360" rel="related" title="Du même auteur" />
+      <category term="Romans" label="Romans"/>
+      <category term="Historique" label="Historique"/>
+      <content type="text"><![CDATA[Henry Esmond nous conte l'histoire de la première partie de sa vie. Fils illégitime du troisième vicomte de Castlewood, il est confié du quatrième vicomte de Castlewood quand son père décède. Mais son nouveau protecteur, gravement blessé au cours d'un duel, révèle à Henry sa véritable identité avant de mourir. Suspecté d'avoir pris part au duel, Henry est emprisonné durant un an et une fois libéré, il s'engage dans l'armée et participe aux guerres sur le continent européen. De retour en Angleterre, Henry se réconcilie avec sa famille d'adoption, la Dame Castlewood et ses enfants Beatrix et Frank. Beatrix est maintenant une jeune femme. Henry s'en éprend, mais Beatrix est trop ambitieuse pour accepter les avances d'un simple officier...Ce roman, situé en Angleterre à la fin du XVIIe et début XVIIIe siècle, a pour cadre les luttes pour le trône de ce qui va devenir la Grande-Bretagne, avec en toile de fond les oppositions entre catholiques et protestants.<br /><br />Édition Ebooks libres et gratuits.]]></content>
+      <dcterms:source>https://www.ebooksgratuits.com/ebooks.php</dcterms:source>
+      <link type="application/epub+zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3529&amp;format=epub" rel="http://opds-spec.org/acquisition" />
+      <link type="application/x-mobipocket-ebook" href="https://www.ebooksgratuits.com/newsendbook.php?id=3529&amp;format=mp" rel="http://opds-spec.org/acquisition" />
+      <link type="application/pdf" href="https://www.ebooksgratuits.com/newsendbook.php?id=3529&amp;format=pdf" rel="http://opds-spec.org/acquisition" />
+      <link type="application/zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3529&amp;format=so" rel="http://opds-spec.org/acquisition" />
+   </entry>
+   <entry>
+      <title>Fragoletta</title>
+      <id>https://www.ebooksgratuits.com/details.php?book=3526</id>
+      <author>
+         <name>Latouche, Henri de</name>
+         <uri>https://www.ebooksgratuits.com/ebooks.php?auteur=Latouche_Henri+de</uri>
+      </author>
+      <published>2026-11-01T00:00:00-07:00</published>
+      <dcterms:language>fr</dcterms:language>
+      <link type="text/html" href="https://www.ebooksgratuits.com/details.php?book=3526" rel="alternate" title="Voir sur ebooksgratuits.com" />
+      <link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php?mode=author&amp;id=710" rel="related" title="Du même auteur" />
+      <category term="Romans" label="Romans"/>
+      <category term="Historique" label="Historique"/>
+      <content type="text"><![CDATA[1799, première campagne d’Italie sous Ferdinand II. Le capitaine français d’Hauteville, amoureux d’une sicilienne, Camille, est fait prisonnier puis s'évade et revient en France pour une mission près du ministre de la guerre. Chez sa mère, il rencontre Philippe Adriani, frère jumeau de Camille...<br /><br />Édition Ebooks libres et gratuits.]]></content>
+      <dcterms:source>https://www.ebooksgratuits.com/ebooks.php</dcterms:source>
+      <link type="application/epub+zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3526&amp;format=epub" rel="http://opds-spec.org/acquisition" />
+      <link type="application/x-mobipocket-ebook" href="https://www.ebooksgratuits.com/newsendbook.php?id=3526&amp;format=mp" rel="http://opds-spec.org/acquisition" />
+      <link type="application/pdf" href="https://www.ebooksgratuits.com/newsendbook.php?id=3526&amp;format=pdf" rel="http://opds-spec.org/acquisition" />
+      <link type="application/zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3526&amp;format=so" rel="http://opds-spec.org/acquisition" />
+   </entry>
+   <entry>
+      <title>Nêne</title>
+      <id>https://www.ebooksgratuits.com/details.php?book=3527</id>
+      <author>
+         <name>Pérochon, Ernest</name>
+         <uri>https://www.ebooksgratuits.com/ebooks.php?auteur=P%C3%A9rochon_Ernest</uri>
+      </author>
+      <published>2026-11-01T00:00:00-07:00</published>
+      <dcterms:language>fr</dcterms:language>
+      <link type="text/html" href="https://www.ebooksgratuits.com/details.php?book=3527" rel="alternate" title="Voir sur ebooksgratuits.com" />
+      <link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php?mode=author&amp;id=544" rel="related" title="Du même auteur" />
+      <category term="Romans" label="Romans"/>
+      <content type="text"><![CDATA[L'auteur nous plonge dans l'univers qu'il affectionne tout particulièrement, la terre, les champs, la vie, ici en Vendée. Le récit suit le destin tragique de Madeleine Clarandeau, surnommée « Nêne ». Jeune femme issue de la communauté religieuse dissidente de la «Petite Église», elle entre comme servante au service de Michel Corbier, un fermier veuf et père de deux jeunes enfants, Lalie et Georges.Dévouée corps et âme, Madeleine assume le rôle de maîtresse de maison et s'attache profondément aux enfants, les élevant avec un amour purement maternel et dépensant même ses propres économies pour eux. Cependant, sa vie bascule lorsque Corbier s'éprend de Violette, une couturière coquette et manipulatrice du village. Corbier épouse Violette, et alors c'est le drame...Quand on lit Pérochon, on ne peut qu'être tout de suite ensorcelé. Chaque mot est à sa place, choisi dans un vocabulaire d'une étendue infinie et remarquablement descriptif.<br /><br />Édition Ebooks libres et gratuits.]]></content>
+      <dcterms:source>https://www.ebooksgratuits.com/ebooks.php</dcterms:source>
+      <link type="application/epub+zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3527&amp;format=epub" rel="http://opds-spec.org/acquisition" />
+      <link type="application/x-mobipocket-ebook" href="https://www.ebooksgratuits.com/newsendbook.php?id=3527&amp;format=mp" rel="http://opds-spec.org/acquisition" />
+      <link type="application/pdf" href="https://www.ebooksgratuits.com/newsendbook.php?id=3527&amp;format=pdf" rel="http://opds-spec.org/acquisition" />
+      <link type="application/zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3527&amp;format=so" rel="http://opds-spec.org/acquisition" />
+   </entry>
+   <entry>
+      <title>La Navigateurs de l'Infini</title>
+      <id>https://www.ebooksgratuits.com/details.php?book=3528</id>
+      <author>
+         <name>Rosny Aîné, J.-H.</name>
+         <uri>https://www.ebooksgratuits.com/ebooks.php?auteur=Rosny+A%C3%AEn%C3%A9_J.-H.</uri>
+      </author>
+      <published>2026-11-01T00:00:00-07:00</published>
+      <dcterms:language>fr</dcterms:language>
+      <link type="text/html" href="https://www.ebooksgratuits.com/details.php?book=3528" rel="alternate" title="Voir sur ebooksgratuits.com" />
+      <link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php?mode=author&amp;id=127" rel="related" title="Du même auteur" />
+      <category term="Romans" label="Romans"/>
+      <category term="Fantastique &amp; SF" label="Fantastique &amp; SF"/>
+      <content type="text"><![CDATA[Trois hommes visitent Mars à bord d'un vaisseau puissant. Au cours de leur séjour, ils rencontrent des êtres féeriques qui luttent pour leur survie contre un ennemi plus puissant qu'eux. Les voyageurs deviennent leurs amis et aident ces êtres à repousser les attaques. Ils font un second voyage sur Mars, accompagnés d'une jeune femme, fiancée de l'un d'entre eux...<br /><br />Édition Ebooks libres et gratuits.]]></content>
+      <dcterms:source>https://www.ebooksgratuits.com/ebooks.php</dcterms:source>
+      <link type="application/epub+zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3528&amp;format=epub" rel="http://opds-spec.org/acquisition" />
+      <link type="application/x-mobipocket-ebook" href="https://www.ebooksgratuits.com/newsendbook.php?id=3528&amp;format=mp" rel="http://opds-spec.org/acquisition" />
+      <link type="application/pdf" href="https://www.ebooksgratuits.com/newsendbook.php?id=3528&amp;format=pdf" rel="http://opds-spec.org/acquisition" />
+      <link type="application/zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3528&amp;format=so" rel="http://opds-spec.org/acquisition" />
+   </entry>
+   <entry>
+      <title>Les Lurettes fourrées</title>
+      <id>https://www.ebooksgratuits.com/details.php?book=3530</id>
+      <author>
+         <name>Vian, Boris</name>
+         <uri>https://www.ebooksgratuits.com/ebooks.php?auteur=Vian_Boris</uri>
+      </author>
+      <published>2026-11-01T00:00:00-07:00</published>
+      <dcterms:language>fr</dcterms:language>
+      <link type="text/html" href="https://www.ebooksgratuits.com/details.php?book=3530" rel="alternate" title="Voir sur ebooksgratuits.com" />
+      <link type="application/atom+xml" href="https://www.ebooksgratuits.com/opds/feed.php?mode=author&amp;id=462" rel="related" title="Du même auteur" />
+      <category term="Nouvelles - Contes" label="Nouvelles - Contes"/>
+      <content type="text"><![CDATA[Attention: téléchargement non autorisé dans certains pays. Lire la note sur le droit d’auteur. Auteur décédé en 1959.<br /><br />Recueil de trois nouvelles caractéristiques du style de Boris Vian : humour très noir...Dans «Le rappel», un homme saute du haut de l'Empire State Building... «Les pompiers», avec un horaire trop chargé, ne viennent pas quand on les appelle... «Le retraité», harcelé par des enfants, se venge d'une façon assez particulière...<br /><br />Édition Ebooks libres et gratuits.]]></content>
+      <dcterms:source>https://www.ebooksgratuits.com/ebooks.php</dcterms:source>
+      <link type="application/epub+zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3530&amp;format=epub" rel="http://opds-spec.org/acquisition" />
+      <link type="application/x-mobipocket-ebook" href="https://www.ebooksgratuits.com/newsendbook.php?id=3530&amp;format=mp" rel="http://opds-spec.org/acquisition" />
+      <link type="application/pdf" href="https://www.ebooksgratuits.com/newsendbook.php?id=3530&amp;format=pdf" rel="http://opds-spec.org/acquisition" />
+      <link type="application/zip" href="https://www.ebooksgratuits.com/newsendbook.php?id=3530&amp;format=so" rel="http://opds-spec.org/acquisition" />
+   </entry>
+
+</feed>

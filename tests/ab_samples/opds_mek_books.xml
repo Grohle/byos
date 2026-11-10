@@ -1,0 +1,92 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+<feed xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/" xmlns="http://www.w3.org/2005/Atom">
+  <title>MEK könyvek - Dátum szerint</title>
+  <id>https://bookserver.mek.oszk.hu/ujak.php</id>
+  <updated>2026-11-10T14:04:15</updated>
+  <author>
+    <name>MEK</name>
+    <uri>https://mek.oszk.hu</uri>
+  </author>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" title="Home" rel="start" href="https://bookserver.mek.oszk.hu/index.atom"/>
+  <link rel="self" type="application/atom+xml;profile=opds-catalog;kind=subsection" href="https://bookserver.mek.oszk.hu/ujak/0"/>
+<link rel="next" type="application/atom+xml" href="https://bookserver.mek.oszk.hu/ujak/1" title="Next results"/>
+
+
+<entry>
+   <title>Sarokház</title>
+   <id>urn:nbn:hu-185194</id>
+   <updated>2026-11-10T14:04:15</updated>
+   <link href="https://mek.oszk.hu/29000/29089" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+   <link href="https://mek.oszk.hu/29000/29089/borito.jpg" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" title="Bélyegkép"/>
+    <link href="https://mek.oszk.hu/29000/29089/29089.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition"/>
+    <link href="https://mek.oszk.hu/29000/29089/29089.pdf" type="application/pdf" rel="http://opds-spec.org/acquisition"/>
+   <author>
+      <name>Friedrich Gerstäcker</name>
+   </author>
+   <content type="html">&lt;/b&gt;&lt;img src="https://mek.oszk.hu/29000/29089/borito.jpg" width=62 HSPACE=10 align=left&gt;&lt;b&gt;Szerző(k): &lt;/b&gt;Friedrich Gerstäcker&lt;br/&gt;&lt;b&gt;MEK-be került:&lt;/b&gt; 2026-03-11&lt;br/&gt;&lt;b&gt;Típus:&lt;/b&gt; elbeszélés(ek)&lt;br/&gt;&lt;b&gt;Tárgyszavak:&lt;/b&gt; német irodalom&lt;br/&gt;&lt;b&gt;Formátum: &lt;/b&gt;(&lt;a href="https://mek.oszk.hu/29000/29089/29089.epub"&gt;EPUB&lt;/a&gt;) (&lt;a href="https://mek.oszk.hu/29000/29089/29089.pdf"&gt;PDF&lt;/a&gt;)</content>
+</entry>
+<entry>
+   <title>Igaz-e a Biblia?</title>
+   <id>urn:nbn:hu-182431</id>
+   <updated>2026-11-10T14:04:15</updated>
+   <link href="https://mek.oszk.hu/28400/28476" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+   <link href="https://mek.oszk.hu/28400/28476/borito.jpg" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" title="Bélyegkép"/>
+    <link href="https://mek.oszk.hu/28400/28476/28476.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition"/>
+    <link href="https://mek.oszk.hu/28400/28476/28476.pdf" type="application/pdf" rel="http://opds-spec.org/acquisition"/>
+   <author>
+      <name>Fekete Árpád</name>
+   </author>
+   <content type="html">&lt;/b&gt;&lt;img src="https://mek.oszk.hu/28400/28476/borito.jpg" width=62 HSPACE=10 align=left&gt;&lt;b&gt;Alcím:&lt;/b&gt; kritika&lt;br/&gt;&lt;b&gt;Szerző(k): &lt;/b&gt;Fekete Árpád&lt;br/&gt;&lt;b&gt;MEK-be került:&lt;/b&gt; 2025-09-19&lt;br/&gt;&lt;b&gt;Típus:&lt;/b&gt; kritiká(k)&lt;br/&gt;&lt;b&gt;Tárgyszavak:&lt;/b&gt; bibliamagyarázat, kritika&lt;br/&gt;&lt;b&gt;Formátum: &lt;/b&gt;(&lt;a href="https://mek.oszk.hu/28400/28476/28476.epub"&gt;EPUB&lt;/a&gt;) (&lt;a href="https://mek.oszk.hu/28400/28476/28476.pdf"&gt;PDF&lt;/a&gt;)</content>
+</entry>
+<entry>
+   <title>Az új világ első angyala</title>
+   <id>urn:nbn:hu-182007</id>
+   <updated>2026-11-10T14:04:15</updated>
+   <link href="https://mek.oszk.hu/27500/27551" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+   <link href="https://mek.oszk.hu/27500/27551/borito.jpg" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" title="Bélyegkép"/>
+    <link href="https://mek.oszk.hu/27500/27551/27551.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition"/>
+    <link href="https://mek.oszk.hu/27500/27551/27551.pdf" type="application/pdf" rel="http://opds-spec.org/acquisition"/>
+   <author>
+      <name>Bálint Béla</name>
+   </author>
+   <content type="html">&lt;/b&gt;&lt;img src="https://mek.oszk.hu/27500/27551/borito.jpg" width=62 HSPACE=10 align=left&gt;&lt;b&gt;Alcím:&lt;/b&gt; dráma&lt;br/&gt;&lt;b&gt;Szerző(k): &lt;/b&gt;Bálint Béla&lt;br/&gt;&lt;b&gt;MEK-be került:&lt;/b&gt; 2025-08-05&lt;br/&gt;&lt;b&gt;Típus:&lt;/b&gt; regény&lt;br/&gt;&lt;b&gt;Tárgyszavak:&lt;/b&gt; magyar irodalom, dráma&lt;br/&gt;&lt;b&gt;Formátum: &lt;/b&gt;(&lt;a href="https://mek.oszk.hu/27500/27551/27551.epub"&gt;EPUB&lt;/a&gt;) (&lt;a href="https://mek.oszk.hu/27500/27551/27551.pdf"&gt;PDF&lt;/a&gt;)</content>
+</entry>
+<entry>
+   <title>Paul Auster&apos;s early works and the fallacy of critical reception</title>
+   <id>urn:nbn:hu-181992</id>
+   <updated>2026-11-10T14:04:15</updated>
+   <link href="https://mek.oszk.hu/28400/28428" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+   <link href="https://mek.oszk.hu/28400/28428/borito.jpg" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" title="Bélyegkép"/>
+    <link href="https://mek.oszk.hu/28400/28428/28428.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition"/>
+   <author>
+      <name>Hegyi Pál</name>
+   </author>
+   <content type="html">&lt;/b&gt;&lt;img src="https://mek.oszk.hu/28400/28428/borito.jpg" width=62 HSPACE=10 align=left&gt;&lt;b&gt;Szerző(k): &lt;/b&gt;Hegyi Pál&lt;br/&gt;&lt;b&gt;MEK-be került:&lt;/b&gt; 2025-08-04&lt;br/&gt;&lt;b&gt;Típus:&lt;/b&gt; tanulmány(ok)&lt;br/&gt;&lt;b&gt;Tárgyszavak:&lt;/b&gt; irodalomesztétika, Auster, Paul (1947-2024)&lt;br/&gt;&lt;b&gt;Formátum: &lt;/b&gt;(&lt;a href="https://mek.oszk.hu/28400/28428/28428.epub"&gt;EPUB&lt;/a&gt;) </content>
+</entry>
+<entry>
+   <title>A női jogok igazolása</title>
+   <id>urn:nbn:hu-181259</id>
+   <updated>2026-11-10T14:04:15</updated>
+   <link href="https://mek.oszk.hu/27400/27423" type="application/atom+xml;profile=opds-catalog;kind=navigation"/>
+   <link href="https://mek.oszk.hu/27400/27423/borito.jpg" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" title="Bélyegkép"/>
+    <link href="https://mek.oszk.hu/27400/27423/27423.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition"/>
+    <link href="https://mek.oszk.hu/27400/27423/27423.pdf" type="application/pdf" rel="http://opds-spec.org/acquisition"/>
+   <author>
+      <name>Wollstonecraft, Mary</name>
+   </author>
+   <content type="html">&lt;/b&gt;&lt;img src="https://mek.oszk.hu/27400/27423/borito.jpg" width=62 HSPACE=10 align=left&gt;&lt;b&gt;Alcím:&lt;/b&gt; vitairat politikai és etikai vonatkozású kritikai észrevételekkel alátámasztva&lt;br/&gt;&lt;b&gt;Szerző(k): &lt;/b&gt;Wollstonecraft, Mary&lt;br/&gt;&lt;b&gt;MEK-be került:&lt;/b&gt; 2025-06-03&lt;br/&gt;&lt;b&gt;Típus:&lt;/b&gt; vitairat&lt;br/&gt;&lt;b&gt;Tárgyszavak:&lt;/b&gt; nők a társadalomban, női egyenjogúság, politika, etika&lt;br/&gt;&lt;b&gt;Formátum: &lt;/b&gt;(&lt;a href="https://mek.oszk.hu/27400/27423/27423.epub"&gt;EPUB&lt;/a&gt;) (&lt;a href="https://mek.oszk.hu/27400/27423/27423.pdf"&gt;PDF&lt;/a&gt;)</content>
+</entry>
+
+</feed>

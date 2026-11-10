@@ -4,7 +4,7 @@
 # collections, URL detection, MD5), then the texts in the 13 languages.
 # bash tests/freemusic_test.sh            (WSL; no device)
 set -e
-H=/mnt/c/Users/alber/Downloads/Hiby/hibymod
+H=${H:-$(cd "$(dirname "$0")/.." && pwd)}      # this checkout (or a worktree of it)
 gcc -O1 -g -Wall -Wextra -Wno-unused-function -Wno-sign-compare -fsanitize=address,undefined \
   -I$H/src -o /tmp/freemusic_test $H/tests/freemusic_test.c
 cd $H && /tmp/freemusic_test tests/freemusic_samples

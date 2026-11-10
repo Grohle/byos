@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"
+		       xmlns:atom="http://www.w3.org/2005/Atom"
+		       xmlns:moz="http://www.mozilla.org/2006/browser/search/">
+    <ShortName>Wolne Lektury</ShortName>
+    <Description>Biblioteka internetowa WolneLektury.pl</Description>
+    <InputEncoding>UTF-8</InputEncoding>
+    <Tags>lektury</Tags>
+    <Developer>Fundacja Wolne Lektury</Developer>
+    <Language>pl</Language>
+    <Contact>fundacja@wolnelektury.pl</Contact>
+    <Image height="16" width="16" type="image/x-icon">https://static.wolnelektury.pl/static/img/favicon.ico</Image>
+    <Image height="64" width="64" type="image/png">https://static.wolnelektury.pl/static/img/wl_icon_64.png</Image>
+    <Url type="application/atom+xml;profile=opds-catalog"
+        template="https://wolnelektury.pl/opds/search/?q={searchTerms}&amp;author={atom:author}&amp;translator={atom:contributor}&amp;title={atom:title}" />
+    <Url type="text/html" method="GET" template="https://wolnelektury.pl/szukaj/?q={searchTerms}" />
+    <Url type="application/x-suggestions+json" method="GET" template="https://www.wolnelektury.pl/katalog/jtags/?mozhint=1&amp;q={searchTerms}" />
+    <moz:SearchForm>https://wolnelektury.pl/</moz:SearchForm>
+    <Query role="example" searchTerms="słowa" />
+</OpenSearchDescription>

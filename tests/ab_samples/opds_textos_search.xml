@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns:app="http://www.w3.org/2007/app" xmlns:schema="http://schema.org/" xmlns:odl="http://opds-spec.org/odl" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.w3.org/2005/Atom" xml:lang="es" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>https://www.textos.info/busqueda.atom&amp;query=quijote</id>
+  <title>Búsqueda de 'quijote'</title>
+  <updated>2026-11-10T14:04:11+01:00</updated>
+  <icon>https://www.textos.info/img/favicon-32x32.png</icon>
+  <author>
+    <name>textos.info</name>
+    <uri>https://www.textos.info/</uri>
+    <email>hola@textos.info</email>
+  </author>
+  <subtitle>12 textos</subtitle>
+  <link title="Búsqueda de 'quijote'" type="application/atom+xml; profile=opds-catalog; kind=acquisition" href="https://www.textos.info/busqueda.atom&amp;query=quijote" rel="self"/>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" title="Inicio" href="https://www.textos.info/catalogo.atom" rel="start"/>
+<opensearch:totalResults>12</opensearch:totalResults>
+<opensearch:itemsPerPage>50</opensearch:itemsPerPage>
+<opensearch:startIndex>1</opensearch:startIndex>
+<entry>
+<title>Capítulos que se le Olvidaron a Cervantes</title>
+<id>https://www.textos.info/juan-montalvo/capitulos-que-se-le-olvidaron-a-cervantes</id>
+<author>
+  <name>Juan Montalvo</name>
+  <uri>https://www.textos.info/juan-montalvo</uri>
+</author>
+<content type="text"></content>
+<published>2023-05-08T18:13:46+02:00</published>
+<updated>2023-05-08T18:54:02+02:00</updated>
+<dcterms:language>es</dcterms:language>
+<dcterms:issued></dcterms:issued>
+<category scheme="https://www.textos.info/etiquetas" term="nove" label="Novela"/>
+<summary>La obra tiene un extenso prólogo, que lleva por título El buscapié, y refiere nuevas aventuras de Don Quijote de la Mancha. Se diferencia notablemente de otras continuaciones del Quijote en que la acción se inicia a partir de un momento indeterminado de la obra cervantina, en el contexto de la tercera salida, y se interrumpe dejando a Don Quijote con vida, aunque después de haber redactado un testamento en verso octosilábico.
+
+El texto contiene numerosas referencias a los libros de caballerías, evidentemente tomadas de las notas de Diego Clemencín a su edición del Quijote, y hace también alusión a una serie de personajes de la política ecuatoriana de su tiempo, en particular el presidente Ignacio de Veintemilla, de quien Montalvo era furibundo adversario, y al que presenta en la figura de un ladrón ajusticiado, cuyo cadáver hallan Don Quijote y Sancho. Otra característica de la obra es su notorio anticlericalismo, expresado en reiteradas burlas y censuras a la Iglesia católica y la conducta y actitudes del clero.
+
+Según la crítica, esta obra de Montalvo es la mejor aproximación al personaje cervantino, en términos novelísticos, pues logra reproducir en gran medida su esencia.</summary>
+<dcterms:extent>158578 palabras</dcterms:extent>
+<rights></rights>
+<link type="text/html" title="Ver en textos.info" href="https://www.textos.info/juan-montalvo/capitulos-que-se-le-olvidaron-a-cervantes/ebook" rel="alternate"/>
+<link type="application/epub+zip" href="https://www.textos.info/juan-montalvo/capitulos-que-se-le-olvidaron-a-cervantes/epub" rel="http://opds-spec.org/acquisition"/>
+<link type="application/x-mobipocket-ebook" href="https://www.textos.info/juan-montalvo/capitulos-que-se-le-olvidaron-a-cervantes/mobi" rel="http://opds-spec.org/acquisition"/>
+<link type="application/pdf" href="https://www.textos.info/juan-montalvo/capitulos-que-se-le-olvidaron-a-cervantes/pdf" rel="http://opds-spec.org/acquisition"/>
+<link type="image/jpeg" href="https://www.textos.info/img/9/9821.jpg" rel="http://opds-spec.org/image"/>
+<link type="image/jpeg" href="https://www.textos.info/img/9/9821.jpg" rel="http://opds-spec.org/image/thumbnail"/>
+<link type="application/atom+xml;type=entry;profile=opds-catalog" title="Información" href="https://www.textos.info/autores.atom&amp;" rel="alternate"/>
+</entry>
+<entry>
+<title>Con Don Quijote en Sigüenza</title>
+<id>https://www.textos.info/miguel-de-unamuno/con-don-quijote-en-siguenza</id>
+<author>
+  <name>Miguel de Unamuno</name>
+  <uri>https://www.textos.info/miguel-de-unamuno</uri>
+</author>
+<content type="text"></content>
+<published>2019-10-07T19:12:56+02:00</published>
+<updated>2019-10-07T19:13:06+02:00</updated>
+<dcterms:language>es</dcterms:language>
+<dcterms:issued></dcterms:issued>
+<category scheme="https://www.textos.info/etiquetas" term="articulo" label="Artículo"/>
+<category scheme="https://www.textos.info/etiquetas" term="ensayo" label="ensayo"/>
+<summary></summary>
+<dcterms:extent>1786 palabras</dcterms:extent>
+<rights></rights>
+<link type="text/html" title="Ver en textos.info" href="https://www.textos.info/miguel-de-unamuno/con-don-quijote-en-siguenza/ebook" rel="alternate"/>
+<link type="application/epub+zip" href="https://www.textos.info/miguel-de-unamuno/con-don-quijote-en-siguenza/epub" rel="http://opds-spec.org/acquisition"/>
+<link type="application/x-mobipocket-ebook" href="https://www.textos.info/miguel-de-unamuno/con-don-quijote-en-siguenza/mobi" rel="http://opds-spec.org/acquisition"/>
+<link type="application/pdf" href="https://www.textos.info/miguel-de-unamuno/con-don-quijote-en-siguenza/pdf" rel="http://opds-spec.org/acquisition"/>
+<link type="image/jpeg" href="https://www.textos.info/img/5/5206.jpg" rel="http://opds-spec.org/image"/>
+<link type="image/jpeg" href="https://www.textos.info/img/5/5206.jpg" rel="http://opds-spec.org/image/thumbnail"/>
+<link type="application/atom+xml;type=entry;profile=opds-catalog" title="Información" href="https://www.textos.info/autores.atom&amp;" rel="alternate"/>
+</entry>
+<entry>
+<title>El Ingenioso Hidalgo Don Quijote de la Mancha</title>
+<id>https://www.textos.info/miguel-de-cervantes-saavedra/el-ingenioso-hidalgo-don-quijote-de-la-mancha</id>
+<author>
+  <name>Miguel de Cervantes Saavedra</name>
+  <uri>https://www.textos.info/miguel-de-cervantes-saavedra</uri>
+</author>
+<content type="text"></content>
+<published>2016-04-19T18:04:03+02:00</published>
+<updated>2016-08-22T13:14:48+02:00</updated>
+<dcterms:language>es</dcterms:language>
+<dcterms:issued></dcterms:issued>
+<category scheme="https://www.textos.info/etiquetas" term="novela" label="Novela"/>
+<category scheme="https://www.textos.info/etiquetas" term="clasico" label="Clásico"/>
+<summary></summary>
+<dcterms:extent>416163 palabras</dcterms:extent>
+<rights></rights>
+<link type="text/html" title="Ver en textos.info" href="https://www.textos.info/miguel-de-cervantes-saavedra/el-ingenioso-hidalgo-don-quijote-de-la-mancha/ebook" rel="alternate"/>
+<link type="application/epub+zip" href="https://www.textos.info/miguel-de-cervantes-saavedra/el-ingenioso-hidalgo-don-quijote-de-la-mancha/epub" rel="http://opds-spec.org/acquisition"/>
+<link type="application/x-mobipocket-ebook" href="https://www.textos.info/miguel-de-cervantes-saavedra/el-ingenioso-hidalgo-don-quijote-de-la-mancha/mobi" rel="http://opds-spec.org/acquisition"/>
+<link type="application/pdf" href="https://www.textos.info/miguel-de-cervantes-saavedra/el-ingenioso-hidalgo-don-quijote-de-la-mancha/pdf" rel="http://opds-spec.org/acquisition"/>
+<link type="image/jpeg" href="https://www.textos.info/img/8/8263.jpg" rel="http://opds-spec.org/image"/>
+<link type="image/jpeg" href="https://www.textos.info/img/8/8263.jpg" rel="http://opds-spec.org/image/thumbnail"/>
+<link type="application/atom+xml;type=entry;profile=opds-catalog" title="Información" href="https://www.textos.info/autores.atom&amp;" rel="alternate"/>
+</entry>
+<entry>
+<title>El Quijote de la Boardilla</title>
+<id>https://www.textos.info/alejandro-larrubiera/el-quijote-de-la-boardilla</id>
+<author>
+  <name>Alejandro Larrubiera</name>
+  <uri>https://www.textos.info/alejandro-larrubiera</uri>
+</author>
+<content type="text"></content>
+<published>2023-07-27T12:38:38+02:00</published>
+<updated>2023-07-27T12:38:47+02:00</updated>
+<dcterms:language>es</dcterms:language>
+<dcterms:issued></dcterms:issued>
+<category scheme="https://www.textos.info/etiquetas" term="cuen" label="Cuento"/>
+<summary></summary>
+<dcterms:extent>1470 palabras</dcterms:extent>
+<rights></rights>
+<link type="text/html" title="Ver en textos.info" href="https://www.textos.info/alejandro-larrubiera/el-quijote-de-la-boardilla/ebook" rel="alternate"/>
+<link type="application/epub+zip" href="https://www.textos.info/alejandro-larrubiera/el-quijote-de-la-boardilla/epub" rel="http://opds-spec.org/acquisition"/>
+<link type="application/x-mobipocket-ebook" href="https://www.textos.info/alejandro-larrubiera/el-quijote-de-la-boardilla/mobi" rel="http://opds-spec.org/acquisition"/>
+<link type="application/pdf" href="https://www.textos.info/alejandro-larrubiera/el-quijote-de-la-boardilla/pdf" rel="http://opds-spec.org/acquisition"/>
+<link type="image/jpeg" href="https://www.textos.info/img/9/9926.jpg" rel="http://opds-spec.org/image"/>
+<link type="image/jpeg" href="https://www.textos.info/img/9/9926.jpg" rel="http://opds-spec.org/image/thumbnail"/>
+<link type="application/atom+xml;type=entry;profile=opds-catalog" title="Información" href="https://www.textos.info/autores.atom&amp;" rel="alternate"/>
+</entry>
+
+</feed>

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:dcterms="http://purl.org/dc/terms/">
+ <title>Recent additions</title>
+ <id>cops:recentbooks</id>
+ <updated>2026-11-10T14:14:59+01:00</updated>
+ <icon>favicon.ico</icon>
+ <author>
+  <name>Sébastien Lucas</name>
+  <uri>http://blog.slucas.fr</uri>
+  <email>sebastien@slucas.fr</email>
+ </author>
+ <link href="feed.php" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="start" title="Home"/>
+ <link href="feed.php?page=10" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="self"/>
+ <link href="feed.php?page=8" type="application/opensearchdescription+xml" rel="search" title="Search here"/>
+ <entry>
+  <title>Alice's Adventures in Wonderland</title>
+  <updated>2026-11-10T14:14:59+01:00</updated>
+  <id>urn:uuid:d74fec58-06bc-4ba8-b8b4-24a91a58e6f9</id>
+  <content type="text/html"><p class="description">Alice's Adventures in Wonderland (1865) is a novel written by English author Charles Lutwidge Dodgson, better known under the pseudonym Lewis Carroll. It tells the story of a girl named Alice who falls down a rabbit-hole into a fantasy world populated by peculiar and anthropomorphic creatures.<br />The tale is filled with allusions to Dodgson's friends (and enemies), and to the lessons that British schoolchildren were expected to memorize. The tale plays with logic in ways that have made the story of lasting popularity with adults as well as children. It is considered to be one of the most characteristic examples of the genre of literary nonsense, and its narrative course and structure has been enormously influential, mainly in the fantasy genre.</p>
+
+Alice's Adventures in Wonderland (1865) is a novel written by English author Charles Lutwidge Dodgson, better known under the pseudonym Lewis Carroll. It tells the story of a girl named Alice who falls down a rabbit-hole into a fantasy world populated by peculiar and anthropomorphic creatures.
+The tale is filled with allusions to Dodgson's friends (and enemies), and to the lessons that British schoolchildren were expected to memorize. The tale plays with logic in ways that have made the story of lasting popularity with adults as well as children. It is considered to be one of the most characteristic examples of the genre of literary nonsense, and its narrative course and structure has been enormously influential, mainly in the fantasy genre.</content>
+  <link href="fetch.php?id=17" type="image/jpeg" rel="http://opds-spec.org/image"/>
+  <link href="fetch.php?height=164&amp;id=17" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail"/>
+  <link href="download/17/Alice%27s%20Adventures%20in%20Wonderland%20-%20Lewis%20Carroll.mobi" type="application/x-mobipocket-ebook" rel="http://opds-spec.org/acquisition" title="MOBI"/>
+  <link href="download/19/Alice%27s%20Adventures%20in%20Wonderland%20-%20Lewis%20Carroll.pdf" type="application/pdf" rel="http://opds-spec.org/acquisition" title="PDF"/>
+  <link href="download/20/Alice%27s%20Adventures%20in%20Wonderland%20-%20Lewis%20Carroll.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB"/>
+  <link href="feed.php?page=3&amp;id=3" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Other books by Lewis Carroll"/>
+  <author>
+   <name>Lewis Carroll</name>
+   <uri>feed.php?page=3&amp;id=3</uri>
+  </author>
+  <category term="Fantasy" label="Fantasy"/>
+  <category term="Fiction" label="Fiction"/>
+  <category term="Juvenile" label="Juvenile"/>
+  <dcterms:issued>1897-04-10</dcterms:issued>
+  <published>1897-04-10T08:08:08Z</published>
+  <dcterms:language>English</dcterms:language>
+ </entry>
+ <entry>
+  <title>Twenty Years After</title>
+  <updated>2026-11-10T14:14:59+01:00</updated>
+  <id>urn:uuid:6c9b800c-4cda-49ba-a110-82d8fafb2c48</id>
+  <content type="text/html"><strong>Series:</strong>Book 1.0 in the D'Artagnan Romances series<br />
+The fantastic adventures of the Three Musketeers continue - starting with an intrigue surrounding D'Artagnan who has, for twenty years, remained a lieutenant.</content>
+  <link href="fetch.php?id=15" type="image/jpeg" rel="http://opds-spec.org/image"/>
+  <link href="fetch.php?height=164&amp;id=15" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail"/>
+  <link href="download/14/Twenty%20Years%20After%20-%20Alexandre%20Dumas.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB"/>
+  <link href="feed.php?page=3&amp;id=5" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Other books by Alexandre Dumas"/>
+  <link href="feed.php?page=7&amp;id=3" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Book 1.0 in the D'Artagnan Romances series"/>
+  <author>
+   <name>Alexandre Dumas</name>
+   <uri>feed.php?page=3&amp;id=5</uri>
+  </author>
+  <category term="Action &amp; Adventure" label="Action &amp; Adventure"/>
+  <category term="Fiction" label="Fiction"/>
+  <category term="Historical" label="Historical"/>
+  <category term="Romance" label="Romance"/>
+  <dcterms:issued>2009-01-14</dcterms:issued>
+  <published>2009-01-14T08:08:08Z</published>
+  <dcterms:language>English</dcterms:language>
+ </entry>
+ <entry>
+  <title>The Three Musketeers</title>
+  <updated>2026-11-10T14:14:59+01:00</updated>
+  <id>urn:uuid:fc81dbcf-f1bf-4aef-93ea-1cb58c662d9a</id>
+  <content type="text/html"><strong>Series:</strong>Book 2.0 in the D'Artagnan Romances series<br />
+<p class="description">The Three Musketeers (Les Trois Mousquetaires) is a novel by Alexandre Dumas, père. It recounts the adventures of a young man named d'Artagnan after he leaves home to become a musketeer. D'Artagnan is not one of the musketeers of the title; those are his friends Athos, Porthos, and Aramis—inseparable friends who live by the motto, "One for all, and all for one".<br />The story of d'Artagnan is continued in Twenty Years After and The Vicomte de Bragelonne. Those three novels by Dumas are together known as the D'Artagnan Romances.<br />The Three Musketeers was first published in serial form in the magazine Le Siècle between March and July 1844.</p></content>
+  <link href="fetch.php?id=14" type="image/jpeg" rel="http://opds-spec.org/image"/>
+  <link href="fetch.php?height=164&amp;id=14" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail"/>
+  <link href="download/13/The%20Three%20Musketeers%20-%20Alexandre%20Dumas.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB"/>
+  <link href="feed.php?page=3&amp;id=5" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Other books by Alexandre Dumas"/>
+  <link href="feed.php?page=7&amp;id=3" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Book 2.0 in the D'Artagnan Romances series"/>
+  <author>
+   <name>Alexandre Dumas</name>
+   <uri>feed.php?page=3&amp;id=5</uri>
+  </author>
+  <category term="Action &amp; Adventure" label="Action &amp; Adventure"/>
+  <category term="Fiction" label="Fiction"/>
+  <category term="Historical" label="Historical"/>
+  <category term="Romance" label="Romance"/>
+  <dcterms:issued>2007-02-08</dcterms:issued>
+  <published>2007-02-08T08:08:08Z</published>
+  <dcterms:language>English</dcterms:language>
+ </entry>
+ <entry>
+  <title>The Hound of the Baskervilles</title>
+  <updated>2026-11-10T14:14:59+01:00</updated>
+  <id>urn:uuid:28ba9d8f-6f1b-4b72-9150-d2933ebe13b5</id>
+  <content type="text/html"><strong>Series:</strong>Book 3.0 in the Sherlock Holmes series<br />
+<p class="description">The rich landowner Sir Charles Baskerville is found dead in the park of his manor surrounded by the grim moor of Dartmoor, in the county of Devon. His death seems to have been caused by a heart attack, but the victim's best friend, Dr. Mortimer, is convinced that the strike was due to a supernatural creature, which haunts the moor in the shape of an enormous hound, with blazing eyes and jaws. In order to protect Baskerville's heir, Sir Henry, who's arriving to London from Canada, Dr. Mortimer asks for Sherlock Holmes' help, telling him also of the so-called Baskervilles' curse, according to which a monstrous hound has been haunting and killing the family males for centuries, in revenge for the misdeeds of one Sir Hugo Baskerville, who lived at the time of Oliver Cromwell.</p></content>
+  <link href="fetch.php?id=13" type="image/jpeg" rel="http://opds-spec.org/image"/>
+  <link href="fetch.php?height=164&amp;id=13" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail"/>
+  <link href="download/12/The%20Hound%20of%20the%20Baskervilles%20-%20Arthur%20Conan%20Doyle.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB"/>
+  <link href="feed.php?page=3&amp;id=1" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Other books by Arthur Conan Doyle"/>
+  <link href="feed.php?page=7&amp;id=1" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Book 3.0 in the Sherlock Holmes series"/>
+  <author>
+   <name>Arthur Conan Doyle</name>
+   <uri>feed.php?page=3&amp;id=1</uri>
+  </author>
+  <category term="Fiction" label="Fiction"/>
+  <category term="Mystery &amp; Detective" label="Mystery &amp; Detective"/>
+  <dcterms:issued>2006-10-29</dcterms:issued>
+  <published>2006-10-29T08:08:08Z</published>
+  <dcterms:language>English</dcterms:language>
+ </entry>
+ <entry>
+  <title>The Memoirs of Sherlock Holmes</title>
+  <updated>2026-11-10T14:14:59+01:00</updated>
+  <id>urn:uuid:af1d960b-7167-47f2-a1d8-6a38c8c893fd</id>
+  <content type="text/html"><strong>Series:</strong>Book 5.0 in the Sherlock Holmes series<br />
+<p class="description">The Memoirs of Sherlock Holmes is a collection of Sherlock Holmes stories, originally published in 1894, by Arthur Conan Doyle.</p></content>
+  <link href="fetch.php?id=12" type="image/jpeg" rel="http://opds-spec.org/image"/>
+  <link href="fetch.php?height=164&amp;id=12" type="image/jpeg" rel="http://opds-spec.org/image/thumbnail"/>
+  <link href="download/11/The%20Memoirs%20of%20Sherlock%20Holmes%20-%20Arthur%20Conan%20Doyle.epub" type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB"/>
+  <link href="feed.php?page=3&amp;id=1" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Other books by Arthur Conan Doyle"/>
+  <link href="feed.php?page=7&amp;id=1" type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="related" title="Book 5.0 in the Sherlock Holmes series"/>
+  <author>
+   <name>Arthur Conan Doyle</name>
+   <uri>feed.php?page=3&amp;id=1</uri>
+  </author>
+  <category term="Fiction" label="Fiction"/>
+  <category term="Mystery &amp; Detective" label="Mystery &amp; Detective"/>
+  <category term="Short Stories" label="Short Stories"/>
+  <dcterms:issued>2006-12-28</dcterms:issued>
+  <published>2006-12-28T08:08:08Z</published>
+  <dcterms:language>English</dcterms:language>
+ </entry>
+
+</feed>
