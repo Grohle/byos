@@ -6,9 +6,8 @@ with an image viewer, a text editor and multi-select.**
 <p align="center">
   <img src="../../docs/media/apps/files/01_locations.png" width="160" alt="Locations">
   <img src="../../docs/media/apps/files/02_sd_card.png" width="160" alt="SD card">
-  <img src="../../docs/media/apps/files/04_album_folder.png" width="160" alt="A folder">
-  <img src="../../docs/media/apps/files/05_select.png" width="160" alt="Multi-select">
-  <img src="../../docs/media/apps/files/06_image_viewer.png" width="160" alt="Image viewer">
+  <img src="../../docs/media/apps/files/03_folder.png" width="160" alt="A folder">
+  <img src="../../docs/media/apps/files/04_select.png" width="160" alt="Select mode">
 </p>
 
 Status: **Stable**.
@@ -32,11 +31,6 @@ Status: **Stable**.
 - When the SD card is connected to a computer over USB, the app says so instead of showing an
   empty card.
 
-<p align="center">
-  <img src="../../docs/media/apps/files/03_folder.png" width="160" alt="Artist folder">
-  <img src="../../docs/media/apps/files/07_documents.png" width="160" alt="Documents">
-  <img src="../../docs/media/apps/files/08_text_viewer.png" width="160" alt="Text viewer">
-</p>
 
 ## How to use
 
@@ -71,9 +65,8 @@ None of its own. The keyboard follows Settings › Keyboard (layout, height, num
   moved").
 - The internal location is limited to `/usr/data/hibymod/archivos`; the rest of the system is
   not shown on purpose. Internal storage has only about 24 MB free.
-- Found while taking these screenshots (QEMU harness): **in the text viewer, swiping up from
-  the bottom bar scrolls the text instead of going home**; use **‹** first. To be checked on
-  the device.
+- Found in testing off the device: **in the text viewer, swiping up from the bottom bar may
+  scroll the text instead of going home**; use **‹** first.
 
 ## Technical notes
 

@@ -6,10 +6,10 @@ files.**
 
 <p align="center">
   <img src="../../docs/media/apps/books/01_library.png" width="160" alt="Library">
-  <img src="../../docs/media/apps/books/05_reader_sepia.png" width="160" alt="Reading, Sepia theme">
-  <img src="../../docs/media/apps/books/06_themes.png" width="160" alt="Themes and settings">
-  <img src="../../docs/media/apps/books/08_store.png" width="160" alt="Store: audiobooks">
-  <img src="../../docs/media/apps/books/09_audiobook_page.png" width="160" alt="Audiobook page">
+  <img src="../../docs/media/apps/books/02_reader.png" width="160" alt="Reading">
+  <img src="../../docs/media/apps/books/04_themes.png" width="160" alt="Themes and settings">
+  <img src="../../docs/media/apps/books/06_explore_audiobooks.png" width="160" alt="Explore: audiobooks">
+  <img src="../../docs/media/apps/books/07_explore_books.png" width="160" alt="Explore: books">
 </p>
 
 Status: **Beta**. The reader is complete; the Audiobooks and Store tabs are new and audiobook
@@ -97,12 +97,12 @@ The list is kept in `/usr/data/hibymod/appdata/books/catalogs.tsv` (plain text, 
 per line: address, last status, name, search template).
 
 <p align="center">
-  <img src="../../docs/media/apps/books/02_library_more.png" width="160" alt="Library, scrolled">
-  <img src="../../docs/media/apps/books/03_book_menu.png" width="160" alt="Book menu">
-  <img src="../../docs/media/apps/books/04_reader.png" width="160" alt="Reader">
-  <img src="../../docs/media/apps/books/07_audiobooks.png" width="160" alt="Downloaded audiobooks">
-  <img src="../../docs/media/apps/books/10_chapters.png" width="160" alt="Chapters and downloads">
-  <img src="../../docs/media/apps/books/11_audiobooks_empty.png" width="160" alt="Audiobooks tab before the first download">
+  <img src="../../docs/media/apps/books/03_reader_menu.png" width="160" alt="Reader menu">
+  <img src="../../docs/media/apps/books/05_audiobooks.png" width="160" alt="Audiobooks">
+  <img src="../../docs/media/apps/books/08_catalogs.png" width="160" alt="Catalogs">
+  <img src="../../docs/media/apps/books/09_catalog.png" width="160" alt="A catalog">
+  <img src="../../docs/media/apps/books/10_catalog_list.png" width="160" alt="Catalog list">
+  <img src="../../docs/media/apps/books/11_book_page.png" width="160" alt="Book page">
 </p>
 
 ## How to use
@@ -141,9 +141,8 @@ hold still for 1 s for multitasking.
 - Audiobook playback goes through the stock player's play-list API (display library v6) and
   is still being verified on the device.
 - No highlights, notes or bookmarks yet.
-- The Store needs Wi-Fi. When the screenshots were taken, Gutendex did not answer (from the
-  computer either), so the Books store is not pictured.
-- Found while taking these screenshots (QEMU harness):
+- Explore needs Wi-Fi.
+- Found during testing:
   - on the first scan, the EPUB covers were not extracted and a generated cover was shown
     instead; the failure is remembered in the index, so it was only retried after deleting
     `/usr/data/hibymod/appdata/books/index`. To be checked on the device.

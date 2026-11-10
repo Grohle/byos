@@ -7,9 +7,9 @@ uninstall them.**
 <p align="center">
   <img src="../../docs/media/apps/store/01_today.png" width="160" alt="Today">
   <img src="../../docs/media/apps/store/02_apps.png" width="160" alt="Apps">
-  <img src="../../docs/media/apps/store/04_app_page.png" width="160" alt="App page">
-  <img src="../../docs/media/apps/store/05_where_to_install.png" width="160" alt="Where to install">
-  <img src="../../docs/media/apps/store/07_installed_tab.png" width="160" alt="Installed">
+  <img src="../../docs/media/apps/store/03_apps_more.png" width="160" alt="Included apps and apps on the SD card">
+  <img src="../../docs/media/apps/store/04_installed.png" width="160" alt="Installed">
+  <img src="../../docs/media/apps/store/05_app_actions.png" width="160" alt="App actions">
 </p>
 
 Status: **Beta**. The `.hpk` installer and the management of installed apps (open, back up,
@@ -40,10 +40,8 @@ apps are newer. The screenshots show the real HiByOS repository, fetched live fr
 - **Refresh**: pull down on a list, or tap the circular arrow next to the title.
 
 <p align="center">
-  <img src="../../docs/media/apps/store/03_search.png" width="160" alt="Search">
-  <img src="../../docs/media/apps/store/06_installed.png" width="160" alt="Just installed">
-  <img src="../../docs/media/apps/store/08_app_actions.png" width="160" alt="Installed app actions">
-  <img src="../../docs/media/apps/hola/01_hello.png" width="160" alt="The Hello app, opened from the store">
+  <img src="../../docs/media/apps/store/06_uninstall.png" width="160" alt="Uninstall">
+  <img src="../../docs/media/apps/hola/01_hello.png" width="160" alt="Hello">
 </p>
 
 ## How to use

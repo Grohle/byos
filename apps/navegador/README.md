@@ -9,8 +9,8 @@ JavaScript), packaged as an external `.hpk` app.** "Navegador" is Spanish for "b
 folder keeps that name because it is the app's package id (`org.hibymod.navegador`).
 
 <p align="center">
-  <img src="../../docs/media/apps/navegador/01_store_in_testing.png" width="160" alt="The Browser in the store, IN TESTING">
-  <img src="../../docs/media/apps/navegador/02_apps_list.png" width="160" alt="The Browser in the store's app list">
+  <img src="../../docs/media/apps/store/02_apps.png" width="160" alt="Apps">
+  <img src="../../docs/media/apps/store/03_apps_more.png" width="160" alt="Included apps and apps on the SD card">
 </p>
 
 There are no screenshots of the browser itself on purpose: it is not run on the device (see

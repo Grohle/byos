@@ -7,8 +7,7 @@ template for your own `.hpk` app.** "Hola" is Spanish for "hello"; the package i
 
 <p align="center">
   <img src="../../docs/media/apps/hola/01_hello.png" width="160" alt="Hello">
-  <img src="../../docs/media/apps/hola/02_touch.png" width="160" alt="Hello, touching the screen">
-  <img src="../../docs/media/apps/store/04_app_page.png" width="160" alt="Hello in the Apps store">
+  <img src="../../docs/media/apps/store/02_apps.png" width="160" alt="Apps">
 </p>
 
 Status: **Stable (example)**. It is published in the HiByOS repository (release `apps-1`) and

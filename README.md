@@ -5,7 +5,7 @@
 <h1 align="center">HiByOS</h1>
 
 <p align="center">
-  <b>An iOS-style system for the HiBy R3 II: a new home screen, gestures, a Control Centre, widgets and apps, running on top of the stock player.</b>
+  <b>An iOS-style system for the HiBy R3 II: a new home screen, gestures, a Control Center, widgets and apps, running on top of the stock player.</b>
 </p>
 
 <p align="center">
@@ -26,16 +26,18 @@
 HiByOS is a community firmware for the **HiBy R3 II (2025)** digital audio player. It keeps
 HiBy's own music player and audio path exactly as they are and builds a new system around
 them:
-- an iOS-style home screen with a widgets page;
+- an iOS-style home screen with a dock of four apps and a widgets page;
 - system-wide gestures and a multitasking switcher;
-- a Control Centre;
-- a new Music app, lyrics and cover-art search;
-- a file manager and a tag editor;
-- an app store;
+- a Control Center with Airplane Mode, headphone noise control and Bluetooth;
+- a new Music app with synced lyrics, cover-art search and a tag editor;
+- Books (e-books and audiobooks), Vinyl (free music), Gutenberg, Radio, Headphones and Files;
+- an app store: the included apps come preinstalled and can be updated or uninstalled;
+- over-the-air updates from this project's releases;
 - a long list of fixes and hidden features unlocked from the stock firmware.
 
-Everything is written for a 57 MB RAM, 320×480 device and measured on the real hardware,
-frame by frame.
+Everything is written for a 57 MB RAM, 320×480 device and tested on the real player, frame
+by frame, so that it runs faster and smoother than the stock interface. All the screenshots
+on these pages were taken on a real HiBy R3 II (2025).
 
 > **A project directed by [Grohle](https://github.com/Grohle) and executed mostly by AI
 > agents.** Grohle set the goals, the design direction and the quality bar ("don't stop
@@ -45,9 +47,9 @@ frame by frame.
 
 <p align="center">
   <img src="docs/media/apps/system/01_home.png" width="200" alt="Home screen">
-  <img src="docs/media/apps/system/03_control_centre.png" width="200" alt="Control Centre">
+  <img src="docs/media/apps/system/04_control_center.png" width="200" alt="Control Center">
   <img src="docs/media/apps/system/02_widgets.png" width="200" alt="Widgets">
-  <img src="docs/media/apps/music/03_albums.png" width="200" alt="Music: albums">
+  <img src="docs/media/apps/music/02_albums.png" width="200" alt="Albums">
 </p>
 
 ## Contents
@@ -73,12 +75,14 @@ known limitations: see the **[app index](apps/README.md)**.
 |---|---|---|---|
 | <img src="docs/media/apps/icons/music_64.png" width="32" alt=""> | [Music](apps/music/README.md) | Apple Music-style library, mixes, Now Playing with synced lyrics, tag editor | Beta |
 | <img src="docs/media/apps/icons/files_64.png" width="32" alt=""> | [Files](apps/files/README.md) | File manager for the SD card and internal storage, image viewer, text editor | Stable |
-| <img src="docs/media/apps/icons/books_64.png" width="32" alt=""> | [Books](apps/books/README.md) | EPUB / TXT reader, LibriVox audiobooks and Project Gutenberg books | Beta |
-| <img src="docs/media/apps/icons/freemusic_64.png" width="32" alt=""> | [Free Music](apps/freemusic/README.md) | Free and Creative Commons music from the Internet Archive and Jamendo | Beta |
-| <img src="docs/media/apps/icons/settings_64.png" width="32" alt=""> | [Settings](apps/settings/README.md) | Player and system settings, USB DAC, home screen, gestures, Control Centre | Beta |
-| <img src="docs/media/apps/icons/wireless_64.png" width="32" alt=""> | [Wireless](apps/wireless/README.md) | Wi-Fi and Bluetooth | Experimental |
+| <img src="docs/media/apps/icons/books_64.png" width="32" alt=""> | [Books](apps/books/README.md) | EPUB / TXT reader, audiobooks, free catalogs you can add (OPDS) | Beta |
+| <img src="docs/media/apps/icons/gutenberg_64.png" width="32" alt=""> | [Gutenberg](apps/gutenberg/README.md) | Project Gutenberg books and LibriVox audiobooks, to download and read | Beta |
+| <img src="docs/media/apps/icons/freemusic_64.png" width="32" alt=""> | [Vinyl](apps/freemusic/README.md) | Free and Creative Commons music (Internet Archive, Jamendo, your own sources), with format and quality | Beta |
+| <img src="docs/media/apps/icons/radio_64.png" width="32" alt=""> | Radio ([docs/RADIO.md](docs/RADIO.md)) | Internet radio from the Radio Browser directory, favourites and your own stations | Beta |
+| <img src="docs/media/apps/icons/settings_64.png" width="32" alt=""> | [Settings](apps/settings/README.md) | Player and system settings, USB DAC, home screen, gestures, Control Center, keyboard, updates (the old Customize app is now part of it) | Beta |
+| <img src="docs/media/apps/icons/wireless_64.png" width="32" alt=""> | [Wireless](apps/wireless/README.md) | Wi-Fi and Bluetooth | Beta |
 | <img src="docs/media/apps/icons/appstore_64.png" width="32" alt=""> | [Apps](apps/store/README.md) | App store: repositories, `.hpk` files, SD card installs, backups | Beta |
-| | [Headphones](apps/headphones/README.md) | AirPods, Galaxy Buds, Nothing, Sony and Fast Pair controls | In development |
+| <img src="docs/media/apps/icons/headphones_64.png" width="32" alt=""> | [Headphones](apps/headphones/README.md) | AirPods, Galaxy Buds, Nothing, Sony, Soundcore and Fast Pair: battery, noise control | In development |
 | <img src="docs/media/apps/icons/navegador_64.png" width="32" alt=""> | [Browser](apps/navegador/README.md) | NetSurf web browser | Experimental (blocked) |
 | <img src="docs/media/apps/icons/hola_64.png" width="32" alt=""> | [Hello](apps/hola/README.md) | Example app for developers | Stable (example) |
 
@@ -87,6 +91,16 @@ known limitations: see the **[app index](apps/README.md)**.
 > ⚠️ **At your own risk.** HiByOS has been developed and tested on one HiBy R3 II (2025)
 > with the official firmware of 2 March 2026. It never touches the bootloader or HiBy's
 > recovery, so you can always reinstall the official firmware from the SD card.
+
+> **Start from the official firmware v1.3.** HiByOS was built and tested starting from a
+> player that already had HiBy's official **v1.3** installed. Install v1.3 first if your
+> player has another version (in the stock menus: **System › About** shows the version;
+> **System › Firmware update** installs it).
+
+**No computer?** The Android app **[HiByOS Install](android/hibyos-install/README.md)** does
+steps 1 to 4 on your phone: it downloads the official v1.3, builds HiByOS on the phone and
+sends it to the player over Wi-Fi (the player's own "Import Music via Wi-Fi" screen) or lets
+you copy it by hand. Get the APK and its SHA-256 from the project's releases page.
 
 **Why do I have to build the firmware myself?** HiBy's firmware belongs to HiBy, so this
 project does not share it, not even modified. You download the official firmware from HiBy
@@ -193,7 +207,7 @@ The result is `out/r3ii_2025.upt`. macOS cannot run the build directly: use opti
 
 ### Step 5. Install
 
-1. On the player, open **Settings › Firmware update › Via SD card** and confirm.
+1. On the player, open **System › Firmware update › Via SD-card** (the stock menu) and confirm.
 2. The player restarts and shows an update progress bar for **about 1 minute**.
    **Do not turn it off or remove the card.**
 3. It restarts again and plays the **HiByOS boot animation**. The first boot takes a few
@@ -209,7 +223,7 @@ After installing:
 
 **First steps:**
 - Swipe up from the bottom bar to go home.
-- Swipe down from the top-left corner for the Control Centre.
+- Swipe down from the top-left corner for the Control Center.
 - Swipe down from the top-right corner for the player.
 - Swipe from the left or right edge to go back.
 - Swipe right from the home screen for widgets.
@@ -218,7 +232,12 @@ After installing:
 
 ### Updating to a new version
 
-Each release says whether the firmware changed.
+**Over the air (easiest).** With Wi-Fi on, open **Settings › General › Software Update** and
+tap **Check for Updates**. HiByOS downloads the update from this project's GitHub releases,
+checks its signature (ed25519) and installs it. Only HiByOS's own files are downloaded,
+never HiBy's firmware.
+
+**By hand.** Each release says whether the firmware changed.
 - **Only the SD files changed:**
   1. Replace the `HiByOS` folder on the card with the new one.
   2. Restart the player.
@@ -274,7 +293,8 @@ The player applies the command once and renames the file to `<name>.done`.
 - **Boot animation.** The HiByOS logo animation loops on a black background while the
   system starts, and hands over to the home screen without a visible cut.
 - **Home screen.**
-  - iOS-style pages and dock;
+  - iOS-style pages and a dock of four: Books, Headphones, Now Playing and Music;
+  - long-press an app for its menu: **Open**, **Edit Home Screen** and **Uninstall**;
   - wallpapers from the SD card (9 included);
   - 3 to 5 columns and three icon sizes;
   - an edit mode with the jiggle animation;
@@ -288,17 +308,23 @@ The player applies the command once and renames the file to `<name>.done`.
   - **left or right edge:** back, with a bubble that follows your finger;
   - **swipe up from the bottom bar:** home; **swipe up and hold:** the multitasking
     switcher with the current app and the player;
-  - **down from the top-left:** Control Centre; **down from the top-right:** the player;
-  - **left/right between the player and the Control Centre:** switch between them;
+  - **down from the top-left:** Control Center; **down from the top-right:** the player;
+  - **left/right between the player and the Control Center:** switch between them;
   - **up in either of them:** back to home.
-- **Control Centre (iOS 26 style).** It opens following your finger over a blurred copy of
+- **Control Center (iOS 26 style).** It opens following your finger over a blurred copy of
   the screen. It has:
   - **Now Playing** with the real track, its cover and ⏮ ⏯ ⏭;
   - a brightness slider that behaves like iOS;
+  - **Airplane Mode**: turns Wi-Fi and Bluetooth off and, when you turn it off, back on only
+    the ones that were on. If you are using ADB over Wi-Fi it asks first;
+  - **Noise Control**: cycles the noise modes your connected headphones support (off,
+    noise cancelling, transparency, adaptive). Without headphones, or with a model that has
+    no noise control, it is dimmed and tells you why when tapped;
+  - a **Bluetooth** module with the connected device's name and battery;
   - round controls: **USB only (don't charge the battery)**, **power mode**, **USB DAC**,
-    the HiBy panel, Wireless, **DAC filter**, Files and Settings.
+    Wireless, **DAC filter**, Files and Settings.
 
-  You choose which controls appear (Settings › Control Centre).
+  You choose and order the controls in Settings › Control Center.
 - **Music app.** An Apple Music-style library:
   - albums in a cover grid; artists, songs, genres and recently added;
   - album pages, search, and a mini-player;
@@ -322,9 +348,22 @@ The player applies the command once and renames the file to `<name>.done`.
   - adjustable height (drag its top edge) and an always-visible close key;
   - long-press accents and cursor movement on the space bar;
   - its settings are reachable from the keyboard itself.
+- **Books.** An Apple Books-style reader for EPUB and TXT, with themes (Original, Sepia,
+  Night) and font size, an audiobook player, and an Explore tab with Project Gutenberg,
+  LibriVox and any OPDS catalog you add (several are suggested, in many languages).
+- **Vinyl.** Search, listen to and download free and Creative Commons music from the
+  Internet Archive, Jamendo and sources you add yourself, seeing the format, bit depth and
+  sample rate before you download.
+- **Gutenberg.** Project Gutenberg books and LibriVox audiobooks, kept as a separate app in
+  case Books' built-in catalogs are not enough.
+- **Radio.** Internet radio stations from the community Radio Browser directory, plus your
+  own stations; see [docs/RADIO.md](docs/RADIO.md).
+- **Headphones.** Battery and noise control for AirPods, Galaxy Buds, Nothing, Sony,
+  Soundcore and Fast Pair headphones, with an iOS-style battery card when they connect.
 - **App Store.** Install `.hpk` apps from online repositories (this project's by default,
   others can be added) or from the SD card. Apps can be installed on the card or on the
-  player, backed up and uninstalled.
+  player, backed up and uninstalled. The apps included with HiByOS (Gutenberg, Vinyl,
+  Headphones, Hello) appear there too, so you can uninstall and reinstall them.
 - **13 languages:** English, Spanish, French, German, Italian, Polish, Russian, Ukrainian,
   Japanese, Korean, Thai, and Simplified and Traditional Chinese.
 
@@ -332,7 +371,7 @@ The player applies the command once and renames the file to `<name>.done`.
 
 | Feature | What changed |
 |---|---|
-| **8 DAC digital filters** | The ES9219 driver forced every filter except one to "fast". HiByOS patches the kernel module so all 8 shapes work: fast and slow, linear and minimum phase, apodizing, hybrid, brickwall. Choose one in Settings › Audio & system or from the Control Centre |
+| **8 DAC digital filters** | The ES9219 driver forced every filter except one to "fast". HiByOS patches the kernel module so all 8 shapes work: fast and slow, linear and minimum phase, apodizing, hybrid, brickwall. Choose one in Settings › Audio & system or from the Control Center |
 | Car mode | Plays when USB power appears and turns off when it goes. Now visible in HiBy's System settings |
 | Standby, double-tap to wake, no charging in DAC mode | Present in the firmware but hidden; now visible in System settings |
 | EU volume warning | Can be turned off, with a hearing-safety confirmation. It removes the prompt only and adds no power |
@@ -361,37 +400,36 @@ Raising the clock brings a high risk of instability for no visible gain. See
 ## Screenshots
 
 <p align="center">
-  <img src="docs/media/apps/system/01_home.png" width="160" alt="Home">
+  <img src="docs/media/apps/system/01_home.png" width="160" alt="Home screen">
   <img src="docs/media/apps/system/02_widgets.png" width="160" alt="Widgets">
-  <img src="docs/media/apps/system/03_control_centre.png" width="160" alt="Control Centre">
-  <img src="docs/media/apps/system/06_multitasking.png" width="160" alt="Multitasking">
-  <img src="docs/media/apps/system/07_back_gesture.png" width="160" alt="Back gesture">
+  <img src="docs/media/apps/system/04_control_center.png" width="160" alt="Control Center">
+  <img src="docs/media/apps/system/07_multitasking.png" width="160" alt="Multitasking">
+  <img src="docs/media/apps/system/08_back_gesture.png" width="160" alt="Back gesture">
 </p>
 <p align="center">
-  <img src="docs/media/apps/music/05_album_tracks.png" width="160" alt="Music: album">
-  <img src="docs/media/apps/music/09_context_menu.png" width="160" alt="Music: song menu">
-  <img src="docs/media/apps/music/10_now_playing.png" width="160" alt="Now Playing">
-  <img src="docs/media/apps/music/12_lyrics.png" width="160" alt="Synced lyrics">
-  <img src="docs/media/apps/music/19_tag_editor.png" width="160" alt="Tag editor">
+  <img src="docs/media/apps/music/03_album_tracks.png" width="160" alt="Album tracks">
+  <img src="docs/media/apps/music/08_song_menu.png" width="160" alt="Song menu">
+  <img src="docs/media/apps/music/09_now_playing.png" width="160" alt="Now Playing">
+  <img src="docs/media/apps/music/11_lyrics_search.png" width="160" alt="Choosing lyrics">
+  <img src="docs/media/apps/music/16_tag_editor.png" width="160" alt="Tag editor">
 </p>
 <p align="center">
-  <img src="docs/media/apps/books/01_library.png" width="160" alt="Books">
-  <img src="docs/media/apps/books/05_reader_sepia.png" width="160" alt="Reading a book">
-  <img src="docs/media/apps/freemusic/04_search.png" width="160" alt="Free Music search">
-  <img src="docs/media/apps/files/04_album_folder.png" width="160" alt="Files">
-  <img src="docs/media/apps/store/04_app_page.png" width="160" alt="Apps store">
+  <img src="docs/media/apps/books/01_library.png" width="160" alt="Library">
+  <img src="docs/media/apps/books/02_reader.png" width="160" alt="Reading">
+  <img src="docs/media/apps/vinyl/02_album.png" width="160" alt="Album with formats and quality">
+  <img src="docs/media/apps/gutenberg/01_audiobooks.png" width="160" alt="Audiobooks">
+  <img src="docs/media/apps/store/03_apps_more.png" width="160" alt="Included apps and apps on the SD card">
 </p>
 <p align="center">
   <img src="docs/media/apps/settings/01_settings.png" width="160" alt="Settings">
-  <img src="docs/media/apps/settings/10_gestures.png" width="160" alt="Gestures">
-  <img src="docs/media/apps/settings/03_usb.png" width="160" alt="USB">
-  <img src="docs/media/apps/settings/09_home_screen.png" width="160" alt="Home screen settings">
-  <img src="docs/media/apps/system/08_edit_mode.png" width="160" alt="Home screen edit mode">
+  <img src="docs/media/apps/settings/14_gestures.png" width="160" alt="Gestures">
+  <img src="docs/media/apps/settings/13_control_center.png" width="160" alt="Control Center">
+  <img src="docs/media/apps/settings/12_home_screen.png" width="160" alt="Home Screen">
+  <img src="docs/media/apps/system/10_app_menu.png" width="160" alt="App menu: open, edit, uninstall">
 </p>
 
-These screenshots were taken in English in the QEMU harness, which runs the real shell binary
-(`docs/VM_SHELL.md`), with a demo library of public-domain works. The harness has no real
-player, so the status bar is a placeholder and the track is shown paused. More screenshots
+These screenshots were taken in English on a real HiBy R3 II (2025) running HiByOS, with
+the player's own music library. Network names and addresses are blurred. More screenshots
 on each [app's page](apps/README.md).
 
 ## Installing apps
@@ -404,7 +442,8 @@ static MIPS executable.
 - **From a file:** copy the `.hpk` file to the **`Apps/`** folder at the root of the SD
   card, then open **Apps**: it appears under "On the SD card".
 - **Managing apps:** in **Apps**, tap an installed app to open it, back it up, uninstall it
-  or erase its data.
+  or erase its data. On the home screen, long-press an app's icon and choose **Uninstall**,
+  as on iOS. The included apps can be uninstalled too and reinstalled from **Apps**.
 - **Closing an app:** swipe up from the bottom bar.
 
 If an app needs the memory that the player uses, the music is paused first and the app is
@@ -526,8 +565,9 @@ stock interface and plays the audio. Around it:
 ## Status and known limitations
 
 - **Tested on one device.** Reports from other R3 II (2025) units are welcome.
-- **Partly restyled.** Some of HiBy's own screens (system settings, wireless, books,
-  streaming) keep the stock look apart from the status bar; replacing them is in progress.
+- **Partly restyled.** Tidal, Qobuz and a few of HiBy's own pages (the USB connection screen,
+  some system dialogs) keep the stock look apart from the status bar and the HiByOS
+  gestures.
 - **The browser app** is not available yet: it needs more memory than the player leaves
   free, and stays blocked until it passes the off-device tests.
 - **YouTube Music is not included.** The research is in `docs/`.

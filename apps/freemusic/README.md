@@ -1,14 +1,15 @@
-# Free Music
+# Vinyl
 
-**Search, listen to and download free and Creative Commons music from the Internet Archive
-and Jamendo, with the audio quality shown right in the search results.**
+**Search, listen to and download free and Creative Commons music from the Internet Archive,
+Jamendo and sources you add yourself, with the audio quality shown right in the search
+results.** (This app was called Free Music before; its folder in the source is still
+`freemusic`.)
 
 <p align="center">
-  <img src="../../docs/media/apps/freemusic/01_home.png" width="160" alt="Popular concerts">
-  <img src="../../docs/media/apps/freemusic/04_search.png" width="160" alt="Search results">
-  <img src="../../docs/media/apps/freemusic/02_album.png" width="160" alt="Album page">
-  <img src="../../docs/media/apps/freemusic/03_album_licence.png" width="160" alt="Licence">
-  <img src="../../docs/media/apps/freemusic/08_settings.png" width="160" alt="Settings">
+  <img src="../../docs/media/apps/vinyl/01_home.png" width="160" alt="Vinyl">
+  <img src="../../docs/media/apps/vinyl/02_album.png" width="160" alt="Album with formats and quality">
+  <img src="../../docs/media/apps/vinyl/03_settings.png" width="160" alt="Settings">
+  <img src="../../docs/media/apps/vinyl/04_sources.png" width="160" alt="Sources">
 </p>
 
 Status: **Beta**. Search, album pages, downloads and settings work (live data in the
@@ -38,17 +39,11 @@ verified on the device.
   the free space first and write the tags and a `cover.jpg`.
 - **Downloads** page (the ⬇ button at the top): queue, progress, "Clear finished".
 
-<p align="center">
-  <img src="../../docs/media/apps/freemusic/05_search_typing.png" width="160" alt="Typing a search">
-  <img src="../../docs/media/apps/freemusic/06_source.png" width="160" alt="Choose the source">
-  <img src="../../docs/media/apps/freemusic/07_jamendo_no_key.png" width="160" alt="Jamendo without a key">
-  <img src="../../docs/media/apps/freemusic/09_settings_more.png" width="160" alt="More settings">
-</p>
 
 ## How to use
 
 1. Connect to Wi-Fi and insert an SD card.
-2. Open **Free Music**. The start page shows popular lossless concerts.
+2. Open **Vinyl**. The start page shows popular lossless concerts.
 3. Tap the search bar, type (for example `jazz`) and tap **Search**. Use the chips to filter
    (Lossless, Genre, Language...).
 4. Tap a result to open the album page. Choose a format in the segmented control.
@@ -74,6 +69,23 @@ hold still for 1 s for multitasking.
      settings, so the file can then be deleted.
 3. Choose **Jamendo** in the source chip. Without a key, Jamendo only shows the row "Add your
    free Jamendo key".
+
+## Your own sources
+
+In **Settings › Sources › Add Source**, type or paste one of these and Vinyl works out what
+it is:
+
+- an **archive.org collection** id or link (searched like the built-in source);
+- a **Vinyl catalog**: an open JSON format (see `docs/FREEMUSIC.md`);
+- a **podcast or music feed** (RSS, Atom, Media RSS: the feed is an album, its episodes are
+  the tracks) or an **OPML** list of feeds;
+- your own **Subsonic-compatible server** (Navidrome, Funkwhale, Airsonic, Gonic...), with
+  its address, user and password. The password is sent as a salted token, as the Subsonic
+  API specifies.
+
+Each source has a switch; tap one to test, rename, move or remove it, and pull down to
+refresh them. Only add sources whose music you are allowed
+to download.
 
 ## Settings and options
 

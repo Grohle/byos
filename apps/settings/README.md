@@ -6,10 +6,10 @@ gestures, the Control Centre, the keyboard and developer tools, all in one place
 
 <p align="center">
   <img src="../../docs/media/apps/settings/01_settings.png" width="160" alt="Settings">
-  <img src="../../docs/media/apps/settings/03_usb.png" width="160" alt="USB">
-  <img src="../../docs/media/apps/settings/05_sound.png" width="160" alt="Sound">
-  <img src="../../docs/media/apps/settings/10_gestures.png" width="160" alt="Gestures">
-  <img src="../../docs/media/apps/settings/09_home_screen.png" width="160" alt="Home Screen">
+  <img src="../../docs/media/apps/settings/10_usb.png" width="160" alt="USB">
+  <img src="../../docs/media/apps/settings/07_sound.png" width="160" alt="Sound">
+  <img src="../../docs/media/apps/settings/14_gestures.png" width="160" alt="Gestures">
+  <img src="../../docs/media/apps/settings/12_home_screen.png" width="160" alt="Home Screen">
 </p>
 
 Status: **Beta**. The HiByOS pages (home screen, gestures, Control Centre, keyboard,
@@ -19,8 +19,8 @@ been tested on the device yet (`docs/research_settings_api.md` §7).
 
 ## Features
 
-Open **Settings** from the dock (grey gear) or **Customize** on the home screen. The **USB
-DAC** icon opens the USB page directly.
+Open **Settings** on the home screen (grey gear). The old **Customize** app is now the
+**Personalization** section of Settings: Home Screen, Control Center, Gestures and Keyboard.
 
 | Group | Page | What is in it |
 |---|---|---|
@@ -34,20 +34,23 @@ DAC** icon opens the USB page directly.
 | HiByOS | **Music Library** | counts, *Find New Music Automatically*, *Library on the SD card* and *Cover cache on the SD card* (reboot to apply) |
 | | **Home Screen** | live preview, icon size, columns, app names, page dots, dock background, dim the wallpaper, wallpaper (images from `SD/Pictures`), widgets page, reset the home screen |
 | | **Gestures** | the action of each edge (bottom in apps, bottom on the home screen, top-left, top-right, left edge, right edge) with an animated preview: swipe from the edge on the page to see it |
-| | **Control Center** | which controls appear: USB only, Power mode, USB DAC, HiBy panel, Wireless, Digital filter, Files, Customize |
+| | **Control Center** | which controls appear, in two groups: Airplane Mode, Noise Control, Bluetooth, Wi-Fi, USB only, Power mode; then USB DAC, Digital filter, Files, Settings |
 | | **Keyboard** | height (Compact, Normal, Tall), number row, layout (English QWERTY, Spanish QWERTY, French AZERTY) |
 | | **Developer** | ADB: Off, Wi-Fi (shows the address to `adb connect`) or USB |
 
 <p align="center">
   <img src="../../docs/media/apps/settings/02_settings_more.png" width="160" alt="Settings, scrolled">
-  <img src="../../docs/media/apps/settings/04_display.png" width="160" alt="Display and Brightness">
-  <img src="../../docs/media/apps/settings/07_streaming.png" width="160" alt="Streaming">
-  <img src="../../docs/media/apps/settings/08_general.png" width="160" alt="General">
-  <img src="../../docs/media/apps/settings/11_control_centre.png" width="160" alt="Control Center">
+  <img src="../../docs/media/apps/settings/08_display.png" width="160" alt="Display and Brightness">
+  <img src="../../docs/media/apps/settings/11_streaming.png" width="160" alt="Streaming">
+  <img src="../../docs/media/apps/settings/03_general.png" width="160" alt="General">
+  <img src="../../docs/media/apps/settings/13_control_center.png" width="160" alt="Control Center">
 </p>
 <p align="center">
-  <img src="../../docs/media/apps/settings/12_music_library.png" width="160" alt="Music Library">
-  <img src="../../docs/media/apps/settings/06_sound_vm_notice.png" width="160" alt="Sound, with the notice shown when the player does not answer">
+  <img src="../../docs/media/apps/settings/16_music_library.png" width="160" alt="Music Library">
+  <img src="../../docs/media/apps/settings/04_info.png" width="160" alt="Info">
+  <img src="../../docs/media/apps/settings/05_software_update.png" width="160" alt="Software Update">
+  <img src="../../docs/media/apps/settings/15_keyboard.png" width="160" alt="Keyboard">
+  <img src="../../docs/media/apps/settings/18_donate_qr.png" width="160" alt="Support the project">
 </p>
 
 ## How to use
@@ -81,9 +84,10 @@ the player in `/usr/data/user.ini`, exactly as when you change them in HiBy's ow
 
 ## Limitations / known issues
 
-- **The player's settings API (v7) has not been tested on the device yet.** When the player
-  does not answer (as in the QEMU harness), the pages show the saved values greyed out with the
-  notice "The player's settings are not responding" (screenshot above).
+- The player's settings (Sound, Display, Battery, USB) are read from and written to the
+  stock player through its settings API (v7), as in the screenshots above. If the player does
+  not answer, the pages show the saved values greyed out with the notice "The player's
+  settings are not responding".
 - Brightness, screen-off, idle power-off and the library update mode are new keys proposed for
   the next library version; until it knows them they are shown greyed out with the saved
   value (`docs/research_settings_api.md` §9).
@@ -91,8 +95,6 @@ the player in `/usr/data/user.ini`, exactly as when you change them in HiBy's ow
   warns before starting.
 - Performance power mode: the help text says 60 Hz, while `todo.md` records 48.7 Hz as the
   highest rate within the panel's specification (to be confirmed).
-- In the QEMU harness the HiByOS version shows "?" (no version file), so that page is not
-  pictured.
 
 ## Technical notes
 

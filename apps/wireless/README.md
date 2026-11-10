@@ -6,13 +6,16 @@ and HiBy Link.**
 
 <p align="center">
   <img src="../../docs/media/apps/wireless/01_wireless.png" width="160" alt="Wireless">
-  <img src="../../docs/media/apps/wireless/02_wifi.png" width="160" alt="Wi-Fi (off in the harness)">
-  <img src="../../docs/media/apps/wireless/03_bluetooth.png" width="160" alt="Bluetooth (off in the harness)">
+  <img src="../../docs/media/apps/wireless/02_wifi.png" width="160" alt="Wi-Fi">
+  <img src="../../docs/media/apps/wireless/03_network.png" width="160" alt="Network details">
+  <img src="../../docs/media/apps/wireless/04_adb_warning.png" width="160" alt="Warning before turning Wi-Fi off during ADB over Wi-Fi">
+  <img src="../../docs/media/apps/wireless/05_bluetooth.png" width="160" alt="Bluetooth">
 </p>
 
-Status: **Experimental**. It builds with zero warnings and its PC tests pass, but it **has
-not been run on the device yet**. The QEMU harness has no radios, so the screenshots only show
-the "off" state; the pages below are described from the code and `docs/WIRELESS.md`.
+Status: **Beta**. It runs on the device and the screenshots above are from the real player
+(network names and addresses blurred): the Wi-Fi list, network details, the warning shown
+before turning Wi-Fi off while ADB uses it, and the Bluetooth page. Joining a new network and
+pairing a new Bluetooth device have not been verified on the device yet.
 
 ## Features
 

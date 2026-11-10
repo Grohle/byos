@@ -12,12 +12,18 @@ info, for AirPods / Beats, Galaxy Buds, Nothing / CMF, Sony (read-only for now) 
 Google Fast Pair headset (battery).**
 
 <p align="center">
-  <img src="../../docs/media/apps/headphones/01_list.png" width="160" alt="Headphones list">
-  <img src="../../docs/media/apps/headphones/02_airpods.png" width="160" alt="AirPods Pro page">
-  <img src="../../docs/media/apps/headphones/03_galaxy.png" width="160" alt="Galaxy Buds2 Pro page">
-  <img src="../../docs/media/apps/headphones/04_equalizer.png" width="160" alt="Equalizer">
-  <img src="../../docs/media/apps/headphones/05_popup.png" width="160" alt="Connection card">
-  <img src="../../docs/media/apps/headphones/06_supported.png" width="160" alt="Supported devices">
+  <img src="../../docs/media/apps/headphones/01_no_headphones.png" width="160" alt="No headphones connected">
+  <img src="../../docs/media/apps/headphones/02_supported.png" width="160" alt="Supported devices">
+  <img src="../../docs/media/apps/headphones/03_supported_more.png" width="160" alt="Supported devices, more">
+</p>
+
+PC renders of the per-model pages with simulated headphones (`tests/buds_render.sh`):
+
+<p align="center">
+  <img src="../../docs/media/apps/headphones/04_render_airpods.png" width="160" alt="AirPods Pro page (PC render)">
+  <img src="../../docs/media/apps/headphones/05_render_galaxy.png" width="160" alt="Galaxy Buds2 Pro page (PC render)">
+  <img src="../../docs/media/apps/headphones/06_render_equalizer.png" width="160" alt="Equalizer (PC render)">
+  <img src="../../docs/media/apps/headphones/07_render_popup.png" width="160" alt="Connection card (PC render)">
 </p>
 
 *These images are PC renders of the app's real drawing code with simulated headphones

@@ -6,10 +6,10 @@ editor.**
 
 <p align="center">
   <img src="../../docs/media/apps/music/01_library.png" width="160" alt="Library">
-  <img src="../../docs/media/apps/music/03_albums.png" width="160" alt="Albums">
-  <img src="../../docs/media/apps/music/05_album_tracks.png" width="160" alt="Album page">
-  <img src="../../docs/media/apps/music/10_now_playing.png" width="160" alt="Now Playing">
-  <img src="../../docs/media/apps/music/12_lyrics.png" width="160" alt="Synced lyrics">
+  <img src="../../docs/media/apps/music/02_albums.png" width="160" alt="Albums">
+  <img src="../../docs/media/apps/music/03_album_tracks.png" width="160" alt="Album tracks">
+  <img src="../../docs/media/apps/music/09_now_playing.png" width="160" alt="Now Playing">
+  <img src="../../docs/media/apps/music/11_lyrics_search.png" width="160" alt="Choosing lyrics">
 </p>
 
 Status: **Beta**. The library, album pages and search are in daily use; some newer parts
@@ -48,25 +48,22 @@ verified on the device. See [Limitations](#limitations--known-issues).
   comments, file renaming with a pattern (album), and autocomplete from your library.
 
 <p align="center">
-  <img src="../../docs/media/apps/music/02_recently_added.png" width="160" alt="Recently Added">
-  <img src="../../docs/media/apps/music/06_artists.png" width="160" alt="Artists">
-  <img src="../../docs/media/apps/music/07_songs.png" width="160" alt="Songs">
-  <img src="../../docs/media/apps/music/08_search.png" width="160" alt="Search">
-  <img src="../../docs/media/apps/music/09_context_menu.png" width="160" alt="Context menu">
+  <img src="../../docs/media/apps/music/04_artists.png" width="160" alt="Artists">
+  <img src="../../docs/media/apps/music/05_artist.png" width="160" alt="Artist page">
+  <img src="../../docs/media/apps/music/06_songs.png" width="160" alt="Songs">
+  <img src="../../docs/media/apps/music/07_search.png" width="160" alt="Search">
+  <img src="../../docs/media/apps/music/08_song_menu.png" width="160" alt="Song menu">
 </p>
 <p align="center">
-  <img src="../../docs/media/apps/music/15_mixes.png" width="160" alt="Mixes">
-  <img src="../../docs/media/apps/music/16_daily_mix.png" width="160" alt="Daily Mix">
-  <img src="../../docs/media/apps/music/17_playlists.png" width="160" alt="Playlists">
-  <img src="../../docs/media/apps/music/18_genres.png" width="160" alt="Genres">
-  <img src="../../docs/media/apps/music/04_album.png" width="160" alt="Album page">
+  <img src="../../docs/media/apps/music/12_mixes.png" width="160" alt="Mixes">
+  <img src="../../docs/media/apps/music/13_daily_mix.png" width="160" alt="Daily Mix">
+  <img src="../../docs/media/apps/music/14_playlists.png" width="160" alt="Playlists">
+  <img src="../../docs/media/apps/music/15_genres.png" width="160" alt="Genres">
 </p>
 <p align="center">
-  <img src="../../docs/media/apps/music/11_now_playing_menu.png" width="160" alt="Now Playing menu">
-  <img src="../../docs/media/apps/music/14_no_lyrics.png" width="160" alt="No lyrics yet">
-  <img src="../../docs/media/apps/music/13_lyrics_timing.png" width="160" alt="Adjust lyrics timing">
-  <img src="../../docs/media/apps/music/19_tag_editor.png" width="160" alt="Tag editor">
-  <img src="../../docs/media/apps/music/20_tag_editor_more.png" width="160" alt="Tag editor: more tags">
+  <img src="../../docs/media/apps/music/10_now_playing_menu.png" width="160" alt="Now Playing menu">
+  <img src="../../docs/media/apps/music/16_tag_editor.png" width="160" alt="Tag editor">
+  <img src="../../docs/media/apps/music/17_apply_scope.png" width="160" alt="This song or the whole album">
 </p>
 
 ## How to use
@@ -122,8 +119,6 @@ System gestures work everywhere in the app:
 - The library is read-only (it is the player's database); new music needs a rescan by the
   player.
 - Cover and lyrics search need Wi-Fi.
-- In the screenshots (QEMU harness) the track is paused with no elapsed time because there is
-  no real player.
 
 ## Technical notes
 
@@ -145,4 +140,4 @@ More: `docs/LYRICS_AND_COVERS.md`, `docs/research_play_list.md`, `docs/research_
 - [All apps](../README.md)
 - [Files](../files/README.md) (also opens the tag editor for audio files)
 - [Settings › Music Library](../settings/README.md)
-- [Free Music](../freemusic/README.md) (downloads into `Music/Free`)
+- [Vinyl](../freemusic/README.md) (downloads into `Music/Free`)
