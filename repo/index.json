@@ -9,7 +9,7 @@
  "apps": [
   {
    "id": "org.hibymod.navegador",
-   "version": "1.0.0",
+   "version": "1.0.1",
    "min_hibymod": "0.1.0",
    "name": {
     "es": "Navegador",
@@ -26,10 +26,9 @@
    "ram_kb": 7000,
    "stop_player": true,
    "featured": true,
-   "size": 4300800,
-   "sha256": "2d5593b90d26e8fe0f0b34dc083627430047157c1e9ee41d3bccf6761a381ad3",
+   "size": 4311040,
    "icon": "icons/org.hibymod.navegador.png",
-   "hpk": "https://github.com/Grohle/hibyos/releases/download/apps-1/org.hibymod.navegador-1.0.0.hpk"
+   "available": false
   },
   {
    "id": "org.hibymod.hola",
