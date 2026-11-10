@@ -269,6 +269,7 @@ static int lyrics_preview(const char *lrc, const char *title)
     }
     fclose(f);
     float sc = 0; struct pkt p; int total = lp_draw(sc, title);
+    hz_hold++;
     for (;;) {
         if (!read_pkt(&p, 400) || !p.down) continue;
         int x = p.x, sy = p.y, moved = 0; float s0 = sc;
@@ -277,8 +278,8 @@ static int lyrics_preview(const char *lrc, const char *title)
             if (moved) { float mx = total - H + 20; if (mx < 0) mx = 0; sc = s0 - (cur_y - sy); if (sc < 0) sc = 0; if (sc > mx) sc = mx; total = lp_draw(sc, title); }
         }
         if (moved) continue;
-        if (sy < 94 && x < 100) return 0;
-        if (sy < 94 && x > W - 100) return 1;
+        if (sy < 94 && x < 100) { hz_hold--; return 0; }
+        if (sy < 94 && x > W - 100) { hz_hold--; return 1; }
     }
 }
 

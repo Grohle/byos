@@ -2,7 +2,7 @@
  * Diseno y medidas: docs/investigacion_overclock_energia.md. Sin overclock: la CPU ya va a
  * 1104 MHz (un 10 % sobre la hoja de datos) y la interfaz la limita el panel.
  *
- *  Ahorro:       30 fps en las animaciones, brillo como mucho 40, vm.dirty_expire 60 s
+ *  Ahorro:       pantalla a 30 Hz (30 fps), brillo como mucho 40, vm.dirty_expire 60 s
  *  Normal:       44 fps (el maximo del panel), brillo del usuario, 30 s
  *  Rendimiento:  pantalla a 60 Hz (reloj del LCD), sin topes; pensado para ir enchufado
  *
@@ -17,6 +17,12 @@
 enum { PW_SAVE, PW_NORMAL, PW_PERF };
 static int pw_mode = PW_NORMAL, pw_nocharge, pw_user_bl = -1;
 static void lcd_apply(void); static int lcd_hz;
+/* refresco en reposo: sin tocar la pantalla 1,5 s se baja al minimo viable; cualquier toque o
+ * tecla lo devuelve al del modo ANTES del primer fotograma (lcd_boost, microsegundos).
+ * hz_hold > 0: una pantalla pide refresco completo (video, navegador, letra). */
+static int lcd_idle_hz = 30, hz_hold, lcd_cur_hz;
+static double lcd_last_input;
+static void lcd_boost(void);
 static double pw_plug_t, pw_chg_t, pw_tick_t;
 static int pw_online = -1;
 
@@ -38,7 +44,7 @@ static void pw_save(void)
 }
 static void pw_apply(void)
 {
-    lcd_hz = pw_mode == PW_PERF ? 60 : 45; lcd_apply();      /* 60 Hz solo en Rendimiento */
+    lcd_hz = pw_mode == PW_PERF ? 60 : pw_mode == PW_SAVE ? 30 : 45; lcd_apply();      /* Ahorro 30, Normal 45, Rendimiento 60 Hz */
     int bl = sysfs_get(BL_PATH, -1);
     if (pw_mode == PW_SAVE) {
         if (bl > 40) { pw_user_bl = bl; sysfs_put(BL_PATH, 40); }
@@ -67,7 +73,7 @@ static void pw_load(void)
         else if (!strcmp(k, "lcd_hz")) lcd_hz = v == 60 ? 60 : 45;
     }
     if (f) fclose(f);
-    lcd_hz = pw_mode == PW_PERF ? 60 : 45;
+    lcd_hz = pw_mode == PW_PERF ? 60 : pw_mode == PW_SAVE ? 30 : 45;
     if (pw_mode == PW_SAVE) pw_apply();
     lcd_apply();
 }
@@ -75,7 +81,7 @@ static void pw_load(void)
 static void pw_tick(void)
 {
     double t = now_ms(); if (t - pw_tick_t < 1000) return; pw_tick_t = t;
-    if (lcd_hz != 45) lcd_apply();             /* el driver lo restaura al encender la pantalla */
+    lcd_apply();                                /* reposo o el driver lo restauro al encender la pantalla */
     int on = sysfs_get(USB_ONLINE, 0);
     if (on != pw_online) { pw_online = on; pw_plug_t = t; pw_chg_t = 0; }
     if (pw_nocharge && on && t - pw_plug_t > 7000 && (!pw_chg_t || t - pw_chg_t > 30000)) { sysfs_put(CHG_PATH, 0); pw_chg_t = t; }
@@ -98,9 +104,15 @@ static const char *pw_name(int m) { return m == PW_SAVE ? "Ahorro" : m == PW_PER
  * esperar a que BUSY se limpie y quitar CE. El driver puede restaurarlo al encender la
  * pantalla: pw_tick lo comprueba cada segundo y lo reaplica. docs/investigacion_60fps.md */
 #define LPCDR_PHYS 0x10000064u
-static int lcd_hz = 45;                   /* 45 (de serie) o 60 */
+static int lcd_hz = 45;                   /* 30 (Ahorro), 45 (de serie) o 60 (Rendimiento) */
 static volatile uint32_t *lpcdr;
-static uint32_t lcd_div(void) { return lcd_hz == 60 ? 0x17 : 0x20; }
+static uint32_t hz_div(int hz) { return hz >= 60 ? 0x17 : hz <= 20 ? 0x48 : hz <= 24 ? 0x3c : hz <= 30 ? 0x30 : 0x20; }   /* MPLL/(div+1): 60,9 / 44,3 / 29,8 / 24,0 / 19,8 Hz */
+static int lcd_want_hz(void)
+{
+    int idle = !hz_hold && now_ms() - lcd_last_input > 1500;
+    return idle && lcd_idle_hz < lcd_hz ? lcd_idle_hz : lcd_hz;
+}
+static uint32_t lcd_div(void) { return hz_div(lcd_cur_hz = lcd_want_hz()); }
 static void lcd_apply(void)
 {
     if (!lpcdr) {
@@ -115,5 +127,11 @@ static void lcd_apply(void)
     *lpcdr = base | 0x20000000u | lcd_div();    /* CE */
     for (int i = 0; i < 1000 && (*lpcdr & 0x10000000u); i++) {}   /* BUSY */
     *lpcdr = base | lcd_div();
-    lg("pantalla: %d Hz (LPCDR %08x)", lcd_hz, *lpcdr);
+    if (lcd_cur_hz != lcd_hz) {} else lg("pantalla: %d Hz (LPCDR %08x)", lcd_hz, *lpcdr);
+}
+/* llamado con cada evento de entrada: vuelve al refresco del modo al instante */
+static void lcd_boost(void)
+{
+    lcd_last_input = now_ms();
+    if (lcd_cur_hz != lcd_hz) lcd_apply();
 }

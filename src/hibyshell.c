@@ -69,6 +69,8 @@ static void present(void);
 static void pw_frame_cap(void);
 static void cc_open(int start_y);
 static void cc_conf_line(char *rest);
+static void lcd_boost(void);
+static int hz_hold;
 static void cc_conf_save(FILE *f);
 static int widgets_on;
 static void widgets_draw(uint16_t *d, int ox);
@@ -403,6 +405,7 @@ static int read_pkt(struct pkt *p, int timeout_ms)
         struct input_event e;
         if (read(ts, &e, sizeof e) != sizeof e) return 0;
         if (p->n < 24) p->ev[p->n++] = e;
+        if (p->n == 1) lcd_boost();                /* refresco completo antes del primer fotograma */
         if (e.type == EV_KEY && e.code == BTN_TOUCH) cur_down = e.value;
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_X) cur_x = e.value;
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_Y) cur_y = e.value;
@@ -693,7 +696,7 @@ static void hud_key(int code)
 {
     double t = now_ms();
     if (!hud_active) { hud_shown_at = t; hud_active = 1; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
-    hud_last_key = t;
+    hud_last_key = t; lcd_boost();
     hud_bump = 1;                                   /* la pildora se ensancha un instante (iOS) */
     /* sin barra de estado (Now Playing): se sigue el paso de la rueda */
     if (ocr_volume(st->capture ? fr1 : visible()) < 0) { vol_guess += code == KEY_RIGHT ? 1 : -1; if (vol_guess < 0) vol_guess = 0; if (vol_guess > 100) vol_guess = 100; }
