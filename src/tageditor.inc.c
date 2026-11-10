@@ -319,10 +319,15 @@ static void te_nav(uint16_t *d, const char *left, const char *title, const char 
     memcpy(d, fr1, 30 * W * 2);
     for (int yy = 30; yy < TE_TOP; yy++) for (int x = 0; x < W; x++) d[yy * W + x] = rgb(12, 12, 13);
     if (sep) for (int x = 0; x < W; x++) d[(TE_TOP - 1) * W + x] = rgb(38, 38, 40);
-    if (left) draw_text(d, 14, 68, left, 16, C_BLUE, 90, 0, H);
-    int tw = tw_n(title, 17, -1); if (tw > 150) tw = 150;
-    draw_text(d, (W - tw) / 2, 68, title, 17, 0xFFFF, 150, 0, H);
-    if (right) { int rw = tw_n(right, 16, -1); if (rw > 80) rw = 80; draw_text(d, W - 14 - rw, 68, right, 16, right_on ? C_BLUE : rgb(70, 70, 76), 80, 0, H); }
+    /* el titulo se centra en el hueco que dejan los dos botones (idiomas con textos largos) */
+    int lw = left ? tw_n(left, 16, -1) : 0, rw = right ? tw_n(right, 16, -1) : 0;
+    if (lw > 100) lw = 100; if (rw > 100) rw = 100;
+    int side = (lw > rw ? lw : rw) + 14 + 8, tmax = W - 2 * side;
+    if (tmax < 96) tmax = 96;
+    if (left) draw_text(d, 14, 68, left, 16, C_BLUE, 100, 0, H);
+    int tw = tw_n(title, 17, -1); if (tw > tmax) tw = tmax;
+    draw_text(d, (W - tw) / 2, 68, title, 17, 0xFFFF, tmax, 0, H);
+    if (right) draw_text(d, W - 14 - rw, 68, right, 16, right_on ? C_BLUE : rgb(70, 70, 76), 100, 0, H);
 }
 
 /* ------------------------------------------------------------------ pantalla con lista que se desplaza */
@@ -614,9 +619,9 @@ static void te_draw_main(uint16_t *d, const struct te_row *r, int sy, int presse
         break;
     }
     case R_FILE: {
-        draw_text(d, 32, cy, tr("Nombre del archivo"), 13, rgb(152, 152, 159), 110, TE_TOP, H);
+        draw_text(d, 32, sy + 19, tr("Nombre del archivo"), 12, rgb(152, 152, 159), W - 64, TE_TOP, H);   /* dos lineas: los nombres son largos */
         const char *b = strrchr(te_paths[0], '/'); b = b ? b + 1 : te_paths[0];
-        draw_text(d, 150, cy, te_fname_on ? te_fname : b, 14, te_fname_on ? C_BLUE : 0xFFFF, W - 16 - 12 - 150, TE_TOP, H);
+        draw_text(d, 32, sy + 40, te_fname_on ? te_fname : b, 15, te_fname_on ? C_BLUE : 0xFFFF, W - 64, TE_TOP, H);
         break;
     }
     case R_RENAME: {
@@ -631,7 +636,9 @@ static void te_build_main(struct te_scr *s)
 {
     s->n = 0; s->ch = 0;
     s->left = tr("Cancelar"); s->title = te_n > 1 ? tr("Editar canciones") : tr("Editar canción");
-    s->right = tr("Guardar"); s->right_on = te_any_dirty() && te_nm4a < te_n; s->draw = te_draw_main;
+    int tags = 0; for (int i = 0; i < te_nf; i++) tags |= te_fs[i].dirty;
+    s->right = tr("Guardar"); s->draw = te_draw_main;
+    s->right_on = (tags && te_nm4a < te_n) || te_fname_on || te_pat >= 0 || te_fold;   /* M4A: renombrar si, etiquetas no */
     struct te_row *r;
     if (te_n > 1) { snprintf(te_cap, sizeof te_cap, tr("%d canciones"), te_n); r = te_row_add(s, R_CAPTION, 0, 28); if (r) r->txt = te_cap; }
     else te_row_add(s, R_GAP, 0, 22);
@@ -641,7 +648,7 @@ static void te_build_main(struct te_scr *s)
     for (int i = HT_NFIELDS; i < te_nf; i++) { r = te_row_add(s, R_FIELD, 2, 40); if (r) r->idx = (short)i; }
     if (te_nm4a < te_n) te_row_add(s, R_ADD, 2, 40);
     r = te_row_add(s, R_HDR, 0, 34); if (r) r->txt = tr("Archivo");
-    if (te_n == 1) te_row_add(s, R_FILE, 3, 40);
+    if (te_n == 1) te_row_add(s, R_FILE, 3, 54);
     else {
         r = te_row_add(s, R_RENAME, 3, 40);
         static char sum[64];
@@ -894,7 +901,7 @@ static int rn_conflict(void)
 static void te_build_ren(struct te_scr *s)
 {
     s->n = 0; s->ch = 0;
-    s->left = tr("Cancelar"); s->title = tr("Renombrar archivos"); s->right = tr("Aceptar"); s->draw = te_draw_ren;
+    s->left = tr("Cancelar"); s->title = tr("Renombrar"); s->right = tr("Aceptar"); s->draw = te_draw_ren;
     rn_plan(rn_pat, rn_fold);
     int any = 0; for (int i = 0; i < rn_n; i++) any |= rn[i].change;
     s->right_on = !rn_conflict() && (any || rn_target[0] || (rn_pat < 0 && !rn_fold));
