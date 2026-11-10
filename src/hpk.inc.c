@@ -417,6 +417,7 @@ static int hpk_mf_parse(char *txt, struct hpk_info *in)
         else if (!strcmp(k, "author")) hpk_cpy(in->author, sizeof in->author, v);
         else if (!strcmp(k, "homepage")) hpk_cpy(in->homepage, sizeof in->homepage, v);
         else if (!strcmp(k, "refresh")) in->refresh_full = !strcmp(v, "full");
+        else if (!strcmp(k, "back")) in->back_app = !strcmp(v, "app");
         /* claves desconocidas: se ignoran (compatibilidad hacia delante) */
     }
     for (int i = 1; i < 3; i++) {

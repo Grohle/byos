@@ -134,6 +134,32 @@ static void run_ext_app(int a, int ix, int iy)
         if (waitpid(pid, &stt, WNOHANG) == pid) break;
         if (term_t && now_ms() - term_t > 1000) { kill(pid, SIGKILL); waitpid(pid, &stt, 0); break; }
         if (!read_pkt(&p, 50)) continue;
+        int ez = p.down && !term_t && p.y < 456 ? back_zone(p.x, p.y) : 0;
+        if (ez == 5 || (ez && !pk->back_app)) {
+            /* gesto del sistema (arriba, o un borde): retener hasta saber si el dedo se aleja */
+            struct pkt held[16]; int nh = 0; held[nh++] = p; int sx = p.x, sy = p.y, go = 0; double tg = now_ms();
+            while (read_pkt(&p, 600)) {
+                if (!p.down) break;
+                int dx = p.x - sx, dy = p.y - sy, along = ez == 5 ? dy : (ez == 2 || ez == 4) ? -dx : dx, across = ez == 5 ? abs(dx) : abs(dy);
+                if (along > 14 && along > across) { go = 1; break; }
+                if (across > 28 || along < -10 || now_ms() - tg > 450) break;
+                if (nh < 16) held[nh++] = p; else break;
+            }
+            if (go && ez == 5) {
+                /* la app en pausa; el shell dibuja directamente en la pagina que se ve */
+                kill(pid, SIGSTOP); msleep(30);
+                memcpy(fr0, fb_shown(), HM_FRAME_BYTES);
+                present_direct = 1;
+                own_top_gesture(sx, sy);
+                present_direct = 0;
+                kill(pid, SIGCONT);
+                continue;
+            }
+            if (go) { lg("app externa: atras desde el borde -> cerrar"); kill(pid, SIGTERM); term_t = now_ms(); drain_until_up(); continue; }
+            for (int i = 0; i < nh; i++) write(app_uin, held[i].ev, held[i].n * sizeof held[i].ev[0]);
+            if (p.n) write(app_uin, p.ev, p.n * sizeof p.ev[0]);
+            continue;
+        }
         if (p.down && p.y >= 456 && !term_t) {
             struct pkt held[16]; int nh = 0; held[nh++] = p; int sy = p.y, quit = 0;
             while (read_pkt(&p, 600)) { if (!p.down) break; if (sy - p.y > 30) { quit = 1; break; } if (nh < 16) held[nh++] = p; }

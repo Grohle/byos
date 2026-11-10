@@ -70,6 +70,16 @@ static pthread_mutex_t sock_mu = PTHREAD_MUTEX_INITIALIZER;
 
 static void cmd(char c) { if (write(fifo, &c, 1) != 1) lg("fifo: %s", strerror(errno)); }
 static uint16_t *visible(void) { return fb + (size_t)st->yoffset * W; }
+/* Presentacion directa: con una app externa en pausa (SIGSTOP) la pantalla esta retenida para
+ * ella y la libreria no presenta nada del shell; el shell escribe entonces en la pagina del fb
+ * que esta en pantalla (la app cambia de pagina por su cuenta: se pregunta al driver). */
+static int fb_fd = -1, present_direct;
+static uint16_t *fb_shown(void)
+{
+    struct fb_var_screeninfo v;
+    if (fb_fd < 0 || ioctl(fb_fd, FBIOGET_VSCREENINFO, &v) || v.yoffset > (unsigned)H) return fb;
+    return fb + (size_t)v.yoffset * W;
+}
 
 static int dirty_y0, dirty_y1;
 static int sp_on;                  /* aviso del sistema en pantalla (syspop.inc.c) */   /* presentacion parcial: solo estas filas cambiaron */
@@ -113,6 +123,12 @@ static void perf_frame(double t_in, double t_out, int rows)
 /* presenta frames[0] y espera a que el panel lo tenga */
 static void present(void)
 {
+    if (present_direct) {
+        memcpy(fb_shown(), fr0, HM_FRAME_BYTES);
+        dirty_y0 = dirty_y1 = 0; st->shell_beat++;
+        msleep(12);                                  /* ritmo de unos 60 Hz */
+        return;
+    }
     pw_frame_cap();
     uint32_t p = st->presents; double t = now_ms();
     int prow = dirty_y1 > dirty_y0 ? dirty_y1 - dirty_y0 : H;
@@ -1099,6 +1115,7 @@ int main(int argc, char **argv)
     int fbf = open("/dev/fb0", O_RDWR);
     struct fb_fix_screeninfo x; ioctl(fbf, FBIOGET_FSCREENINFO, &x);
     fb = mmap(0, x.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fbf, 0);
+    fb_fd = fbf;
     if (fb == MAP_FAILED) { lg("sin fb"); return 1; }
     fifo = open(HM_FIFO, O_WRONLY);
     if (fifo < 0) { lg("sin fifo"); return 1; }

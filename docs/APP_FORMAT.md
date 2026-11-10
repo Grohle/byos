@@ -50,6 +50,7 @@ quoted. Unknown keys are ignored (forward compatibility).
 | `stop_player` | no | `1` if the app needs the RAM and the music must be stopped; `0` by default |
 | `ram_kb` | rec. | estimate of the memory (KB) the app uses |
 | `refresh` | no | `full`: while the app is open the panel does not drop to the idle refresh rate (30 Hz after 1.5 s without touch). For a browser, video or animations without touching the screen |
+| `back` | no | `app`: a swipe in from the left or right edge is passed to the app (for apps with their own pages). Without it, the system back gesture closes the app, like back at the root of the built-in apps |
 | `category`, `author`, `homepage` | no | informational |
 
 Example (`apps/hola/manifest.ini`; the Spanish `name`/`description` values are the real file
