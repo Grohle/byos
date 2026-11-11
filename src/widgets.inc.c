@@ -1352,6 +1352,15 @@ static int wg_build(int type, int sz, int sx, int sy)
     s->nb = wg_nbcur; memcpy(s->b, wg_bcur, sizeof s->b);
     return 1;
 }
+/* pagina de widgets desactivada (Ajustes > Inicio): fuera todo lo que ocupa (imagenes de cada
+ * widget, la pagina compuesta y el fondo desenfocado); nada se refresca ni se compone */
+static void wg_wall_blur_release(void);
+static uint16_t *wg_cache;
+static void wg_free_all(void)
+{
+    for (int t = 0; t < WG_N; t++) for (int s = 0; s < 3; s++) { free(wg_spr[t][s].px); wg_spr[t][s].px = 0; }
+    free(wg_cache); wg_cache = 0; wg_cache_ok = 0; wg_wall_blur_release();
+}
 static void wg_free_unused(void)
 {
     for (int t = 0; t < WG_N; t++) for (int s = 0; s < 3; s++) if (wg_spr[t][s].px && !wg_has(t, s)) { free(wg_spr[t][s].px); wg_spr[t][s].px = 0; }
@@ -1360,7 +1369,6 @@ static void wg_free_unused(void)
 #ifndef WG_RENDER_ONLY
 /* ------------------------------------------------------------------ pagina (estatica) */
 static float wg_scroll, wg_cache_scroll; static int wg_cache_min;
-static uint16_t *wg_cache;
 static int wg_budget = 99;                   /* sprites que se pueden rehacer en esta composicion */
 static int wg_part_y0, wg_part_y1;           /* filas cambiadas (presentacion parcial) */
 static int wg_press = -1, wg_press_btn = -1, wg_scrolling;

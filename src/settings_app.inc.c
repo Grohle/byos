@@ -407,6 +407,7 @@ static void gesture_demo(uint16_t *d, int cx, int y0, int edge, int act, double 
 /* ------------------------------------------------------------------ paginas */
 static int set_labels, set_dots, set_dockbg, set_dim, set_wgpage;
 static int wg_page_on, wg_cache_ok, home_prev_ok;
+static void wg_free_all(void);
 static int set_lang_idx, set_icon_idx, set_cols_idx, set_kb_h = 1, set_kb_num = 0, set_kb_layout = 0, set_adb_mode;
 static int g_bottom_app_i, g_bottom_home_i, g_top_i, g_topr_i, g_left_i, g_right_i, g_chev;
 static const char *const O_ICON[] = { "Pequeños", "Normales", "Grandes" };
@@ -463,7 +464,7 @@ static void apply_look(void)
     int dim = L.dim != set_dim;
     L.labels = set_labels; L.dots = set_dots; L.dockbg = set_dockbg; L.dim = set_dim;
     if (dim) load_wall();
-    if (wg_page_on != set_wgpage) { wg_page_on = set_wgpage; if (!wg_page_on && (widgets_on || V.scroll < 0)) { widgets_on = 0; V.scroll = cur_page * W; } }
+    if (wg_page_on != set_wgpage) { wg_page_on = set_wgpage; if (!wg_page_on && (widgets_on || V.scroll < 0)) { widgets_on = 0; V.scroll = cur_page * W; } if (!wg_page_on) wg_free_all(); }
     wg_cache_ok = 0; home_prev_ok = 0; lconf_save();
 }
 static void apply_gestures(void)
@@ -572,7 +573,7 @@ static void page_home(struct spage *p)
                                                ROW("Puntos de página", R_TOGGLE, &set_dots, 0, 0, apply_look, 0, 0) }, 4 };
     p->secs[1] = (struct ssec){ "FONDO", 0, { ROW("Fondo de pantalla", R_NAV, 0, 0, 0, act_wallpaper_h, v_wall, 0),
                                               ROW("Oscurecer fondo", R_TOGGLE, &set_dim, 0, 0, apply_look, 0, 0) }, 2 };
-    p->secs[2] = (struct ssec){ "WIDGETS", "Mantén pulsado un widget para moverlo o quitarlo, como las apps.", {
+    p->secs[2] = (struct ssec){ "WIDGETS", "WG_PAGE_HELP", {
                                               ROW("Página de widgets", R_TOGGLE, &set_wgpage, 0, 0, apply_look, 0, 0),
                                               ROW("Editar widgets", R_NAV, 0, 0, 0, wg_edit_from_settings, 0, 0),
                                               ROW("Widgets", R_NAV, 0, 0, 0, nav_wg_list, v_wg_count, 0) }, 3 };
