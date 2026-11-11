@@ -218,8 +218,16 @@ After installing:
 - **Keep the `ByOS` folder on the card.** It is used for updates and for some caches.
 - You can delete `r3ii_2025.upt` from the card.
 - Recommended: in HiBy's music settings, set the library update to **Manual**. Big
-  libraries then don't rescan at every boot.
+  libraries then don't rescan at every boot. If you change a lot of music on the card
+  (or format it), set it back to **Automatic** once (**Settings › Music Library**) so the
+  library catches up.
 - ByOS follows the system language. To pick another one, open **Settings › Language**.
+
+> **If the interface shows errors** (HiBy's own menus appearing over ByOS, a light or
+> tinted look, the home screen not taking over), open HiBy's stock settings, turn
+> **Theme color off** and choose the **Dark** theme, then restart. ByOS is drawn for
+> HiBy's dark theme without the colour tint. It sets both at every start, but a factory
+> reset brings back the defaults until the next restart.
 
 **First steps:**
 - Swipe up from the bottom bar to go home.
@@ -264,6 +272,8 @@ Centre, power mode, DAC filter and installed apps.
 | Problem | What to do |
 |---|---|
 | The build says *"This is not the supported official firmware"* | Your `.upt` is a different version or was changed. Download it again from HiBy. ByOS only patches the exact supported version, so that nothing unexpected is written to your player. |
+| HiBy's menus show over ByOS, the look is light or tinted, or the home screen does not appear | In HiBy's stock settings turn **Theme color off** and pick the **Dark** theme, then restart (see the note in Step 5). After a factory reset this is the usual cause. |
+| The screen turns off or the player switches off by itself | These are HiBy's **Auto-Lock** and **auto power-off when idle** (5 minutes by default after a reset). Change them in **Settings › Display & Brightness** and **Settings › General › Auto Power-Off**. |
 | The screen is frozen | Hold the power button for about 10 seconds until the player turns off, then turn it on again. |
 | The player keeps restarting | After three failed starts in a row ByOS starts in **safe mode**: HiBy's original look, without ByOS. To leave safe mode, use the `NORMAL` command below. |
 | ByOS does not start at all | Use a command file (below). As a last resort, use `REINSTALL` with the official firmware at the root of the card. |
@@ -324,7 +334,9 @@ The player applies the command once and renames the file to `<name>.done`.
   - round controls: **USB only (don't charge the battery)**, **power mode**, **USB DAC**,
     Wireless, **DAC filter**, Files and Settings.
 
-  You choose and order the controls in Settings › Control Center.
+  You choose and order the controls in Settings › Control Center. Touch and hold a control
+  to open its page in Settings; from inside an app, controls that open another app close
+  the current one first (only one app runs at a time).
 - **Music app.** An Apple Music-style library:
   - albums in a cover grid; artists, songs, genres and recently added;
   - album pages, search, and a mini-player;
@@ -337,7 +349,12 @@ The player applies the command once and renames the file to `<name>.done`.
   - icons at the same height;
   - a rounded battery;
   - no icon when Wi-Fi or Bluetooth are off.
-- **Volume HUD:** an iOS volume pill that follows the real level.
+- **Volume HUD:** an iOS volume pill that follows the real level (read from the player,
+  50 or 100 steps), drawn over whatever is on screen.
+- **Rounded screen corners** on every screen, HiBy's included (Settings › Display &
+  Brightness).
+- **Home indicator** in the apps: it rises when an app opens and slides away when you
+  leave it.
 - **Files.** A Finder-like file manager for the SD card and internal storage:
   - multi-select, rename, move, delete with progress, new folders;
   - a text editor and an image viewer.
@@ -397,6 +414,19 @@ Raising the clock brings a high risk of instability for no visible gain. See
 - Screen updates are synchronised with the panel scan, so there is no tearing.
 - A faster `wpa_cli` replaces the stock one, which the player runs every 3 s.
 - Memory tuning, and the player and its theme are served from fast storage.
+- **Resource manager.** The sound always comes first: the player has the highest memory
+  priority, then the ByOS interface and the system essentials; ByOS's helpers (covers,
+  network, tags, mixes) give way first, and whatever is playing (the radio, for example)
+  keeps its reserve. When memory runs critically low, a watcher cuts the helpers at once and
+  frees the system caches, inside apps too. **Settings › General › Memory** shows what is in
+  use and what the manager has done, and frees memory on demand.
+- **Self-repair.** Two quick failed starts in a row set the state files aside and start with
+  defaults; four also clear the caches. If the interface stops, its last image stays on the
+  screen while it restarts instead of showing HiBy's menus.
+- **Clean installs.** After a factory reset ByOS sets HiBy's dark theme, turns the colour
+  tint off and prepares its home screen by itself, restarting once.
+- **Wi-Fi stability.** The Wi-Fi driver's TCP ACK suppression is turned off: under long
+  streams (internet radio, downloads) it exhausted the driver and crashed the kernel.
 
 ## Screenshots
 
@@ -474,11 +504,24 @@ user guide is [apps/store](apps/store/README.md).
   | `hibyshot.py` | screenshot |
   | `readme_shots.py` | scripted screenshot tours |
   | `recsheet.py` | turns recordings into frame-by-frame contact sheets with frame timings |
+  | `recnet.py` | unlimited live recording streamed from the player (`hibyctl recnet`), decoding and timing stats |
   | `raw2png.py` | converts a raw RGB565 frame to PNG |
   | `device/*.sh` | diagnostics and benchmarks run on the device |
 
   On the device, `hibyctl` (in `/usr/bin`) injects touches and keys, takes screenshots,
   records frames (`hibyctl rec`) and measures fps.
+- **Restarting the player from ADB:** plain `reboot` powers this player **off** (it has to
+  be switched on by hand). To restart it, let the hardware watchdog reset it, from a
+  process that keeps `/dev/watchdog` open (it restarts in about 30 s and boots by itself):
+  ```
+  adb shell 'printf "#!/bin/sh
+exec 3>/dev/watchdog
+echo 1 >&3
+sleep 600
+" > /tmp/wd.sh; chmod 755 /tmp/wd.sh; sync; start-stop-daemon -S -b -x /tmp/wd.sh'
+  ```
+- **Frame profiler:** create `/tmp/hibymod/perf` and restart the interface; every animation
+  then logs its frame count, average and worst drawing time to `/tmp/hibymod/shell.log`.
 - **Test VM** ([apps/harness_vm](apps/harness_vm)): a QEMU `mipsel` machine with a 320×480
   framebuffer and the same input devices and memory as the HiBy. It boots in about 4 s and
   is used to try apps and stress memory without touching the device. See
@@ -603,8 +646,9 @@ official HiBy firmware is not part of it and is never redistributed.
 
 ## Acknowledgments
 
-- **HiBy**, for an excellent little player whose firmware is open enough (Linux, JSON
-  views, a stock recovery) to be extended safely.
+- **The community**, for everything shared about the R3 II's firmware and, above all, about
+  how to reach ADB on it: those findings are what made this project possible.
+- **HiBy**, for not closing the door to custom firmware.
 - **[stb](https://github.com/nothings/stb)** by Sean Barrett, **SQLite**, **Mbed TLS** and
   the **Independent JPEG Group**, used inside ByOS.
 - **[LRCLIB](https://lrclib.net)**, the **iTunes Search API** and the
