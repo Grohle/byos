@@ -494,10 +494,13 @@ static const char *v_wall(void)
 {
     /* los fondos de serie, con su nombre traducido (tr cachea por puntero: siempre literales) */
     static const char *const std[] = { "Negro", "Aurora", "Medianoche", "Océano", "Brasa", "Bosque", "Grafito", "Plata", "Atardecer" };
+    /* nombres de fichero: solo ASCII (las actualizaciones por Internet no admiten otros); "Oceano.png"
+     * se muestra como "Océano" (los de antes con tilde siguen valiendo) */
+    static const char *const file[] = { "Negro", "Aurora", "Medianoche", "Oceano", "Brasa", "Bosque", "Grafito", "Plata", "Atardecer" };
     if (!L.wall[0]) return tr(std[1]);
     static char b[64]; const char *n = strrchr(L.wall, '/'); snprintf(b, sizeof b, "%s", n ? n + 1 : L.wall);
     char *e = strrchr(b, '.'); if (e && e != b) *e = 0;
-    for (unsigned i = 0; i < sizeof std / sizeof *std; i++) if (!strcmp(b, std[i])) return tr(std[i]);
+    for (unsigned i = 0; i < sizeof std / sizeof *std; i++) if (!strcmp(b, std[i]) || !strcmp(b, file[i])) return tr(std[i]);
     return b;
 }
 static void page_gestures(struct spage *p);
