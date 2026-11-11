@@ -55,14 +55,14 @@ on these pages were taken on a real HiBy R3 II (2025).
 ## Contents
 
 - [Apps](#apps)
-- [Install ByOS (step by step)](#install-hibyos-step-by-step)
+- [Install ByOS (step by step)](#install-byos-step-by-step)
 - [Update, uninstall and recovery](#update-uninstall-and-recovery)
 - [What it does](#what-it-does)
 - [Installing apps](#installing-apps)
 - [ADB and developer tools](#adb-and-developer-tools)
 - [Building from source](#building-from-source)
 - [How it works](#how-it-works)
-- [Status and known limitations](#status-and-known-limitations)
+- [Known issues](#known-issues)
 - [Support the project](#support-the-project)
 - [Licence](#licence)
 
@@ -349,8 +349,9 @@ The player applies the command once and renames the file to `<name>.done`.
   - icons at the same height;
   - a rounded battery;
   - no icon when Wi-Fi or Bluetooth are off.
-- **Volume HUD:** an iOS volume pill that follows the real level (read from the player,
-  50 or 100 steps), drawn over whatever is on screen.
+- **Volume indicator** (Settings › Sound › Volume Indicator): **HiBy** (default) shows the
+  player's own volume bar on every screen, ByOS's included; **ByOS** shows an iOS volume
+  pill that follows the real level (50 or 100 steps). The pill is still being polished.
 - **Rounded screen corners** on every screen, HiBy's included (Settings › Display &
   Brightness).
 - **Home indicator** in the apps: it rises when an app opens and slides away when you
@@ -427,6 +428,20 @@ Raising the clock brings a high risk of instability for no visible gain. See
   tint off and prepares its home screen by itself, restarting once.
 - **Wi-Fi stability.** The Wi-Fi driver's TCP ACK suppression is turned off: under long
   streams (internet radio, downloads) it exhausted the driver and crashed the kernel.
+- **Stability guard (`hibyguard`).** The R3 II has no swap: when memory runs short, Linux
+  keeps evicting the code of every program and reading it back from flash, and the player
+  crawls or freezes (the stock firmware does this too after long uptimes). A small guard,
+  locked in RAM and running at real-time priority so it never stalls itself, watches free
+  memory and that re-read rate every second. It acts in steps: it cuts ByOS's helpers and
+  frees kernel caches, asks the interface to restart itself (invisibly, at the home screen),
+  and restarts a bloated interface. The player and whatever is playing are never touched, and
+  they get the strongest protection from the kernel's out-of-memory killer. Only if the
+  device is truly frozen does it let the **hardware watchdog** restart it (about 30 s), and the
+  reason is written to `ByOS/logs/guard.log` on the card. Two such restarts within 30 minutes
+  switch the watchdog off by themselves. To turn the guard off, create
+  `/usr/data/hibymod/guard_off`.
+- **Memory given back.** Each app's working memory returns to the system when the app
+  closes, so the interface stays near its start-up size instead of growing app after app.
 
 ## Screenshots
 
@@ -511,15 +526,12 @@ user guide is [apps/store](apps/store/README.md).
   On the device, `hibyctl` (in `/usr/bin`) injects touches and keys, takes screenshots,
   records frames (`hibyctl rec`) and measures fps.
 - **Restarting the player from ADB:** plain `reboot` powers this player **off** (it has to
-  be switched on by hand). To restart it, let the hardware watchdog reset it, from a
-  process that keeps `/dev/watchdog` open (it restarts in about 30 s and boots by itself):
+  be switched on by hand). Restart it with the guard, which lets the hardware watchdog reset
+  it after flushing the card (it comes back by itself in under a minute):
   ```
-  adb shell 'printf "#!/bin/sh
-exec 3>/dev/watchdog
-echo 1 >&3
-sleep 600
-" > /tmp/wd.sh; chmod 755 /tmp/wd.sh; sync; start-stop-daemon -S -b -x /tmp/wd.sh'
+  adb shell /usr/data/hibymod/shell/hibyguard reboot
   ```
+  `hibyguard status` prints free memory, the re-read rate and the interface and player sizes.
 - **Frame profiler:** create `/tmp/hibymod/perf` and restart the interface; every animation
   then logs its frame count, average and worst drawing time to `/tmp/hibymod/shell.log`.
 - **Test VM** ([apps/harness_vm](apps/harness_vm)): a QEMU `mipsel` machine with a 320×480
@@ -606,17 +618,47 @@ stock interface and plays the audio. Around it:
 | [LYRICS_AND_COVERS.md](docs/LYRICS_AND_COVERS.md) | Lyrics and cover-art search |
 | [APP_FORMAT.md](docs/APP_FORMAT.md) | The `.hpk` app format and SDK |
 
-## Status and known limitations
+## Known issues
 
-- **Tested on one device.** Reports from other R3 II (2025) units are welcome.
-- **Partly restyled.** Tidal, Qobuz and a few of HiBy's own pages (the USB connection screen,
-  some system dialogs) keep the stock look apart from the status bar and the ByOS
-  gestures.
-- **The browser app** is not available yet: it needs more memory than the player leaves
-  free, and stays blocked until it passes the off-device tests.
+This is a work in progress, tested on one player. What is known not to work well yet:
+
+**Bluetooth**
+- Pairing and connecting headphones does **not work yet with Samsung Galaxy Buds, Soundcore
+  Q30 or Apple earphones** (AirPods). They may not show in the list or fail to connect.
+- Bluetooth is **somewhat unstable**: when memory is short, BlueZ can take 8-13 s to answer
+  and the device list may lag. ByOS now keeps the last list while Bluetooth is alive instead
+  of showing "Bluetooth isn't responding", but turning it off and on can still help.
+- The search looks for classic Bluetooth devices only (headphones in pairing mode), to keep
+  the flood of nearby Bluetooth LE beacons from overloading BlueZ.
+
+**Memory and smoothness**
+- The player has 57 MB of RAM, no swap, and HiBy's own player uses about 12 MB of it. Inside
+  heavy apps free memory can still drop to 3-4 MB and the interface slows down; the guard
+  then frees memory step by step (see "Stability and speed fixes"). Swap or compressed RAM
+  (zram) would need a rebuilt kernel: it is being researched.
+- A short stutter can show on the first frame of some page transitions, and scrolling the
+  album grid in Music (while covers load) and Books runs at about 25-30 fps instead of 44.
+- With the **ByOS** volume indicator, a strip of the home screen can flash over an app for a
+  single frame at some volume levels (under investigation). HiBy's indicator, the default,
+  avoids it.
+
+**Apps and screens**
+- **Tidal, Qobuz** and a few of HiBy's own pages (the USB connection screen, some system
+  dialogs) keep the stock look apart from the status bar and the ByOS gestures; typing in
+  Qobuz uses HiBy's keyboard.
+- **The browser app** is not available yet: it needs more memory than the player leaves free,
+  and stays blocked until it passes the off-device tests.
 - **YouTube Music is not included.** The research is in `docs/`.
-- **USB only (no charging).** The battery charger driver re-enables charging a few seconds
+
+**System**
+- After a **factory reset**, HiBy's light theme and colour tint come back until the next
+  restart, and HiBy's menus can show over ByOS: see the note in Step 5.
+- With the library update set to **Manual**, Info and Music keep showing songs that are no
+  longer on the card (for example after formatting it) until the library is updated.
+- **USB only (no charging):** the battery charger driver re-enables charging a few seconds
   after every plug-in, so ByOS reasserts the setting every 30 s while USB is connected.
+- From ADB, plain `reboot` switches the player off; use `hibyguard reboot` (see "ADB and
+  developer tools").
 
 ## Support the project
 
