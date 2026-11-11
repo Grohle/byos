@@ -1357,11 +1357,39 @@ static int wg_snap_ok;
 static double wg_pf_build; static int wg_pf_nb;   /* perfil: sprites rehechos y su tiempo */
 static int wg_content_h(void) { short xs[WG_MAX], ys[WG_MAX]; return wg_layout_items(xs, ys) + 46; }
 /* compone la pagina en dst (con el fondo si copy_wall; si no, dst ya lo tiene) */
+/* Fondo de la pagina de widgets (como la vista Hoy de iOS): el MISMO fondo de pantalla, quieto,
+ * que se desenfoca y oscurece segun entra la pagina. Antes la pagina traia su copia del fondo y
+ * se movia con ella: al deslizar se veia el corte entre los dos fondos. */
+static uint16_t *wg_wblur;                         /* fondo desenfocado y oscurecido (se suelta en reposo) */
+static uint16_t wg_wblur_of;                       /* firma del fondo del que salio */
+static const uint16_t *wg_wall_blur(void)
+{
+    uint16_t sig = (uint16_t)(wall[40 * W + 7] ^ wall[200 * W + 160] ^ wall[460 * W + 300] ^ wall[300 * W + 31]);
+    if (wg_wblur && wg_wblur_of == sig) return wg_wblur;
+    if (!wg_wblur) wg_wblur = lazy_alloc((void **)&wg_wblur, HM_FRAME_BYTES, 0);
+    if (!wg_wblur) return 0;
+    double t0 = now_ms();
+    cc_blur(wall, wg_wblur);
+    for (int i = 30 * W; i < W * H; i++) wg_wblur[i] = dim565(wg_wblur[i], 25);
+    wg_wblur_of = sig;
+    lg("widgets: fondo desenfocado en %.0f ms", now_ms() - t0);
+    return wg_wblur;
+}
+/* filas 30..H: fondo con desenfoque k/32 (0 = nitido, 32 = el de la pagina de widgets) */
+static void wg_bg(uint16_t *dst, int k)
+{
+    const uint16_t *b = k > 0 ? wg_wall_blur() : 0;
+    if (!b || k <= 0) { memcpy(dst + 30 * W, wall + 30 * W, (H - 30) * W * 2); return; }
+    if (k >= 32) memcpy(dst, b, HM_FRAME_BYTES);
+    else for (int i = 0; i < W * H; i++) dst[i] = blend565(wall[i], b[i], k);
+    compose_statusbar_on(dst, dst);                /* la barra de estado, desenfocada igual (sin costura) */
+}
+static int wg_ox;                                  /* desplazamiento horizontal de los widgets al deslizar */
 static void wg_compose_to(uint16_t *dst, int copy_wall)
 {
     wg_masks_init();
     if (wg_fresh || !wg_snap_ok) { wg_fresh = 0; wg_snap(); wg_snap_ok = 1; }
-    if (copy_wall) memcpy(dst + 30 * W, wall + 30 * W, (H - 30) * W * 2);
+    if (copy_wall) wg_bg(dst, 32);
     short xs[WG_MAX], ys[WG_MAX]; int tot = wg_layout_items(xs, ys);
     int top = WG_TOP - (int)wg_scroll, pending = 0, y0 = H, y1 = 0, c0 = wg_cy0, c1 = wg_cy1;
     for (int i = 0; i < wg_n; i++) {
@@ -1377,14 +1405,15 @@ static void wg_compose_to(uint16_t *dst, int copy_wall)
                 if (y < y0) y0 = y; if (y + hh > y1) y1 = y + hh;
             } else pending = 1;
         }
-        if (sp->px) wg_blit_m(dst, sp->px, wg_w(s), wg_mask[s], wg_w(s), hh, x, y, 30, (int)WG_R);
+        if (sp->px) wg_blit_m(dst, sp->px, wg_w(s), wg_mask[s], wg_w(s), hh, x + wg_ox, y, 30, (int)WG_R);
     }
     /* "Editar" al final (como iOS) */
     int ey = top + tot + 4;
     wg_cy0 = 30; wg_cy1 = H;
-    if (!wg_n) wlb(dst, 20, top + 150, tr("Sin widgets"), 15, rgb(235, 235, 240), W - 40, W_MED, WA_C), ey = top + 170;
+    if (!wg_n) wlb(dst, 20 + wg_ox, top + 150, tr("Sin widgets"), 15, rgb(235, 235, 240), W - 40, W_MED, WA_C), ey = top + 170;
     int bw = wg_tw(tr("Editar"), 14, W_SEMI) + 32; if (bw > W - 40) bw = W - 40;
-    if (ey < H && ey + 30 > 30) { fill_rrect(dst, (W - bw) / 2, ey, bw, 30, 15, rgb(20, 20, 24), 120); wlb(dst, (W - bw) / 2 + 16, ey + 20, tr("Editar"), 14, 0xFFFF, bw - 32, W_SEMI, WA_C); }
+    int bx = (W - bw) / 2 + wg_ox;
+    if (ey < H && ey + 30 > 30 && bx > -bw && bx < W) { fill_rrect(dst, bx, ey, bw, 30, 15, rgb(20, 20, 24), 120); wlb(dst, bx + 16, ey + 20, tr("Editar"), 14, 0xFFFF, bw - 32, W_SEMI, WA_C); }
     wg_cy0 = c0; wg_cy1 = c1;
     if (pending) wg_fresh = 1;
     if (y1 > y0) { wg_part_y0 = y0 < 30 ? 30 : y0; wg_part_y1 = y1 > H ? H : y1; } else { wg_part_y0 = 30; wg_part_y1 = 31; }
@@ -1430,8 +1459,17 @@ static void widgets_draw(uint16_t *d, int ox)
         if (!data_only) wg_part_y0 = wg_part_y1 = 0;
     } else wg_part_y0 = wg_part_y1 = 0;
     if (!wg_cache) return;
-    int x0 = ox < 0 ? 0 : ox, x1 = ox + W > W ? W : ox + W;
-    if (x1 > x0) for (int y = 30; y < H; y++) memcpy(d + y * W + x0, wg_cache + y * W + (x0 - ox), (x1 - x0) * 2);
+    if (ox != 0) {
+        /* entrando o saliendo: el fondo no se mueve, se desenfoca en proporcion a lo que se ve
+         * de la pagina, y solo los widgets se deslizan encima (sin corte entre dos fondos) */
+        int vis = W - (ox < 0 ? -ox : ox), k = vis * 32 / W;
+        wg_bg(d, k);
+        wg_ox = ox; wg_budget = 0; wg_compose_to(d, 0); wg_budget = 99; wg_ox = 0;
+        wg_part_y0 = wg_part_y1 = 0;
+        goto pressed;
+    }
+    for (int y = 30; y < H; y++) memcpy(d + y * W, wg_cache + y * W, W * 2);
+    { const uint16_t *bl = wg_wall_blur(); if (bl) compose_statusbar_on(d, bl); }   /* barra sobre el fondo desenfocado */
 pressed:
     if (wg_press >= 0 && wg_press < wg_n && ox == 0) {   /* pulsado: el widget se hunde un poco (o se ilumina el boton) */
         short xs[WG_MAX], ys[WG_MAX]; wg_layout_items(xs, ys);

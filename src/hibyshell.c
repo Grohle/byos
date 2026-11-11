@@ -1290,7 +1290,11 @@ static void guard_tick(void)
         for (unsigned i = 0; i < sizeof guard_rules / sizeof *guard_rules; i++) {
             if (strcmp(comm, guard_rules[i].comm)) continue;
             snprintf(p, sizeof p, "/proc/%s/oom_score_adj", e->d_name);
-            if (guard_write(p, guard_rules[i].oom) > 0) changed++;
+            /* lo que esta sonando hereda la reserva: con la radio en marcha su ayudante de red
+             * queda justo detras del reproductor (y sin nice), no entre lo prescindible */
+            int radio = !strcmp(comm, "hibynet") && ra_active();
+            if (guard_write(p, radio ? -700 : guard_rules[i].oom) > 0) changed++;
+            if (radio) break;
             if (guard_rules[i].nice > -99) {
                 int pid = atoi(e->d_name);
                 errno = 0; int nv = getpriority(PRIO_PROCESS, (id_t)pid);

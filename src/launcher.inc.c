@@ -661,9 +661,12 @@ static void draw_app_at(uint16_t *dst, int a, int x, int y, int show_label, doub
 }
 
 /* barra de estado transparente (ver render_launcher) sobre el fondo, filas 0-29 */
-static void compose_statusbar(uint16_t *dst)
+static void compose_statusbar_on(uint16_t *dst, const uint16_t *bg);
+static void compose_statusbar(uint16_t *dst) { compose_statusbar_on(dst, wall); }
+/* la misma barra sobre otro fondo (filas 0-29 de bg): la pagina de widgets la desenfoca */
+static void compose_statusbar_on(uint16_t *dst, const uint16_t *bg)
 {
-    memcpy(dst, wall, 30 * W * 2);
+    if (bg != dst) memcpy(dst, bg, 30 * W * 2);
     for (int y = 0; y < 30; y++) {
         uint16_t *d = dst + y * W; const uint16_t *s = fr1 + y * W;
         int k = 22 + y * 10 / 30;

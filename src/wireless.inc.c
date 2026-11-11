@@ -474,8 +474,13 @@ static void wl_bt_refresh(void)
     static struct wl_dev dv[WL_MAXDEV];
     struct wl_adapter ad; int n = 0;
     double t0 = now_ms();
-    int rc = wl_bt_call(wl_dbus_out, sizeof wl_dbus_out, 3000, "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0, 0, 0);
-    if (!rc) n = wlp_bluez_objects(wl_dbus_out, &ad, dv, WL_MAXDEV); else memset(&ad, 0, sizeof ad);
+    int rc = wl_bt_call(wl_dbus_out, sizeof wl_dbus_out, 6000, "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0, 0, 0);
+    /* una respuesta lenta (bluetoothd ocupado buscando) no es "no responde": se mantiene lo
+     * ultimo que se supo; solo tras 3 fallos seguidos se da por caido */
+    static int fails;
+    if (!rc) { fails = 0; n = wlp_bluez_objects(wl_dbus_out, &ad, dv, WL_MAXDEV); }
+    else if (++fails < 3) { lg("bt: estado sin respuesta (%d), se mantiene el anterior", fails); return; }
+    else memset(&ad, 0, sizeof ad);
     pthread_mutex_lock(&wl_mu);
     WS.bavail = ad.found; WS.ad = ad;
     memcpy(WS.devs, dv, sizeof WS.devs); WS.ndevs = n;
@@ -503,7 +508,11 @@ static void wl_disc_start(void)
     fcntl(fd[1], F_SETFD, FD_CLOEXEC);
     wl_disc_pid = pid; wl_disc_fd = fd[1]; wl_disc_t0 = now_ms();
     /* su propio agente fuera: el de HiBy (bt-agent) sigue siendo el que empareja */
-    static const char c[] = "agent off\nscan on\n";
+    /* solo Bluetooth clasico (BR/EDR): los auriculares en modo emparejamiento se buscan asi, y
+     * se evita la avalancha de anuncios LE (balizas, "update-XXXX"...) que saturaba a bluetoothd
+     * y a D-Bus en este procesador: dejaba de responder y la lista se vaciaba. Sin "menu scan"
+     * (BlueZ antiguo) esas lineas se ignoran y busca como antes. */
+    static const char c[] = "agent off\nmenu scan\ntransport bredr\nduplicate-data off\nback\nscan on\n";
     if (write(wl_disc_fd, c, sizeof c - 1) < 0) lg("bt: bluetoothctl: %s", strerror(errno));
     lg("bt: busqueda iniciada (bluetoothctl %d)", (int)pid);
 }

@@ -281,6 +281,7 @@ static void sw_reveal_home(const uint16_t *home, int k0)
 static void app_switch_gesture(int sy, int sx)
 {
     sw_player_first = 0;
+    double g_t0 = now_ms();                      /* inicio del gesto: para el lanzamiento rapido */
     uint16_t *app = img_sheet, *home = img_base, *bg = img_app, *bg2 = img_under;
     memcpy(app, visible(), HM_FRAME_BYTES);
     if (st->ov_saved) for (uint32_t r = 0; r < st->ov_uh; r++)
@@ -293,8 +294,8 @@ static void app_switch_gesture(int sy, int sx)
     const uint16_t *ph = 0;
     st->ov_on = 0; ov_cur = 0;
     cmd('C');
-    double tc = now_ms(); while (!st->capture && now_ms() - tc < 200) msleep(2);
-    if (!st->capture) return;
+    double tc = now_ms(); while (!st->capture && now_ms() - tc < 400) msleep(2);
+    if (!st->capture) { lg("gesto: sin captura en 400 ms"); return; }
     struct pkt p; double vel = 0, lt = now_ms(), still_t = 0; int ly = sy, lx = sx, armed = 0; double prog = 0, arm_t = 0;
     /* velocidad real: posicion de hace ~80 ms (historial corto) */
     double ht[16]; int hy[16], hn = 0;
@@ -349,8 +350,12 @@ static void app_switch_gesture(int sy, int sx)
         if (!launcher_resume()) cmd('R');
         return;
     }
-    if (prog > 0.28 || vel < -0.5) {
-        lg("gesto: inicio");
+    /* lanzamiento rapido: con pocas muestras la velocidad suavizada salia casi 0 y la app
+     * volvia a su sitio (parpadeo sin ir al inicio). Cuenta tambien la media de todo el gesto. */
+    double gdt = now_ms() - g_t0, gdist = sy - cur_y;
+    int fling = gdist > 40 && gdt > 0 && gdist / gdt > 0.45;
+    if (prog > 0.28 || vel < -0.5 || fling) {
+        lg("gesto: inicio (prog %.2f vel %.2f media %.2f)", prog, vel, gdt > 0 ? gdist / gdt : 0);
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         int x, y, w, h; card_geom(0, (lx - sx) / (W * CARD_S + 18.0), s, (sy - cur_y) * 0.35, &x, &y, &w, &h);
         nav_start(NAV_HOME); card_to_home(home, app, x, y, w, h);

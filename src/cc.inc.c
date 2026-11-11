@@ -145,6 +145,11 @@ static void cc_rrect(uint16_t *d, int x0, int y0, int w, int h, float r, uint16_
         }
     }
 }
+/* estado real para los botones (iOS: color = encendido). Wi-Fi: lo pedido o lo guardado (ccair);
+ * DAC USB: modo USB 0 (audio) en los ajustes guardados del reproductor */
+static int air_wifi_now(void);
+static int cc_wifi_on(void) { return air_wifi_now(); }
+static int cc_usb_dac_on(void) { int v = 1; return !hs_ini_get("usbmode", &v) && v == 0; }
 static void cc_tile(uint16_t *d, int x, int y, int tile)
 {
     int on = 0; uint16_t acc = rgb(10, 132, 255); const char *ic = "gear";
@@ -153,9 +158,9 @@ static void cc_tile(uint16_t *d, int x, int y, int tile)
     case CT_AIRPLANE: on = cc_air_state(); acc = rgb(255, 149, 0); ic = "plane"; break;
     case CT_NOCHARGE: on = pw_nocharge; acc = rgb(48, 209, 88); ic = "plug"; break;
     case CT_POWER: on = pw_mode != PW_NORMAL; acc = pw_mode == PW_SAVE ? rgb(255, 204, 0) : rgb(255, 69, 58); ic = pw_mode == PW_SAVE ? "leaf" : pw_mode == PW_PERF ? "bolt" : "gauge"; break;
-    case CT_DAC: ic = "usb"; break;
+    case CT_DAC: on = cc_usb_dac_on(); ic = "usb"; break;
     case CT_BT: ic = "wifi"; break;          /* (se dibuja como modulo ancho: cc_bt_module) */
-    case CT_WIRELESS: ic = "wifi"; break;
+    case CT_WIRELESS: on = cc_wifi_on(); ic = "wifi"; break;
     case CT_FILTER: on = cc_filter_short() > 0; acc = rgb(191, 90, 242); ic = "wave"; break;
     case CT_FILES: ic = "folder"; break;
     case CT_SETTINGS: ic = "gear"; break;
@@ -521,7 +526,9 @@ static void cc_sun(uint16_t *d, float cx, float cy, float lv, uint16_t col)
 static void cc_slider_paint(uint16_t *d, const uint16_t *blur, float lv, float scale, float stretch)
 {
     /* zona: el modulo con margen para el crecimiento y la goma */
-    int zy0 = CC_Y - 14, zy1 = CC_Y + BR_H + 14;
+    /* margen de 24 filas: crece como mucho BR_H * 0.02 + 10 por cada lado (antes se salia
+     * por arriba y la punta se cortaba al estirar) */
+    int zy0 = CC_Y - 24, zy1 = CC_Y + BR_H + 24;
     for (int y = zy0; y < zy1; y++) memcpy(d + y * W + BR_X - 10, blur + y * W + BR_X - 10, (CC_T + 20) * 2);
     float w = CC_T * scale, h = BR_H * scale + fabsf(stretch);
     float cx = BR_X + CC_T / 2.f, cy = CC_Y + BR_H / 2.f - (stretch > 0 ? stretch / 2 : stretch < 0 ? stretch / 2 : 0);
@@ -541,7 +548,7 @@ static void cc_slider_paint(uint16_t *d, const uint16_t *blur, float lv, float s
 }
 static void cc_slider_draw(uint16_t *d, const uint16_t *blur, float lv, float scale, float stretch)
 {
-    cc_slider_paint(d, blur, lv, scale, stretch); present_rows(CC_Y - 14, CC_Y + BR_H + 14);
+    cc_slider_paint(d, blur, lv, scale, stretch); present_rows(CC_Y - 24, CC_Y + BR_H + 24);
 }
 /* 1 = se mantuvo pulsado sin mover (abrir Pantalla y brillo) */
 static int cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
@@ -560,8 +567,8 @@ static int cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
         int nb = (int)(lv * 101 + .5f); if (nb < 2) nb = 2;
         if (nb != last) { sysfs_put(BL_PATH, nb); last = nb; }
         double t = now_ms(); float k = (float)((t - lt) / 16.7); lt = t; if (k > 3) k = 3;
-        scale += (1.06f - scale) * (1 - powf(0.65f, k));          /* crece con muelle */
-        float st_t = over * BR_H; st_t = st_t > 0 ? 14 * (1 - expf(-st_t / 40)) : -14 * (1 - expf(st_t / 40));   /* goma */
+        scale += (1.04f - scale) * (1 - powf(0.65f, k));          /* crece con muelle */
+        float st_t = over * BR_H; st_t = st_t > 0 ? 10 * (1 - expf(-st_t / 40)) : -10 * (1 - expf(st_t / 40));   /* goma (tope 10 px) */
         stretch += (st_t - stretch) * (1 - powf(0.5f, k));
         cc_slider_draw(fr0, blur, lv, scale, stretch);
         if (got && !p.down) break;
