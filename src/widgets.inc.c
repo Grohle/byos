@@ -140,7 +140,7 @@ static void wg_bt_scan(struct wdata *n)
 {
     n->nbt = 0;
     char *argv[] = { "/usr/bin/dbus-send", "--system", "--print-reply", "--dest=org.bluez", "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0 };
-    static char out[24000];
+    static char out[96 * 1024];        /* con muchos dispositivos cerca 24 KB se cortaba y faltaba el conectado */
     if (access(argv[0], X_OK) || run_capture(argv, out, sizeof out) <= 0) return;
     /* por cada objeto dev_: Alias, Connected y Percentage */
     char alias[40] = ""; int conn = 0, pct = -1, indev = 0, want = 0;   /* 1 alias, 2 conectado, 3 bateria */
@@ -1010,9 +1010,16 @@ static void wg_render(int type, int sz, uint16_t *d, int w, int h)
         if (nh) for (int i = 0; i < nh && nd < (sz ? 4 : 2); i++)
             dv[nd++] = (struct wbi){ hp[i].pct, 2, hp[i].chg, hp[i].fam, hp[i].part, tr(hp[i].part == 1 ? "Izquierdo" : hp[i].part == 2 ? "Derecho" : hp[i].part == 3 ? "Estuche" : "Auriculares") };
         else for (int i = 0; i < D->nbt && nd < 4; i++) dv[nd++] = (struct wbi){ D->bt[i].pct, 1, 0, 0, 0, D->bt[i].name };
-        #define WG_ITEM(e, cx, cy, r, th) do { uint16_t col_ = wg_batt_col((e)->pct, (e)->chg, !(e)->kind); wg_ring(d, cx, cy, r, th, (e)->pct / 100.f, col_); \
+        /* anillo de iOS: pista tenue, avance de color (verde / rojo <= 20 % / amarillo en ahorro),
+         * el glifo del aparato dentro y, cargando, una insignia con el rayo encima del anillo.
+         * Sin dato de bateria (aparato que no lo informa): solo la pista y el glifo, atenuado. */
+        #define WG_ITEM(e, cx, cy, r, th) do { uint16_t col_ = wg_batt_col((e)->pct, (e)->chg, !(e)->kind); \
+            if ((e)->pct >= 0) wg_ring(d, cx, cy, r, th, (e)->pct / 100.f, col_); else wg_arc(d, cx, cy, r, th, 0, 0, C_TRACK, 60); \
+            uint16_t gc_ = (e)->pct >= 0 ? 0xFFFF : rgb(150, 150, 158); \
             if ((e)->kind == 2) buds_glyph(d, cx, (cy) - (r) * .04f, ((r) - (th)) / 34.f, (e)->fam, (e)->part, wg_cy0, wg_cy1); \
-            else if ((e)->kind) wg_glyph_phones(d, cx, cy, (r) * .78f, 0xFFFF); else wg_glyph_player(d, cx, cy, (r) * .8f, 0xFFFF); } while (0)
+            else if ((e)->kind) wg_glyph_phones(d, cx, cy, (r) * .78f, gc_); else wg_glyph_player(d, cx, cy, (r) * .8f, 0xFFFF); \
+            if ((e)->chg) { float br_ = (th) * .9f + 3; fill_circle(d, cx, (cy) - (r), br_, rgb(28, 28, 30), 255); \
+                wg_bolt(d, (cx) - br_ * .42f, (cy) - (r) - br_ * .62f, br_ * 1.25f, C_GREEN); } } while (0)
         if (sz == 0 && nd == 1) {
             WG_ITEM(&dv[0], w / 2.f, 58, 40, 9);
             wg_pct(d, w / 2.f, 124, dv[0].pct, dv[0].chg, 20, 0xFFFF);
@@ -1441,13 +1448,15 @@ static void widgets_draw(uint16_t *d, int ox)
     if (ox <= -W || ox >= W) return;
     static double pf_t, pf_acc, pf_cmp; static int pf_n, pf_nc;
     double pf0 = now_ms(), pf1 = pf0;
-    if (!WD.t || now_ms() - WD.t > 10000) wg_refresh();
+    /* a la vista: cada 4 s (un auricular recien conectado sale enseguida); si no, cada 10 s */
+    if (!WD.t || now_ms() - WD.t > (ox == 0 ? 4000 : 10000)) wg_refresh();
     if (npx_changed && widgets_on) npx_changed = 0;
     wg_np_poll();
     int settled = ox == 0 && !wg_scrolling, sch = wg_cache_scroll != wg_scroll;
     if (ox == 0 && wg_scrolling) {
         /* desplazamiento vertical: los sprites van directos sobre el fondo que ya puso
          * render_launcher (sin la copia a wg_cache y de vuelta: 2 x 290 KB menos por fotograma) */
+        wg_bg(d, 32);            /* el fondo desenfocado (antes quedaba el nitido del inicio al desplazar) */
         wg_budget = 0; wg_compose_to(d, 0); wg_budget = 99; pf_cmp += now_ms() - pf0; pf_nc++;
         wg_part_y0 = wg_part_y1 = 0; wg_cache_ok = 0; wg_cache_scroll = wg_scroll;
         goto pressed;

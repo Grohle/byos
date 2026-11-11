@@ -228,11 +228,14 @@ static int sw_loop(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, i
         int closable = hit == 0 && has_app;
         while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
             int dx = cur_x - tx, dy = cur_y - ty;
-            if (!mode && (abs(dx) > 10 || abs(dy) > 10)) mode = abs(dx) >= abs(dy) ? 1 : (dy < 0 && hit >= 0 ? 2 : 3);
+            if (!mode && (abs(dx) > 10 || abs(dy) > 10)) mode = abs(dx) >= abs(dy) ? 1 : hit >= 0 ? (dy < 0 ? 2 : 4) : 3;
             double t = now_ms(); if (t > lt) { vx = 0.6 * vx + 0.4 * (cur_x - lx) / (t - lt); vy = 0.6 * vy + 0.4 * (cur_y - ly) / (t - lt); lx = cur_x; ly = cur_y; lt = t; }
             if (mode == 1 && ncard > 1) {
                 off = o0 + dx / (W * CARD_S + 18.0); if (off < -0.25) off = -0.25; if (off > 1.25) off = 1.25;
                 switcher_frame(bg, c0, c1, off, CARD_S, 0, 1, 1);
+            } else if (mode == 4) {          /* hacia abajo: la tarjeta baja con el dedo (salir a ella) */
+                lift = -dy * 0.7; if (lift > 0) lift = 0;
+                sw_lift_card = hit; switcher_frame(bg, c0, c1, off, CARD_S, lift, c1 != 0, 1);
             } else if (mode == 2) {          /* la tarjeta sube con el dedo (la del reproductor, con goma) */
                 lift = -dy; if (lift < 0) lift = 0; if (!closable) lift = 40 * (1 - exp(-lift / 80.0));
                 sw_lift_card = hit; switcher_frame(bg, c0, c1, off, CARD_S, lift, c1 != 0, 1);
@@ -251,6 +254,16 @@ static int sw_loop(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, i
             }
             sw_lift_card = 0;
             if (gone) { lg("multitarea: app cerrada"); res = SW_CLOSED; }
+            continue;
+        }
+        if (mode == 4) {
+            /* arrastrar una tarjeta hacia abajo = salir de la multitarea a esa tarjeta; si no llega,
+             * vuelve a su sitio */
+            int open = cur_y - ty > 70 || vy > 0.5;
+            if (open) { sw_lift_card = 0; card_zoom_in(bg, hit == 0 ? c0 : c1, hit, off); res = hit == 0 && has_app ? SW_APP : SW_PLAYER; break; }
+            double from = lift, t0 = now_ms();
+            for (;;) { double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1; switcher_frame(bg, c0, c1, off, CARD_S, from * (1 - ease_out(t)), c1 != 0, 1); if (t >= 1) break; }
+            sw_lift_card = 0;
             continue;
         }
         if (mode == 1 && ncard > 1) {
