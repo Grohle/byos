@@ -1346,6 +1346,18 @@ static void wifi_tcpack_off(void)
  * reproductor carga launcher/mirror.png, y solo lo hace al arrancar. Sin esto se veia el menu
  * original por encima de ByOS hasta que alguien reiniciaba. Aqui: en reposo se genera el
  * espejo y, si el instalador aun no lo ha activado, se reinicia UNA vez (sin musica sonando). */
+/* Reiniciar de verdad: en este aparato "reboot" lo APAGA (hay que encenderlo a mano). El
+ * watchdog de hardware abierto y sin alimentar reinicia el chip en ~30 s y arranca solo.
+ * El descriptor se queda abierto en este proceso (al cerrarlo el controlador lo desactiva). */
+static void sys_restart(void)
+{
+    sync();
+    int f = open("/dev/watchdog", O_WRONLY);
+    if (f < 0) { lg("reinicio: sin watchdog (%s), se usa reboot", strerror(errno)); if (system("reboot")) {} return; }
+    if (write(f, "1", 1) != 1) lg("reinicio: watchdog sin escritura");
+    lg("reinicio: watchdog armado (~30 s)");
+    /* no se cierra f */
+}
 #define FIRST_SETUP_DONE "/usr/data/hibymod/first_setup_reboot"
 static void first_setup_tick(void)
 {
@@ -1357,8 +1369,7 @@ static void first_setup_tick(void)
     if (st->pcm_open && t - st->pcm_last_ms < 2000) return;          /* sonando: esperar */
     int f = open(FIRST_SETUP_DONE, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f < 0) return; close(f);
     lg("primera puesta en marcha: espejo del inicio listo, reiniciando para activarlo");
-    sync();
-    if (system("reboot")) lg("reboot: fallo");
+    sys_restart();
 }
 
 /* ------------------------------------------------------------------ gestor de recursos
