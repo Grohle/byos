@@ -1505,7 +1505,12 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
 static uint16_t *own_card; static int own_card_app = -1;
 static int own_home_gesture_body(int sx, int sy, int self);
 /* durante el gesto la barra de inicio se va (la pinta present encima de todo) */
-static int own_home_gesture(int sx, int sy, int self) { hb_block++; int r = own_home_gesture_body(sx, sy, self); hb_block--; return r; }
+static int own_home_gesture(int sx, int sy, int self)
+{
+    hb_block++; int r = own_home_gesture_body(sx, sy, self); hb_block--;
+    if (r) hb_after = now_ms() + 1e9;   /* se va al inicio: la barra no vuelve mientras la app termina de cerrarse */
+    return r;
+}
 static int own_home_gesture_body(int sx, int sy, int self)
 {
     double g_t0 = now_ms();
@@ -1513,8 +1518,11 @@ static int own_home_gesture_body(int sx, int sy, int self)
     if (!own_card) { drain_until_up(); return 1; }
     memcpy(own_card, fr0, HM_FRAME_BYTES); own_card_app = self; last_app = self;
     uint16_t *home = img_base, *bg = img_app, *bg2 = img_under;
+    double tp0 = now_ms();
     render_launcher(home, now_ms());
+    double tp1 = now_ms();
     dim_buf(bg, home, W * H, 22); dim_buf(bg2, home, W * H, 11);
+    lg("gesto inicio (app propia): preparar %.0f ms (inicio %.0f, desde el toque %.0f)", now_ms() - g_t0, tp1 - tp0, now_ms() - g_t0);
     have_under = 0;
     static uint16_t *phb; if (!phb) phb = lazy_alloc((void **)&phb, HM_FRAME_BYTES, 0);
     const uint16_t *ph = 0;          /* la tarjeta del reproductor se prepara solo si se mantiene el gesto */

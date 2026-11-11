@@ -135,4 +135,5 @@ static void shell_trim_extra(void)
     drop_pages(ab_gen_buf, sizeof ab_gen_buf);               /* audiolibros: idem */
     drop_pages(wg_scr, sizeof wg_scr);                       /* widgets: lienzo de un widget */
     st_tabbar_key = -1; drop_pages(st_tabbar, sizeof st_tabbar);   /* tienda: barra de pestanas en cache */
+    if (!widgets_on) wg_wall_blur_release();                 /* widgets: fondo desenfocado (fuera de su pagina) */
 }

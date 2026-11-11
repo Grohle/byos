@@ -1377,7 +1377,9 @@ static const uint16_t *wg_wall_blur(void)
 {
     uint16_t sig = (uint16_t)(wall[40 * W + 7] ^ wall[200 * W + 160] ^ wall[460 * W + 300] ^ wall[300 * W + 31]);
     if (wg_wblur && wg_wblur_of == sig) return wg_wblur;
-    if (!wg_wblur) wg_wblur = lazy_alloc((void **)&wg_wblur, HM_FRAME_BYTES, 0);
+    /* se conserva mientras se use la pagina de widgets (como lienzo "en reposo" se soltaba a cada
+     * momento y se recalculaba, 22-35 ms: tirones); wg_wall_blur_release() lo suelta al salir */
+    if (!wg_wblur) wg_wblur = malloc(HM_FRAME_BYTES);
     if (!wg_wblur) return 0;
     double t0 = now_ms();
     cc_blur(wall, wg_wblur);
@@ -1386,6 +1388,7 @@ static const uint16_t *wg_wall_blur(void)
     lg("widgets: fondo desenfocado en %.0f ms", now_ms() - t0);
     return wg_wblur;
 }
+static void wg_wall_blur_release(void) { free(wg_wblur); wg_wblur = 0; }
 /* filas 30..H: fondo con desenfoque k/32 (0 = nitido, 32 = el de la pagina de widgets) */
 static void wg_bg(uint16_t *dst, int k)
 {
@@ -1490,7 +1493,10 @@ pressed:
         struct wspr *sp = &wg_spr[t][s];
         if (wg_press_btn >= 0 && wg_press_btn < sp->nb) { const struct wbtn *b = &sp->b[wg_press_btn]; int c0 = wg_cy0; wg_cy0 = 30; fill_circle(d, x + b->x, y + b->y, b->r - 3, 0xFFFF, 56); wg_cy0 = c0; }
         else if (sp->px) {
-            for (int yy = y < 30 ? 30 : y; yy < y + h && yy < H; yy++) memcpy(d + yy * W + x, wall + yy * W + x, w * 2);
+            /* debajo del widget hundido: el fondo desenfocado de la pagina (con el nitido quedaba un
+             * recuadro sin oscurecer alrededor del widget pulsado) */
+            const uint16_t *bgp = wg_wall_blur(); if (!bgp) bgp = wall;
+            for (int yy = y < 30 ? 30 : y; yy < y + h && yy < H; yy++) memcpy(d + yy * W + x, bgp + yy * W + x, w * 2);
             wg_blit_xf(d, 30, sp->px, w, wg_mask[s], w, h, x + w / 2.f, y + h / 2.f, 0, 0.955f, 255, (int)WG_R);
         }
         wg_part_y0 = wg_part_y1 = 0;
@@ -1543,8 +1549,7 @@ static double wg_pf_bg, wg_pf_bl;
 static void wg_edit_frame(uint16_t *d, double t, float pa, int drag)
 {
     double q0 = now_ms();
-    compose_statusbar(d);
-    memcpy(d + 30 * W, wall + 30 * W, (H - 30) * W * 2);
+    wg_bg(d, 32);                        /* modo edicion: el mismo fondo desenfocado (barra incluida) */
     wg_pf_bg += now_ms() - q0;
     int top = WG_TOP + (int)wg_shift - (int)wg_scroll;
     for (int pass = 0; pass < 2; pass++) for (int i = 0; i < wg_n; i++) {
@@ -2038,8 +2043,8 @@ static void widgets_touch(struct pkt *p)
     case WG_NOW: id = "nowplaying"; break;
     case WG_STORAGE: id = "files"; break;
     case WG_LIB: case WG_NEW: case WG_LISTEN: case WG_MIX: id = "music"; break;
-    case WG_BATT: id = WDs.nhp || WDs.nhps ? "headphones" : "settings"; break;
-    case WG_POWER: id = "settings"; break;
+    case WG_BATT: id = WDs.nhp || WDs.nhps ? "headphones" : "settings"; if (!(WDs.nhp || WDs.nhps)) settings_start = SET_POWER; break;
+    case WG_POWER: id = "settings"; settings_start = SET_POWER; break;   /* Bateria y energia, no la raiz */
     }
     int a = id ? app_by_id(id) : -1;
     if (a < 0) { launcher_present(); return; }
