@@ -88,7 +88,10 @@ for vrel in ("layout/theme2/hiby_about_dev.view", "layout/theme3/hiby_about_dev.
             V.set_(el, "y", 192)
         elif n == "about_dev_iv_wechat":
             V.set_(el, "x", (320 - 150) // 2); V.set_(el, "y", 240)
-    dst = os.path.join(OVL, "usr", "resource", vrel)
+    # HiBy's own layout with our changes: never in overlay/ or in git (tools/vendor_edits.json
+    # rebuilds it from the user's firmware). Written to theme/work/ for --deploy and for
+    # `tools/vendor_edits.py update`.
+    dst = os.path.join(HERE, "work", "brand", "usr", "resource", vrel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     V.save(dst, root)
     out.append(("@" + vrel, dst))

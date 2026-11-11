@@ -115,7 +115,7 @@ def icons():
 def hibyos_logo():
     """Logo de ByOS para "Acerca de" (de theme/bootanim/logo.png, tools/bootanim.py)"""
     src = Image.open(os.path.join(HERE, "..", "theme", "bootanim", "logo.png")).convert("RGBA")
-    w = 160
+    w = 132
     save_ov(src.resize((w, round(src.height * w / src.width)), Image.LANCZOS), "hibyos_logo")
 
 
