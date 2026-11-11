@@ -187,6 +187,21 @@ static const uint16_t *cc_under;
 #define CC_NP_PLAY_X (NP_X + 14 + 48 + (NP_W - 14 - 48) / 2)
 #define CC_NP_PLAY_Y (CC_Y + 14 + 24)
 static int cc_np_pressed;                 /* 1 play, 2 anterior, 3 siguiente: resaltado al pulsar */
+/* Estado optimista de play/pausa (como widgets y Reproduciendo): el estado real lo deduce la
+ * libreria de las escrituras de audio y tarda de 1,5 s (pausa) a >10 s (arrancar una cola nueva,
+ * medido) en cambiar. Tras pulsar se muestra lo pedido hasta que el estado real coincide o pasan
+ * 8 s (si la orden fallo, vuelve el real). Un segundo toque se decide con este estado, no con el
+ * real atrasado (antes: pausar justo despues de arrancar mostraba "pausa" al reves). */
+static int cc_pp_force; static double cc_pp_until, cc_pp_t;
+static int cc_playing(const struct np_info *ni)
+{
+    if (!cc_pp_until) return ni->playing;
+    double t = now_ms();
+    if (t >= cc_pp_until || (ni->playing == cc_pp_force && t - cc_pp_t > 400)) { cc_pp_until = 0; return ni->playing; }
+    return cc_pp_force;
+}
+/* zona del modulo de reproduccion bajo (x, y): 1 play/pausa, 2 anterior, 3 siguiente, 0 nada */
+static int cc_np_zone(int x, int y);
 static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
 {
     memcpy(dst, blur, HM_FRAME_BYTES);
@@ -207,7 +222,7 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
         if (cok) npx_blit_cover(dst, cov, NP_X + 14, CC_Y + 14, 48, 9);
         else { int a = app_by_id("nowplaying"); if (a >= 0) blit_scaled(dst, &apps[a].icon[2], NP_X + 14, CC_Y + 14, 48, 48, 255); }
         const char *ti = ni.source && ni.title[0] ? ni.title : tr("Reproduciendo");
-        const char *ar = ni.source && ni.artist[0] ? ni.artist : tr(ni.playing ? "Sonando" : "En pausa");
+        const char *ar = ni.source && ni.artist[0] ? ni.artist : tr(cc_playing(&ni) ? "Sonando" : "En pausa");
         { int sz = 14; while (sz > 11 && tw_n(ti, sz, -1) > NP_W - 24) sz--; draw_text(dst, NP_X + 12, CC_Y + 84, ti, sz, 0xFFFF, NP_W - 24, 0, H); }
         draw_text(dst, NP_X + 12, CC_Y + 102, ar, 12, rgb(200, 200, 206), NP_W - 24, 0, H);
         /* controles (el modulo es pequeno: zonas grandes). Play/pausa a la derecha de la caratula;
@@ -216,7 +231,7 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
         uint16_t c = 0xFFFF;
         int px = CC_NP_PLAY_X, py = CC_NP_PLAY_Y;
         if (cc_np_pressed == 1) fill_circle(dst, px, py, 21, 0xFFFF, 60);
-        if (ni.playing) { fill_rrect(dst, px - 8, py - 11, 6, 22, 2, c, 255); fill_rrect(dst, px + 2, py - 11, 6, 22, 2, c, 255); }
+        if (cc_playing(&ni)) { fill_rrect(dst, px - 8, py - 11, 6, 22, 2, c, 255); fill_rrect(dst, px + 2, py - 11, 6, 22, 2, c, 255); }
         else cc_tri(dst, px - 7, py, 18, 11, 1);
         int cy = CC_Y + BR_H - 22, lx = NP_X + NP_W / 4, rx = NP_X + NP_W * 3 / 4;
         if (cc_np_pressed == 2) fill_circle(dst, lx, cy, 18, 0xFFFF, 60);
@@ -310,6 +325,28 @@ static void cc_open_settings(int start)
 {
     if (start == SET_WIRELESS && app_find("wireless") >= 0) { cc_open_app("wireless"); return; }   /* su propio icono */
     settings_start = start; cc_open_app("settings");
+}
+
+/* orden de reproduccion en un hilo: pc_toggle_or_replay espera la respuesta de la libreria
+ * cuando hay que volver a poner la cola. Una a la vez (pc_* comparte ficheros de peticion). */
+static volatile int cc_pc_busy;
+static void *cc_pc_th(void *a)
+{
+    int n = (int)(intptr_t)a;
+    if (n == 1) pc_toggle_or_replay(); else if (n == 2) pc_prev(); else pc_next();
+    cc_pc_busy = 0; return 0;
+}
+static void cc_pc_async(int n)
+{
+    for (int i = 0; i < 300 && cc_pc_busy; i++) msleep(10);   /* la anterior aun en curso (max 3 s) */
+    cc_pc_busy = 1; pthread_t th;
+    if (pthread_create(&th, 0, cc_pc_th, (void *)(intptr_t)n)) cc_pc_th((void *)(intptr_t)n); else pthread_detach(th);
+}
+static int cc_np_zone(int x, int y)
+{
+    if (x < NP_X || x >= NP_X + NP_W || y < CC_Y || y >= CC_Y + BR_H) return 0;
+    if (y > CC_Y + BR_H - 44) return x < NP_X + NP_W / 2 ? 2 : 3;
+    return x > NP_X + 68 && y < CC_Y + 72 ? 1 : 0;
 }
 
 /* ---- paginas: Centro de control <-> Reproductor (horizontal) e inicio (hacia arriba) ---- */
@@ -672,6 +709,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
     for (;;) {
         if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 500)) {
             int ext = cc_ext_poll();              /* puede dejar un rotulo (error de los auriculares) */
+            if (cc_pp_until && now_ms() >= cc_pp_until) npx_changed = 1;   /* fin del estado optimista: repintar con el real */
             if (ext || (cc_caption && now_ms() - cc_caption_t >= 1800) || npx_changed) { npx_changed = 0; if (cc_caption && now_ms() - cc_caption_t >= 1800) cc_caption = 0; cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present(); }
             continue;
         }
@@ -684,7 +722,11 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             }
             continue;
         }
-        if (hit >= 0) { cc_render(fr0, blur, hit); present(); }
+        /* al pulsar un control del modulo de reproduccion solo se marca su circulo (no toda la tarjeta) */
+        int npd = hit == 100 ? cc_np_zone(sx, sy) : 0;
+        double cc_t_down = now_ms();
+        if (npd) { cc_np_pressed = npd; cc_render(fr0, blur, -1); present(); lg("cc: control %d pulsado (%.0f ms)", npd, now_ms() - cc_t_down); }
+        else if (hit >= 0) { cc_render(fr0, blur, hit); present(); }
         /* decidir pronto: toque, pagina horizontal o subir al inicio */
         int dir = 0; double tdown = now_ms();
         while (cur_down) {
@@ -695,6 +737,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             if (dy < -14 && -dy > abs(dx)) { dir = 2; break; }        /* arriba: inicio */
             if (abs(dx) > 14 || dy > 14) { dir = 3; }
         }
+        if (dir) cc_np_pressed = 0;          /* arrastre o mantener: sin circulo de pulsado */
         if (dir == 4) {
             /* mantener pulsado: la pagina de Ajustes de ese control (como en iOS) */
             int tl = hit == 101 ? -1 : cc_tiles[hit >= 200 ? hit - 200 : hit];
@@ -717,13 +760,18 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         if (hit < 0) break;                                   /* toque fuera: cerrar */
         /* controles: play/pausa = todo lo que hay a la derecha de la caratula (arriba); abajo,
          * mitad izquierda anterior, mitad derecha siguiente */
-        int npc = hit != 100 ? 0 : sy > CC_Y + BR_H - 44 ? (sx < NP_X + NP_W / 2 ? 2 : 3) : (sx > NP_X + 68 && sy < CC_Y + 72 ? 1 : 0);
+        int npc = npd;
         if (npc) {
-            cc_np_pressed = npc; cc_render(fr0, blur, -1); present();
-            if (npc == 1) pc_toggle_or_replay(); else if (npc == 2) pc_prev(); else pc_next();
-            msleep(220); cc_np_pressed = 0; msleep(130); npx_changed = 1;
-            { struct np_info ni; memset(&ni, 0, sizeof ni); if (np_get(&ni) > 0) { pthread_mutex_lock(&npx_mu); npx = ni; pthread_mutex_unlock(&npx_mu); } }
+            if (npc == 1) {                     /* optimista: se muestra ya lo pedido */
+                struct np_info cur; static uint16_t cv[128 * 128]; int ok = 0; npx_snapshot(&cur, cv, &ok);
+                cc_pp_force = !cc_playing(&cur); cc_pp_t = now_ms(); cc_pp_until = cc_pp_t + 8000;
+            }
+            double t_up = now_ms();
+            msleep(70); cc_np_pressed = 0;
             cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+            lg("cc: control %d soltado %.0f ms tras pulsar, pintado en %.0f ms", npc, t_up - cc_t_down, now_ms() - t_up);
+            cc_pc_async(npc);                   /* la orden (volver a poner la cola tarda ~1 s) fuera del hilo de la interfaz */
+            npx_kick_until = now_ms() + 4000;
             continue;
         }
         if (hit == 100) {

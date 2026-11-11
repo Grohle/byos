@@ -169,7 +169,9 @@ static int pc_toggle_or_replay(void)
     if (np_get(&i) > 0 && i.stopped && !i.playing && i.path[0] && !access(i.path, R_OK)) {
         const char *pp = i.path;
         lg("play: la cola habia terminado; otra vez %s", i.path);
-        return pc_list_send(&pp, 1, 0, i.title[0] ? i.title : 0, 0) > 0 ? 0 : -1;
+        /* unscanned: lo ultimo puede ser un audiolibro, la radio o Vinyl (no estan en MEDIA_TABLE:
+         * sin esto la libreria contestaba "lista vacia" y no sonaba nada) */
+        return pc_list_send(&pp, 1, 0, i.title[0] ? i.title : 0, 0 | PC_UNSCANNED) > 0 ? 0 : -1;
     }
     return pc_toggle();
 }

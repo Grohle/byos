@@ -773,17 +773,20 @@ static void note_seek(int fd, long long off)
 }
 
 /* Proteccion del audio: el hilo que escribe al PCM (en este firmware "HiBy_Main_Thread",
- * ioctl WRITEI de tinyalsa; con BT/USB, snd_pcm_writei) pasa a SCHED_FIFO 10 la primera vez
- * que escribe. Casi siempre esta dormido esperando al DMA, asi que no le quita CPU a la UI;
- * solo gana la latencia de despertar. El kernel limita el tiempo real al 95 %
+ * ioctl WRITEI de tinyalsa; con BT/USB, snd_pcm_writei) esta en SCHED_FIFO 10 SOLO durante la
+ * escritura (rt_enter/rt_leave alrededor de la llamada real): gana la latencia de despertar
+ * cuando el DMA deja sitio. Antes se quedaba en tiempo real para siempre y ese hilo tambien
+ * abre, analiza y decodifica: al empezar una pista (bufer vacio, las escrituras no bloquean)
+ * ocupaba la CPU ~1 s y la interfaz se congelaba (medido: pintar un toque 974 ms en vez de
+ * 12 ms). Fuera de la escritura va como en el firmware de fabrica. El kernel limita el tiempo real al 95 %
  * (sched_rt_runtime_us = 950000), asi que un fallo suyo no congela el sistema.
  * Se desactiva con /usr/data/hibymod/no_rt. El decodificador ("lg_music_player") no se toca. */
 #define RT_PRIO 10
 static __thread int rt_done;
-static void rt_boost(void)
+static int rt_boost(void)                /* 1 = este hilo queda en tiempo real */
 {
     rt_done = 1;
-    if (!access("/usr/data/hibymod/no_rt", F_OK)) return;
+    if (!access("/usr/data/hibymod/no_rt", F_OK)) return 0;
     struct sched_param sp = { .sched_priority = RT_PRIO };
     int e = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     uint32_t tid = (uint32_t)syscall(SYS_gettid);
@@ -798,11 +801,21 @@ static void rt_boost(void)
         if (write(f, l, n) < 0) {}
         r_close(f);
     }
+    return !e;
 }
 
+static __thread int rt_on;               /* 1 = este hilo puede usar tiempo real (sin no_rt) */
+static void rt_enter(void)
+{
+    if (!rt_done) { rt_on = rt_boost(); return; }
+    if (rt_on) { struct sched_param sp = { .sched_priority = RT_PRIO }; pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp); }
+}
+static void rt_leave(void)
+{
+    if (rt_on) { struct sched_param sp = { .sched_priority = 0 }; pthread_setschedparam(pthread_self(), SCHED_OTHER, &sp); }
+}
 static void pcm_wrote(long n)
 {
-    if (!rt_done) rt_boost();
     if (n <= 0) return;
     st->pcm_frames += (uint32_t)n;
     st->pcm_last_ms = np_now();
@@ -971,7 +984,10 @@ int ioctl(int fd, unsigned long req, ...)
         return r;
     }
     if (active && fd >= 0 && fd == pcm_fd) {
+        int w = !in_alsa && (req == SNDRV_PCM_IOCTL_WRITEI_FRAMES || req == SNDRV_PCM_IOCTL_WRITEN_FRAMES);
+        if (w) rt_enter();
         int r = r_ioctl(fd, req, arg);
+        if (w) rt_leave();
         pcm_ioctl(req, arg, r);
         return r;
     }
@@ -1009,7 +1025,9 @@ long snd_pcm_writei(void *pcm, const void *buf, unsigned long n)
     if (!r) r = dlsym(RTLD_NEXT, "snd_pcm_writei");
     if (!r) return -38;
     int sv = in_alsa; in_alsa = 1;
+    if (active && !sv) rt_enter();
     long k = r(pcm, buf, n);
+    if (active && !sv) rt_leave();
     in_alsa = sv;
     if (active && !sv) pcm_wrote(k);
     return k;

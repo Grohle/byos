@@ -5,6 +5,7 @@ static pthread_mutex_t npx_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct np_info npx;                 /* copia publicada */
 static uint16_t npx_cov[128 * 128]; static int npx_cov_ok; static uint32_t npx_cov_track = 0xffffffffu;
 static volatile int npx_changed;           /* algo nuevo para pintar */
+static volatile double npx_kick_until;     /* tras una orden (play/pausa...): mirar cada 200 ms */
 static void *npx_thread(void *a)
 {
     (void)a;
@@ -26,7 +27,7 @@ static void *npx_thread(void *a)
             ch = 1;
         }
         if (ch) npx_changed = 1;
-        msleep(1000);
+        if (now_ms() < npx_kick_until) msleep(200); else msleep(1000);
     }
     return 0;
 }
