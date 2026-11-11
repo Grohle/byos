@@ -1,5 +1,5 @@
 #!/bin/sh
-# HIBYOS_SYS_REV=2
+# HIBYOS_SYS_REV=3
 # ByOS: instala/actualiza en /usr/data/hibymod el payload de la SD (ByOS/payload).
 # El rootfs no tiene sitio: shell, binarios, libreria de pantalla y tema viven en la
 # particion de datos (UBIFS, sobrevive al flasheo). Ver docs/INSTALLER.md.
@@ -100,7 +100,7 @@ log()
     m="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*"
     [ -t 1 ] && echo "$*"
     mkdir -p $TMPD 2>/dev/null; echo "$m" >> $TMPD/install.txt 2>/dev/null
-    [ -d $SDM/ByOS ] && echo "$m" >> $LOG 2>/dev/null
+    sd_ok && [ -d $SDM/ByOS ] && echo "$m" >> $LOG 2>/dev/null   # sin SD: el punto de montaje vacio es la memoria interna
 }
 
 ver_of() { [ -f "$1" ] && head -n 1 "$1" 2>/dev/null | tr -d '\r\n\t '; }
@@ -302,7 +302,10 @@ MYREV=$(sys_rev "$0")
 fail()
 {
     log "ERROR: $*"
-    { echo "$NEWV"; echo "rev $MYREV"; } > $HM/install_failed
+    # la SD desaparecio a mitad (el reproductor arranco con un cable de PC y paso a
+    # almacenamiento USB): no es culpa del payload; sin marca, se reintenta en el siguiente arranque
+    if sd_ok; then { echo "$NEWV"; echo "rev $MYREV"; } > $HM/install_failed
+    else log "la SD se desmonto durante la instalacion: se reintentara en el siguiente arranque"; fi
     rm -rf $DRV
     stock_close
     sync
