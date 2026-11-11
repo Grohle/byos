@@ -132,6 +132,12 @@ static void perf_frame(double t_in, double t_out, int rows)
  * sobre el color de la app justo debajo (fila 30, por columna); con fondo claro, iconos negros.
  * Solo en la copia que va al panel: el fr0 de la app no se toca. Franjas que no son "negro con
  * iconos" (inicio, Centro de control, pantallas con su propia barra) se dejan como estan. */
+/* Barra de inicio en las apps de ByOS (como iOS): sube y aparece al abrir una app, baja y se
+ * desvanece al salir (o al empezar un gesto / abrir el Centro de control). Se pinta en present(),
+ * encima de lo que presente la app; la app no la dibuja. hb_apps: apps propias abiertas
+ * (launch_app); hb_block: gesto o panel del sistema en curso. */
+static int hb_apps, hb_block; static double hb_k, hb_lt, hb_after;
+static void homebar_layer(uint16_t *shm_dst, const uint16_t *src, int *dy0, int *dy1);
 static void statusbar_tint(uint16_t *d)
 {
     int dark = 0;
@@ -176,6 +182,7 @@ static void present(void)
     if (dirty_y1 > dirty_y0) memcpy(fr0_shm + dirty_y0 * W, fr0 + dirty_y0 * W, (dirty_y1 - dirty_y0) * W * 2);
     else memcpy(fr0_shm, fr0, HM_FRAME_BYTES);
     if (dirty_y1 <= dirty_y0 || dirty_y0 < 31) statusbar_tint(fr0_shm);   /* barra del color de la app */
+    homebar_layer(fr0_shm, fr0, &dirty_y0, &dirty_y1);                    /* barra de inicio de las apps */
     st->dirty_y0 = dirty_y0; st->dirty_y1 = dirty_y1;
     __sync_synchronize();
     st->fr0_seq++;                                   /* par: lista */
@@ -392,6 +399,29 @@ static int open_app_nav(void);
 #define CHEV_Y_PLANE 468
 #define CHEV_Y 468
 #define BAR_Y 469
+static void homebar_layer(uint16_t *shm_dst, const uint16_t *src, int *dy0, int *dy1)
+{
+    double t = now_ms(), dt = hb_lt ? t - hb_lt : 16; hb_lt = t; if (dt > 60) dt = 60;
+    int want = hb_apps > 0 && !hb_block && t >= hb_after;
+    double k0 = hb_k;
+    hb_k += want ? dt / 260.0 : -dt / 160.0;           /* entra en 260 ms, sale en 160 ms */
+    if (hb_k < 0) hb_k = 0; if (hb_k > 1) hb_k = 1;
+    if (hb_k <= 0 && k0 <= 0) return;
+    if (!spr_bar.w) return;
+    double e = hb_k * hb_k * (3 - 2 * hb_k);           /* suave en los dos extremos */
+    int y = BAR_Y + (int)((1 - e) * 12 + .5), x = (W - spr_bar.w) / 2, y0 = BAR_Y - 2;
+    /* las filas de la barra, frescas desde la app (aunque la app solo presentara otras) */
+    memcpy(shm_dst + y0 * W, src + y0 * W, (H - y0) * W * 2);
+    if (hb_k > 0) {
+        struct sprite s = spr_bar; static uint8_t a[64 * 16];
+        if (spr_bar.w * spr_bar.h <= (int)sizeof a) {
+            for (int i = 0; i < spr_bar.w * spr_bar.h; i++) a[i] = (uint8_t)(spr_bar.a[i] * e);
+            s.a = a;
+        }
+        blend_sprite(shm_dst, &s, x, y);
+    }
+    if (*dy1 > *dy0) { if (*dy0 > y0) *dy0 = y0; *dy1 = H; }
+}
 
 /* ------------------------------------------------------------------ composicion de la hoja */
 static uint16_t img_under[W * H], img_sheet[W * H], img_cache_plane[W * H], img_cache_home[W * H];

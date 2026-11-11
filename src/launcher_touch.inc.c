@@ -61,8 +61,13 @@ static int open_app_nav(void)   /* en el hilo de navegacion; pantalla congelada 
         inj_tap(319, 479);                                   /* "Stream media" (oculto en el tema) */
         if (!wait_left_home(2500)) return 0;
         c = st->cap_frames;
-        inj_tap(ap->ax ? 236 : 84, 140); settle(c, 900, 200);
-        return 1;
+        inj_tap(ap->ax ? 236 : 84, 140);
+        /* Tidal/Qobuz tardan en salir: hasta que la pagina intermedia "Stream media" no se ha
+         * ido no se da por abierta (antes, a los 0,9 s se soltaba y se veia ese menu unos
+         * segundos); luego, que se asiente */
+        { double tw = now_ms(); while (is_stream_page(fr1) && now_ms() - tw < 8000) { msleep(20); st->shell_beat++; } }
+        c = st->cap_frames; settle(c, 600, 250);
+        return !is_stream_page(fr1);
     }
     if (ap->act == ACT_PLANE) { inj_swipe(300, 240, 30, 240, 5, 60); settle(c, 700, 150); return is_plane(fr1); }
     return 0;
@@ -182,7 +187,16 @@ static void zoom_frame_app(uint16_t *d, const uint16_t *bg, int k, const uint16_
     if (ia > 0) blit_scaled(d, &apps[last_app].icon[sz_idx()], rx, ry, rw, rh, ia);
 }
 
+static void launch_app_body(int a, int ix, int iy);
+/* abrir una app: mientras esta abierta (las propias corren aqui dentro) se ve la barra de inicio,
+ * que entra al acabar el zoom de apertura */
 static void launch_app(int a, int ix, int iy)
+{
+    hb_apps++; hb_after = now_ms() + 330;
+    launch_app_body(a, ix, iy);
+    hb_apps--;
+}
+static void launch_app_body(int a, int ix, int iy)
 {
     struct lapp *ap = &apps[a];
     /* apps propias: solo una abierta a la vez (la ultima queda como tarjeta de la multitarea) */
@@ -232,15 +246,20 @@ static void launch_app(int a, int ix, int iy)
         float r = win_radius(rw, rh, e);
         if (t == 0 || !base_dim_ok) { dim_buf(img_under, img_base, W * H, 24); base_dim_ok = 1; have_under = 0; }
         memcpy(fr0, e < 0.15 ? img_base : img_under, HM_FRAME_BYTES);
-        int ready = nav_done && nav_ok;
-        draw_scaled(fr0, ready ? fr1 : img_app, rx, ry, rw, rh, r);
+        /* toda la animacion con la imagen guardada de la app (o negro): cambiar a la pantalla en
+         * vivo a mitad del zoom daba un tiron mientras la app aun se dibujaba */
+        draw_scaled(fr0, img_app, rx, ry, rw, rh, r);
         /* el icono crece con la ventana y se funde en ella (como iOS) */
         int ia = (int)(255 * (1 - e * 3.2)); if (ia > 0) blit_scaled(fr0, &ap->icon[sz_idx()], rx, ry, rw, rh, ia);
         present();
         if (t >= 1) break;
     }
-    int ok = nav_wait(3000);
+    int ok = nav_wait(ap->act == ACT_STREAM ? 10000 : 3000);
     if (ok == 1) {
+        /* de la imagen guardada a la app en vivo con un fundido corto */
+        { double tf = now_ms(); for (;;) { double t = (now_ms() - tf) / 140.0; if (t > 1) t = 1; unsigned k = (unsigned)(255 * t);
+              for (int i = 0; i < W * H; i++) fr0[i] = mix565(fr1[i], img_app[i], k);
+              present(); if (t >= 1) break; } }
         app_cache(a, 1);
         last_app = a;
         stream_launched = ap->act == ACT_STREAM;

@@ -616,7 +616,12 @@ static int cc_close_drag(const uint16_t *under, uint16_t *panel, const uint16_t 
     nav_wait(3000); if (!launcher_resume()) cmd('R');
     return 1;
 }
+static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y);
 static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y)
+{
+    hb_block++; cc_session_body(under, panel, blur, e, start_y); hb_block--;
+}
+static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, double e, int start_y)
 {
     int from_launcher = cc_from_launcher;
     struct pkt p;

@@ -1503,8 +1503,12 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
  * que seguir en la app (la app repinta) o 1 si la app debe salir SIN su animacion de salida
  * (el inicio ya esta en pantalla). self: indice de la app en apps[]. */
 static uint16_t *own_card; static int own_card_app = -1;
-static int own_home_gesture(int sx, int sy, int self)
+static int own_home_gesture_body(int sx, int sy, int self);
+/* durante el gesto la barra de inicio se va (la pinta present encima de todo) */
+static int own_home_gesture(int sx, int sy, int self) { hb_block++; int r = own_home_gesture_body(sx, sy, self); hb_block--; return r; }
+static int own_home_gesture_body(int sx, int sy, int self)
 {
+    double g_t0 = now_ms();
     if (!own_card) own_card = malloc(HM_FRAME_BYTES);
     if (!own_card) { drain_until_up(); return 1; }
     memcpy(own_card, fr0, HM_FRAME_BYTES); own_card_app = self; last_app = self;
@@ -1527,21 +1531,21 @@ static int own_home_gesture(int sx, int sy, int self)
         double spd = 0;
         for (int i = 1; i < 16 && i < hn; i++) { int j = (hn - 1 - i) % 16; if (t - ht[j] >= 80) { spd = abs(cur_y - hy[j]) / (t - ht[j]); break; } }
         prog = (sy - cur_y) / 300.0; if (prog < 0) prog = 0; if (prog > 1.2) prog = 1.2;
-        if (!armed && prog > 0.12 && hn > 3 && spd < 0.15) { if (!still_t) still_t = t; else if (t - still_t > SW_HOLD_MS) { armed = 1; arm_t = t; lg("multitarea armada (app propia)"); } }
-        else if (spd >= 0.15) still_t = 0;
+        if (!armed && prog > 0.12 && hn > 3 && spd < 0.3) { if (!still_t) still_t = t; else if (t - still_t > SW_HOLD_MS) { armed = 1; arm_t = t; lg("multitarea armada (app propia)"); } }
+        else if (spd >= 0.3) still_t = 0;
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         double a = armed ? (t - arm_t) / 200.0 : 0; if (a > 1) a = 1;
+        if (armed) { double k = (t - arm_t) / 260.0; if (k > 1) k = 1; s = (float)(s + (CARD_S - s) * ease_back(k)); }   /* encaje */
         if (!ph && phb && (armed || (still_t && t - still_t > 200))) { player_card(phb); ph = phb; }
         int peek = ph && (armed || (still_t && t - still_t > 300));
-        switcher_frame(armed && a > 0.5 ? bg2 : bg, own_card, ph, (lx - sx) / (W * CARD_S + 18.0), s, (sy - cur_y) * 0.35, peek, armed && a >= 1);
+        switcher_frame(armed && a > 0.5 ? bg2 : bg, own_card, ph, (lx - sx) / (W * CARD_S + 18.0), s, (sy - cur_y) * (armed ? 0.35 * (1 - a * 0.6) : 0.35), peek, armed && a >= 1);
         if (!cur_down) break;
         if (!got) msleep(2);
     }
     if (armed) {
         double off = 0;
         { double t0 = now_ms(); int ly0 = sy - cur_y; for (;;) { double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1; double e = ease_out(t);
-            float s = (float)((1 - 0.40 * (prog > 1 ? 1 : prog)) + (CARD_S - (1 - 0.40 * (prog > 1 ? 1 : prog))) * e);
-            switcher_frame(bg2, own_card, ph, off, s, ly0 * 0.35 * (1 - e), ph != 0, 1); if (t >= 1) break; } }
+            switcher_frame(bg2, own_card, ph, off, CARD_S, ly0 * 0.35 * 0.4 * (1 - e), ph != 0, 1); if (t >= 1) break; } }
         int r = sw_loop(bg2, own_card, ph, 1, &off);
         if (r == SW_APP) return 0;
         if (r == SW_HOME) { int x, y, w, h; card_geom(off < 0.5 ? 0 : 1, off, CARD_S, 0, &x, &y, &w, &h); card_to_home(home, off < 0.5 ? own_card : ph, x, y, w, h); return 1; }
@@ -1549,7 +1553,8 @@ static int own_home_gesture(int sx, int sy, int self)
         np_app_run(home, -1, -1);       /* el reproductor: la app se cierra (solo una a la vez) */
         return 1;
     }
-    if (prog > 0.28 || vel < -0.5) {
+    double gdt = now_ms() - g_t0, gdist = sy - cur_y;   /* lanzamiento rapido: media de todo el gesto */
+    if (prog > 0.28 || vel < -0.5 || (gdist > 40 && gdt > 0 && gdist / gdt > 0.45)) {
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         int x, y, w, h; card_geom(0, (lx - sx) / (W * CARD_S + 18.0), s, (sy - cur_y) * 0.35, &x, &y, &w, &h);
         card_to_home(home, own_card, x, y, w, h);
