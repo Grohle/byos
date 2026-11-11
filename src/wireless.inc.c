@@ -469,20 +469,38 @@ static int wl_bt_call(char *out, int cap, int timeout_ms, const char *path, cons
     if (rc != 0 || wlp_dbus_error(out, en, sizeof en)) { lg("bt: %s %s -> %d %s", method, path, rc, out[0] ? strtok(out, "\n") : ""); return -1; }
     return 0;
 }
+/* bluetoothd vivo (aunque tarde en contestar) */
+static int wl_bluetoothd_alive(void)
+{
+    DIR *d = opendir("/proc"); if (!d) return 1;
+    struct dirent *e; int found = 0; char p[64], c[32];
+    while (!found && (e = readdir(d))) {
+        if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+        snprintf(p, sizeof p, "/proc/%s/comm", e->d_name);
+        int f = open(p, O_RDONLY | O_CLOEXEC); if (f < 0) continue;
+        ssize_t k = read(f, c, sizeof c - 1); close(f); if (k <= 0) continue;
+        c[k] = 0; if (c[k - 1] == '\n') c[k - 1] = 0;
+        found = !strcmp(c, "bluetoothd");
+    }
+    closedir(d);
+    return found;
+}
 static void wl_bt_refresh(void)
 {
     static struct wl_dev dv[WL_MAXDEV];
     struct wl_adapter ad; int n = 0;
     double t0 = now_ms();
     char *wl_dbus_out = malloc(WL_DBUS_CAP);
-    int rc = wl_dbus_out ? wl_bt_call(wl_dbus_out, WL_DBUS_CAP, 6000, "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0, 0, 0) : -1;
-    /* una respuesta lenta (bluetoothd ocupado buscando) no es "no responde": se mantiene lo
-     * ultimo que se supo; solo tras 3 fallos seguidos se da por caido */
+    int rc = wl_dbus_out ? wl_bt_call(wl_dbus_out, WL_DBUS_CAP, 12000, "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0, 0, 0) : -1;
+    /* Una respuesta lenta no es "no responde": con poca memoria o buscando, bluetoothd tarda 8-13 s
+     * en devolver todos sus objetos (incluidas las balizas LE que ha visto). Mientras el proceso
+     * exista se mantiene lo ultimo que se supo (hasta ~1 min de fallos seguidos); si no existe,
+     * tras 3 fallos se da por caido. */
     static int fails;
     if (!rc) { fails = 0; n = wlp_bluez_objects(wl_dbus_out, &ad, dv, WL_MAXDEV); }
     free(wl_dbus_out);
     if (!rc) {}
-    else if (++fails < 3) { lg("bt: estado sin respuesta (%d), se mantiene el anterior", fails); return; }
+    else if (++fails < (wl_bluetoothd_alive() ? 6 : 3)) { lg("bt: estado sin respuesta (%d), se mantiene el anterior", fails); return; }
     else memset(&ad, 0, sizeof ad);
     pthread_mutex_lock(&wl_mu);
     WS.bavail = ad.found; WS.ad = ad;
