@@ -34,10 +34,10 @@ struct lapp {
 static struct lapp apps[40] = {
     { "music",      "Música",        ACT_MUSIC,  116, 425 },   /* app propia; (ax, ay) = la de fabrica */
     /* Ajustes lo tiene TODO (Wi-Fi, Bluetooth, USB/DAC y la personalizacion son paginas suyas).
-     * "Inalambrico" es un acceso directo a esa pagina; los antiguos iconos "Personalizar" y
-     * "DAC USB" ya no existen ("dac" vale como alias de "settings": ver app_by_id). */
+     * Los antiguos iconos "Inalambrico", "Personalizar" y "DAC USB" ya no existen ("wireless" y
+     * "dac" valen como alias de "settings": ver app_by_id). El codigo de Inalambrico sigue: es la
+     * pagina Wi-Fi/Bluetooth de Ajustes (wireless_sub). */
     { "settings",   "Ajustes",       ACT_SETTINGS, 202, 425 },
-    { "wireless",   "Inalámbrico",   ACT_WIRELESS, 46, 74 },   /* Wi-Fi y Bluetooth propios */
     { "radio",      "Radio",         ACT_RADIO,    0,   0 },   /* emisoras por internet (Radio Browser + propias) */
     { "books",      "Libros",        ACT_BOOKS,  117,  74 },   /* lector propio (TXT/EPUB) */
     { "tidal",      "Tidal",         ACT_STREAM,   0,   0 },
@@ -49,7 +49,7 @@ static struct lapp apps[40] = {
     { "headphones", "Auriculares",   ACT_BUDS,     0,   0 },   /* AirPods, Galaxy Buds, Nothing... */
     { "gutenberg",  "Gutenberg",     ACT_BOOKS,    1,   0 },   /* Libros abierto en su tienda (audiolibros + libros) */
 };
-static int napps = 13;              /* internas + instaladas (register_installed_apps) */
+static int napps = 12;              /* internas + instaladas (register_installed_apps) */
 #define NAPPS napps
 static const char *app_label(int a) { int l = lang3(); return apps[a].names3[l] && apps[a].names3[l][0] ? apps[a].names3[l] : tr(apps[a].label); }
 
@@ -74,7 +74,7 @@ static int sz_idx(void) { return L.icon <= 48 ? 0 : L.icon >= 64 ? 2 : 1; }
 static int app_find(const char *id) { for (int i = 0; i < NAPPS; i++) if (!strcmp(apps[i].id, id)) return i; return -1; }
 static int app_by_id(const char *id)
 {
-    if (!strcmp(id, "dac")) id = "settings";
+    if (!strcmp(id, "dac") || !strcmp(id, "wireless")) id = "settings";
     return app_find(id);
 }
 /* Apps incluidas que NO son del sistema base: vienen instaladas, pero se pueden desinstalar (salen
@@ -131,7 +131,7 @@ static void lconf_default(void)
     L.icon = 56; L.cols = 4; L.npages = 1;
     L.labels = L.dots = L.dockbg = 1; L.dim = 0;
     /* ORDEN OFICIAL de una instalacion nueva (LCONF_ORDER lo aplica una vez a las ya instaladas) */
-    static const char *const p0[] = { "settings", "wireless", "files", "radio", "appstore",
+    static const char *const p0[] = { "settings", "files", "radio", "appstore",
                                       "tidal", "qobuz", "gutenberg", "freemusic" };
     static const char *const d0[] = { "books", "headphones", "nowplaying", "music" };
     for (unsigned i = 0; i < sizeof p0 / sizeof *p0; i++) { int a = app_find(p0[i]); if (a >= 0) L.page[0][L.pn[0]++] = a; }
@@ -252,9 +252,9 @@ static void lconf_load0(void)
         else if (!strcmp(t, "gesture")) { char *k = strtok(0, " \t\r\n"); char *v = strtok(0, " \t\r\n"); gestures_conf_line(k, v); }
         else if (!strcmp(t, "wall")) { char *v = strtok(0, "\r\n"); if (v && strcmp(v, "-")) snprintf(L.wall, sizeof L.wall, "%s", v); }
         else if (!strcmp(t, "removed")) { while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (app_sys_removable(a)) app_removed[a] = 1; } }
-        else if (!strcmp(t, "dock")) { got_dock = 1; while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a >= 0 && !seen[a] && nd < 4) { dk[nd++] = a; seen[a] = 1; } } }
+        else if (!strcmp(t, "dock")) { got_dock = 1; while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a < 0) lconf_order_migrated = 1; if (a >= 0 && !seen[a] && nd < 4) { dk[nd++] = a; seen[a] = 1; } } }
         else if (!strcmp(t, "page") && pages < MAXPAGES) {
-            while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a >= 0 && !seen[a] && npn[pages] < MAXAPPS) { np[pages][npn[pages]++] = a; seen[a] = 1; } }
+            while ((t = strtok(0, " \t\r\n"))) { int a = app_find(t); if (a < 0) lconf_order_migrated = 1; /* app que ya no existe (p.ej. "wireless"): guardar sin ella */ if (a >= 0 && !seen[a] && npn[pages] < MAXAPPS) { np[pages][npn[pages]++] = a; seen[a] = 1; } }
             if (npn[pages]) pages++;
         }
     }
