@@ -127,6 +127,38 @@ static void perf_frame(double t_in, double t_out, int rows)
     pf.n++; pf.wait += t_out - t_in; pf.rows += rows; pf.last_end = t_out;
 }
 /* presenta frames[0] y espera a que el panel lo tenga */
+/* Barra de estado del color de la app (como iOS): las apps de ByOS copian la barra del
+ * reproductor (negra con iconos claros). Al presentar, si la franja es de ese tipo, se recompone
+ * sobre el color de la app justo debajo (fila 30, por columna); con fondo claro, iconos negros.
+ * Solo en la copia que va al panel: el fr0 de la app no se toca. Franjas que no son "negro con
+ * iconos" (inicio, Centro de control, pantallas con su propia barra) se dejan como estan. */
+static void statusbar_tint(uint16_t *d)
+{
+    int dark = 0;
+    for (int y = 2; y < 30; y += 3) for (int x = 1; x < W; x += 5) { uint16_t q = d[y * W + x]; if ((q >> 11) < 2 && ((q >> 5) & 63) < 4 && (q & 31) < 2) dark++; }
+    if (dark < 10 * 64 * 80 / 100) return;                      /* no es la barra negra del reproductor */
+    const uint16_t *ref = d + 31 * W;
+    int lum = 0; for (int x = 0; x < W; x += 8) { uint16_t q = ref[x]; lum += (q >> 11) * 2 + ((q >> 5) & 63) + (q & 31) * 2 / 2; }
+    lum /= W / 8;                                               /* ~0..157 */
+    int any = 0; for (int x = 0; x < W; x += 8) if (ref[x] > 0x0841) { any = 1; break; }
+    if (!any) return;                                           /* la app tambien es negra: nada que hacer */
+    int light = lum > 90;
+    for (int y = 0; y < 30; y++) {
+        uint16_t *row = d + y * W;
+        for (int x = 0; x < W; x++) {
+            uint16_t q = row[x], bg = ref[x];
+            unsigned r = q >> 11, g = (q >> 5) & 63, bb = q & 31;
+            unsigned al = r * 2 > g ? r * 2 : g; if (bb * 2 > al) al = bb * 2;   /* 0..63: cobertura del icono */
+            if (!al) { row[x] = bg; continue; }
+            uint16_t fg = light ? 0 : q;                       /* fondo claro: iconos negros */
+            unsigned na = 63 - al;
+            if (light) { row[x] = (uint16_t)((((bg >> 11) * na / 63) << 11) | ((((bg >> 5) & 63) * na / 63) << 5) | ((bg & 31) * na / 63)); continue; }
+            unsigned br = (bg >> 11) * na / 63 + (fg >> 11), bgc = ((bg >> 5) & 63) * na / 63 + ((fg >> 5) & 63), b2 = (bg & 31) * na / 63 + (fg & 31);
+            if (br > 31) br = 31; if (bgc > 63) bgc = 63; if (b2 > 31) b2 = 31;
+            row[x] = (uint16_t)(br << 11 | bgc << 5 | b2);
+        }
+    }
+}
 static void present(void)
 {
     if (present_direct) {
@@ -143,6 +175,7 @@ static void present(void)
     __sync_synchronize();
     if (dirty_y1 > dirty_y0) memcpy(fr0_shm + dirty_y0 * W, fr0 + dirty_y0 * W, (dirty_y1 - dirty_y0) * W * 2);
     else memcpy(fr0_shm, fr0, HM_FRAME_BYTES);
+    if (dirty_y1 <= dirty_y0 || dirty_y0 < 31) statusbar_tint(fr0_shm);   /* barra del color de la app */
     st->dirty_y0 = dirty_y0; st->dirty_y1 = dirty_y1;
     __sync_synchronize();
     st->fr0_seq++;                                   /* par: lista */
@@ -807,8 +840,12 @@ static int read_volume(void)
     /* 1) el valor que publica la libreria de pantalla desde los ajustes del reproductor;
      * 2) si no (libreria antigua), la cifra de la barra de estado del ultimo fotograma.
      * user.ini va con retraso: solo se usa al arrancar si aun no hay ninguna lectura. */
-    if (st->vol_now) {                    /* 0..100, la misma cifra que la barra de estado */
-        int v = (int)st->vol_now - 1; return v > 100 ? 100 : v;
+    if (st->vol_now) {
+        /* la cifra de la barra va de 0 a volmax (50 o 100 niveles segun el reproductor): la
+         * pildora es la fraccion, asi cada paso de la rueda mueve lo mismo en las dos escalas */
+        int mx = st->vol_max > 1 ? (int)st->vol_max - 1 : 100, v = (int)st->vol_now - 1;
+        if (v > mx) v = mx;
+        return (v * 100 + mx / 2) / mx;
     }
     static int last_ok = -1;
     int v = ocr_volume(st->capture ? fr1 : visible());
@@ -820,7 +857,7 @@ static int read_volume(void)
     return (u >= 0 && u <= 100) ? u : -1;
 }
 static int vol_guess = 30;
-static double hud_bump;
+static double hud_bump, hud_bump_t = -1e9;
 static void hud_draw(double vis, double width, double level)
 {
     memset(hud_a, 0, sizeof hud_a);
@@ -886,9 +923,13 @@ static void hud_compose_present(const uint16_t *src)
     st->dirty_y0 = 0; st->dirty_y1 = H;
     __sync_synchronize(); st->fr0_seq++;
 }
+static int hud_main;                        /* 1: llamada desde el bucle principal (se ve el inicio) */
 static void hud_frame(void)
 {
-    if (launcher_on) { launcher_present_hud(); return; }
+    /* el atajo de solo filas del inicio vale SOLO si lo que se ve es el inicio (bucle principal):
+     * con una app o el Centro de control abiertos encima, launcher_on sigue a 1 y pintaba la
+     * franja del inicio por encima de la app */
+    if (launcher_on && hud_main) { launcher_present_hud(); return; }
     if (!hud_cap && !st->capture && !st->held) {           /* pantalla de HiBy: tomarla */
         st->ov_on = 0; ov_cur = 0; cmd('C');
         double t = now_ms(); while (!st->capture && now_ms() - t < 200) msleep(2);
@@ -902,7 +943,7 @@ static void hud_frame(void)
 static void hud_end(void)
 {
     if (hud_cap) { hud_cap = 0; cmd('R'); double t = now_ms(); while (st->held && now_ms() - t < 200) msleep(2); return; }
-    if (st->capture && !launcher_on) {                     /* app de ByOS: su imagen tal cual */
+    if (st->capture && !(launcher_on && hud_main)) {       /* app de ByOS: su imagen tal cual */
         uint32_t p = st->presents; double t = now_ms();
         st->fr0_seq++; __sync_synchronize();
         memcpy(fr0_shm, fr0, HM_FRAME_BYTES); st->dirty_y0 = 0; st->dirty_y1 = H;
@@ -913,7 +954,7 @@ static void hud_end(void)
 /* gancho de present(): una app de ByOS presento; la pildora encima */
 static void hud_after_present(void)
 {
-    if (!hud_active || hud_cap || launcher_on || hud_in) return;
+    if (!hud_active || hud_cap || hud_in) return;
     hud_in = 1;
     if (hud_update(0)) hud_compose_present(fr0);   /* avanza aunque la app no deje tiempo libre */
     hud_in = 0;
@@ -937,7 +978,7 @@ static void hud_key(int code)
     double t = now_ms();
     if (!hud_active) { hud_shown_at = t; hud_active = 1; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
     hud_last_key = t; lcd_boost();
-    hud_bump = 1;                                   /* la pildora se ensancha un instante (iOS) */
+    hud_bump_t = t;                                 /* la pildora se ensancha un instante (iOS), suave */
     /* sin barra de estado (Now Playing): se sigue el paso de la rueda */
     if (!st->vol_now && ocr_volume(st->capture ? fr1 : visible()) < 0) { vol_guess += code == KEY_RIGHT ? 1 : -1; if (vol_guess < 0) vol_guess = 0; if (vol_guess > 100) vol_guess = 100; }
     lg("volumen: tecla %d", code);
@@ -959,21 +1000,21 @@ static int hud_update(int present_it)
     vel += ((target - hud_level) * 0.30 - vel * 0.55) * dt; hud_level += vel * dt;
     if (fabs(target - hud_level) < 0.003 && fabs(vel) < 0.002) { hud_level = target; vel = 0; }
     if (hud_level < 0) hud_level = 0; if (hud_level > 1) hud_level = 1;
-    hud_bump *= pow(0.86, dt); if (hud_bump < 0.01) hud_bump = 0;
+    { double u = (t - hud_bump_t) / 260.0; hud_bump = u >= 0 && u < 1 ? sin(M_PI * u) : 0; }   /* pulso suave, sin salto */
     double in = (t - hud_shown_at) / 220.0; if (in > 1) in = 1;
     double idle = t - hud_last_key;
     double out = idle < 1400 ? 1 : 1 - (idle - 1400) / 300.0;
     if (out <= 0) {
         hud_active = 0;
         if (!present_it) return 0;            /* la app presentara su siguiente fotograma sin pildora */
-        if (launcher_on) { launcher_present_hud(); return 0; }
+        if (launcher_on && hud_main) { launcher_present_hud(); return 0; }
         hud_end();
         update_overlay();
         return 0;
     }
     double e = ease_out(in);
     double o = out < 1 ? out : 1;
-    hud_draw(e * out, (12 + 5 * e + 5 * hud_bump) * (0.7 + 0.3 * o), hud_level);
+    hud_draw(e * out, (12 + 5 * e + 3 * hud_bump) * (0.7 + 0.3 * o), hud_level);
     if (present_it) { hud_in = 1; hud_frame(); hud_in = 0; }
     return 1;
 }
@@ -1522,7 +1563,7 @@ int main(int argc, char **argv)
             for (int i = 0; i < n / (ssize_t)sizeof ke[0]; i++)
                 if (ke[i].type == EV_KEY && ke[i].value && (ke[i].code == KEY_LEFT || ke[i].code == KEY_RIGHT)) hud_key(ke[i].code);
         }
-        if (hud_active) hud_step();
+        if (hud_active) { hud_main = 1; hud_step(); hud_main = 0; }
         if (launcher_on) {
             /* el reproductor dibujo algo: barra de estado nueva, o cambio de pantalla por su cuenta */
             if (st->cap_frames != last_cap) {
