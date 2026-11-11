@@ -308,7 +308,22 @@ static int wlp_bluez_objects(const char *txt, struct wl_adapter *ad, struct wl_d
             else if (!strncmp(p, "/org/bluez/hci0/", 16) && wlp_dev_addr(p, a)) {
                 int k;
                 for (k = 0; k < n; k++) if (!strcmp(dv[k].path, p)) break;
-                if (k == n && n < max) {
+                if (k == n && n >= max) {
+                    /* full (busy places: dozens of nameless LE beacons, TVs, phones): reuse the
+                     * slot of a nameless device that is neither paired nor connected, so a
+                     * real one (headphones in pairing mode) is never left out */
+                    for (int q = 0; q < n; q++) {
+                        const struct wl_dev *o = &dv[q];
+                        char a2[18]; memcpy(a2, o->addr, 18); for (int z = 0; z < 17; z++) if (a2[z] == ':') a2[z] = '-';
+                        int unnamed = !o->name[0] || !strcmp(o->name, a2) || !strcmp(o->name, o->addr);
+                        if (unnamed && !o->paired && !o->connected && o != cur) { k = q; break; }
+                    }
+                    if (k < n) {
+                        memset(&dv[k], 0, sizeof dv[k]);
+                        wlp_cpy(dv[k].path, sizeof dv[k].path, p);
+                        memcpy(dv[k].addr, a, 18);
+                    }
+                } else if (k == n) {
                     memset(&dv[n], 0, sizeof dv[n]);
                     wlp_cpy(dv[n].path, sizeof dv[n].path, p);
                     memcpy(dv[n].addr, a, 18);

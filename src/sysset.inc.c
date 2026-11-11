@@ -91,7 +91,7 @@ static void *ps_thread(void *arg)
         if (w > 0) msleep((int)w);
         struct hs_res r; memset(&r, 0, sizeof r);
         pthread_mutex_lock(&hs_mu);
-        int rc = hs_wait_ex(hs_set_send(ps_def[j.idx].key, j.val, j.flags), &r, 0, 0, HS_TIMEOUT_MS);
+        int rc = hs_wait_ex(hs_set_send(ps_def[j.idx].key, j.val, j.flags), &r, 0, 0, hs_timeout_for(ps_def[j.idx].key));
         pthread_mutex_unlock(&hs_mu);
         last_set = now_ms();
         pthread_mutex_lock(&ps_mu);

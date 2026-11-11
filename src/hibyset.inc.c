@@ -48,6 +48,13 @@
 #define HS_RES "/tmp/hibymod_setres"
 #define HS_FORCE 1
 #define HS_TIMEOUT_MS 6000               /* hibylink off waits up to ~3.1 s inside the player */
+/* turning the radios on can take much longer: after a while off, Bluetooth reloads the chip's
+ * firmware (brcm_patchram) before the player answers. With 6 s the switch said "couldn't
+ * change the setting" although Bluetooth came on a few seconds later. */
+static int hs_timeout_for(const char *name)
+{
+    return name && (!strcmp(name, "bt") || !strcmp(name, "wifi")) ? 20000 : HS_TIMEOUT_MS;
+}
 
 struct hs_res { int id, rc, val, ms; char key[24]; char msg[120]; };
 struct hs_kv { char name[16]; int val; };
@@ -126,7 +133,7 @@ static int hs_set_flags(const char *name, int val, int flags)
 {
     struct hs_res r;
     pthread_mutex_lock(&hs_mu);
-    int rc = hs_wait_ex(hs_set_send(name, val, flags), &r, 0, 0, HS_TIMEOUT_MS);
+    int rc = hs_wait_ex(hs_set_send(name, val, flags), &r, 0, 0, hs_timeout_for(name));
     pthread_mutex_unlock(&hs_mu);
     return rc;
 }

@@ -32,7 +32,7 @@
 #define WL_BTCTL "/usr/bin/bluetoothctl"
 #define WL_MAXNET 40
 #define WL_MAXSAVED 32
-#define WL_MAXDEV 40
+#define WL_MAXDEV 64
 
 /* ------------------------------------------------------------------ estado compartido */
 enum { WJ_NONE, WJ_OK, WJ_WRONGKEY, WJ_FAIL };
@@ -450,7 +450,10 @@ static void *wl_wifi_thread(void *arg)
 }
 
 /* ------------------------------------------------------------------ Bluetooth (bluez por D-Bus) */
-static char wl_dbus_out[96 * 1024];
+/* GetManagedObjects printed by dbus-send: every LE device nearby adds its manufacturer data
+ * byte by byte; 96 KB was cut in busy places and the devices at the end (often the
+ * headphones just put in pairing mode) never showed. Only the pages actually used count. */
+static char wl_dbus_out[384 * 1024];
 static int wl_bt_call(char *out, int cap, int timeout_ms, const char *path, const char *method, const char *arg1, const char *arg2, const char *arg3)
 {
     char to[32]; snprintf(to, sizeof to, "--reply-timeout=%d", timeout_ms);
@@ -482,7 +485,7 @@ static void wl_bt_refresh(void)
 }
 
 /* busqueda: un bluetoothctl con "scan on" mientras haga falta */
-static pid_t wl_disc_pid; static int wl_disc_fd = -1;
+static pid_t wl_disc_pid; static int wl_disc_fd = -1; static double wl_disc_t0;
 static void wl_disc_start(void)
 {
     if (wl_disc_pid > 0 || access(WL_BTCTL, X_OK)) return;
@@ -498,7 +501,7 @@ static void wl_disc_start(void)
     close(fd[0]); if (nul >= 0) close(nul);
     if (r) { close(fd[1]); return; }
     fcntl(fd[1], F_SETFD, FD_CLOEXEC);
-    wl_disc_pid = pid; wl_disc_fd = fd[1];
+    wl_disc_pid = pid; wl_disc_fd = fd[1]; wl_disc_t0 = now_ms();
     /* su propio agente fuera: el de HiBy (bt-agent) sigue siendo el que empareja */
     static const char c[] = "agent off\nscan on\n";
     if (write(wl_disc_fd, c, sizeof c - 1) < 0) lg("bt: bluetoothctl: %s", strerror(errno));
@@ -604,6 +607,13 @@ static void *wl_bt_thread(void *arg)
         if (want && wl_disc_pid <= 0) { wl_disc_start(); wl_touch(); }
         else if (!want && wl_disc_pid > 0) { wl_disc_stop(); wl_touch(); }
         if (wl_disc_pid > 0) { int stt; if (waitpid(wl_disc_pid, &stt, WNOHANG) == wl_disc_pid) { wl_disc_pid = 0; close(wl_disc_fd); wl_disc_fd = -1; } }
+        /* "scan on" sent while the radio was still coming up (switched on from the Control
+         * Center or Settings) fails and bluetoothctl just waits: the search never started
+         * until a reboot. If the adapter is not discovering 6 s later, start it again. */
+        if (want && wl_disc_pid > 0 && now_ms() - wl_disc_t0 > 6000) {
+            pthread_mutex_lock(&wl_mu); int disc = WS.ad.discovering; pthread_mutex_unlock(&wl_mu);
+            if (!disc) { lg("bt: la busqueda no arranco; reintentando"); wl_disc_stop(); wl_disc_start(); }
+        }
         double t = now_ms();
         if (vis && t - last > (vis == 3 ? (wl_disc_pid > 0 ? 2000 : 4000) : 8000)) { wl_bt_refresh(); last = now_ms(); }
     }

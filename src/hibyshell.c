@@ -158,6 +158,17 @@ static int mkev(struct input_event *e, int type, int code, int value)
 {
     memset(e, 0, sizeof *e); e->type = type; e->code = code; e->value = value; return 1;
 }
+/* Toques que ByOS se queda (inicio, gestos, apps propias) no llegan al reproductor, y su
+ * bloqueo automatico los contaba como inactividad: apagaba la pantalla a los 30 s aunque se
+ * estuviera usando. Un SYN_REPORT suelto (sin datos de toque, no es un toque) le cuenta como
+ * actividad; como mucho uno cada 2 s. */
+static void player_poke(void)
+{
+    static double last; double t = now_ms();
+    if (t - last < 2000) return;
+    last = t;
+    struct input_event e; mkev(&e, EV_SYN, SYN_REPORT, 0); inj(&e, 1);
+}
 static void inj_contact(int x, int y, int down)
 {
     struct input_event e[9]; int n = 0;
@@ -1466,6 +1477,7 @@ int main(int argc, char **argv)
         if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); first_setup_tick(); guard_tick(); } } continue; }
         struct pkt p;
         if (!read_pkt(&p, 300)) continue;
+        player_poke();
         if (launcher_on && p.down && p.n) { launcher_touch(&p); last_cap = st->cap_frames; continue; }
         if (!p.down || p.n == 0) { fwd(&p); continue; }
         /* inicio de un toque */
