@@ -140,8 +140,11 @@ static void wg_bt_scan(struct wdata *n)
 {
     n->nbt = 0;
     char *argv[] = { "/usr/bin/dbus-send", "--system", "--print-reply", "--dest=org.bluez", "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0 };
-    static char out[96 * 1024];        /* con muchos dispositivos cerca 24 KB se cortaba y faltaba el conectado */
-    if (access(argv[0], X_OK) || run_capture(argv, out, sizeof out) <= 0) return;
+    /* con muchos dispositivos cerca 24 KB se cortaba y faltaba el conectado: 96 KB, pedidos solo
+     * mientras se lee (y devueltos) */
+    const int cap = 96 * 1024; char *out = malloc(cap);
+    if (!out) return;
+    if (access(argv[0], X_OK) || run_capture(argv, out, cap) <= 0) { free(out); return; }
     /* por cada objeto dev_: Alias, Connected y Percentage */
     char alias[40] = ""; int conn = 0, pct = -1, indev = 0, want = 0;   /* 1 alias, 2 conectado, 3 bateria */
     for (char *sv = 0, *l = strtok_r(out, "\n", &sv); l; l = strtok_r(0, "\n", &sv)) {
@@ -159,6 +162,7 @@ static void wg_bt_scan(struct wdata *n)
         else if (want == 3) { char *q = strstr(l, "byte "); if (q) pct = atoi(q + 5); want = 0; }
     }
     if (indev && conn && n->nbt < 3) { snprintf(n->bt[n->nbt].name, 40, "%s", alias[0] ? alias : "Bluetooth"); n->bt[n->nbt++].pct = pct; }
+    free(out);
 }
 
 /* ---- escuchas: segundos de reproduccion por dia, contados aqui (la base de HiBy no guarda

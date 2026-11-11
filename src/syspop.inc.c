@@ -58,8 +58,8 @@ static void sp_finish(void)
 }
 static void sp_start(void)
 {
-    if (!sp_tmp) sp_tmp = malloc(HM_FRAME_BYTES);
-    if (!sp_base) sp_base = malloc(HM_FRAME_BYTES);
+    if (!sp_tmp) sp_tmp = lazy_alloc((void **)&sp_tmp, HM_FRAME_BYTES, 0);    /* se devuelven en reposo */
+    if (!sp_base) sp_base = lazy_alloc((void **)&sp_base, HM_FRAME_BYTES, 0);
     if (!sp_tmp || !sp_base) { buds_popup_dismiss(); return; }
     buds_popup_ack();
     sp_cap = 0;

@@ -453,7 +453,7 @@ static void *wl_wifi_thread(void *arg)
 /* GetManagedObjects printed by dbus-send: every LE device nearby adds its manufacturer data
  * byte by byte; 96 KB was cut in busy places and the devices at the end (often the
  * headphones just put in pairing mode) never showed. Only the pages actually used count. */
-static char wl_dbus_out[384 * 1024];
+#define WL_DBUS_CAP (384 * 1024)               /* pedido en cada lectura y devuelto al acabar */
 static int wl_bt_call(char *out, int cap, int timeout_ms, const char *path, const char *method, const char *arg1, const char *arg2, const char *arg3)
 {
     char to[32]; snprintf(to, sizeof to, "--reply-timeout=%d", timeout_ms);
@@ -474,11 +474,14 @@ static void wl_bt_refresh(void)
     static struct wl_dev dv[WL_MAXDEV];
     struct wl_adapter ad; int n = 0;
     double t0 = now_ms();
-    int rc = wl_bt_call(wl_dbus_out, sizeof wl_dbus_out, 6000, "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0, 0, 0);
+    char *wl_dbus_out = malloc(WL_DBUS_CAP);
+    int rc = wl_dbus_out ? wl_bt_call(wl_dbus_out, WL_DBUS_CAP, 6000, "/", "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0, 0, 0) : -1;
     /* una respuesta lenta (bluetoothd ocupado buscando) no es "no responde": se mantiene lo
      * ultimo que se supo; solo tras 3 fallos seguidos se da por caido */
     static int fails;
     if (!rc) { fails = 0; n = wlp_bluez_objects(wl_dbus_out, &ad, dv, WL_MAXDEV); }
+    free(wl_dbus_out);
+    if (!rc) {}
     else if (++fails < 3) { lg("bt: estado sin respuesta (%d), se mantiene el anterior", fails); return; }
     else memset(&ad, 0, sizeof ad);
     pthread_mutex_lock(&wl_mu);

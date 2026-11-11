@@ -183,6 +183,10 @@ static void cc_tri(uint16_t *d, int x0, int cy, int w, int half, int dir)
     }
 }
 static const uint16_t *cc_under;
+/* modulo de reproduccion: centro del boton play/pausa (a la derecha de la caratula de 48 px) */
+#define CC_NP_PLAY_X (NP_X + 14 + 48 + (NP_W - 14 - 48) / 2)
+#define CC_NP_PLAY_Y (CC_Y + 14 + 24)
+static int cc_np_pressed;                 /* 1 play, 2 anterior, 3 siguiente: resaltado al pulsar */
 static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
 {
     memcpy(dst, blur, HM_FRAME_BYTES);
@@ -206,16 +210,22 @@ static void cc_render(uint16_t *dst, const uint16_t *blur, int pressed)
         const char *ar = ni.source && ni.artist[0] ? ni.artist : tr(ni.playing ? "Sonando" : "En pausa");
         { int sz = 14; while (sz > 11 && tw_n(ti, sz, -1) > NP_W - 24) sz--; draw_text(dst, NP_X + 12, CC_Y + 84, ti, sz, 0xFFFF, NP_W - 24, 0, H); }
         draw_text(dst, NP_X + 12, CC_Y + 102, ar, 12, rgb(200, 200, 206), NP_W - 24, 0, H);
-        /* controles: anterior, reproducir/pausa, siguiente */
-        int cy = CC_Y + BR_H - 20, cx = NP_X + NP_W / 2;
+        /* controles (el modulo es pequeno: zonas grandes). Play/pausa a la derecha de la caratula;
+         * abajo solo anterior (mitad izquierda) y siguiente (mitad derecha). Pulsado: un circulo
+         * claro detras del boton (cc_np_pressed). */
         uint16_t c = 0xFFFF;
-        /* anterior |<< */
-        fill_rrect(dst, cx - 40, cy - 6, 2, 12, 1, c, 255);
-        cc_tri(dst, cx - 30, cy, 7, 6, -1); cc_tri(dst, cx - 23, cy, 7, 6, -1);
-        if (ni.playing) { fill_rrect(dst, cx - 6, cy - 8, 4, 16, 1, c, 255); fill_rrect(dst, cx + 2, cy - 8, 4, 16, 1, c, 255); }
-        else cc_tri(dst, cx - 5, cy, 13, 8, 1);
-        cc_tri(dst, cx + 30, cy, 7, 6, 1); cc_tri(dst, cx + 37, cy, 7, 6, 1);
-        fill_rrect(dst, cx + 44, cy - 6, 2, 12, 1, c, 255);
+        int px = CC_NP_PLAY_X, py = CC_NP_PLAY_Y;
+        if (cc_np_pressed == 1) fill_circle(dst, px, py, 21, 0xFFFF, 60);
+        if (ni.playing) { fill_rrect(dst, px - 8, py - 11, 6, 22, 2, c, 255); fill_rrect(dst, px + 2, py - 11, 6, 22, 2, c, 255); }
+        else cc_tri(dst, px - 7, py, 18, 11, 1);
+        int cy = CC_Y + BR_H - 22, lx = NP_X + NP_W / 4, rx = NP_X + NP_W * 3 / 4;
+        if (cc_np_pressed == 2) fill_circle(dst, lx, cy, 18, 0xFFFF, 60);
+        if (cc_np_pressed == 3) fill_circle(dst, rx, cy, 18, 0xFFFF, 60);
+        /* anterior |<<  y siguiente >>| */
+        fill_rrect(dst, lx - 12, cy - 6, 2, 12, 1, c, 255);
+        cc_tri(dst, lx - 2, cy, 7, 6, -1); cc_tri(dst, lx + 5, cy, 7, 6, -1);
+        cc_tri(dst, rx - 5, cy, 7, 6, 1); cc_tri(dst, rx + 2, cy, 7, 6, 1);
+        fill_rrect(dst, rx + 10, cy - 6, 2, 12, 1, c, 255);
     }
     /* brillo: el mismo dibujo que durante el arrastre */
     { float lv = cc_bl_level() / 101.f; cc_slider_paint(dst, blur, lv > 1 ? 1 : lv, 1, 0); }
@@ -691,10 +701,13 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         if (dir == 2) { if (cc_close_drag(under, panel, blur, sy, from_launcher, sy >= 440)) return; continue; }
         if (dir == 3) { while (cur_down && read_pkt(&p, 3000)) {} cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present(); continue; }
         if (hit < 0) break;                                   /* toque fuera: cerrar */
-        if (hit == 100 && sy > CC_Y + BR_H - 40) {          /* controles de reproduccion */
-            int cx = NP_X + NP_W / 2;
-            if (sx < cx - 22) pc_prev(); else if (sx > cx + 22) pc_next(); else pc_toggle_or_replay();
-            msleep(350); npx_changed = 1;
+        /* controles: play/pausa = todo lo que hay a la derecha de la caratula (arriba); abajo,
+         * mitad izquierda anterior, mitad derecha siguiente */
+        int npc = hit != 100 ? 0 : sy > CC_Y + BR_H - 44 ? (sx < NP_X + NP_W / 2 ? 2 : 3) : (sx > NP_X + 68 && sy < CC_Y + 72 ? 1 : 0);
+        if (npc) {
+            cc_np_pressed = npc; cc_render(fr0, blur, -1); present();
+            if (npc == 1) pc_toggle_or_replay(); else if (npc == 2) pc_prev(); else pc_next();
+            msleep(220); cc_np_pressed = 0; msleep(130); npx_changed = 1;
             { struct np_info ni; memset(&ni, 0, sizeof ni); if (np_get(&ni) > 0) { pthread_mutex_lock(&npx_mu); npx = ni; pthread_mutex_unlock(&npx_mu); } }
             cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
             continue;

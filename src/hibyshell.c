@@ -952,7 +952,7 @@ static int hud_cap;                         /* 1: capturamos una pantalla de HiB
 static uint16_t *hud_tmp;
 static void hud_compose_present(const uint16_t *src)
 {
-    if (!hud_tmp && !(hud_tmp = malloc(HM_FRAME_BYTES))) return;
+    if (!hud_tmp && !(hud_tmp = lazy_alloc((void **)&hud_tmp, HM_FRAME_BYTES, 0))) return;   /* se devuelve en reposo */
     memcpy(hud_tmp, src, HM_FRAME_BYTES);
     blend_sprite(hud_tmp, &spr_hud, HUD_X, HUD_Y);
     st->fr0_seq++; __sync_synchronize();
@@ -1469,6 +1469,44 @@ static void guard_tick(void)
     if (changed) { guard_changes += changed; lg("recursos: %d prioridades ajustadas", changed); }
 }
 
+/* ------------------------------------------------------------------ vigilante de memoria critica
+ * Un hilo propio (no depende de que el inicio este en reposo: dentro de una app el bucle
+ * principal no corre). Cada 2 s mira MemAvailable; por debajo de MEM_CRIT_KB corta en seco lo
+ * prescindible para que el sonido y la app en pantalla sigan: los ayudantes de ByOS (caratulas,
+ * etiquetas, mezclas y red, salvo el de la radio si esta sonando) y vacia las caches del nucleo.
+ * El reproductor, el shell y lo esencial del sistema no se tocan (y tienen la reserva del gestor
+ * de recursos). Los lienzos del shell los devuelve mem_guard en reposo (no desde aqui: una app
+ * podria estar usandolos). */
+#define MEM_CRIT_KB 4500
+static int memw_kills;
+static void *mem_watch(void *arg)
+{
+    (void)arg; thread_nice(-5);
+    for (;;) {
+        sleep(2);
+        int kb = mem_avail_kb();
+        if (kb < 0 || kb >= MEM_CRIT_KB) continue;
+        int killed = 0;
+        DIR *d = opendir("/proc"); struct dirent *e;
+        while (d && (e = readdir(d))) {
+            if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+            char pth[64], comm[32] = ""; snprintf(pth, sizeof pth, "/proc/%s/comm", e->d_name);
+            int f = open(pth, O_RDONLY | O_CLOEXEC); if (f < 0) continue;
+            ssize_t n = read(f, comm, sizeof comm - 1); close(f); if (n <= 0) continue;
+            comm[n] = 0; if (comm[n - 1] == '\n') comm[n - 1] = 0;
+            int victim = !strcmp(comm, "hibywall") || !strcmp(comm, "hibytag") || !strcmp(comm, "hibymix")
+                      || (!strcmp(comm, "hibynet") && !ra_active());
+            if (victim && kill(atoi(e->d_name), SIGKILL) == 0) killed++;
+        }
+        if (d) closedir(d);
+        { int f = open("/proc/sys/vm/drop_caches", O_WRONLY | O_CLOEXEC); if (f >= 0) { if (write(f, "1", 1) != 1) {} close(f); } }
+        memw_kills += killed;
+        lg("memoria CRITICA: %d KB libres -> %d ayudantes cortados, caches vaciadas (ahora %d KB)", kb, killed, mem_avail_kb());
+        sleep(3);                                         /* dar tiempo a que se note */
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ guardian de memoria
  * Cada 5 s en reposo se mira MemAvailable; por debajo de MEM_LOW_KB se devuelven al sistema las
  * paginas de los lienzos de trabajo y de las caches con bandera (se rehacen al usarlas): el shell
@@ -1516,6 +1554,7 @@ int main(int argc, char **argv)
     perf_on = !access("/tmp/hibymod/perf", F_OK);
     self_heal();
     cache_to_sd();
+    { pthread_t mt; if (!pthread_create(&mt, 0, mem_watch, 0)) pthread_detach(mt); }
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);
     if (!st) { lg("sin estado compartido"); return 1; }
     for (int i = 0; i < 300 && st->magic != HM_MAGIC; i++) msleep(200);
