@@ -169,22 +169,11 @@ static void home_substitute(unsigned char *b)
         homeimg = m;
     }
     if (!is_home_frame(b)) return;
-    /* el resto, el launcher; la barra de estado del reproductor (negra con iconos) se vuelve
-     * transparente sobre el fondo, igual que la dibuja el shell (filas 0-29 de homeimg = fondo) */
+    /* solo debajo de la barra de estado. Antes tambien se componia la barra (transparente sobre
+     * el fondo) EN el bufer del reproductor; el reproductor luego solo repinta sus cifras, asi que
+     * su barra se quedaba con el fondo rosa del inicio y las apps de ByOS, que copian la barra del
+     * reproductor, la mostraban asi. La barra transparente del inicio la pone el shell. */
     memcpy(b + 30 * fline, homeimg + 30 * fline, fsize - 30 * fline);
-    for (int y = 0; y < 30; y++) {
-        uint16_t *d = (uint16_t *)(b + y * fline); const uint16_t *w = (const uint16_t *)(homeimg + y * fline);
-        int k = 22 + y * 10 / 30;
-        for (int x = 0; x < HM_W; x++) {
-            uint16_t p = d[x], q = w[x];
-            unsigned r = p >> 11, g = (p >> 5) & 63, bl = p & 31;
-            unsigned a = r * 2 > g ? r * 2 : g; if (bl * 2 > a) a = bl * 2;
-            unsigned br = (q >> 11) * k >> 5, bg = ((q >> 5) & 63) * k >> 5, bb = (q & 31) * k >> 5, na = 63 - a;
-            br = br * na / 63 + r; bg = bg * na / 63 + g; bb = bb * na / 63 + bl;
-            if (br > 31) br = 31; if (bg > 63) bg = 63; if (bb > 31) bb = 31;
-            d[x] = (uint16_t)(br << 11 | bg << 5 | bb);
-        }
-    }
     st->home_hits++;
 }
 

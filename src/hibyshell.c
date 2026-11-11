@@ -138,6 +138,7 @@ static void perf_frame(double t_in, double t_out, int rows)
  * (launch_app); hb_block: gesto o panel del sistema en curso. */
 static int hb_apps, hb_block; static double hb_k, hb_lt, hb_after;
 static void homebar_layer(uint16_t *shm_dst, const uint16_t *src, int *dy0, int *dy1);
+static int homebar_moving(void);
 static void statusbar_tint(uint16_t *d)
 {
     int dark = 0;
@@ -399,10 +400,17 @@ static int open_app_nav(void);
 #define CHEV_Y_PLANE 468
 #define CHEV_Y 468
 #define BAR_Y 469
+/* 1 mientras la barra de inicio tenga que moverse (entrar o salir) */
+static int homebar_moving(void)
+{
+    int want = hb_apps > 0 && !hb_block && now_ms() >= hb_after;
+    return (want && hb_k < 1) || (!want && hb_k > 0) || (hb_apps > 0 && !hb_block && hb_k <= 0 && now_ms() < hb_after + 50);
+}
 static void homebar_layer(uint16_t *shm_dst, const uint16_t *src, int *dy0, int *dy1)
 {
     double t = now_ms(), dt = hb_lt ? t - hb_lt : 16; hb_lt = t; if (dt > 60) dt = 60;
     int want = hb_apps > 0 && !hb_block && t >= hb_after;
+    static int lw = -1; if (want != lw) { lw = want; lg("barra de inicio: %s (apps %d, bloqueo %d)", want ? "entra" : "sale", hb_apps, hb_block); }
     double k0 = hb_k;
     hb_k += want ? dt / 260.0 : -dt / 160.0;           /* entra en 260 ms, sale en 160 ms */
     if (hb_k < 0) hb_k = 0; if (hb_k > 1) hb_k = 1;
@@ -578,7 +586,7 @@ static int read_pkt(struct pkt *p, int timeout_ms)
         struct pollfd pf = { ts, POLLIN, 0 };
         int left = p->n ? 50 : timeout_ms, r;
         do {   /* en tramos cortos para mantener el latido (y mover los avisos del sistema) */
-            int lim = sp_on || hud_active ? 16 : 250, slice = left > lim ? lim : left;
+            int lim = sp_on || hud_active || homebar_moving() ? 16 : 250, slice = left > lim ? lim : left;
             st->shell_beat++;
             struct pollfd pk[2] = { { ts, POLLIN, 0 }, { keys, POLLIN, 0 } };
             r = poll(pk, keys >= 0 ? 2 : 1, slice);
@@ -591,6 +599,7 @@ static int read_pkt(struct pkt *p, int timeout_ms)
             pf.revents = pk[0].revents;
             left -= slice;
             if (r == 0 && timeout_ms > 0 && hud_active && !hud_in) hud_step();
+            else if (r == 0 && timeout_ms != 0 && homebar_moving()) present_rows(BAR_Y - 2, H);   /* la barra de inicio sube/baja aunque la app este quieta */
             if (r == 0 && timeout_ms > 0) syspop_tick();
         } while (r == 0 && left > 0);
         if (r <= 0) return 0;
@@ -1304,7 +1313,10 @@ static void cache_to_sd(void)
         if (symlink(S, C)) { lg("cache: no se pudo enlazar a la SD (%s)", strerror(errno)); mkdir(C, 0755); }
         else lg("cache: en la SD (%s)", S);
     } else if (islink) {
-        unlink(C); mkdir(C, 0755); lg("cache: sin SD, carpeta interna");
+        /* SD aun sin montar (al arrancar tarda unos segundos) o en el PC por USB: se deja el
+         * enlace (escribir falla sin mas) en vez de crear la cache en la memoria interna, que va
+         * justa; guard_tick lo vuelve a mirar cada 10 s */
+        static int said; if (!said) { said = 1; lg("cache: SD no montada, se espera"); }
     }
 }
 
@@ -1440,6 +1452,7 @@ static void guard_tick(void)
     static double next; double t = now_ms();
     if (t < next) return;
     next = t + 10000;
+    cache_to_sd();                                /* la SD pudo montarse (o volver del PC) */
     DIR *d = opendir("/proc"); if (!d) return;
     struct dirent *e; int changed = 0;
     while ((e = readdir(d))) {
