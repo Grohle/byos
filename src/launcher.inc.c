@@ -541,9 +541,14 @@ static int load_wall(void)
     wall_gen++;
     const char *p = ASSETS "/wall_custom.raw";
     int f = L.wall[0] ? open(p, O_RDONLY) : -1;
+    int def = f < 0;
     if (f < 0) f = open(ASSETS "/wall.raw", O_RDONLY);
     if (f < 0) { for (int i = 0; i < W * H; i++) wall[i] = rgb(40, 30, 90); build_dock_glass(); return 0; }
     ssize_t n = read(f, wall, sizeof wall); close(f);
+    /* el fondo de serie trae en las filas 0-29 (detras de la barra de estado) una COPIA de las
+     * 30-59: en un degradado se veia un corte en la fila 30. Reflejadas (29 = 30, 28 = 31...)
+     * el degradado sigue sin salto. */
+    if (def) for (int y = 0; y < 30; y++) memcpy(wall + y * W, wall + (59 - y) * W, W * 2);
     if (L.dim) dim_buf(wall, wall, W * H, 21);   /* "Oscurecer fondo" (~65 %) */
     build_dock_glass();
     mirror_dirty = 1; edit_bg_ok = 0;
@@ -801,7 +806,9 @@ static void launcher_present_hud(void)
 }
 static void launcher_statusbar(void)
 {
-    if (!lclean_ok) { launcher_present(); return; }
+    /* en la pagina de widgets la barra va sobre el fondo desenfocado: se recompone todo (si no,
+     * la barra nitida del fondo normal aparecia sobre el oscurecido y no iban a la par) */
+    if (!lclean_ok || V.scroll < 0) { launcher_present(); return; }
     compose_statusbar(img_cache_home);
     memcpy(fr0, img_cache_home, 30 * W * 2);
     present_rows(0, 30);

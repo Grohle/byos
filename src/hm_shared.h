@@ -84,6 +84,9 @@ struct hm_state {
     /* esquinas redondeadas de la pantalla: radio en px (0 = no). Lo pone el shell (Ajustes >
      * Pantalla y brillo); la libreria lo aplica a cada imagen que llega al panel */
     volatile uint32_t corner_r;
+    /* volumen del reproductor leido de su estructura de ajustes en cada fotograma (+1; 0 = aun
+     * no se sabe). Sustituye a leer las cifras de la barra de estado (fallaban a ratos). */
+    volatile uint32_t vol_now, vol_max;
 };
 #define HM_NP_MAGIC 0x3550504eu   /* "NPP5" */
 #define HM_NP_SLOTS 8

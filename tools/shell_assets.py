@@ -127,7 +127,7 @@ def default_wall():
     # mismo tramado que el tema (fase del patron desde y=30), para que encaje pixel a pixel
     full = Image.new("RGB", (320, 480))
     full.paste(wallpaper.dither565(wall).convert("RGB"), (0, 30))
-    full.paste(full.crop((0, 30, 320, 60)), (0, 0))
+    full.paste(full.crop((0, 30, 320, 60)).transpose(Image.FLIP_TOP_BOTTOM), (0, 0))   # reflejo: sin corte en la fila 30
     px = list(full.getdata())
     with open(os.path.join(OUT, "wall.raw"), "wb") as o:
         o.write(b"".join(struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) for r, g, b in px))

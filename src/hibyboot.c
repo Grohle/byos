@@ -60,6 +60,14 @@ int main(int argc, char **argv)
     int nbuf = (int)(fx.smem_len / (fx.line_length * H)); if (nbuf > 2) nbuf = 2; if (nbuf < 1) nbuf = 1;
     uint16_t *fbm = mmap(0, fx.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fb, 0);
     if (fbm == MAP_FAILED || bw > W || by + bh > H) return 1;
+    /* lo que hubiera en pantalla (logo del cargador de arranque): se funde hacia la animacion
+     * en vez de saltar a negro de golpe (el corte se veia como un parpadeo) */
+    uint16_t *prev = malloc((size_t)W * H * 2); int have_prev = 0;
+    if (prev) {
+        const uint16_t *vis = fbm + (v.yoffset / H < (unsigned)nbuf ? v.yoffset / H : 0) * stride * H;
+        for (int y = 0; y < H; y++) memcpy(prev + y * W, vis + y * stride, W * 2);
+        for (int i = 0; i < W * H; i += 7) if (prev[i]) { have_prev = 1; break; }
+    }
     for (int b = 0; b < nbuf; b++) memset(fbm + b * stride * H, 0, fx.line_length * H);
 
     uint16_t *cur = malloc(bw * bh * 2), *rest = malloc(bw * bh * 2);
@@ -88,6 +96,25 @@ int main(int argc, char **argv)
             }
         }
         uint16_t *dst = fbm + back * stride * H;
+        static int fin = 0;                           /* fundido de entrada desde la imagen previa */
+        if (have_prev && fin < 10) {
+            int k = ++fin * 32 / 10;                  /* 0..32: cuanto de la animacion */
+            for (int y = 0; y < H; y++) {
+                uint16_t *row = dst + y * stride; const uint16_t *pv = prev + y * W;
+                const uint16_t *an = y >= by && y < by + bh ? cur + (y - by) * bw - ox : 0;
+                for (int x = 0; x < W; x++) {
+                    uint16_t a = pv[x], b = an && x >= ox && x < ox + bw ? an[x] : 0;
+                    int r = ((a >> 11) * (32 - k) + (b >> 11) * k) >> 5;
+                    int g = (((a >> 5) & 63) * (32 - k) + ((b >> 5) & 63) * k) >> 5;
+                    int bl = ((a & 31) * (32 - k) + (b & 31) * k) >> 5;
+                    row[x] = (uint16_t)(r << 11 | g << 5 | bl);
+                }
+            }
+            if (fin == 10) for (int bb = 0; bb < nbuf; bb++) {   /* fuera de la banda: negro en ambos */
+                uint16_t *q = fbm + bb * stride * H;
+                for (int y = 0; y < H; y++) if (y < by || y >= by + bh) memset(q + y * stride, 0, W * 2);
+            }
+        } else
         for (int y = 0; y < bh; y++) memcpy(dst + (by + y) * stride + ox, cur + y * bw, bw * 2);
         v.yoffset = back * H; v.xoffset = 0;
         ioctl(fb, FBIOPAN_DISPLAY, &v);                  /* escribir, despues pan */

@@ -311,6 +311,7 @@ static inline uint16_t corner_px(uint16_t p, unsigned a)
     unsigned rr = (p >> 11) * a / 255, g = ((p >> 5) & 63) * a / 255, b = (p & 31) * a / 255;
     return (uint16_t)(rr << 11 | g << 5 | b);
 }
+static void vol_publish(void);              /* al final del fichero */
 static void corners_apply(unsigned char *buf)
 {
     uint32_t r = st->corner_r;
@@ -905,6 +906,7 @@ int ioctl(int fd, unsigned long req, ...)
             if (map_fb()) corners_apply(buf_at(last_var.yoffset));
         }
         st->frames++;
+        vol_publish();
         int r = r_ioctl(fd, req, arg);
         pthread_mutex_unlock(&mu);
         return r;
@@ -2024,4 +2026,23 @@ static void qc_kick(void)
         qc_result("id=-1 rc=-11 op=- pos=0 dur=0 state=-1 index=-1 count=-1 val=0 max=0 ms=0 pthread_create\n");
     }
     pthread_attr_destroy(&a);
+}
+
+/* volumen actual del reproductor para el shell: lectura directa de su estructura de ajustes
+ * (volume 0x23c, volmax 0x238; docs/research_settings_api.md). La comprobacion de que la
+ * estructura esta mapeada se hace una vez (leer /proc/self/maps en cada fotograma es caro). */
+static uint32_t vol_base;
+static void vol_publish(void)
+{
+    if (!vol_base) {
+        static int tries; if (tries > 400) return;
+        if (++tries % 25) return;                                     /* unos 2 intentos por segundo */
+        if (!pl_mapped(HP_SETTINGS, 4, 0)) return;
+        uint32_t s = *(const uint32_t *)(uintptr_t)HP_SETTINGS;
+        if (!s || !pl_mapped(s, 0xad0, 0)) return;
+        vol_base = s;
+    }
+    int v = *(const volatile int *)(uintptr_t)(vol_base + 0x23c), m = *(const volatile int *)(uintptr_t)(vol_base + 0x238);
+    if (v >= 0 && v <= 255) st->vol_now = (uint32_t)v + 1;
+    if (m > 0 && m <= 255) st->vol_max = (uint32_t)m + 1;
 }

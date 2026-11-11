@@ -86,6 +86,12 @@ static int sp_on;                  /* aviso del sistema en pantalla (syspop.inc.
 static void present(void);
 static void syspop_tick(void);
 static void syspop_after_present(void);
+/* pildora de volumen (mas abajo): se mueve desde read_pkt y se pinta encima en present() */
+static int hud_active, hud_in;
+static void hud_after_present(void);
+static void hud_key(int code);
+static int hud_step(void);
+static int hud_update(int present_it);
 struct pkt;
 static int syspop_touch(const struct pkt *p);
 static void pw_frame_cap(void);
@@ -141,6 +147,7 @@ static void present(void)
     __sync_synchronize();
     st->fr0_seq++;                                   /* par: lista */
     syspop_after_present();                          /* aviso del sistema encima (syspop.inc.c) */
+    hud_after_present();                             /* pildora de volumen encima */
     dirty_y0 = dirty_y1 = 0;                         /* la siguiente, completa salvo que se diga */
     cmd('P');
     while (st->presents == p && now_ms() - t < 80) msleep(1);
@@ -501,10 +508,19 @@ static int read_pkt(struct pkt *p, int timeout_ms)
         struct pollfd pf = { ts, POLLIN, 0 };
         int left = p->n ? 50 : timeout_ms, r;
         do {   /* en tramos cortos para mantener el latido (y mover los avisos del sistema) */
-            int lim = sp_on ? 16 : 250, slice = left > lim ? lim : left;
+            int lim = sp_on || hud_active ? 16 : 250, slice = left > lim ? lim : left;
             st->shell_beat++;
-            r = poll(&pf, 1, slice);
+            struct pollfd pk[2] = { { ts, POLLIN, 0 }, { keys, POLLIN, 0 } };
+            r = poll(pk, keys >= 0 ? 2 : 1, slice);
+            if (r > 0 && keys >= 0 && (pk[1].revents & POLLIN)) {   /* rueda de volumen en cualquier app */
+                struct input_event ke[16]; ssize_t kn = read(keys, ke, sizeof ke);
+                for (int i = 0; i < (int)(kn / (ssize_t)sizeof ke[0]); i++)
+                    if (ke[i].type == EV_KEY && ke[i].value && (ke[i].code == KEY_LEFT || ke[i].code == KEY_RIGHT)) hud_key(ke[i].code);
+                if (!(pk[0].revents & POLLIN)) r = 0;
+            }
+            pf.revents = pk[0].revents;
             left -= slice;
+            if (r == 0 && timeout_ms > 0 && hud_active && !hud_in) hud_step();
             if (r == 0 && timeout_ms > 0) syspop_tick();
         } while (r == 0 && left > 0);
         if (r <= 0) return 0;
@@ -783,14 +799,17 @@ static uint16_t hud_rgb[HUD_W * HUD_H];
 static uint8_t hud_a[HUD_W * HUD_H];
 static struct sprite spr_hud = { HUD_W, HUD_H, hud_rgb, hud_a };
 static double hud_last_key = -1e9, hud_shown_at = -1e9;
-static int hud_active;
 static double hud_level = -1;            /* nivel dibujado (0..1), se acerca al real */
 static int vol_fd = -1;
 static int ocr_volume(const uint16_t *img);
 static int read_volume(void)
 {
-    /* la cifra de la barra de estado del ultimo fotograma del reproductor (en vivo).
+    /* 1) el valor que publica la libreria de pantalla desde los ajustes del reproductor;
+     * 2) si no (libreria antigua), la cifra de la barra de estado del ultimo fotograma.
      * user.ini va con retraso: solo se usa al arrancar si aun no hay ninguna lectura. */
+    if (st->vol_now) {                    /* 0..100, la misma cifra que la barra de estado */
+        int v = (int)st->vol_now - 1; return v > 100 ? 100 : v;
+    }
     static int last_ok = -1;
     int v = ocr_volume(st->capture ? fr1 : visible());
     if (v >= 0) { if (v != last_ok) lg("volumen leido: %d", v); last_ok = v; return v; }
@@ -848,6 +867,57 @@ static void hud_draw(double vis, double width, double level)
         }
     }
 }
+/* ---- una sola forma de presentar la pildora, en cualquier pantalla:
+ *  - inicio de ByOS: launcher_present_hud (solo sus filas);
+ *  - app de ByOS (st->capture): encima de lo que presenta la app (gancho de present() y, si la
+ *    app esta quieta, desde read_pkt), sin tocar su fr0;
+ *  - pantalla de HiBy: captura ('C'): cada fotograma del reproductor (fr1, en vivo) + pildora,
+ *    y se suelta ('R') al acabar. Antes iba como capa pegada a los fotogramas del reproductor
+ *    y competia con su repintado: parpadeo, saltos de sitio y a veces ni aparecia. */
+static int hud_cap;                         /* 1: capturamos una pantalla de HiBy para la pildora */
+static uint16_t *hud_tmp;
+static void hud_compose_present(const uint16_t *src)
+{
+    if (!hud_tmp && !(hud_tmp = malloc(HM_FRAME_BYTES))) return;
+    memcpy(hud_tmp, src, HM_FRAME_BYTES);
+    blend_sprite(hud_tmp, &spr_hud, HUD_X, HUD_Y);
+    st->fr0_seq++; __sync_synchronize();
+    memcpy(fr0_shm, hud_tmp, HM_FRAME_BYTES);
+    st->dirty_y0 = 0; st->dirty_y1 = H;
+    __sync_synchronize(); st->fr0_seq++;
+}
+static void hud_frame(void)
+{
+    if (launcher_on) { launcher_present_hud(); return; }
+    if (!hud_cap && !st->capture && !st->held) {           /* pantalla de HiBy: tomarla */
+        st->ov_on = 0; ov_cur = 0; cmd('C');
+        double t = now_ms(); while (!st->capture && now_ms() - t < 200) msleep(2);
+        if (!st->capture) return;
+        hud_cap = 1;
+    }
+    uint32_t p = st->presents; double t = now_ms();
+    hud_compose_present(hud_cap ? fr1 : fr0);
+    cmd('P'); while (st->presents == p && now_ms() - t < 60) msleep(1);
+}
+static void hud_end(void)
+{
+    if (hud_cap) { hud_cap = 0; cmd('R'); double t = now_ms(); while (st->held && now_ms() - t < 200) msleep(2); return; }
+    if (st->capture && !launcher_on) {                     /* app de ByOS: su imagen tal cual */
+        uint32_t p = st->presents; double t = now_ms();
+        st->fr0_seq++; __sync_synchronize();
+        memcpy(fr0_shm, fr0, HM_FRAME_BYTES); st->dirty_y0 = 0; st->dirty_y1 = H;
+        __sync_synchronize(); st->fr0_seq++;
+        cmd('P'); while (st->presents == p && now_ms() - t < 60) msleep(1);
+    }
+}
+/* gancho de present(): una app de ByOS presento; la pildora encima */
+static void hud_after_present(void)
+{
+    if (!hud_active || hud_cap || launcher_on || hud_in) return;
+    hud_in = 1;
+    if (hud_update(0)) hud_compose_present(fr0);   /* avanza aunque la app no deje tiempo libre */
+    hud_in = 0;
+}
 static void hud_upload(void)
 {
     if (st->capture || st->held) return;
@@ -869,14 +939,19 @@ static void hud_key(int code)
     hud_last_key = t; lcd_boost();
     hud_bump = 1;                                   /* la pildora se ensancha un instante (iOS) */
     /* sin barra de estado (Now Playing): se sigue el paso de la rueda */
-    if (ocr_volume(st->capture ? fr1 : visible()) < 0) { vol_guess += code == KEY_RIGHT ? 1 : -1; if (vol_guess < 0) vol_guess = 0; if (vol_guess > 100) vol_guess = 100; }
+    if (!st->vol_now && ocr_volume(st->capture ? fr1 : visible()) < 0) { vol_guess += code == KEY_RIGHT ? 1 : -1; if (vol_guess < 0) vol_guess = 0; if (vol_guess > 100) vol_guess = 100; }
     lg("volumen: tecla %d", code);
 }
-/* un paso de animacion; devuelve 1 mientras siga activo */
-static int hud_step(void)
+/* un paso de animacion; devuelve 1 mientras siga activo. present = 0: solo avanza el estado y
+ * dibuja la pildora (una app de ByOS esta animando y la pinta encima en su present()) */
+static int hud_update(int present_it);
+static int hud_step(void) { return hud_update(1); }
+static int hud_update(int present_it)
 {
     if (!hud_active) return 0;
     double t = now_ms();
+    static double last_upd; if (!present_it && t - last_upd < 14) return 1;   /* a ritmo de panel */
+    last_upd = t;
     int v = read_volume(); if (v >= 0) vol_guess = v;
     double target = vol_guess / 100.0;
     /* muelle casi critico: llega rapido y sin saltos; el ensanchamiento se relaja */
@@ -890,16 +965,16 @@ static int hud_step(void)
     double out = idle < 1400 ? 1 : 1 - (idle - 1400) / 300.0;
     if (out <= 0) {
         hud_active = 0;
+        if (!present_it) return 0;            /* la app presentara su siguiente fotograma sin pildora */
         if (launcher_on) { launcher_present_hud(); return 0; }
-        ov_cur = &spr_hud;                 /* forzar: la capa siguiente sustituye al aviso de una vez */
+        hud_end();
         update_overlay();
-        if (ov_cur == &spr_hud) overlay(0, 0, 0);
         return 0;
     }
     double e = ease_out(in);
     double o = out < 1 ? out : 1;
     hud_draw(e * out, (12 + 5 * e + 5 * hud_bump) * (0.7 + 0.3 * o), hud_level);
-    if (launcher_on) launcher_present_hud(); else hud_upload();
+    if (present_it) { hud_in = 1; hud_frame(); hud_in = 0; }
     return 1;
 }
 
@@ -910,12 +985,10 @@ static void update_overlay(void)
     if (st->capture || st->held || hud_active || launcher_on) return;
     /* mirar la imagen visible sin la capa */
     const uint16_t *v = visible();
-    static int seen_home;
-    if (!seen_home) {
-        struct timespec up; clock_gettime(CLOCK_BOOTTIME, &up);
-        if (launcher_on || is_home(v) || up.tv_sec > 120) seen_home = 1;
-        else { overlay(0, 0, 0); return; }                  /* arranque: nada encima de la animacion */
-    }
+    /* arranque: nada encima de la animacion mientras hibyboot la muestra. (Antes se esperaba a
+     * ver el inicio DESDE aqui, pero con el inicio de ByOS activo esta funcion no se llama: la
+     * barra de inicio no salia en los dos primeros minutos tras cada arranque.) */
+    if (!access("/tmp/hibyos_boot", F_OK)) { overlay(0, 0, 0); return; }
     int plane = is_plane(v), cc = is_cc(v);
     /* barra de inicio de iOS en cualquier app (y en Now Playing): deslizar desde ella = inicio */
     if (plane || (!cc && G.bottom_app == GA_HOME)) overlay(&spr_bar, (W - spr_bar.w) / 2, BAR_Y);
