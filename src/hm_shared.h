@@ -81,6 +81,9 @@ struct hm_state {
     /* hilo que escribe el PCM subido a SCHED_FIFO (0 = aun no / desactivado con
      * /usr/data/hibymod/no_rt); rt_err = errno si fallo */
     volatile uint32_t rt_tid, rt_prio, rt_err, rt_count;
+    /* esquinas redondeadas de la pantalla: radio en px (0 = no). Lo pone el shell (Ajustes >
+     * Pantalla y brillo); la libreria lo aplica a cada imagen que llega al panel */
+    volatile uint32_t corner_r;
 };
 #define HM_NP_MAGIC 0x3550504eu   /* "NPP5" */
 #define HM_NP_SLOTS 8

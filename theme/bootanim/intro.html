@@ -5,9 +5,11 @@
        0.00-0.35  black
        0.35-1.60  "ByOS" appears: a faint glass outline, then the white fill and the coloured "OS"
        1.60-2.30  a light sweep crosses the word
-       2.30-3.50  "Hi" fades in on the left while "ByOS" glides right (HiBy, the player's maker)
-       3.75-      loop of LOOP_S seconds: the "OS" gradient turns and the glow breathes
-     Everything after 3.75 s is periodic, so the loop is seamless. -->
+       2.30-3.30  "Hi" fades in on the left while "ByOS" glides right (HiBy, the player's maker)
+       3.30-4.40  "HiByOS" held
+       4.30-5.40  "Hi" fades out and "ByOS" glides back to the centre
+       5.60-      loop of LOOP_S seconds on "ByOS": the "OS" gradient turns and the glow breathes
+     Everything after 5.6 s is periodic, so the loop is seamless. -->
 <html><head><meta charset="utf-8">
 <style>
 @font-face { font-family: Inter; font-weight: 700; src: url("../fonts/Inter-Bold.ttf"); }
@@ -27,7 +29,7 @@ html, body { margin: 0; background: #000; }
   <div class="word" id="fill"><span class="w" id="by">By</span><span class="os" id="os">OS</span></div>
 </div>
 <script>
-const LOOP_T = 3.75, LOOP_S = 4.0;
+const LOOP_T = 5.6, LOOP_S = 3.0;
 const $ = id => document.getElementById(id);
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 const ease = x => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
@@ -49,7 +51,7 @@ window.render = function (t) {
   const gap = 0;                                     // "Hi" and "By" set as one word
   const total = W_HI + gap + W_BYOS;
   const xBy0 = 160 - W_BYOS / 2, xBy1 = 160 - total / 2 + W_HI + gap;
-  const k = seg(t, 2.3, 3.5);
+  const k = seg(t, 2.3, 3.3) - seg(t, 4.4, 5.4);   // glide right for "Hi", then back
   const xBy = xBy0 + (xBy1 - xBy0) * k;
   for (const id of ['outline', 'fill']) { $(id).style.transform = `translate(${xBy}px, ${cy}px)`; }
   // appear: outline first, then the fill
@@ -76,7 +78,7 @@ window.render = function (t) {
   $('sweep').style.background = t >= 1.6 && t <= 2.3
     ? `linear-gradient(100deg, transparent ${sx - 40}px, rgba(255,255,255,.9) ${sx}px, transparent ${sx + 40}px)` : 'none';
   // "Hi": fades in from a soft blur, a few pixels to the left of its place
-  const h = seg(t, 2.45, 3.5);
+  const h = seg(t, 2.4, 3.3) * (1 - seg(t, 4.3, 5.2));   // "Hi" in, held, out
   const xHi = 160 - total / 2 - 10 * (1 - h);
   $('hi').style.transform = `translate(${xHi}px, ${cy}px)`;
   $('hi').style.opacity = h * 0.9;

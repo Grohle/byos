@@ -618,12 +618,40 @@ static void mu_blit(uint16_t *d, const uint16_t *src, int s, int x, int y, int r
         }
     }
 }
-static void mu_note(uint16_t *d, int cx, int cy, int s, uint16_t col)   /* corchea */
+/* corchea (como el simbolo music.note): cabeza eliptica inclinada, plica que nace de su borde
+ * derecho y corchete curvo. Cobertura con 4x4 muestras por pixel: bordes limpios a cualquier
+ * tamano (antes eran rectangulos enteros que no casaban con la cabeza). Se dibuja una vez por
+ * tamano (mu_placeholder la guarda). Unidades: k = s / 24, origen (cx, cy). */
+static int mu_note_in(float u, float v)
+{
+    /* cabeza: elipse a 4.3 x 3.1, girada -22 grados, centro (-3.3, 6.0) */
+    float hx = u + 3.3f, hy = v - 6.0f, c = 0.927f, sn = -0.375f;
+    float ex = hx * c + hy * sn, ey = -hx * sn + hy * c;
+    if ((ex * ex) / (4.3f * 4.3f) + (ey * ey) / (3.1f * 3.1f) <= 1) return 1;
+    /* plica: del borde derecho de la cabeza hacia arriba */
+    if (u >= -0.35f && u <= 1.75f && v >= -10.2f && v <= 5.6f) return 1;
+    /* corchete: banda de 1.5 de radio alrededor de una curva de Bezier cuadratica */
+    if (u < 0 || u > 9.5f || v < -11.5f || v > 0.5f) return 0;
+    for (int i = 0; i <= 20; i++) {
+        float t = i / 20.f, m = 1 - t;
+        float bx = m * m * 0.9f + 2 * m * t * 7.6f + t * t * 6.4f;
+        float by = m * m * -9.4f + 2 * m * t * -7.4f + t * t * -1.8f;
+        float w = 1.55f - 0.55f * t;                       /* se afina hacia la punta */
+        if ((u - bx) * (u - bx) + (v - by) * (v - by) <= w * w) return 1;
+    }
+    return 0;
+}
+static void mu_note(uint16_t *d, int cx, int cy, int s, uint16_t col)
 {
     float k = s / 24.f;
-    fill_circle(d, cx - 4 * k, cy + 6 * k, 4.2f * k, col, 255);
-    fill_rrect(d, (int)(cx - 0.6f * k), (int)(cy - 9 * k), (int)(2.4f * k + 1), (int)(15 * k), 1, col, 255);
-    fill_rrect(d, (int)(cx - 0.6f * k), (int)(cy - 9 * k), (int)(8 * k), (int)(3.2f * k + 1), 1.5f, col, 255);
+    int x0 = (int)(cx - 8.5f * k) - 1, x1 = (int)(cx + 10 * k) + 1, y0 = (int)(cy - 12 * k) - 1, y1 = (int)(cy + 10 * k) + 1;
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > W) x1 = W; if (y1 > H) y1 = H;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
+        int n = 0;
+        for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++)
+            n += mu_note_in((x + (sx + .5f) / 4 - cx) / k, (y + (sy + .5f) / 4 - cy) / k);
+        if (n) d[y * W + x] = n == 16 ? col : mix565(col, d[y * W + x], (unsigned)(n * 255 / 16));
+    }
 }
 /* hueco gris con la nota: se pinta una vez por tamano (fill_rrect hace una raiz por pixel) y
  * luego se copia como una caratula mas */

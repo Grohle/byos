@@ -285,6 +285,49 @@ static void sb_fix(unsigned char *b)
     sb_done[sb_ndone++ % 8] = sb_hash(b);
 }
 
+/* ---------------------------------------------------------------- esquinas redondeadas
+ * Mascara negra con borde suavizado en las cuatro esquinas, aplicada a cada imagen justo antes
+ * de que llegue al panel (fotogramas del reproductor, imagen del shell, capa). Solo se tocan
+ * r*r pixeles por esquina; la tabla de cobertura se rehace si cambia el radio. */
+#define CORNER_MAX 40
+static unsigned char corner_cov[CORNER_MAX][CORNER_MAX];    /* 0 fuera .. 255 dentro (esquina sup. izq.) */
+static int corner_tab_r;
+static void corner_table(int r)
+{
+    for (int y = 0; y < r; y++) for (int x = 0; x < r; x++) {
+        int in = 0;                                          /* 4x4 muestras por pixel */
+        for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+            float dx = r - (x + (sx + 0.5f) / 4), dy = r - (y + (sy + 0.5f) / 4);
+            if (dx * dx + dy * dy <= (float)r * r) in++;
+        }
+        corner_cov[y][x] = (unsigned char)(in * 255 / 16);
+    }
+    corner_tab_r = r;
+}
+static inline uint16_t corner_px(uint16_t p, unsigned a)
+{
+    if (a >= 255) return p;
+    if (!a) return 0;
+    unsigned rr = (p >> 11) * a / 255, g = ((p >> 5) & 63) * a / 255, b = (p & 31) * a / 255;
+    return (uint16_t)(rr << 11 | g << 5 | b);
+}
+static void corners_apply(unsigned char *buf)
+{
+    uint32_t r = st->corner_r;
+    if (!r || !buf) return;
+    if (r > CORNER_MAX) r = CORNER_MAX;
+    if ((int)r != corner_tab_r) corner_table((int)r);
+    for (uint32_t y = 0; y < r; y++) {
+        uint16_t *top = (uint16_t *)(buf + y * fline), *bot = (uint16_t *)(buf + (HM_H - 1 - y) * fline);
+        for (uint32_t x = 0; x < r; x++) {
+            unsigned a = corner_cov[y][x];
+            if (a >= 255) break;                             /* el resto de la fila ya esta dentro */
+            top[x] = corner_px(top[x], a); top[HM_W - 1 - x] = corner_px(top[HM_W - 1 - x], a);
+            bot[x] = corner_px(bot[x], a); bot[HM_W - 1 - x] = corner_px(bot[HM_W - 1 - x], a);
+        }
+    }
+}
+
 /* copia src -> d (bufer visible, tras frame_edge) y pone la capa en el orden del barrido:
  * filas hasta el final de la capa, la capa, el resto. Asi ninguna fila de la capa se barre
  * antes de estar puesta. */
@@ -333,6 +376,7 @@ static void *control(void *arg)
                     uint32_t y0 = st->dirty_y0, y1 = st->dirty_y1;
                     if (y1 > y0 && y1 <= HM_H) memcpy(buf_at(last_var.yoffset) + y0 * fline, frames + y0 * fline, (y1 - y0) * fline);
                     else memcpy(buf_at(last_var.yoffset), frames, fsize);
+                    corners_apply(buf_at(last_var.yoffset));
                 }
                 st->presents++;
             } else if (c == 'H') {
@@ -347,6 +391,7 @@ static void *control(void *arg)
                     frame_edge();
                     if (was_capture && frames) copy_then_ov(d, frames + fsize);
                     else { st->ov_saved = 0; ov_apply(d); }
+                    corners_apply(d);
                 }
                 st->presents++;
             } else if (c == 'O') {
@@ -355,6 +400,7 @@ static void *control(void *arg)
                     frame_edge();            /* al empezar el vblank: quitar y poner seguidos */
                     ov_restore(d);           /* (decenas de us), nunca se barre a medias */
                     ov_apply(d);
+                    corners_apply(d);
                 }
                 st->presents++;
             }
@@ -441,7 +487,7 @@ static void shell_release(void)
     if (st->capture || st->held) {
         st->capture = 0; st->held = 0;
         if (st->waiting) pthread_cond_broadcast(&cv);
-        else if (fbmem && frames) { frame_edge(); memcpy(buf_at(last_var.yoffset), frames + fsize, fsize); st->ov_saved = 0; }
+        else if (fbmem && frames) { frame_edge(); memcpy(buf_at(last_var.yoffset), frames + fsize, fsize); st->ov_saved = 0; corners_apply(buf_at(last_var.yoffset)); }
     }
     st->ov_on = 0;
     if (fbmem) { frame_edge(); ov_restore(buf_at(last_var.yoffset)); }
@@ -849,12 +895,14 @@ int ioctl(int fd, unsigned long req, ...)
             sb_fix(frames + fsize);             /* el shell copia la barra de aqui */
             wait_even(&st->fr0_seq);
             memcpy(b, frames, fsize);           /* el panel sigue con la imagen del shell */
+            corners_apply(b);
             st->cap_frames++;
         } else {
             if (map_fb()) sb_fix(buf_at(last_var.yoffset));
             if (st->home_sub_on && map_fb()) home_substitute(buf_at(last_var.yoffset));
             if (st->ov_on && map_fb()) ov_apply(buf_at(last_var.yoffset));
             else st->ov_saved = 0;
+            if (map_fb()) corners_apply(buf_at(last_var.yoffset));
         }
         st->frames++;
         int r = r_ioctl(fd, req, arg);
@@ -1339,6 +1387,7 @@ enum {
     SF_VOLUME = 16,    /* secuencia de setVolume de HiBy Link */
     SF_RO     = 32,    /* solo lectura */
     SF_POST   = 64,    /* tras setting_set, mensaje msg_on/msg_off a la cola de la interfaz (como el CC) */
+    SF_OPT    = 128,   /* v8: se comprueba por separado; si su caso no casa, solo esa opcion falta */
 };
 static const struct st_opt {
     const char *name; int id, lo, hi, flags, msg_on, msg_off;
@@ -1363,6 +1412,14 @@ static const struct st_opt {
     { "volume",    0x11,   0, 255, SF_VOLUME,   0,     0,     0x42a954, 0x42c0c0 },
     { "volmax",    0x10,   0, 255, SF_RO,       0,     0,     0x42a95c, 0 },
     { "speed",     0x65,   0, 255, SF_RO,       0,     0,     0x42a698, 0 },   /* % (MSEB necesita 100) */
+    /* v8 (docs/research_settings_api.md §9): pantalla y apagado por inactividad. Mismo camino
+     * con cerrojo (system_lister) que sleep/sleepmin. bkltime sin control de rango dentro del
+     * reproductor: lo pone lo/hi aqui. */
+    { "bklon",     0x0e,   0,   1, SF_OPT,      0,     0,     0x42a96c, 0x42c728 },
+    { "bkltime",   0x0f,  10, 120, SF_OPT,      0,     0,     0x42a964, 0x42c184 },
+    { "idle",      0x0b,   0,   1, SF_OPT,      0,     0,     0x42a984, 0x42c6c8 },
+    { "idlemin",   0x0c,   1,  10, SF_OPT,      0,     0,     0x42a97c, 0x42c6a8 },
+    { "update",    0x07,   0,   1, SF_OPT,      0,     0,     0x42a9a4, 0x42c540 },
 };
 #define ST_NOPT ((int)(sizeof st_opt / sizeof st_opt[0]))
 #define ST_ID_LINEOUT 0x2d
@@ -1379,6 +1436,7 @@ static int st_check(void)
     if (!pl_mapped(HP_SGET_TBL, HP_NSET * 4, 0) || !pl_mapped(HP_SSET_TBL, HP_NSET * 4, 0)) return -ENOEXEC;
     const uint32_t *gt = (const uint32_t *)(uintptr_t)HP_SGET_TBL, *ss = (const uint32_t *)(uintptr_t)HP_SSET_TBL;
     for (int i = 0; i < ST_NOPT; i++) {
+        if (st_opt[i].flags & SF_OPT) continue;                         /* v8: st_opt_ok() */
         if (gt[st_opt[i].id] != st_opt[i].get_case) return -ENOEXEC;
         if (st_opt[i].set_case && ss[st_opt[i].id] != st_opt[i].set_case) return -ENOEXEC;
     }
@@ -1388,9 +1446,16 @@ static int st_check(void)
     return 0;
 }
 
+/* una opcion v8 solo se usa si sus casos de las tablas de saltos son los esperados */
+static int st_opt_ok(const struct st_opt *o)
+{
+    if (!(o->flags & SF_OPT)) return 1;
+    const uint32_t *gt = (const uint32_t *)(uintptr_t)HP_SGET_TBL, *ss = (const uint32_t *)(uintptr_t)HP_SSET_TBL;
+    return gt[o->id] == o->get_case && (!o->set_case || ss[o->id] == o->set_case);
+}
 static const struct st_opt *st_find(const char *k)
 {
-    for (int i = 0; i < ST_NOPT; i++) if (!strcmp(k, st_opt[i].name)) return &st_opt[i];
+    for (int i = 0; i < ST_NOPT; i++) if (!strcmp(k, st_opt[i].name)) return st_opt_ok(&st_opt[i]) ? &st_opt[i] : 0;
     return 0;
 }
 
@@ -1473,7 +1538,7 @@ static void st_serve(void)
     if (!strcmp(op, "list") || (!strcmp(op, "get") && !strcmp(key, "all"))) {
         size_t k = 0;
         for (int i = 0; i < ST_NOPT && k + 40 < sizeof extra; i++)
-            k += (size_t)snprintf(extra + k, sizeof extra - k, "%s=%d\n", st_opt[i].name, st_get(st_opt[i].id));
+            if (st_opt_ok(&st_opt[i])) k += (size_t)snprintf(extra + k, sizeof extra - k, "%s=%d\n", st_opt[i].name, st_get(st_opt[i].id));
         val = ST_NOPT; msg = "ok"; goto out;
     }
     const struct st_opt *o = st_find(key);

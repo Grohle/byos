@@ -181,6 +181,16 @@ static void mirror_sig_write(const uint16_t *img)
 
 static int edit_bg_ok;
 static int wg_part_y0, wg_part_y1;   /* widgets.inc.c */
+/* esquinas redondeadas de toda la pantalla (Ajustes > Pantalla y brillo; "corners" en la
+ * configuracion, activadas por defecto). Las dibuja la libreria de pantalla en cada imagen. */
+#define CORNER_R 16
+static int ui_corners = 1;
+static void corners_push(void)
+{
+    if (!st) return;
+    st->corner_r = ui_corners ? CORNER_R : 0;
+    cmd('O');                                     /* repintar ya lo que se ve */
+}
 static void lconf_save(void)
 {
     mirror_dirty = 1; edit_bg_ok = 0;
@@ -198,7 +208,7 @@ static void lconf_save(void)
     gestures_conf_save(f);
     cc_conf_save(f);
     wg_conf_save(f);
-    fprintf(f, "lang %s\nkb %d %d %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout);
+    fprintf(f, "lang %s\nkb %d %d %d\ncorners %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, ui_corners);
     fclose(f);
     rename(LCONF ".tmp", LCONF);
 }
@@ -230,6 +240,7 @@ static void lconf_load0(void)
         else if (!strcmp(t, "order")) { char *v = strtok(0, " \t\r\n"); order = v ? atoi(v) : 0; }
         else if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
         else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
+        else if (!strcmp(t, "corners")) { char *v = strtok(0, " \t\r\n"); ui_corners = v ? atoi(v) != 0 : 1; }
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
             if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; got_kb = 1; } }
@@ -295,7 +306,7 @@ static void lconf_load0(void)
     if (!layout2) lconf_compact();                 /* una vez: todo arriba a la izquierda */
     lconf_drop_empty_pages();
 }
-static void lconf_load(void) { lconf_load0(); lconf_strip_removed(); }
+static void lconf_load(void) { lconf_load0(); lconf_strip_removed(); corners_push(); }
 
 /* ------------------------------------------------------------------ geometria */
 static int per_page(void)

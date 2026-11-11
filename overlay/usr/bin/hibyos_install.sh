@@ -444,9 +444,33 @@ pending()
     return 0
 }
 
+# ByOS is drawn for the player's dark theme (theme3). After a factory reset the player starts
+# with the light one and its menus show over ByOS. user.ini is the player's settings struct as
+# is (docs/research_settings_api.md); the UI theme is the 32-bit value at 0x1c (2 = dark,
+# found by comparing the file before and after changing it in the stock settings).
+dark_theme() {
+    U=${HIBYOS_USERINI:-/usr/data/user.ini}
+    [ -f $U ] || return 0
+    [ "$(wc -c < $U)" -ge 32 ] || return 0
+    v=$(dd if=$U bs=1 skip=28 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+    if [ "$v" != 2 ]; then
+        printf '\002' | dd of=$U bs=1 seek=28 count=1 conv=notrunc 2>/dev/null && sync
+        log "tema de la interfaz: $v -> 2 (oscuro)"
+    fi
+    # "Theme color" tints every screen with a hue, ByOS included: always off. 32-bit flag at
+    # 0x3e0 (0 off, 1 on; the hue itself is at 0x3dc and is left alone). Same method.
+    [ "$(wc -c < $U)" -ge 996 ] || return 0
+    c=$(dd if=$U bs=1 skip=992 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+    if [ "$c" != 0 ]; then
+        printf '\000' | dd of=$U bs=1 seek=992 count=1 conv=notrunc 2>/dev/null && sync
+        log "color del tema: $c -> 0 (desactivado)"
+    fi
+}
+
 case "$1" in
   boot)
     clean_partial
+    dark_theme
     [ -f $TH/$MIRROR_PNG ] && [ ! -f $HM/mirror_on ] && mirror_apply
     if ! sd_ok; then
         # instalado (o sin payload la ultima vez): no se espera a la SD; si hay una version

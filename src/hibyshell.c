@@ -1212,6 +1212,82 @@ static void wifi_tcpack_off(void)
     close(s);
 }
 
+/* ------------------------------------------------------------------ primera puesta en marcha
+ * En una instalacion limpia el inicio de ByOS no puede tapar al de fabrica hasta que el
+ * reproductor carga launcher/mirror.png, y solo lo hace al arrancar. Sin esto se veia el menu
+ * original por encima de ByOS hasta que alguien reiniciaba. Aqui: en reposo se genera el
+ * espejo y, si el instalador aun no lo ha activado, se reinicia UNA vez (sin musica sonando). */
+#define FIRST_SETUP_DONE "/usr/data/hibymod/first_setup_reboot"
+static void first_setup_tick(void)
+{
+    static double next; double t = now_ms();
+    if (t < next) return;
+    next = t + 3000;
+    if (mirror_dirty && !launcher_on) mirror_save();
+    if (access(MIRROR_PNG, F_OK) || !access("/usr/data/hibymod/mirror_on", F_OK) || !access(FIRST_SETUP_DONE, F_OK)) return;
+    if (st->pcm_open && t - st->pcm_last_ms < 2000) return;          /* sonando: esperar */
+    int f = open(FIRST_SETUP_DONE, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f < 0) return; close(f);
+    lg("primera puesta en marcha: espejo del inicio listo, reiniciando para activarlo");
+    sync();
+    if (system("reboot")) lg("reboot: fallo");
+}
+
+/* ------------------------------------------------------------------ gestor de recursos
+ * Vigilante silencioso (cada 10 s en reposo, ~1 ms): reparte prioridades para que, si falta
+ * memoria o CPU, ceda siempre lo prescindible y nunca el sonido.
+ *   - memoria (oom_score_adj; el nucleo mata primero al de valor mas alto):
+ *       reproductor -900 (el audio, siempre reservado) > shell -800 > lo esencial del sistema
+ *       (adbd, Wi-Fi, sys_server, dbus, Bluetooth) -500 > apps de la tienda 0 >
+ *       ayudantes de ByOS (caratulas, red, etiquetas, mezclas) 600: los primeros en ceder.
+ *   - CPU: los ayudantes van con nice 10 como minimo (el reproductor ya tiene su hilo de audio
+ *     en tiempo real; ver hibymod_disp.c).
+ * Solo escribe cuando el valor no es ya el que toca. */
+struct guard_rule { const char *comm; int oom, nice; };
+static const struct guard_rule guard_rules[] = {
+    { "system_main_thr", -900, -99 }, { "hiby_player", -900, -99 }, { "hibyshell", -800, -99 },
+    { "adbd", -500, -99 }, { "wpa_supplicant", -500, -99 }, { "sys_server", -500, -99 },
+    { "dbus-daemon", -500, -99 }, { "bluetoothd", -400, -99 }, { "bluealsa", -400, -99 },
+    { "hibybudsd", -200, -99 },
+    { "hibywall", 600, 10 }, { "hibynet", 600, 10 }, { "hibytag", 600, 10 }, { "hibymix", 600, 10 },
+};
+static int guard_write(const char *path, int v)
+{
+    char cur[16] = ""; int f = open(path, O_RDONLY | O_CLOEXEC);
+    if (f >= 0) { ssize_t n = read(f, cur, sizeof cur - 1); close(f); if (n > 0) { cur[n] = 0; if (atoi(cur) == v) return 0; } }
+    f = open(path, O_WRONLY | O_CLOEXEC); if (f < 0) return -1;
+    char b[16]; int n = snprintf(b, sizeof b, "%d", v), ok = write(f, b, n) == n; close(f);
+    return ok ? 1 : -1;
+}
+static void guard_tick(void)
+{
+    static double next; double t = now_ms();
+    if (t < next) return;
+    next = t + 10000;
+    DIR *d = opendir("/proc"); if (!d) return;
+    struct dirent *e; int changed = 0;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+        char p[64], comm[32] = ""; snprintf(p, sizeof p, "/proc/%s/comm", e->d_name);
+        int f = open(p, O_RDONLY | O_CLOEXEC); if (f < 0) continue;
+        ssize_t n = read(f, comm, sizeof comm - 1); close(f);
+        if (n <= 0) continue;
+        comm[n] = 0; if (comm[n - 1] == '\n') comm[n - 1] = 0;
+        for (unsigned i = 0; i < sizeof guard_rules / sizeof *guard_rules; i++) {
+            if (strcmp(comm, guard_rules[i].comm)) continue;
+            snprintf(p, sizeof p, "/proc/%s/oom_score_adj", e->d_name);
+            if (guard_write(p, guard_rules[i].oom) > 0) changed++;
+            if (guard_rules[i].nice > -99) {
+                int pid = atoi(e->d_name);
+                errno = 0; int nv = getpriority(PRIO_PROCESS, (id_t)pid);
+                if (!errno && nv < guard_rules[i].nice && !setpriority(PRIO_PROCESS, (id_t)pid, guard_rules[i].nice)) changed++;
+            }
+            break;
+        }
+    }
+    closedir(d);
+    if (changed) lg("recursos: %d prioridades ajustadas", changed);
+}
+
 /* ------------------------------------------------------------------ guardian de memoria
  * Cada 5 s en reposo se mira MemAvailable; por debajo de MEM_LOW_KB se devuelven al sistema las
  * paginas de los lienzos de trabajo y de las caches con bandera (se rehacen al usarlas): el shell
@@ -1302,6 +1378,10 @@ int main(int argc, char **argv)
     }
     lconf_load();
     if (lconf_order_migrated) { lconf_order_migrated = 0; lconf_save(); }   /* orden oficial: una vez */
+    /* instalacion limpia (sin configuracion): se guarda la de serie y se pide el espejo del
+     * inicio, que el reproductor solo carga al arrancar (first_setup_tick lo completa) */
+    if (access(LCONF, F_OK)) lconf_save();
+    if (access(MIRROR_PNG, F_OK)) mirror_dirty = 1;
     pw_load();
     npx_start();
     audio_boot();
@@ -1383,7 +1463,7 @@ int main(int argc, char **argv)
             }
         }
         starts_tick();
-        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); } } continue; }
+        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); first_setup_tick(); guard_tick(); } } continue; }
         struct pkt p;
         if (!read_pkt(&p, 300)) continue;
         if (launcher_on && p.down && p.n) { launcher_touch(&p); last_cap = st->cap_frames; continue; }

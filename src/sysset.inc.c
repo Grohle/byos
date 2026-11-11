@@ -474,6 +474,7 @@ static void page_usb_root(struct spage *p)
 static void nav_usb(void) { set_nocharge = pw_nocharge; open_page(page_usb, "Ajustes"); }
 
 /* ------------------------------------------------------------------ Pantalla y brillo */
+static void ssa_corners(void) { corners_push(); lconf_save(); }
 static void page_display(struct spage *p)
 {
     ss_derive();
@@ -481,7 +482,8 @@ static void page_display(struct spage *p)
     p->secs[0] = (struct ssec){ "BRILLO", pw_mode == PW_SAVE ? "BRIGHT_SAVE_HELP" : 0, { ROWS("Brillo", &ui_bright, 1, 100, SL_BRIGHT, ssa_bright, 0) }, 1 };
     p->secs[1] = (struct ssec){ 0, ps_unsup[PS_BKLON] ? "PS_NEEDLIB_HELP" : "AUTOLOCK_HELP",
                                 { ROWC("Bloqueo automático", &ui_bkl_i, O_BKL, 6, ssa_bkl, ps_unsup[PS_BKLON] || ps_unsup[PS_BKLTIME]) }, 1 };
-    p->nsec = 2;
+    p->secs[2] = (struct ssec){ 0, "CORNERS_HELP", { ROWT("Esquinas redondeadas", &ui_corners, ssa_corners, 0) }, 1 };
+    p->nsec = 3;
 }
 static void nav_display(void)
 {
