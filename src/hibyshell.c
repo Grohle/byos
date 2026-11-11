@@ -413,12 +413,19 @@ static void homebar_layer(uint16_t *shm_dst, const uint16_t *src, int *dy0, int 
     /* las filas de la barra, frescas desde la app (aunque la app solo presentara otras) */
     memcpy(shm_dst + y0 * W, src + y0 * W, (H - y0) * W * 2);
     if (hb_k > 0) {
-        struct sprite s = spr_bar; static uint8_t a[64 * 16];
-        if (spr_bar.w * spr_bar.h <= (int)sizeof a) {
-            for (int i = 0; i < spr_bar.w * spr_bar.h; i++) a[i] = (uint8_t)(spr_bar.a[i] * e);
-            s.a = a;
+        /* recortada al borde inferior: blend_sprite no recorta y, al entrar desde abajo, escribia
+         * pasada la ultima fila (en el fotograma del reproductor: salia una barra arriba en las
+         * apps, que copian su barra de estado de ahi) */
+        for (int r = 0; r < spr_bar.h; r++) {
+            int yy = y + r; if (yy < 0 || yy >= H) continue;
+            uint16_t *row = shm_dst + yy * W;
+            for (int c = 0; c < spr_bar.w; c++) {
+                int xx = x + c; if (xx < 0 || xx >= W) continue;
+                unsigned al = (unsigned)(spr_bar.a[r * spr_bar.w + c] * e); if (!al) continue;
+                unsigned cc = spr_bar.rgb[r * spr_bar.w + c], d = row[xx], na = 255 - al;
+                row[xx] = (uint16_t)((((cc >> 11) * al + (d >> 11) * na) / 255) << 11 | (((((cc >> 5) & 63) * al + ((d >> 5) & 63) * na) / 255) << 5) | (((cc & 31) * al + (d & 31) * na) / 255));
+            }
         }
-        blend_sprite(shm_dst, &s, x, y);
     }
     if (*dy1 > *dy0) { if (*dy0 > y0) *dy0 = y0; *dy1 = H; }
 }
