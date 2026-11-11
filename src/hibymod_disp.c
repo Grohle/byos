@@ -424,6 +424,30 @@ static int create_uinput(void)
     return 1;
 }
 
+/* Shell caido: durante SHELL_GRACE_S se mantiene su ultima imagen (la captura sigue: el
+ * reproductor sigue sonando y alternando bufers sin que se vea) y la tactil no llega al
+ * reproductor; asi la interfaz de fabrica no asoma mientras el supervisor lo relanza. Si no
+ * vuelve en ese tiempo, se suelta todo (red de seguridad: el aparato sigue siendo usable). */
+#define SHELL_GRACE_S 20
+static double mono_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
+static void shell_release(void)
+{
+    struct input_event up[3]; memset(up, 0, sizeof up);
+    up[0].type = EV_KEY; up[0].code = BTN_TOUCH; up[0].value = 0;
+    up[1].type = EV_SYN; up[1].code = SYN_MT_REPORT;
+    up[2].type = EV_SYN; up[2].code = SYN_REPORT;
+    write(uin, up, sizeof up);
+    pthread_mutex_lock(&mu);
+    if (st->capture || st->held) {
+        st->capture = 0; st->held = 0;
+        if (st->waiting) pthread_cond_broadcast(&cv);
+        else if (fbmem && frames) { frame_edge(); memcpy(buf_at(last_var.yoffset), frames + fsize, fsize); st->ov_saved = 0; }
+    }
+    st->ov_on = 0;
+    if (fbmem) { frame_edge(); ov_restore(buf_at(last_var.yoffset)); }
+    pthread_mutex_unlock(&mu);
+}
+
 static void *input_thread(void *arg)
 {
     (void)arg;
@@ -433,22 +457,24 @@ static void *input_thread(void *arg)
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     strcpy(a.sun_path, HM_SOCK);
     if (ls >= 0 && (bind(ls, (struct sockaddr *)&a, sizeof a) || listen(ls, 1))) { close(ls); ls = -1; }
-    int cl = -1;
+    int cl = -1; double down_t = 0;          /* down_t > 0: el shell se cayo en ese instante */
     struct input_event ev[64];
     for (;;) {
+        if (down_t && mono_s() - down_t > SHELL_GRACE_S) { down_t = 0; shell_release(); }
         struct pollfd p[3]; int n = 0;
         int irf = -1, ils = -1, icl = -1;
         if (rf >= 0) { p[n].fd = rf; p[n].events = POLLIN; irf = n++; }
         if (ls >= 0 && cl < 0) { p[n].fd = ls; p[n].events = POLLIN; ils = n++; }
         if (cl >= 0) { p[n].fd = cl; p[n].events = POLLIN; icl = n++; }
-        if (poll(p, n, -1) < 0) { if (errno == EINTR) continue; sleep(1); continue; }
+        if (poll(p, n, down_t ? 500 : -1) < 0) { if (errno == EINTR) continue; sleep(1); continue; }
         if (irf >= 0 && (p[irf].revents & POLLIN)) {
             ssize_t r = read(rf, ev, sizeof ev);
-            if (r > 0 && cl < 0) write(uin, ev, r);         /* paso directo */
+            if (r > 0 && cl < 0 && !down_t) write(uin, ev, r);   /* paso directo (no mientras el shell vuelve) */
         }
         if (ils >= 0 && (p[ils].revents & POLLIN)) {
             cl = accept(ls, 0, 0);
             if (cl >= 0) {
+                down_t = 0;                                    /* el shell volvio: sigue con su imagen */
                 struct ucred cr; socklen_t cl_len = sizeof cr;
                 st->shell_pid = getsockopt(cl, SOL_SOCKET, SO_PEERCRED, &cr, &cl_len) == 0 ? (uint32_t)cr.pid : 0;
                 st->input_mode = 2;
@@ -458,21 +484,13 @@ static void *input_thread(void *arg)
             ssize_t r = read(cl, ev, sizeof ev);
             if (r <= 0) {
                 close(cl); cl = -1; st->input_mode = 1;
-                /* el shell murio: soltar cualquier toque a medias y quitar su capa */
-                struct input_event up[3]; memset(up, 0, sizeof up);
-                up[0].type = EV_KEY; up[0].code = BTN_TOUCH; up[0].value = 0;
-                up[1].type = EV_SYN; up[1].code = SYN_MT_REPORT;
-                up[2].type = EV_SYN; up[2].code = SYN_REPORT;
-                write(uin, up, sizeof up);
-                pthread_mutex_lock(&mu);
-                if (st->capture || st->held) {
-                    st->capture = 0; st->held = 0;
-                    if (st->waiting) pthread_cond_broadcast(&cv);
-                    else if (fbmem && frames) { frame_edge(); memcpy(buf_at(last_var.yoffset), frames + fsize, fsize); st->ov_saved = 0; }
-                }
-                st->ov_on = 0;
-                if (fbmem) { frame_edge(); ov_restore(buf_at(last_var.yoffset)); }
-                pthread_mutex_unlock(&mu);
+                /* el shell murio: soltar el toque a medias; su imagen se queda SHELL_GRACE_S */
+                { struct input_event up[3]; memset(up, 0, sizeof up);
+                  up[0].type = EV_KEY; up[0].code = BTN_TOUCH; up[0].value = 0;
+                  up[1].type = EV_SYN; up[1].code = SYN_MT_REPORT;
+                  up[2].type = EV_SYN; up[2].code = SYN_REPORT;
+                  write(uin, up, sizeof up); }
+                if (st->capture || st->held) down_t = mono_s(); else shell_release();
                 continue;
             }
             r -= r % sizeof ev[0];
@@ -519,7 +537,7 @@ static void *watchdog(void *arg)
         if (st->input_mode != 2 || !st->shell_pid) { still = 0; continue; }
         uint32_t b = st->shell_beat;
         if (b != last) { last = b; still = 0; continue; }
-        if (++still >= 4) {
+        if (++still >= 10) {             /* 10 s: con poca memoria el shell puede ir lento sin estar colgado */
             kill((pid_t)st->shell_pid, SIGKILL);   /* el cierre del socket hace el resto */
             still = 0;
         }

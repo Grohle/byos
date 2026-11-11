@@ -125,3 +125,14 @@ static int syspop_touch(const struct pkt *p)
     else { sp_close(); sp_open_req = 1; }      /* tocar la tarjeta: abrir Auriculares */
     return 1;
 }
+
+/* ------------------------------------------------------------------ guardian de memoria (modulos)
+ * Lienzos de trabajo que se rellenan enteros en cada uso y caches con su bandera de validez.
+ * Solo se llama en reposo desde mem_guard (hibyshell.c). */
+static void shell_trim_extra(void)
+{
+    drop_pages(bk_cscr, sizeof bk_cscr);                     /* Libros: lienzo de portadas generadas */
+    drop_pages(ab_gen_buf, sizeof ab_gen_buf);               /* audiolibros: idem */
+    drop_pages(wg_scr, sizeof wg_scr);                       /* widgets: lienzo de un widget */
+    st_tabbar_key = -1; drop_pages(st_tabbar, sizeof st_tabbar);   /* tienda: barra de pestanas en cache */
+}

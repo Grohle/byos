@@ -537,6 +537,12 @@ static void fwd(const struct pkt *p) { inj(p->ev, p->n); }
  * soltaban nunca: con el uso iban sumando varios MB de RAM en un aparato de 57 MB. Ahora se
  * registran y se sueltan todos en reposo (bucle principal, sin gesto ni app en curso); musl los
  * devuelve al sistema (mmap). Solo para bufers que se rellenan desde cero en cada uso. */
+/* devuelve al sistema las paginas enteras de [p, p+n): vuelven a cero al tocarlas */
+static void drop_pages(void *p, size_t n)
+{
+    uintptr_t a = ((uintptr_t)p + 4095) & ~(uintptr_t)4095, e = ((uintptr_t)p + n) & ~(uintptr_t)4095;
+    if (e > a) madvise((void *)a, e - a, MADV_DONTNEED);
+}
 static void **lazy_slot[32]; static int lazy_n;
 static void *lazy_alloc(void **slot, size_t n, int zero)
 {
@@ -1115,8 +1121,9 @@ static void cache_to_sd(void)
 {
     static const char *C = "/usr/data/hibymod/cache", *S = "/usr/data/mnt/sd_0/HiByOS/cache/int";
     struct stat sb; int islink = !lstat(C, &sb) && S_ISLNK(sb.st_mode), isdir = !islink && !lstat(C, &sb) && S_ISDIR(sb.st_mode);
-    if (!access("/usr/data/mnt/sd_0/HiByOS", W_OK)) {
+    if (sd_mounted()) {
         if (islink) return;
+        mkdir("/usr/data/mnt/sd_0/HiByOS", 0755);
         mkdir("/usr/data/mnt/sd_0/HiByOS/cache", 0755); mkdir(S, 0755);
         if (access(S, W_OK)) return;
         if (isdir) { if (system("rm -rf /usr/data/hibymod/cache")) {} }
@@ -1125,6 +1132,103 @@ static void cache_to_sd(void)
     } else if (islink) {
         unlink(C); mkdir(C, 0755); lg("cache: sin SD, carpeta interna");
     }
+}
+
+/* ------------------------------------------------------------------ arranque que se repara solo
+ * ASSETS/starts cuenta los arranques seguidos que no llegaron a 25 s de vida. Con 2 seguidos se
+ * apartan los ficheros de estado (pueden haber quedado a medias tras un apagado brusco) y se
+ * arranca con los valores de fabrica; con 4, tambien las caches. Los apartados quedan como
+ * *.bad (uno por fichero, se sobrescribe) para poder mirarlos. */
+#define STARTS_FILE ASSETS "/starts"
+static int starts_pending;                     /* hay que poner el contador a 0 cuando llevemos 25 s */
+static double starts_t0;
+static void starts_write(int n)
+{
+    FILE *f = fopen(STARTS_FILE ".tmp", "w"); if (!f) return;
+    fprintf(f, "%d\n", n); fflush(f); fsync(fileno(f)); fclose(f);
+    rename(STARTS_FILE ".tmp", STARTS_FILE);
+}
+static void self_heal(void)
+{
+    int n = 0; FILE *f = fopen(STARTS_FILE, "r"); if (f) { if (fscanf(f, "%d", &n) != 1) n = 0; fclose(f); }
+    if (n < 0 || n > 1000) n = 0;
+    if (n >= 2) {
+        static const char *st_files[] = { ASSETS "/launcher.conf", "/usr/data/hibymod/power.conf", ASSETS "/airplane",
+                                          "/usr/data/hibymod/appdata/radio/config", 0 };
+        for (int i = 0; st_files[i]; i++) if (!access(st_files[i], F_OK)) {
+            char bad[300]; snprintf(bad, sizeof bad, "%s.bad", st_files[i]);
+            rename(st_files[i], bad); lg("auto-reparacion: %s apartado", st_files[i]);
+        }
+    }
+    if (n >= 4) {
+        struct stat sb;
+        if (!lstat("/usr/data/hibymod/cache", &sb)) { if (S_ISLNK(sb.st_mode)) unlink("/usr/data/hibymod/cache"); else if (system("rm -rf /usr/data/hibymod/cache")) {} }
+        if (sd_mounted() && system("rm -rf /usr/data/mnt/sd_0/HiByOS/cache/int /usr/data/mnt/sd_0/HiByOS/cache/music")) {}
+        lg("auto-reparacion: caches borradas");
+    }
+    if (n) lg("arranque %d seguido sin llegar a 25 s", n + 1);
+    starts_write(n + 1); starts_pending = 1; starts_t0 = now_ms();
+}
+static void starts_tick(void)
+{
+    if (starts_pending && now_ms() - starts_t0 > 25000) { starts_pending = 0; starts_write(0); }
+}
+
+/* ------------------------------------------------------------------ Wi-Fi: supresion de ACK de TCP
+ * El driver de Broadcom (cywdhd, BCM43438) trae activada la "supresion de ACK de TCP": con
+ * trafico TCP sostenido (radio por internet, descargas, ADB por Wi-Fi) agota su reserva de
+ * bloques ("No more free tdata_psh_info", miles de lineas) y el nucleo acaba cayendo
+ * (hibymod/logs/crash_*.txt). Se desactiva con la variable del driver "tcpack_suppress" (ioctl
+ * privado de DHD); se vuelve a mirar cada 30 s por si el Wi-Fi se reinicio. Si el driver no la
+ * conoce, el ioctl falla y no pasa nada. */
+struct dhd_ioc { uint32_t cmd; void *buf; uint32_t len, set, used, needed, driver; };
+static int dhd_iovar(int s, int set, uint32_t *val)
+{
+    char b[32]; memset(b, 0, sizeof b);
+    strcpy(b, "tcpack_suppress"); memcpy(b + 16, val, 4);
+    struct dhd_ioc io = { set ? 3 /* DHD_SET_VAR */ : 2 /* DHD_GET_VAR */, b, 20, (uint32_t)set, 0, 0, 0x00444944 /* DHD_IOCTL_MAGIC */ };
+    struct ifreq ifr; memset(&ifr, 0, sizeof ifr); strcpy(ifr.ifr_name, "wlan0"); ifr.ifr_data = (void *)&io;
+    if (ioctl(s, SIOCDEVPRIVATE, &ifr) < 0) return -errno;
+    if (!set) memcpy(val, b, 4);
+    return 0;
+}
+static void wifi_tcpack_off(void)
+{
+    static double next; static int said; double t = now_ms();
+    if (t < next) return;
+    next = t + 30000;
+    int s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0); if (s < 0) return;
+    uint32_t v = 0; int r = dhd_iovar(s, 0, &v);
+    if (!r && v) { uint32_t z = 0; int w = dhd_iovar(s, 1, &z); lg("wifi: tcpack_suppress %u -> 0 (%s)", v, w ? strerror(-w) : "ok"); }
+    else if (r && r != -ENODEV && !said) { said = 1; lg("wifi: tcpack_suppress no disponible (%s)", strerror(-r)); }
+    close(s);
+}
+
+/* ------------------------------------------------------------------ guardian de memoria
+ * Cada 5 s en reposo se mira MemAvailable; por debajo de MEM_LOW_KB se devuelven al sistema las
+ * paginas de los lienzos de trabajo y de las caches con bandera (se rehacen al usarlas): el shell
+ * vuelve a su tamano de recien arrancado en vez de crecer hasta ahogar al aparato. */
+#define MEM_LOW_KB 7000
+static void shell_trim_extra(void);            /* lienzos de los modulos (al final del fichero) */
+static int mem_avail_kb(void)
+{
+    char b[600]; int f = open("/proc/meminfo", O_RDONLY | O_CLOEXEC); if (f < 0) return -1;
+    int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return -1; b[n] = 0;
+    char *m = strstr(b, "MemAvailable:"); return m ? atoi(m + 13) : -1;
+}
+static void mem_guard(void)
+{
+    static double next, last_trim; double t = now_ms();
+    if (t < next) return;
+    next = t + 5000;
+    int kb = mem_avail_kb();
+    if (kb < 0 || kb >= MEM_LOW_KB || t - last_trim < 20000) return;
+    last_trim = t;
+    lazy_release();
+    have_cache_plane = 0; drop_pages(img_cache_plane, sizeof img_cache_plane);
+    have_under = 0; drop_pages(img_under, sizeof img_under); drop_pages(img_sheet, sizeof img_sheet);
+    shell_trim_extra();
+    lg("memoria: %d KB libres -> lienzos y caches devueltos (ahora %d KB)", kb, mem_avail_kb());
 }
 
 int main(int argc, char **argv)
@@ -1139,6 +1243,7 @@ int main(int argc, char **argv)
      * ayudantes (hibywall, hibynet, hibytag) no arrancan. */
     { int f = open("/proc/sys/vm/overcommit_memory", O_WRONLY); if (f >= 0) { if (write(f, "1", 1) != 1) lg("overcommit: no se pudo"); close(f); } }
     perf_on = !access("/tmp/hibymod/perf", F_OK);
+    self_heal();
     cache_to_sd();
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);
     if (!st) { lg("sin estado compartido"); return 1; }
@@ -1185,7 +1290,7 @@ int main(int argc, char **argv)
     {   /* animacion de arranque: pedir el final, esperar al fundido (<= 1,5 s) y soltar al reproductor */
         int f = open("/tmp/hibyos_boot_stop", O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f >= 0) close(f);
         double tb = now_ms(); while (!access("/tmp/hibyos_boot", F_OK) && now_ms() - tb < 1500) msleep(20);
-        if (st->held) cmd('R');
+        if (st->held || st->capture) cmd('R');      /* tambien la captura que dejo un shell anterior caido */
     }
     lconf_load();
     if (lconf_order_migrated) { lconf_order_migrated = 0; lconf_save(); }   /* orden oficial: una vez */
@@ -1269,7 +1374,8 @@ int main(int argc, char **argv)
                 } else if (!is_stream_page(vv) && !is_home(vv)) { /* sigue en la app */ }
             }
         }
-        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) lazy_release(); continue; }
+        starts_tick();
+        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); } } continue; }
         struct pkt p;
         if (!read_pkt(&p, 300)) continue;
         if (launcher_on && p.down && p.n) { launcher_touch(&p); last_cap = st->cap_frames; continue; }
