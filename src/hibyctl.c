@@ -22,6 +22,10 @@
 #include <linux/input.h>
 #include <linux/fb.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <signal.h>
 
 /* Captura el fotograma visible (doble bufer) a un fichero RGB565 crudo de 320x480. */
 static int shot(const char *out, int which)
@@ -365,6 +369,57 @@ static int sheet(int tx, int ty, int dur)
 
 /* Graba cada fotograma presentado (reproductor o shell) a media resolucion durante MS:
  * fichero = N x { uint32 t_ms, uint32 yoffset, uint16 px[160*240] }. Para revisar animaciones. */
+/* recnet PORT ESCALA: graba sin limite y lo manda por TCP (para "adb forward"): cada fotograma
+ * presentado (cambio de frames/presents/yoffset), reducido 1/ESCALA y comprimido en tramos
+ * (u16 repeticiones, u16 pixel) de la DIFERENCIA (XOR) con el fotograma anterior. Cabecera por fotograma: "SFRM", u32 ms, u16 ancho, u16 alto,
+ * u32 bytes. Hasta que el cliente cierra. Nada se guarda en el aparato. */
+static int send_all(int fd, const void *b, size_t n)
+{
+    const char *p = b;
+    while (n) { ssize_t k = send(fd, p, n, MSG_NOSIGNAL); if (k <= 0) { if (k < 0 && errno == EINTR) continue; return -1; } p += k; n -= (size_t)k; }
+    return 0;
+}
+static int recnet(int port, int sc)
+{
+    if (sc < 1) sc = 1; if (sc > 4) sc = 4;
+    signal(SIGPIPE, SIG_IGN);
+    int s = open("/dev/shm/hibymod_fbstate", O_RDONLY);
+    if (s < 0) { perror("estado"); return 2; }
+    volatile uint32_t *stt = mmap(0, 4096, PROT_READ, MAP_SHARED, s, 0);
+    int f = open("/dev/fb0", O_RDONLY);
+    struct fb_var_screeninfo v; struct fb_fix_screeninfo x;
+    ioctl(f, FBIOGET_VSCREENINFO, &v); ioctl(f, FBIOGET_FSCREENINFO, &x);
+    const uint16_t *fbm = mmap(0, x.smem_len, PROT_READ, MAP_SHARED, f, 0);
+    int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+    setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons((uint16_t)port); a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(ls, (struct sockaddr *)&a, sizeof a) || listen(ls, 1)) { perror("socket"); return 2; }
+    fprintf(stderr, "recnet: esperando en %d\n", port);
+    int c = accept(ls, 0, 0); if (c < 0) return 2;
+    setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    int ow = 320 / sc, oh = 480 / sc;
+    static uint16_t fr[320 * 480], prev[320 * 480], dif[320 * 480], enc[320 * 480 * 2 + 16];
+    uint32_t lf = 0xffffffff, lp = 0, ly = 0; double t0 = now_ms(); long nfr = 0;
+    for (;;) {
+        uint32_t fr_ = stt[4], pr = stt[8];
+        struct fb_var_screeninfo vv; ioctl(f, FBIOGET_VSCREENINFO, &vv); uint32_t yo = vv.yoffset;
+        if (fr_ != lf || pr != lp || yo != ly) {
+            lf = fr_; lp = pr; ly = yo;
+            const uint16_t *b = fbm + (size_t)yo * 320;
+            for (int yy = 0; yy < oh; yy++) for (int xx = 0; xx < ow; xx++) fr[yy * ow + xx] = b[(yy * sc) * 320 + xx * sc];
+            /* diferencia con el anterior (XOR): lo que no cambia son ceros y el RLE lo reduce a casi nada */
+            int n = 0, tot = ow * oh;
+            for (int i = 0; i < tot; i++) { dif[i] = fr[i] ^ prev[i]; prev[i] = fr[i]; }
+            for (int i = 0; i < tot; ) { uint16_t px = dif[i]; int k = 1; while (i + k < tot && dif[i + k] == px && k < 65535) k++; enc[n++] = (uint16_t)k; enc[n++] = px; i += k; }
+            uint32_t hd[4]; memcpy(hd, "SFRM", 4); hd[1] = (uint32_t)(now_ms() - t0); hd[2] = (uint32_t)ow | (uint32_t)oh << 16; hd[3] = (uint32_t)(n * 2);
+            if (send_all(c, hd, sizeof hd) || send_all(c, enc, (size_t)n * 2)) break;
+            nfr++;
+        }
+        struct timespec q = { 0, 1000000 }; nanosleep(&q, 0);
+    }
+    fprintf(stderr, "recnet: %ld fotogramas\n", nfr);
+    return 0;
+}
 static int rec(int ms, const char *out, int maxn)
 {
     int s = open("/dev/shm/hibymod_fbstate", O_RDONLY);
@@ -457,6 +512,7 @@ int main(int argc, char **argv)
         printf("\n");
         return 0;
     }
+    if (!strcmp(c, "recnet")) return recnet(argc >= 3 ? atoi(argv[2]) : 5600, argc >= 4 ? atoi(argv[3]) : 2);
     if (!strcmp(c, "rec") && argc >= 4) return rec(atoi(argv[2]), argv[3], argc >= 5 ? atoi(argv[4]) : 80);
     if (!strcmp(c, "sheet") && argc >= 4) return sheet(atoi(argv[2]), atoi(argv[3]), argc >= 5 ? atoi(argv[4]) : 320);
     if (!strcmp(c, "paint") && argc >= 3) return paint(argv[2], argc >= 4 ? atoi(argv[3]) : 0);

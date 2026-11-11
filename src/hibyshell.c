@@ -991,6 +991,12 @@ static void hud_compose_present(const uint16_t *src)
 {
     if (!hud_tmp && !(hud_tmp = lazy_alloc((void **)&hud_tmp, HM_FRAME_BYTES, 0))) return;   /* se devuelve en reposo */
     memcpy(hud_tmp, src, HM_FRAME_BYTES);
+    /* lo mismo que lleva un fotograma normal, para que nada cambie entre los de la app y los de la
+     * pildora (si no: la barra de inicio y la de estado aparecian y desaparecian a cada paso) */
+    if (!hud_cap) {
+        statusbar_tint(hud_tmp);
+        int a = 0, b = 0; homebar_layer(hud_tmp, src, &a, &b);
+    } else if (ov_cur == &spr_bar && spr_bar.w) blend_sprite(hud_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de las pantallas de HiBy */
     blend_sprite(hud_tmp, &spr_hud, HUD_X, HUD_Y);
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, hud_tmp, HM_FRAME_BYTES);
@@ -1069,10 +1075,12 @@ static int hud_update(int present_it)
     last_upd = t;
     int v = read_volume(); if (v >= 0) vol_guess = v;
     double target = vol_guess / 100.0;
-    /* muelle casi critico: llega rapido y sin saltos; el ensanchamiento se relaja */
-    static double vel, lt; double dt = lt ? (t - lt) / 16.7 : 1; lt = t; if (dt > 3) dt = 3;
-    vel += ((target - hud_level) * 0.30 - vel * 0.55) * dt; hud_level += vel * dt;
-    if (fabs(target - hud_level) < 0.003 && fabs(vel) < 0.002) { hud_level = target; vel = 0; }
+    /* suavizado exponencial (tau 45 ms): estable con cualquier intervalo entre fotogramas y sin
+     * pasarse. El muelle de antes, con 40-90 ms entre llamadas, se pasaba y oscilaba (0,03 -> 0,20
+     * -> 0,04 en 90 ms con el volumen bajando de 8 a 7: la barra subia y bajaba sola) */
+    static double lt; double dms = lt ? t - lt : 16; lt = t; if (dms > 200) dms = 200; if (dms < 0) dms = 0;
+    hud_level += (target - hud_level) * (1 - exp(-dms / 45.0));
+    if (fabs(target - hud_level) < 0.002) hud_level = target;
     if (hud_level < 0) hud_level = 0; if (hud_level > 1) hud_level = 1;
     { double u = (t - hud_bump_t) / 260.0; hud_bump = u >= 0 && u < 1 ? sin(M_PI * u) : 0; }   /* pulso suave, sin salto */
     double in = (t - hud_shown_at) / 220.0; if (in > 1) in = 1;
@@ -1088,6 +1096,8 @@ static int hud_update(int present_it)
     }
     double e = ease_out(in);
     double o = out < 1 ? out : 1;
+    if (perf_on) { static double lt2; if (t - lt2 > 40) { lt2 = t; lg("hud: v=%d raw=%u/%u nivel=%.2f vis=%.2f via=%s cap=%d capt=%d main=%d hb=%.2f", vol_guess, st->vol_now, st->vol_max, hud_level, e * out,
+        present_it ? "propio" : "app", hud_cap, (int)st->capture, hud_main, hb_k); } }
     hud_draw(e * out, (12 + 5 * e + 3 * hud_bump) * (0.7 + 0.3 * o), hud_level);
     if (present_it) { hud_in = 1; hud_frame(); hud_in = 0; }
     return 1;
