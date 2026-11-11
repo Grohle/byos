@@ -114,12 +114,14 @@ static int line_edit_suggest(const char *title, const char *hint, char *buf, int
 
 /* tarjeta de progreso: barra que avanza con un brillo que la recorre */
 static double te_last_draw;
+static uint16_t pc_base[W * H]; static int pc_have;   /* fondo de la tarjeta de progreso */
 static void progress_card(const char *title, const char *sub, double frac)
 {
-    static uint16_t base[W * H]; static int have;
-    if (frac < 0) { memcpy(base, fr0, sizeof base); dim_buf(base, base, W * H, 14); have = 1; return; }
+    uint16_t *base = pc_base;
+    if (frac < 0) { memcpy(base, fr0, sizeof pc_base); dim_buf(base, base, W * H, 14); pc_have = 1; return; }
+    int have = pc_have;
     if (!have) return;
-    memcpy(fr0, base, sizeof base);
+    memcpy(fr0, base, sizeof pc_base);
     int cw = 250, ch = 120, cx = (W - cw) / 2, cy = (H - ch) / 2;
     fill_rrect(fr0, cx, cy, cw, ch, 16, rgb(38, 38, 42), 245);
     int tw = tw_n(title, 16, -1); draw_text(fr0, cx + (cw - tw) / 2, cy + 36, title, 16, 0xFFFF, cw - 20, 0, H);

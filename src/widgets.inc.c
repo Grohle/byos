@@ -201,6 +201,8 @@ static void wls_week(int *o)
 }
 /* hilo de 1 s: cuenta las escuchas y, con la pagina en pantalla, avisa cuando el progreso o los
  * minutos de hoy cambian lo que se ve (no dibuja nada) */
+static int wg_tick_on;
+static int wg_page_enabled(void) { return wg_page_on; }
 static void *wg_tick(void *a)
 {
     (void)a; thread_nice(10);
@@ -208,6 +210,7 @@ static void *wg_tick(void *a)
     double last = now_ms(), acc = 0; int unsaved = 0, day = wls_day(time(0)), lmin = -1;
     for (;;) {
         msleep(1000);
+        if (!wg_page_on) { wg_tick_on = 0; return 0; }   /* pagina desactivada: nada de widgets corre */
         double t = now_ms(), dt = t - last; last = t; if (dt < 0 || dt > 3000) dt = 0;
         pthread_mutex_lock(&npx_mu);
         int pl = npx.source && npx.playing && !npx.stopped, pos = npx.position_ms, dur = npx.duration_ms;
@@ -326,8 +329,8 @@ static void *wg_thread(void *a)
 }
 static void wg_refresh(void)            /* asincrono */
 {
-    static int tick_on;
-    if (!tick_on) { tick_on = 1; pthread_t th; if (!pthread_create(&th, 0, wg_tick, 0)) pthread_detach(th); }
+    if (!wg_page_on) return;                 /* pagina desactivada: ni datos ni hilos */
+    if (!wg_tick_on) { wg_tick_on = 1; pthread_t th; if (!pthread_create(&th, 0, wg_tick, 0)) pthread_detach(th); else wg_tick_on = 0; }
     if (wg_busy) return;
     wg_busy = 1; WD.t = now_ms();
     pthread_t th; if (pthread_create(&th, 0, wg_thread, 0)) { wg_busy = 0; return; } pthread_detach(th);

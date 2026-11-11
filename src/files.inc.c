@@ -269,9 +269,17 @@ static void fs_go(const char *path, int dir)
 
 /* ------------------------------------------------------------------ hojas de acciones */
 static int wrap_cw;   /* definida en settings_app.inc.c: centra las lineas de draw_wrapped */
+static uint16_t as_base[W * H];     /* fondo de la hoja: se devuelve al sistema al cerrarla */
+static int action_sheet_body(const char *title, const char **opts, int n, int destructive_idx);
 static int action_sheet(const char *title, const char **opts, int n, int destructive_idx)
 {
-    static uint16_t base[W * H]; memcpy(base, fr0, sizeof base);
+    int r = action_sheet_body(title, opts, n, destructive_idx);
+    drop_pages(as_base, sizeof as_base);
+    return r;
+}
+static int action_sheet_body(const char *title, const char **opts, int n, int destructive_idx)
+{
+    uint16_t *base = as_base; memcpy(base, fr0, sizeof as_base);
     /* el titulo se parte en las lineas que haga falta (avisos largos): la cabecera crece con el */
     int th = draw_wrapped(0, 0, 0, W - 48, title, 12, 0, 16, 0); if (th < 16) th = 16;
     int hh = 24 + th;
@@ -300,7 +308,7 @@ static int action_sheet(const char *title, const char **opts, int n, int destruc
     for (;;) {
         if (!read_pkt(&p, 300) || !p.down) continue;
         int y = p.y; while (cur_down && read_pkt(&p, 3000)) {}
-        memcpy(fr0, base, sizeof base);          /* una hoja encadenada (confirmar) parte de la pantalla limpia, no de esta hoja */
+        memcpy(fr0, base, sizeof as_base);          /* una hoja encadenada (confirmar) parte de la pantalla limpia, no de esta hoja */
         if (y >= y0 + hh && y < y0 + hh + n * bh) return (y - y0 - hh) / bh;
         return -1;
     }

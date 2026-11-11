@@ -228,9 +228,17 @@ static void ss_open(void)
 /* ------------------------------------------------------------------ alerta de iOS
  * Tarjeta centrada (titulo, mensaje partido en lineas y dos botones), aparece con escala y
  * fundido como en iOS. Devuelve 1 si se pulsa el boton de aceptar. */
+static uint16_t ssa_base[W * H];    /* fondo de la alerta: se devuelve al sistema al cerrarla */
+static int ss_alert_body(const char *title, const char *msg, const char *ok, int destructive);
 static int ss_alert(const char *title, const char *msg, const char *ok, int destructive)
 {
-    static uint16_t base[W * H]; memcpy(base, fr0, sizeof base);
+    int r = ss_alert_body(title, msg, ok, destructive);
+    drop_pages(ssa_base, sizeof ssa_base);
+    return r;
+}
+static int ss_alert_body(const char *title, const char *msg, const char *ok, int destructive)
+{
+    uint16_t *base = ssa_base; memcpy(base, fr0, sizeof ssa_base);
     const int aw = 270, bh = 44;
     int th = draw_wrapped(0, 0, 0, aw - 32, title, 17, 0, 22, 0), mh = msg ? draw_wrapped(0, 0, 0, aw - 32, msg, 13, 0, 17, 0) : 0;
     int ah = 20 + th + (msg ? 4 + mh : 0) + 18 + bh, ax = (W - aw) / 2, ay = (H - ah) / 2;
@@ -494,6 +502,8 @@ static void nav_display(void)
 
 /* ------------------------------------------------------------------ Sonido */
 static const char *const O_GAIN[] = { "Baja", "Alta" };
+static const char *const O_VOLUI[] = { "HiBy", "ByOS" };
+static void ssa_volui(void) { vol_ui_apply(); lconf_save(); }
 static const char *const O_PLAYMODE[] = { "En orden", "Repetir canción", "Aleatorio", "Repetir lista" };
 static void page_sound(struct spage *p)
 {
@@ -510,8 +520,9 @@ static void page_sound(struct spage *p)
     p->secs[3] = (struct ssec){ "DAC ES9219", au_filt_max >= 7 ? "FILT_HELP" : "FILT_HELP_OLD", {
         ROW("Filtro digital", R_CHOICE, &au_filt_i, n == 7 ? O_FILT8 : O_FILT2, n, apply_filter, 0, 0) }, 1 };
     p->secs[4] = (struct ssec){ "MSEB", "MSEB_HELP", { ROWT("MSEB", &ps_v[PS_MSEB], ssa_mseb, mseb_off) }, 1 };
-    p->secs[5] = (struct ssec){ "VOLUMEN", "VOLWARN_HELP", { ROWT("Aviso de volumen alto (UE)", &au_volwarn, ssa_volwarn, 0) }, 1 };
-    if (au_reboot) { p->secs[5].rows[1] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[5].n = 2; }
+    p->secs[5] = (struct ssec){ "VOLUMEN", "VOLUI_HELP", { ROWC("Indicador de volumen", &vol_ui, O_VOLUI, 2, ssa_volui, 0),
+                                                         ROWT("Aviso de volumen alto (UE)", &au_volwarn, ssa_volwarn, 0) }, 2 };
+    if (au_reboot) { p->secs[5].rows[2] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[5].n = 3; }
     p->nsec = 6;
 }
 static void nav_sound(void) { audio_sync(); open_page(page_sound, "Ajustes"); }

@@ -242,6 +242,7 @@ static void ov_apply(unsigned char *b)
 static uint32_t np_now(void);
 static int sb_ndig = 3; static uint32_t sb_t;
 static uint32_t sb_done[8]; static unsigned sb_ndone;
+static uint16_t sb_raw[TOPBAR_Y1 - TOPBAR_Y0][TOPBAR_PCT_W];   /* el bloque del "%" tal como lo pinto HiBy */
 static uint32_t sb_hash(const unsigned char *b)
 {
     uint32_t h = 2166136261u;
@@ -265,6 +266,19 @@ static void sb_fix(unsigned char *b)
     if (k <= 0) return;
     uint32_t h = sb_hash(b);
     for (unsigned i = 0; i < 8 && i < sb_ndone; i++) if (sb_done[i] == h) return;   /* ya movida */
+    /* idempotente: solo si las primeras k columnas del bloque tienen tinta (cifras pegadas a la
+     * izquierda, como las deja HiBy). Si ya estan vacias, las cifras ya estan a la derecha (movidas
+     * antes o redibujadas solo en parte): moverlas otra vez metia el "%" bajo la pila y, con el
+     * Wi-Fi, deshacia la barra */
+    {
+        int ink = 0;
+        for (int y = TOPBAR_Y0; y < TOPBAR_Y1 && !ink; y++) {
+            const uint16_t *r = (const uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
+            uint16_t bg = r[-1];
+            for (int x = 0; x < k; x++) { uint16_t p = r[x]; int d = abs((p >> 11) - (bg >> 11)) + abs(((p >> 5) & 63) - ((bg >> 5) & 63)) / 2 + abs((p & 31) - (bg & 31)); if (d > 6) { ink = 1; break; } }
+        }
+        if (!ink) return;
+    }
     for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) {
         uint16_t *r = (uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
         uint16_t bg = r[-1];                          /* el fondo justo a la izquierda (hueco tras el Wi-Fi) */
@@ -272,6 +286,45 @@ static void sb_fix(unsigned char *b)
         for (int x = 0; x < k; x++) r[x] = bg;
     }
     sb_done[sb_ndone++ % 8] = sb_hash(b);
+}
+
+/* Rayo de carga legible: HiBy pinta el relleno blanco de la pila ENCIMA del marco de carga (que
+ * lleva el rayo blanco), asi que el rayo desaparecia. Si se ve el marco verde de carga, se pinta
+ * un rayo oscuro alli donde hay relleno claro (fuera del relleno sigue el blanco del marco). */
+static unsigned char bolt_a[20][27]; static int bolt_ok;
+static void bolt_mask(void)
+{
+    static const float px[] = { 13.4f, 9.6f, 12.4f, 11.4f, 15.4f, 12.6f }, py[] = { 3.0f, 10.6f, 10.6f, 17.0f, 9.2f, 9.2f };
+    for (int y = 0; y < 20; y++) for (int x = 0; x < 27; x++) {
+        int in = 0;
+        for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+            float X = x + (sx + 0.5f) / 4, Y = y + (sy + 0.5f) / 4; int c = 0;
+            for (int i = 0, j = 5; i < 6; j = i++)
+                if ((py[i] > Y) != (py[j] > Y) && X < (px[j] - px[i]) * (Y - py[i]) / (py[j] - py[i]) + px[i]) c = !c;
+            in += c;
+        }
+        bolt_a[y][x] = (unsigned char)(in * 255 / 16);
+    }
+    bolt_ok = 1;
+}
+static void sb_bolt(unsigned char *b)
+{
+    if (!b || fline < (TOPBAR_BATT_X + 27) * 2u) return;
+    /* marco de carga: el borde superior del cuerpo es verde (GREEN de topbar.py) */
+    uint16_t o = ((const uint16_t *)(b + (TOPBAR_Y0 + 4) * fline))[TOPBAR_BATT_X + 5];
+    int r = o >> 11, g = (o >> 5) & 63, bl = o & 31;
+    if (!(g > 2 * r + 10 && g > 2 * bl + 6)) return;
+    if (!bolt_ok) bolt_mask();
+    for (int y = 0; y < 20; y++) {
+        uint16_t *row = (uint16_t *)(b + (TOPBAR_Y0 + y) * fline) + TOPBAR_BATT_X;
+        for (int x = 0; x < 27; x++) {
+            unsigned a = bolt_a[y][x]; if (!a) continue;
+            uint16_t p = row[x];
+            if (((p >> 11) < 26) || (((p >> 5) & 63) < 52) || ((p & 31) < 26)) continue;   /* solo sobre el relleno claro */
+            unsigned na = 255 - a, d = 3;            /* casi negro */
+            row[x] = (uint16_t)((((d * a + (p >> 11) * na) / 255) << 11) | (((2 * d * a + ((p >> 5) & 63) * na) / 255) << 5) | ((d * a + (p & 31) * na) / 255));
+        }
+    }
 }
 
 /* ---------------------------------------------------------------- esquinas redondeadas
@@ -879,16 +932,24 @@ int ioctl(int fd, unsigned long req, ...)
             last_var = *(struct fb_var_screeninfo *)arg;
             st->yoffset = last_var.yoffset;
         }
+        static uint32_t shown_y = 0xffffffffu;
+        if (last_var.yoffset == shown_y) st->same_pans++;
+        unsigned char *restore = 0;              /* bufer que deja de verse: vuelve el fotograma de HiBy */
         if (st->capture && frames) {
             unsigned char *b = buf_at(last_var.yoffset);
             memcpy(frames + fsize, b, fsize);   /* fotograma del reproductor -> frames[1] */
+            /* el bloque del "%" sin mover, para devolverselo a HiBy tal cual lo dibujo */
+            for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) memcpy(sb_raw[y - TOPBAR_Y0], (const uint16_t *)(frames + fsize + y * fline) + TOPBAR_PCT_X, TOPBAR_PCT_W * 2);
             sb_fix(frames + fsize);             /* el shell copia la barra de aqui */
+            sb_bolt(frames + fsize);
             wait_even(&st->fr0_seq);
             memcpy(b, frames, fsize);           /* el panel sigue con la imagen del shell */
             corners_apply(b);
             st->cap_frames++;
+            if (shown_y != 0xffffffffu && shown_y != last_var.yoffset && shown_y * fline + fsize <= 2 * fsize) restore = buf_at(shown_y);
         } else {
             if (map_fb()) sb_fix(buf_at(last_var.yoffset));
+            if (map_fb()) sb_bolt(buf_at(last_var.yoffset));
             if (st->home_sub_on && map_fb()) home_substitute(buf_at(last_var.yoffset));
             if (st->ov_on && map_fb()) ov_apply(buf_at(last_var.yoffset));
             else st->ov_saved = 0;
@@ -897,6 +958,15 @@ int ioctl(int fd, unsigned long req, ...)
         st->frames++;
         vol_publish();
         int r = r_ioctl(fd, req, arg);
+        shown_y = last_var.yoffset;
+        /* Capturando, HiBy recibe de vuelta sus buferes con la imagen del shell dentro y luego solo
+         * repinta lo que cambio ENCIMA de eso: la barra de estado salia mezclada (el Wi-Fi roto, el
+         * "%" empujado dos veces bajo la pila). Tras el pan (ese bufer ya no se ve) se le devuelve
+         * su ultimo fotograma, con el "%" donde el lo dibujo. ~1 ms, sin memoria extra. */
+        if (restore) {
+            memcpy(restore, frames + fsize, fsize);
+            for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) memcpy((uint16_t *)(restore + y * fline) + TOPBAR_PCT_X, sb_raw[y - TOPBAR_Y0], TOPBAR_PCT_W * 2);
+        }
         pthread_mutex_unlock(&mu);
         return r;
     }

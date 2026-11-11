@@ -987,6 +987,78 @@ static void hud_draw(double vis, double width, double level)
  *    y competia con su repintado: parpadeo, saltos de sitio y a veces ni aparecia. */
 static int hud_cap;                         /* 1: capturamos una pantalla de HiBy para la pildora */
 static uint16_t *hud_tmp;
+/* ---- Indicador de volumen: el de HiBy (vol_ui 0, por defecto) o la pildora de ByOS (1).
+ * Con el de HiBy, su dialogo (volume.dlg: barra de 300x38 en x 10, y 30) se deja visible; en sus
+ * pantallas se ve tal cual y en las de ByOS se copia del fotograma vivo del reproductor (fr1, que
+ * sigue en su inicio debajo) mientras ese dialogo esta a la vista. */
+static int vol_ui;
+#define VS_X 10
+#define VS_Y 30
+#define VS_W 300
+#define VS_H 38
+#define VS_DLG "/usr/data/hibymod/theme/layout/theme3/dialog/volume.dlg"
+static uint8_t vs_a[VS_W * VS_H]; static int vs_a_ok;
+static void vs_mask(void)                   /* la forma del fondo del dialogo: capsula de radio 19 */
+{
+    for (int y = 0; y < VS_H; y++) for (int x = 0; x < VS_W; x++) {
+        double px = x + 0.5, py = y + 0.5, cx = px < 19 ? 19 : px > VS_W - 19 ? VS_W - 19 : px;
+        double d = sqrt((px - cx) * (px - cx) + (py - 19) * (py - 19)), c = 19 - d + 0.5;
+        vs_a[y * VS_W + x] = c <= 0 ? 0 : c >= 1 ? 255 : (uint8_t)(c * 255);
+    }
+    vs_a_ok = 1;
+}
+static int vs_grey(uint16_t p)             /* el gris del fondo del dialogo, rgb(87,87,91) */
+{
+    int r = p >> 11, g = (p >> 5) & 63, b = p & 31;
+    return abs(r - 10) <= 1 && abs(g - 21) <= 1 && abs(b - 11) <= 1;
+}
+static int vs_visible(void)                 /* el dialogo de HiBy esta en el fotograma del reproductor */
+{
+    return st->capture && vs_grey(fr1[(VS_Y + 3) * W + 60]) && vs_grey(fr1[(VS_Y + 3) * W + 260]) && vs_grey(fr1[(VS_Y + VS_H - 4) * W + 160]);
+}
+static void vs_overlay(uint16_t *d)
+{
+    if (!vs_a_ok) vs_mask();
+    const unsigned br = 10, bg = 21, bb = 11;
+    for (int y = 0; y < VS_H; y++) for (int x = 0; x < VS_W; x++) {
+        unsigned a = vs_a[y * VS_W + x]; if (!a) continue;
+        int i = (VS_Y + y) * W + VS_X + x;
+        if (a >= 250) { d[i] = fr1[i]; continue; }
+        unsigned p = d[i], na = 255 - a;   /* borde: el gris del dialogo sobre lo que hay debajo (no sobre el inicio de HiBy) */
+        d[i] = (uint16_t)((((br * a + (p >> 11) * na) / 255) << 11) | (((bg * a + ((p >> 5) & 63) * na) / 255) << 5) | ((bb * a + (p & 31) * na) / 255));
+    }
+}
+static void hud_overlay(uint16_t *d)
+{
+    if (vol_ui) blend_sprite(d, &spr_hud, HUD_X, HUD_Y);
+    else if (vs_visible()) vs_overlay(d);
+}
+/* volume.dlg visible (HiBy) u oculto (ByOS): solo cambian las lineas "visible":"hide" */
+static void vol_ui_apply(void)
+{
+    static char b[8192], o[9000];
+    int f = open(VS_DLG, O_RDONLY | O_CLOEXEC); if (f < 0) return;
+    int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return; b[n] = 0;
+    char *w = o; int prev_hide = 0;
+    for (char *l = b; *l; ) {
+        char *e = strchr(l, '\n'); int len = e ? (int)(e - l + 1) : (int)strlen(l);
+        char *t = l; while (t < l + len && (*t == ' ' || *t == '\t')) t++;
+        int is_hide = !strncmp(t, "\"visible\":\"hide\",", 17);
+        int is_last = !strncmp(t, "\"imageview\":true", 16) || !strncmp(t, "\"progress_bar\":true", 19);
+        if (is_hide) { if (vol_ui) { memcpy(w, l, len); w += len; } prev_hide = 1; l += len; continue; }
+        /* ocultar: "visible":"hide" justo antes del ultimo campo de cada elemento (si no lo lleva ya) */
+        if (vol_ui && is_last && !prev_hide && w - o + (t - l) + 24 < (int)sizeof o) { memcpy(w, l, t - l); w += t - l; w += sprintf(w, "\"visible\":\"hide\",\n"); }
+        if (w - o + len >= (int)sizeof o) return;
+        memcpy(w, l, len); w += len; prev_hide = 0;
+        l += len;
+    }
+    *w = 0;
+    if (!strcmp(o, b)) return;
+    char tmp[sizeof VS_DLG + 8]; snprintf(tmp, sizeof tmp, "%s.tmp", VS_DLG);
+    f = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0664); if (f < 0) return;
+    int len = (int)strlen(o); int ok = write(f, o, len) == len; fsync(f); close(f);
+    if (ok && !rename(tmp, VS_DLG)) lg("volumen: indicador de %s", vol_ui ? "ByOS" : "HiBy"); else unlink(tmp);
+}
 static void hud_compose_present(const uint16_t *src)
 {
     if (!hud_tmp && !(hud_tmp = lazy_alloc((void **)&hud_tmp, HM_FRAME_BYTES, 0))) return;   /* se devuelve en reposo */
@@ -997,7 +1069,7 @@ static void hud_compose_present(const uint16_t *src)
         statusbar_tint(hud_tmp);
         int a = 0, b = 0; homebar_layer(hud_tmp, src, &a, &b);
     } else if (ov_cur == &spr_bar && spr_bar.w) blend_sprite(hud_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de las pantallas de HiBy */
-    blend_sprite(hud_tmp, &spr_hud, HUD_X, HUD_Y);
+    hud_overlay(hud_tmp);
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, hud_tmp, HM_FRAME_BYTES);
     st->dirty_y0 = 0; st->dirty_y1 = H;
@@ -1056,12 +1128,14 @@ static void update_overlay(void);
 static void hud_key(int code)
 {
     double t = now_ms();
+    /* indicador de HiBy: en sus pantallas lo dibuja el reproductor; nada que hacer aqui */
+    if (!vol_ui && !st->capture) { lcd_boost(); lg("volumen: tecla %d (indicador de HiBy)", code); return; }
     if (!hud_active) { hud_shown_at = t; hud_active = 1; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
     hud_last_key = t; lcd_boost();
     hud_bump_t = t;                                 /* la pildora se ensancha un instante (iOS), suave */
     /* sin barra de estado (Now Playing): se sigue el paso de la rueda */
     if (!st->vol_now && ocr_volume(st->capture ? fr1 : visible()) < 0) { vol_guess += code == KEY_RIGHT ? 1 : -1; if (vol_guess < 0) vol_guess = 0; if (vol_guess > 100) vol_guess = 100; }
-    lg("volumen: tecla %d", code);
+    lg("volumen: tecla %d (pans al bufer visible: %u)", code, st->same_pans);
 }
 /* un paso de animacion; devuelve 1 mientras siga activo. present = 0: solo avanza el estado y
  * dibuja la pildora (una app de ByOS esta animando y la pinta encima en su present()) */
@@ -1086,6 +1160,8 @@ static int hud_update(int present_it)
     double in = (t - hud_shown_at) / 220.0; if (in > 1) in = 1;
     double idle = t - hud_last_key;
     double out = idle < 1400 ? 1 : 1 - (idle - 1400) / 300.0;
+    /* indicador de HiBy: dura lo que su dialogo (aparece unos ms despues de la tecla) */
+    if (!vol_ui) out = (idle < 600 || vs_visible()) && idle < 6000 ? 1 : 0;
     if (out <= 0) {
         hud_active = 0;
         if (!present_it) return 0;            /* la app presentara su siguiente fotograma sin pildora */
@@ -1485,11 +1561,33 @@ static int guard_write(const char *path, int v)
     char b[16]; int n = snprintf(b, sizeof b, "%d", v), ok = write(f, b, n) == n; close(f);
     return ok ? 1 : -1;
 }
+/* diagnostico: con /tmp/hibymod/memmap, que bloques de 16 KB de los datos estaticos estan en
+ * memoria (mincore); se cruzan con los simbolos de un binario sin recortar (nm) */
+static void memmap_dump(void)
+{
+    if (access("/tmp/hibymod/memmap", F_OK)) return;
+    unlink("/tmp/hibymod/memmap");
+    FILE *m = fopen("/proc/self/maps", "r"); if (!m) return;
+    char l[256]; unsigned long a0 = 0, a1 = 0; int next = 0;
+    while (fgets(l, sizeof l, m)) {
+        unsigned long x, y; char perm[8]; if (sscanf(l, "%lx-%lx %7s", &x, &y, perm) != 3) continue;
+        if (next && perm[1] == 'w' && !strchr(l, '/')) { a0 = x; a1 = y; break; }
+        next = strstr(l, "hibyshell") && perm[1] == 'w';
+    }
+    fclose(m);
+    if (!a0) return;
+    size_t n = (a1 - a0) / 4096; unsigned char *v = malloc(n); if (!v) return;
+    if (mincore((void *)a0, a1 - a0, v)) { free(v); return; }
+    FILE *o = fopen("/tmp/hibymod/memmap.txt", "w");
+    if (o) { fprintf(o, "bss %lx %lx\n", a0, a1); for (size_t i = 0; i < n; i += 4) { int k = 0; for (int j = 0; j < 4 && i + j < n; j++) k += v[i + j] & 1; if (k) fprintf(o, "%lx %d\n", a0 + i * 4096, k * 4); } fclose(o); }
+    free(v);
+}
 static void guard_tick(void)
 {
     static double next; double t = now_ms();
     if (t < next) return;
     next = t + 10000;
+    memmap_dump();                                /* diagnostico bajo demanda (fichero disparador) */
     cache_to_sd();                                /* la SD pudo montarse (o volver del PC) */
     DIR *d = opendir("/proc"); if (!d) return;
     struct dirent *e; int changed = 0;
@@ -1550,7 +1648,9 @@ static void *mem_watch(void *arg)
             if (victim && kill(atoi(e->d_name), SIGKILL) == 0) killed++;
         }
         if (d) closedir(d);
-        { int f = open("/proc/sys/vm/drop_caches", O_WRONLY | O_CLOEXEC); if (f >= 0) { if (write(f, "1", 1) != 1) {} close(f); } }
+        /* "2": solo objetos del nucleo (dentries, inodos). Nunca "1": la cache de paginas es el
+         * CODIGO de todos los procesos; vaciarla obliga a releerlo de la flash y agrava el atasco */
+        { int f = open("/proc/sys/vm/drop_caches", O_WRONLY | O_CLOEXEC); if (f >= 0) { if (write(f, "2", 1) != 1) {} close(f); } }
         memw_kills += killed;
         lg("memoria CRITICA: %d KB libres -> %d ayudantes cortados, caches vaciadas (ahora %d KB)", kb, killed, mem_avail_kb());
         sleep(3);                                         /* dar tiempo a que se note */
@@ -1580,12 +1680,42 @@ static void mem_trim(const char *why)
     memg_trims++; memg_last_t = now_ms(); memg_last_before = kb; memg_last_after = mem_avail_kb();
     lg("memoria (%s): %d KB libres -> lienzos y caches devueltos (ahora %d KB)", why, kb, memg_last_after);
 }
+/* Rejuvenecer: el shell crece con el uso (paginas de lienzos, monticulo fragmentado) y no hay
+ * swap; recien arrancado ocupa ~4,5 MB. En reposo en el inicio, si ocupa mas de REJUV_RSS_KB y
+ * la memoria escasea (o hibyguard lo pide), se reemplaza a si mismo con exec (mismo proceso): la
+ * libreria mantiene la ultima imagen mientras vuelve (~1 s) y nada mas cambia. */
+#define REJUV_RSS_KB 6500
+static double shell_t0;
+static int self_rss_kb(void)
+{
+    char b[96]; int f = open("/proc/self/statm", O_RDONLY | O_CLOEXEC); if (f < 0) return -1;
+    int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return -1; b[n] = 0;
+    long sz = 0, res = 0; if (sscanf(b, "%ld %ld", &sz, &res) != 2) return -1;
+    return (int)(res * (sysconf(_SC_PAGESIZE) / 1024));
+}
+static void maybe_rejuvenate(int avail_kb)
+{
+    double t = now_ms();
+    if (t - shell_t0 < 120000 || !launcher_on || V.edit || V.drag_app >= 0 || hud_active || cur_down) return;
+    int req = !access("/tmp/hibymod/rejuv_req", F_OK);
+    int rss = self_rss_kb();
+    if (rss < 0 || (rss < REJUV_RSS_KB && !req)) return;
+    if (!req && avail_kb >= 6500) return;
+    unlink("/tmp/hibymod/rejuv_req");
+    lg("rejuvenecer: shell %d KB, %d KB libres%s -> exec", rss, avail_kb, req ? " (pedido por hibyguard)" : "");
+    if (logfp) fflush(logfp);
+    { FILE *f = fopen("/tmp/hibymod/rejuv_count", "a"); if (f) { fprintf(f, "%.0f %d %d\n", t, rss, avail_kb); fclose(f); } }
+    char *av[] = { (char *)"/usr/data/hibymod/shell/hibyshell", 0 };
+    execv(av[0], av);
+    lg("rejuvenecer: exec fallo (%s)", strerror(errno));
+}
 static void mem_guard(void)
 {
     static double next, last_trim; double t = now_ms();
     if (t < next) return;
     next = t + 5000;
     int kb = mem_avail_kb();
+    if (kb >= 0) maybe_rejuvenate(kb);
     if (kb < 0 || kb >= MEM_LOW_KB || t - last_trim < 20000) return;
     last_trim = t;
     mem_trim("auto");
@@ -1603,7 +1733,16 @@ int main(int argc, char **argv)
      * ayudantes (hibywall, hibynet, hibytag) no arrancan. */
     { int f = open("/proc/sys/vm/overcommit_memory", O_WRONLY); if (f >= 0) { if (write(f, "1", 1) != 1) lg("overcommit: no se pudo"); close(f); } }
     perf_on = !access("/tmp/hibymod/perf", F_OK);
+    shell_t0 = now_ms();
     self_heal();
+    /* guardian de estabilidad (hibyguard.c): proceso aparte, bloqueado en RAM y en tiempo real,
+     * que vigila la memoria y el vigilante de hardware. Una sola instancia (el se separa solo y
+     * sale si ya hay otra); desactivar del todo: /usr/data/hibymod/guard_off */
+    if (access("/usr/data/hibymod/guard_off", F_OK) && !access("/usr/data/hibymod/shell/hibyguard", X_OK)) {
+        pid_t g = fork();
+        if (g == 0) { execl("/usr/data/hibymod/shell/hibyguard", "hibyguard", (char *)0); _exit(127); }
+        if (g > 0) waitpid(g, 0, 0);
+    }
     cache_to_sd();
     { pthread_t mt; if (!pthread_create(&mt, 0, mem_watch, 0)) pthread_detach(mt); }
     for (int i = 0; i < 300 && !(st = map_file(HM_STATE, HM_STATE_SIZE, 0)); i++) msleep(200);
@@ -1706,7 +1845,7 @@ int main(int argc, char **argv)
             /* el reproductor dibujo algo: barra de estado nueva, o cambio de pantalla por su cuenta */
             if (st->cap_frames != last_cap) {
                 last_cap = st->cap_frames;
-                if (!is_home(fr1)) { lg("el reproductor cambio de pantalla"); launcher_leave(); }
+                if (!is_home(fr1) && !vs_visible()) { lg("el reproductor cambio de pantalla"); launcher_leave(); }   /* su dialogo de volumen tapa la firma */
                 else launcher_statusbar();
             } else if (now_ms() < toast_until + 40 || V.edit) launcher_present();   /* aviso o temblor */
             else if (widgets_on && (wg_fresh || npx_changed || now_ms() - WD.t > 10000 || (int)(time(0) / 60) != wg_cache_min)) launcher_present();

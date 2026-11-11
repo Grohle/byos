@@ -136,4 +136,26 @@ static void shell_trim_extra(void)
     drop_pages(wg_scr, sizeof wg_scr);                       /* widgets: lienzo de un widget */
     st_tabbar_key = -1; drop_pages(st_tabbar, sizeof st_tabbar);   /* tienda: barra de pestanas en cache */
     if (!widgets_on) wg_wall_blur_release();                 /* widgets: fondo desenfocado (fuera de su pagina) */
+    pc_have = 0; drop_pages(pc_base, sizeof pc_base);         /* tarjeta de progreso (no hay ninguna en reposo) */
+}
+
+/* Al cerrar una app: sus lienzos y pilas de paginas vuelven al sistema. Las paginas devueltas se
+ * leen como ceros, igual que al arrancar el shell, y cada app las rehace al abrirse (raiz nueva,
+ * profundidad 0); las caches con indice se vacian a la vez. Sin esto el shell crecia de 5 a 8 MB
+ * despues de recorrer las apps y el aparato quedaba con 3 MB libres. */
+static void app_exit_release(void)
+{
+    double t0 = now_ms();
+    shell_trim_extra();
+    drop_pages(wl_pages, sizeof wl_pages);                   /* Inalambrico: pila de paginas */
+    drop_pages(bu_pages, sizeof bu_pages);                   /* Auriculares: idem */
+    drop_pages(kb_ovbuf, sizeof kb_ovbuf);                   /* teclado: lo que tapaba */
+    kb_nmk = kb_mk_used = 0; drop_pages(kb_mk_pool, sizeof kb_mk_pool);   /* teclado: mascaras */
+    ab_feed_drop(); drop_pages(&ab_feed, sizeof ab_feed);     /* Libros: catalogo abierto */
+    ab_res.n = 0; ab_res_state = 0; ab_res_key[0] = 0; drop_pages(&ab_res, sizeof ab_res);   /* busqueda */
+    drop_pages(img_app, sizeof img_app); drop_pages(img_base, sizeof img_base);   /* zoom de apertura: se rehacen */
+    have_under = 0; drop_pages(img_under, sizeof img_under); drop_pages(img_sheet, sizeof img_sheet);
+    have_cache_plane = 0; drop_pages(img_cache_plane, sizeof img_cache_plane);
+
+    lg("app cerrada: memoria devuelta en %.0f ms (%d KB libres)", now_ms() - t0, mem_avail_kb());
 }

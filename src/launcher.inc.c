@@ -208,7 +208,7 @@ static void lconf_save(void)
     gestures_conf_save(f);
     cc_conf_save(f);
     wg_conf_save(f);
-    fprintf(f, "lang %s\nkb %d %d %d\ncorners %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, ui_corners);
+    fprintf(f, "lang %s\nkb %d %d %d\ncorners %d\nvolui %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, ui_corners, vol_ui);
     fclose(f);
     rename(LCONF ".tmp", LCONF);
 }
@@ -241,6 +241,7 @@ static void lconf_load0(void)
         else if (!strcmp(t, "icon")) { char *v = strtok(0, " \t\r\n"); if (v) { int s = atoi(v); L.icon = s <= 48 ? 48 : s >= 64 ? 64 : 56; } }
         else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
         else if (!strcmp(t, "corners")) { char *v = strtok(0, " \t\r\n"); ui_corners = v ? atoi(v) != 0 : 1; }
+        else if (!strcmp(t, "volui")) { char *v = strtok(0, " \t\r\n"); vol_ui = v ? atoi(v) != 0 : 0; }
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
             if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; got_kb = 1; } }
@@ -306,7 +307,7 @@ static void lconf_load0(void)
     if (!layout2) lconf_compact();                 /* una vez: todo arriba a la izquierda */
     lconf_drop_empty_pages();
 }
-static void lconf_load(void) { lconf_load0(); lconf_strip_removed(); corners_push(); }
+static void lconf_load(void) { lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); }
 
 /* ------------------------------------------------------------------ geometria */
 static int per_page(void)
@@ -463,6 +464,7 @@ static int sq_in(float x, float y, float w, float h, const float *g, float ext)
  * icono mas el margen (concentrico) y la curva, la misma esquina continua que los iconos, con
  * un filo claro de ~1.3 px algo mas vivo arriba que abajo. */
 static uint16_t dock_base[DOCK_W * DOCK_H];
+static int wg_page_enabled(void);            /* widgets.inc.c: la pagina de widgets existe */
 static int dock_sh_n = -1, dock_sh_icon;
 static void dock_shape(int n)
 {
@@ -531,6 +533,7 @@ static void build_dock_glass(void)
         int r = acc[0][i] + (255 - acc[0][i]) * 22 / 100, g = acc[1][i] + (255 - acc[1][i]) * 22 / 100, b = acc[2][i] + (255 - acc[2][i]) * 22 / 100;
         dock_base[i] = rgb(r, g, b);
     }
+    drop_pages(acc, sizeof acc); drop_pages(tmp, sizeof tmp);   /* 390 KB de trabajo: fuera */
     int n = dock_sh_n < 0 ? L.dn : dock_sh_n;
     dock_sh_n = -1; dock_shape(n);                            /* fondo nuevo: se recorta otra vez */
 }
@@ -703,8 +706,9 @@ static void render_launcher(uint16_t *dst, double t)
         }
     }
     int top_shift = V.edit ? 22 : 0;
-    /* pagina de widgets (izquierda de la primera) */
-    if (V.scroll < 0 && rl_mode != 2) widgets_draw(dst, -W - (int)V.scroll);
+    /* pagina de widgets (izquierda de la primera). Desactivada en Ajustes: no existe; el rebote
+     * del borde (40 px) solo deja ver el fondo, sin dibujar ni cargar nada de los widgets */
+    if (V.scroll < 0 && rl_mode != 2 && wg_page_enabled()) widgets_draw(dst, -W - (int)V.scroll);
     /* paginas visibles */
     int p0 = (int)floorf(V.scroll / W);
     for (int p = p0; p <= p0 + 1; p++) {
@@ -783,7 +787,7 @@ static void launcher_present(void)
     edit_bg_ok = 0;
     render_launcher(img_cache_home, t0); have_cache_home = 1; lclean_ok = 1;
     memcpy(fr0, img_cache_home, HM_FRAME_BYTES);
-    if (hud_active) blend_sprite(fr0, &spr_hud, HUD_X, HUD_Y);
+    if (hud_active) hud_overlay(fr0);
     /* widgets: si solo cambiaron unas tarjetas (datos nuevos) y lo ultimo presentado fue esta
      * misma pagina, se presentan solo sus filas */
     static uint32_t lp_presents;
@@ -800,9 +804,10 @@ static void launcher_present(void)
 static void launcher_present_hud(void)
 {
     if (!lclean_ok || V.edit || V.drag_app >= 0) { launcher_present(); return; }
-    memcpy(fr0 + HUD_Y * W, img_cache_home + HUD_Y * W, HUD_H * W * 2);
-    if (hud_active) blend_sprite(fr0, &spr_hud, HUD_X, HUD_Y);
-    present_rows(HUD_Y, HUD_Y + HUD_H);
+    int y0 = vol_ui ? HUD_Y : VS_Y, h = vol_ui ? HUD_H : VS_H;   /* pildora de ByOS o dialogo de HiBy */
+    memcpy(fr0 + y0 * W, img_cache_home + y0 * W, h * W * 2);
+    if (hud_active) hud_overlay(fr0);
+    present_rows(y0, y0 + h);
 }
 static void launcher_statusbar(void)
 {

@@ -372,6 +372,7 @@ with open(os.path.join(HERE, "..", "src", "topbar_layout.h"), "w", newline="\n")
     f.write(f"#define TOPBAR_PCT_W {3 * DW + wd('percent')}       /* 3 cifras + el signo % */\n")
     f.write(f"#define TOPBAR_DW {DW}            /* ancho de celda de una cifra */\n")
     f.write("#define TOPBAR_Y0 5\n#define TOPBAR_Y1 25\n")
+    f.write(f"#define TOPBAR_BATT_X {X_BATT}     /* icono de la pila (el rayo de carga se dibuja encima) */\n")
 print("cifras: alto", min(rows_h), "-", max(rows_h), "px;", len(out), "ficheros; POS", POS)
 
 if "--deploy" in sys.argv:

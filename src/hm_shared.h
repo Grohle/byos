@@ -87,6 +87,9 @@ struct hm_state {
     /* volumen del reproductor leido de su estructura de ajustes en cada fotograma (+1; 0 = aun
      * no se sabe). Sustituye a leer las cifras de la barra de estado (fallaban a ratos). */
     volatile uint32_t vol_now, vol_max;
+    /* diagnostico: veces que el reproductor presento el MISMO bufer que ya se veia (dibujo directo
+     * en pantalla: lo que pinte se ve antes de que la libreria lo tape) */
+    volatile uint32_t same_pans;
 };
 #define HM_NP_MAGIC 0x3550504eu   /* "NPP5" */
 #define HM_NP_SLOTS 8

@@ -185,6 +185,7 @@ reload:
     {   /* Aurora: reducir wall.raw */
         static uint16_t def[W * H]; int f = open(ASSETS "/wall.raw", O_RDONLY);
         if (f >= 0) { read(f, def, sizeof def); close(f); for (int y = 0; y < TH; y++) for (int x = 0; x < TW; x++) thumbs[0][y * TW + x] = def[(y * H / TH) * W + x * W / TW]; }
+        drop_pages(def, sizeof def);
         thumb_ready[0] = 1;
     }
     for (int i = 1; i <= MAXIMG; i++) thumb_ready[i] = 0;

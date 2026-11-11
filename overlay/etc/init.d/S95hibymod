@@ -80,6 +80,11 @@ boot_tasks()
 
 case "$1" in
   start)
+	# stability guard (hibyguard.c): locked in RAM, real-time; watches memory pressure and feeds
+	# the hardware watchdog. Off: /usr/data/hibymod/guard_off. The shell also starts it if missing.
+	if [ -x /usr/data/hibymod/shell/hibyguard ] && [ ! -f /usr/data/hibymod/guard_off ] && [ ! -f /data/.hibymod_safe ]; then
+		/usr/data/hibymod/shell/hibyguard
+	fi
 	boot_tasks &
 	;;
   stop)

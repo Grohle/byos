@@ -86,7 +86,12 @@ static int app_cache(int a, int save)
     /* guardar solo si cambio (evita escribir la flash en cada apertura) */
     static uint16_t old[W * H];
     int f = open(p, O_RDONLY);
-    if (f >= 0) { ssize_t n = read(f, old, sizeof old); close(f); if (n == (ssize_t)sizeof old && !memcmp(old + 30 * W, fr1 + 30 * W, (H - 30) * W * 2)) return 1; }
+    if (f >= 0) {
+        ssize_t n = read(f, old, sizeof old); close(f);
+        int same = n == (ssize_t)sizeof old && !memcmp(old + 30 * W, fr1 + 30 * W, (H - 30) * W * 2);
+        drop_pages(old, sizeof old);           /* solo servia para comparar: fuera de la memoria */
+        if (same) return 1;
+    }
     mkdir(ASSETS "/cache", 0755);
     f = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (f < 0) return 0;
     write(f, fr1, sizeof img_app); close(f);
@@ -191,11 +196,13 @@ static void zoom_frame_app(uint16_t *d, const uint16_t *bg, int k, const uint16_
 static void launch_app_body(int a, int ix, int iy);
 /* abrir una app: mientras esta abierta (las propias corren aqui dentro) se ve la barra de inicio,
  * que entra al acabar el zoom de apertura */
+static void app_exit_release(void);    /* syspop.inc.c: lo que la app usaba vuelve al sistema */
 static void launch_app(int a, int ix, int iy)
 {
     hb_apps++; hb_after = now_ms() + 330;
     launch_app_body(a, ix, iy);
     hb_apps--;
+    app_exit_release();
 }
 static void launch_app_body(int a, int ix, int iy)
 {
