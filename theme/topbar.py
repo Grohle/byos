@@ -226,16 +226,20 @@ else:
 done("speaker", speaker()); done("po", headphones())
 # 19 px (no cabe mas antes del Bluetooth): margen interior 5 en vez de 7, asi "OPT" y "ADB" no
 # se encogen hasta que la O toca el borde (se leia "DPT")
-done("lo", pill("LO", maxw=19)); done("balance", pill("4.4", maxw=19)); done("spdif", pill("OPT", maxw=18, pad=5))
-done("usb", usb()); done("a2dp", pill("BT", maxw=19)); done("adb", pill("ADB", sz=7.0, maxw=18, pad=5))
+done("lo", pill("LO", maxw=18)); done("balance", pill("4.4", maxw=18)); done("spdif", pill("OPT", maxw=18, pad=5))
+done("usb", usb()); done("a2dp", pill("BT", maxw=18)); done("adb", pill("ADB", sz=7.0, maxw=18, pad=5))
 # codec del Bluetooth (los de serie median 32 px y pisaban al altavoz)
 for n, t in (("sbc", "SBC"), ("aptx", "aptX"), ("aptx_hd", "aptX HD"), ("ldac", "LDAC"), ("uat", "UAT"), ("aac", "AAC")):
     done(n, pill(t, maxw=27, minsz=5.0))
 # El reproductor NO usa la x de topbar_iv_output: la pone justo detras de las cifras del volumen
 # (x de las cifras + ancho real + ~1 px; visto en el aparato). El hueco va dentro del icono.
 OUT_PAD = 4
+# el reproductor recorta este icono a 19 px de ancho: las capsulas (18 px) llevan solo 1 px de hueco
+# (con 4 se cortaba su borde derecho con el volumen de 3 cifras)
+PILLS = ("lo", "balance", "spdif", "a2dp", "adb")
 for o in ("po", "lo", "balance", "spdif", "usb", "a2dp", "adb"):
-    im = files[o]; pad = Image.new("RGBA", (im.width + OUT_PAD, im.height), (0, 0, 0, 0)); pad.alpha_composite(im, (OUT_PAD, 0)); files[o] = pad
+    p_ = 1 if o in PILLS else OUT_PAD
+    im = files[o]; pad = Image.new("RGBA", (im.width + p_, im.height), (0, 0, 0, 0)); pad.alpha_composite(im, (p_, 0)); files[o] = pad
 done("am", blank(1)); done("pm", blank(1))              # como iOS: sin AM/PM en la barra
 done("play", play()); done("pause", pause())
 for i in range(4): done(f"wifi_connect_{i}", wifi(i if i else 1))

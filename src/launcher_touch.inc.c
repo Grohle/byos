@@ -1,5 +1,6 @@
 /* launcher_touch.inc.c - apertura de apps (zoom), avisos y gestos del launcher. */
 static void files_app(int ix, int iy);
+static int wg_page_on_now(void);
 static void settings_app(int ix, int iy);
 static void usbdac_app_at(int ix, int iy);
 static void wireless_app_at(int ix, int iy);
@@ -359,6 +360,7 @@ static void commit_drop(void)
 static void animate_scroll_to(int page)
 {
     if (page < -1) page = -1; if (page >= L.npages) page = L.npages - 1;
+    if (page < 0 && !wg_page_on_now()) page = 0;    /* pagina de widgets desactivada: un lanzamiento no la abre */
     float from = V.scroll, to = page * W;
     double t0 = now_ms(); int dur = 260;
     for (;;) {
@@ -391,6 +393,7 @@ static void app_menu(int a, int ix, int iy)
 }
 static void widgets_touch(struct pkt *p);
 static int wg_page_on;
+static int wg_page_on_now(void) { return wg_page_on; }
 
 /* ------------------------------------------------------------------ toque en el launcher */
 /* p: primer paquete (dedo abajo). Gestiona el gesto completo. */
