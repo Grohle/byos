@@ -52,7 +52,8 @@ support it: look for a newer ByOS Install.
 
 ## Install the app
 
-1. Download `hibyos-install-1.0.0.apk` from the project's releases page.
+1. Download `hibyos-install-1.0.0.apk` from its release, **ByOS Install 1.0.0 (Android)**, on the project's
+   [releases page](https://github.com/Grohle/hibyos/releases). It carries ByOS 0.8.0.
 2. Check it (see "Check the APK" below).
 3. Open the file on the phone. Android asks you to allow installing apps from that source: allow
    it, then tap **Install**.
@@ -119,13 +120,13 @@ level of the card.
 **SHA-256 of `hibyos-install-1.0.0.apk`:**
 
 ```
-38cd9e7865b3223ce04c9e2c9791689a23004f5bd00be875408a2a6820555b0e
+2988c2836c632093794f2a2aecf788d8e682a729af3b2937275b905490845722
 ```
 
 - Windows (PowerShell): `Get-FileHash hibyos-install-1.0.0.apk -Algorithm SHA256`
 - macOS / Linux: `shasum -a 256 hibyos-install-1.0.0.apk`
 
-**SHA-256 fingerprint of the signing certificate** (`CN=ByOS Install, O=ByOS`):
+**SHA-256 fingerprint of the signing certificate** (`CN=HiByOS Install, O=HiByOS`: the project's former name; the certificate cannot change without breaking updates):
 
 ```
 2526c1b0e7a578d626888b0b9da789808980177dd46d534477e3980c0c93eef9
