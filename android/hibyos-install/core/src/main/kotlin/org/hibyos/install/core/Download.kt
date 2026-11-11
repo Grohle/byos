@@ -20,7 +20,7 @@ class DownloadException(val kind: Kind, message: String, val status: Int = 0, ca
         /** The file arrived but it is not the expected one. */
         MISMATCH,
 
-        /** The index of the HiByOS files is not signed by HiByOS, or cannot be understood. */
+        /** The index of the ByOS files is not signed by ByOS, or cannot be understood. */
         UNTRUSTED,
         STORAGE,
         CANCELLED,
@@ -29,7 +29,7 @@ class DownloadException(val kind: Kind, message: String, val status: Int = 0, ca
 
 /** Plain HTTPS downloads to a file, with resume. */
 object Downloader {
-    private const val USER_AGENT = "HiByOS-Install"
+    private const val USER_AGENT = "ByOS-Install"
 
     private fun open(url: String, range: Long): HttpURLConnection {
         val c = URL(url).openConnection() as HttpURLConnection
@@ -204,11 +204,11 @@ object FirmwareFetcher {
     }
 }
 
-/** A newer set of HiByOS files published with a release of the project. */
+/** A newer set of ByOS files published with a release of the project. */
 class RemoteBundle(val version: String, val url: String, val size: Long, val sha256: String)
 
 /**
- * Newer HiByOS files from the project's releases, so that a new HiByOS version does not need
+ * Newer ByOS files from the project's releases, so that a new ByOS version does not need
  * a new version of this app. The index is a small JSON signed with the project's release key
  * (the same Ed25519 scheme as the player's own updater, docs/OTA.md); it carries the size and
  * SHA-256 of the bundle, so the one signature covers the bundle too. The keys come from the
@@ -232,22 +232,22 @@ object BundleUpdater {
     /** Checks the signature of the index and reads it. [allowedPrefix] is where bundles may come from. */
     fun parseIndex(data: ByteArray, keys: List<String>, allowedPrefix: String): RemoteBundle {
         val untrusted = { why: String -> DownloadException(DownloadException.Kind.UNTRUSTED, why) }
-        if (!Ed25519.verifySignedJson(data, keys)) throw untrusted("the list of HiByOS files is not signed by HiByOS")
+        if (!Ed25519.verifySignedJson(data, keys)) throw untrusted("the list of ByOS files is not signed by ByOS")
         try {
             val m = Json.obj(Json.parse(String(data, Charsets.UTF_8)))
             if (Json.long(m, "format") != Bundle.FORMAT.toLong()) {
-                throw untrusted("the newer HiByOS files need a newer version of the app")
+                throw untrusted("the newer ByOS files need a newer version of the app")
             }
             val url = Json.str(m, "url")
-            if (!url.startsWith(allowedPrefix) || url.any { it <= ' ' }) throw untrusted("unexpected link in the list of HiByOS files")
+            if (!url.startsWith(allowedPrefix) || url.any { it <= ' ' }) throw untrusted("unexpected link in the list of ByOS files")
             val sha = Json.str(m, "sha256").lowercase()
             val size = Json.long(m, "size")
             val version = Json.str(m, "hibyos_version")
             if (!Regex("[0-9a-f]{64}").matches(sha) || size <= 0 || size > MAX_BUNDLE ||
-                !Regex("[0-9A-Za-z.+-]{1,32}").matches(version)) throw untrusted("the list of HiByOS files is not valid")
+                !Regex("[0-9A-Za-z.+-]{1,32}").matches(version)) throw untrusted("the list of ByOS files is not valid")
             return RemoteBundle(version, url, size, sha)
         } catch (e: JsonException) {
-            throw untrusted("the list of HiByOS files is not valid (${e.message})")
+            throw untrusted("the list of ByOS files is not valid (${e.message})")
         }
     }
 
@@ -268,20 +268,20 @@ object BundleUpdater {
         try {
             val id = Patcher.identify(tmp, cancelled)
             if (id.size != remote.size || id.sha256 != remote.sha256) {
-                throw DownloadException(DownloadException.Kind.MISMATCH, "the downloaded HiByOS files are damaged")
+                throw DownloadException(DownloadException.Kind.MISMATCH, "the downloaded ByOS files are damaged")
             }
             try {
                 Bundle.open(tmp).use {
                     it.verifyAll()
                     if (it.hibyosVersion != remote.version) {
-                        throw DownloadException(DownloadException.Kind.MISMATCH, "the downloaded HiByOS files are not version ${remote.version}")
+                        throw DownloadException(DownloadException.Kind.MISMATCH, "the downloaded ByOS files are not version ${remote.version}")
                     }
                 }
             } catch (e: BundleException) {
-                throw DownloadException(DownloadException.Kind.MISMATCH, e.message ?: "the downloaded HiByOS files are damaged")
+                throw DownloadException(DownloadException.Kind.MISMATCH, e.message ?: "the downloaded ByOS files are damaged")
             }
             dest.delete()
-            if (!tmp.renameTo(dest)) throw DownloadException(DownloadException.Kind.STORAGE, "the HiByOS files could not be saved")
+            if (!tmp.renameTo(dest)) throw DownloadException(DownloadException.Kind.STORAGE, "the ByOS files could not be saved")
             return dest
         } catch (e: PatchException) {
             throw DownloadException(DownloadException.Kind.CANCELLED, "cancelled")

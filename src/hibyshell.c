@@ -966,7 +966,7 @@ static float ocr_fg(uint16_t p)
 /* Plantillas binarias reales de HiBy (digits.h); cada digito de la barra (fondo negro) se
  * compara con desplazamientos de +-1 px y gana el de menos pixeles distintos. */
 static int ocr_on(const uint16_t *img, int x, int y) { return ocr_fg(img[y * W + x]) > 0.55f; }
-/* cifras del volumen en la barra de HiByOS (theme/topbar.py: topbar_nv_speaker en x=144) */
+/* cifras del volumen en la barra de ByOS (theme/topbar.py: topbar_nv_speaker en x=144) */
 #define VOL_X0 TOPBAR_VOL_X0
 #define VOL_X1 TOPBAR_VOL_X1
 static int ocr_volume(const uint16_t *img)
@@ -1115,16 +1115,24 @@ static int open_touch(void)
 
 /* La memoria interna (UBIFS, ~36 MB) va justa y casi llena se vuelve lentisima; la SD sobra.
  * Las caches de las apps (listas y miniaturas de Libros, Vinyl, letras y caratulas, tienda...)
- * se pueden rehacer: /usr/data/hibymod/cache pasa a ser un enlace a HiByOS/cache/int de la SD.
+ * se pueden rehacer: /usr/data/hibymod/cache pasa a ser un enlace a ByOS/cache/int de la SD.
  * Sin tarjeta al arrancar, vuelve a ser una carpeta interna (nada se rompe; solo no hay cache). */
 static void cache_to_sd(void)
 {
-    static const char *C = "/usr/data/hibymod/cache", *S = "/usr/data/mnt/sd_0/HiByOS/cache/int";
+    static const char *C = "/usr/data/hibymod/cache", *S = "/usr/data/mnt/sd_0/ByOS/cache/int";
     struct stat sb; int islink = !lstat(C, &sb) && S_ISLNK(sb.st_mode), isdir = !islink && !lstat(C, &sb) && S_ISDIR(sb.st_mode);
     if (sd_mounted()) {
-        if (islink) return;
-        mkdir("/usr/data/mnt/sd_0/HiByOS", 0755);
-        mkdir("/usr/data/mnt/sd_0/HiByOS/cache", 0755); mkdir(S, 0755);
+        /* the project was called HiByOS: its SD folder becomes ByOS (the installer merges the
+         * case where both exist) and a cache link to the old folder is redone */
+        if (!access("/usr/data/mnt/sd_0/HiByOS", F_OK) && access("/usr/data/mnt/sd_0/ByOS", F_OK)
+            && !rename("/usr/data/mnt/sd_0/HiByOS", "/usr/data/mnt/sd_0/ByOS")) lg("SD: carpeta HiByOS -> ByOS");
+        if (islink) {
+            char t[200]; ssize_t n = readlink(C, t, sizeof t - 1);
+            if (n > 0 && (t[n] = 0, !strcmp(t, S)) && !access(S, W_OK)) return;
+            unlink(C); islink = 0;
+        }
+        mkdir("/usr/data/mnt/sd_0/ByOS", 0755);
+        mkdir("/usr/data/mnt/sd_0/ByOS/cache", 0755); mkdir(S, 0755);
         if (access(S, W_OK)) return;
         if (isdir) { if (system("rm -rf /usr/data/hibymod/cache")) {} }
         if (symlink(S, C)) { lg("cache: no se pudo enlazar a la SD (%s)", strerror(errno)); mkdir(C, 0755); }
@@ -1163,7 +1171,7 @@ static void self_heal(void)
     if (n >= 4) {
         struct stat sb;
         if (!lstat("/usr/data/hibymod/cache", &sb)) { if (S_ISLNK(sb.st_mode)) unlink("/usr/data/hibymod/cache"); else if (system("rm -rf /usr/data/hibymod/cache")) {} }
-        if (sd_mounted() && system("rm -rf /usr/data/mnt/sd_0/HiByOS/cache/int /usr/data/mnt/sd_0/HiByOS/cache/music")) {}
+        if (sd_mounted() && system("rm -rf /usr/data/mnt/sd_0/ByOS/cache/int /usr/data/mnt/sd_0/ByOS/cache/music")) {}
         lg("auto-reparacion: caches borradas");
     }
     if (n) lg("arranque %d seguido sin llegar a 25 s", n + 1);

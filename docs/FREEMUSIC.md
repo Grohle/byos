@@ -215,7 +215,7 @@ covers.
    - In the app: **Vinyl > ⋯ (top right) > JAMENDO > Key (client_id)**, type it with the
      keyboard and press OK. The app tests it right away ("Valid key" / "Invalid key" /
      "No connection"); **Test key** repeats the test, **Remove key** deletes it.
-   - Without typing: create the text file **`HiByOS/jamendo_client_id.txt`** on the SD card with the
+   - Without typing: create the text file **`ByOS/jamendo_client_id.txt`** on the SD card with the
      Client ID on the first line. The app reads it when it opens and copies it to
      `/usr/data/hibymod/appdata/freemusic/jamendo_client_id` (so the SD file can be removed).
 3. Jamendo then appears in *All Sources* and in the source chip (first chip under the search bar).

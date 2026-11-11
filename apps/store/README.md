@@ -1,6 +1,6 @@
 # Apps (store)
 
-**A light App Store for HiByOS: install apps from online repositories or from `.hpk` files on
+**A light App Store for ByOS: install apps from online repositories or from `.hpk` files on
 the SD card, choose to install them on the SD card or on the HiBy, and open, move, back up or
 uninstall them.**
 
@@ -14,7 +14,7 @@ uninstall them.**
 
 Status: **Beta**. The `.hpk` installer and the management of installed apps (open, back up,
 uninstall, erase data) are done and used; the repositories, the SD card installs and moving
-apps are newer. The screenshots show the real HiByOS repository, fetched live from GitHub.
+apps are newer. The screenshots show the real ByOS repository, fetched live from GitHub.
 
 ## Features
 
@@ -35,7 +35,7 @@ apps are newer. The screenshots show the real HiByOS repository, fetched live fr
   The HiBy has only about 24 MB free, so the SD card comes first.
 - **Installed app actions** (tap it in Installed): **Open**, **Move to SD card / Move to HiBy**,
   **Back up**, **Uninstall** (keeps its data) and **Uninstall and delete data**.
-- **Repositories**: the HiByOS repository (cannot be removed) plus up to 8 of your own; each
+- **Repositories**: the ByOS repository (cannot be removed) plus up to 8 of your own; each
   shows its status and number of apps, with **Update now**, **Remove** and **Add Repository…**.
 - **Refresh**: pull down on a list, or tap the circular arrow next to the title.
 
@@ -98,7 +98,7 @@ multitasking. Tap the active tab to scroll back to the top.
 - **Browser** is listed as **IN TESTING** and cannot be installed or opened (see
   [navegador/](../navegador/README.md)).
 - The backup folder is named `Copias` (Spanish for "copies") on every language.
-- An app uninstalled while its SD card is missing leaves the folder `HiByOS/apps/<id>` on the
+- An app uninstalled while its SD card is missing leaves the folder `ByOS/apps/<id>` on the
   card, to delete by hand.
 - The home screen icon of an SD app whose card is missing is not dimmed yet.
 - Slow response of the store on the device was reported once (open item in `todo.md`); in the
@@ -111,8 +111,8 @@ multitasking. Tap the active tab to scroll back to the top.
 | Source | `src/store.inc.c` (store UI, repositories, downloads, SD installs, backups, running external apps), `src/hpk.inc.c` + `src/hpk.h` (installer; PC tests `tests/hpk_test.c`) |
 | Helpers | `hibynet get` (HTTPS with certificate verification, in separate processes) |
 | Repository | default `https://raw.githubusercontent.com/Grohle/hibyos/main/repo/index.json`; packages are assets of the GitHub release `apps-1` |
-| Cache | `/usr/data/hibymod/cache/store/` (`<hash>.json` indexes, `icons/`, `dl/` while downloading to the HiBy; SD installs download to `SD/HiByOS/dl/`) |
-| Install paths | HiBy: `/usr/data/hibymod/apps/<id>/`; SD card: `SD/HiByOS/apps/<id>/` plus a stub in `/usr/data/hibymod/apps/<id>/` (`manifest.ini`, icons, `sd_location`); data: `/usr/data/hibymod/appdata/<id>/` |
+| Cache | `/usr/data/hibymod/cache/store/` (`<hash>.json` indexes, `icons/`, `dl/` while downloading to the HiBy; SD installs download to `SD/ByOS/dl/`) |
+| Install paths | HiBy: `/usr/data/hibymod/apps/<id>/`; SD card: `SD/ByOS/apps/<id>/` plus a stub in `/usr/data/hibymod/apps/<id>/` (`manifest.ini`, icons, `sd_location`); data: `/usr/data/hibymod/appdata/<id>/` |
 | Safety | SHA-256 and size checked before installing; the installer validates the whole tar first and swaps the new version in with two `rename()`s, so a power cut never leaves a half-installed app (`hpk_recover`) |
 | Network | only on refresh (pull down / button), once on the very first run, and for downloads. Switching tabs or scrolling never uses the network or the disk |
 

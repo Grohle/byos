@@ -47,7 +47,7 @@ static void blit(uint16_t *d, const struct sprite *s, int x, int y, int k, int a
 static int confirm(const char *t, const char *b) { (void)t; (void)b; return 0; }
 static void progress_card(const char *t, const char *s, double f) { (void)t; (void)s; (void)f; }
 static int ss_alert(const char *t, const char *m, const char *ok, int d) { (void)t; (void)m; (void)ok; (void)d; return 0; }
-static const char *v_version(void) { return "HiByOS 0.6.1"; }
+static const char *v_version(void) { return "ByOS 0.6.1"; }
 #include "i18n.inc.c"
 #include "text.inc.c"
 #include "ota_render_extract.inc"        /* fill_rrect, fill_circle, struct spage, draw_wrapped, sp_render... (from the shell, as is) */

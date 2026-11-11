@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds a HiByOS online-update release (docs/OTA.md): the payload tar, the signed
+"""Builds a ByOS online-update release (docs/OTA.md): the payload tar, the signed
 hibyos-update.json and the release notes, and prints the `gh release create` command
 (it does not run it).
 
@@ -11,12 +11,12 @@ hibyos-update.json and the release notes, and prints the `gh release create` com
                         language code of the shell (de, it, ja, ko, pl, ru, zh-Hans, th,
                         zh-Hant, uk) is optional (the device falls back to en)
   --version X.Y.Z       default: the one in overlay/usr/bin/hibymod
-  --build               run tools/make_payload.py first (otherwise out/sd/HiByOS/payload is used)
-  --payload DIR         payload folder (default out/sd/HiByOS/payload)
+  --build               run tools/make_payload.py first (otherwise out/sd/ByOS/payload is used)
+  --payload DIR         payload folder (default out/sd/ByOS/payload)
   --prev-payload DIR    payload of the previous release: computes "restart" (shell/reboot) like
                         the device does; without it "reboot" is announced (the device still
                         computes the real need from the manifests)
-  --min-version V       oldest installed HiByOS that may take this update (default 0.6.0)
+  --min-version V       oldest installed ByOS that may take this update (default 0.6.0)
   --min-firmware V      oldest firmware (rootfs) it works on (default: the current firmware
                         version, i.e. --version, if --needs-firmware; else 0.6.0)
   --needs-firmware      this release changes the rootfs: devices are told to use the Patcher
@@ -53,7 +53,7 @@ MAX_PAYLOAD = 64 * 1024 * 1024
 
 def version_default():
     with open(os.path.join(ROOT, "overlay", "usr", "bin", "hibymod"), encoding="utf-8") as f:
-        m = re.search(r'echo "HiByOS ([0-9][0-9A-Za-z.\-]*)"', f.read())
+        m = re.search(r'echo "ByOS ([0-9][0-9A-Za-z.\-]*)"', f.read())
     return m.group(1) if m else "0.0.0"
 
 
@@ -200,7 +200,7 @@ def main():
     ap.add_argument("--changelog", required=True)
     ap.add_argument("--version", default=version_default())
     ap.add_argument("--build", action="store_true")
-    ap.add_argument("--payload", default=os.path.join(ROOT, "out", "sd", "HiByOS", "payload"))
+    ap.add_argument("--payload", default=os.path.join(ROOT, "out", "sd", "ByOS", "payload"))
     ap.add_argument("--prev-payload")
     ap.add_argument("--min-version", default="0.6.0")
     ap.add_argument("--min-firmware")
@@ -276,22 +276,22 @@ def main():
     notes = os.path.join(out, "notes.md")
     with open(notes, "w", encoding="utf-8", newline="\n") as f:
         en = changelog["en"]
-        f.write(f"# HiByOS {v}\n\n")
+        f.write(f"# ByOS {v}\n\n")
         f.write(("\n".join(f"- {x}" for x in en) if isinstance(en, list) else en) + "\n\n")
         if a.needs_firmware:
-            f.write("**This release changes the firmware: run the HiByOS Patcher on your official "
+            f.write("**This release changes the firmware: run the ByOS Patcher on your official "
                     "firmware and install the resulting r3ii_2025.upt from the SD.**\n\n")
-        f.write("Installed HiByOS devices update from *Settings > General > Software Update*.\n")
+        f.write("Installed ByOS devices update from *Settings > General > Software Update*.\n")
         f.write(f"Payload sha256: `{doc['payload']['sha256']}` ({size} bytes). Signed with `{pub[:16]}…`.\n")
 
-    print(f"HiByOS {v}: {out}")
+    print(f"ByOS {v}: {out}")
     print(f"  {tname}  {size} bytes  sha256 {doc['payload']['sha256']}")
     print(f"  hibyos-update.json  restart={restart}  needs_firmware={doc['needs_firmware']}  key {pub[:16]}...")
     print()
     print("Publish (not run here). The release must be the repository's *latest* one, because devices read")
     print(f"https://github.com/{a.repo}/releases/latest/download/hibyos-update.json :")
     print()
-    print(f'  gh release create {tag} "{tpath}" "{jpath}" --repo {a.repo} --title "HiByOS {v}" '
+    print(f'  gh release create {tag} "{tpath}" "{jpath}" --repo {a.repo} --title "ByOS {v}" '
           f'--notes-file "{notes}" --latest')
 
 

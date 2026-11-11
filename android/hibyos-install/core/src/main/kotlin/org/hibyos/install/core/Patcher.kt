@@ -13,7 +13,7 @@ import java.util.IdentityHashMap
 import java.util.UUID
 
 /**
- * Turns the user's own copy of the official firmware into the HiByOS firmware.
+ * Turns the user's own copy of the official firmware into the ByOS firmware.
  *
  * This is the JVM counterpart of tools/hibyos_patcher.py and follows it step by step; the
  * output is the same file, byte for byte, when the build identifier and the date written in
@@ -30,7 +30,7 @@ class PatchException(val reason: Reason, message: String, val detail: String? = 
         /** The file looked right but something inside is damaged or unexpected. */
         DAMAGED,
 
-        /** The HiByOS bundle is damaged or needs a newer app. */
+        /** The ByOS bundle is damaged or needs a newer app. */
         BUNDLE,
 
         /** The new root filesystem does not fit in the player's partition. */
@@ -75,7 +75,7 @@ class PatchResult(
     val output: File, val size: Long, val md5: String, val sha256: String, val buildId: String,
     val hibyosVersion: String, val entries: Int, val files: Int, val overlayFiles: Int,
     val rootfsSize: Long, val rootfsLimit: Long, val rootfsMd5: String, val stats: SquashStats,
-    /** Official files rebuilt with the HiByOS changes (the "edit" steps of the bundle). */
+    /** Official files rebuilt with the ByOS changes (the "edit" steps of the bundle). */
     val editedFiles: Int = 0,
 )
 
@@ -125,7 +125,7 @@ object Patcher {
         } catch (e: PatchException) {
             throw e
         } catch (e: BundleException) {
-            throw PatchException(PatchException.Reason.BUNDLE, e.message ?: "bad HiByOS bundle")
+            throw PatchException(PatchException.Reason.BUNDLE, e.message ?: "bad ByOS bundle")
         } catch (e: IsoException) {
             throw PatchException(PatchException.Reason.DAMAGED, e.message ?: "damaged firmware container")
         } catch (e: UptException) {

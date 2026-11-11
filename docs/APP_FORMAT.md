@@ -135,7 +135,7 @@ Paths (all under a root that can be configured for testing with `hpk_set_root()`
 The shell must close the app (SIGTERM) before updating or uninstalling it.
 
 **Apps on the SD card** (chosen when installing from the store): the full app goes to
-`SD/HiByOS/apps/<id>/` (same atomic installer, root `SD/HiByOS`) and a *stub* with
+`SD/ByOS/apps/<id>/` (same atomic installer, root `SD/ByOS`) and a *stub* with
 `manifest.ini`, `icon_*.ov` and `sd_location` remains in `apps/<id>/`. `HM_APP_DIR` points to the
 SD (exfat without `noexec`: it runs in place). Data stays in the HiBy's `appdata/<id>`. Details,
 moving between SD and HiBy, and recovery after power cuts: `docs/STORE.md` §4.

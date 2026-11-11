@@ -368,7 +368,7 @@ static void ra_src_del(struct ra_srcs *S, int i)
 /* sources.tsv: tipo activa nombrada emisoras cargada err nombre url (una por linea) */
 static void ra_srcs_write(const struct ra_srcs *S, FILE *f)
 {
-    fputs("# HiByOS Radio sources 1: type on named stations fetched err name url\n", f);
+    fputs("# ByOS Radio sources 1: type on named stations fetched err name url\n", f);
     for (int i = 0; i < S->n; i++) {
         const struct ra_src *s = &S->s[i];
         fprintf(f, "%d\t%d\t%d\t%d\t%lld\t%d\t", s->type, s->on, s->named, s->n, s->fetched, s->err);

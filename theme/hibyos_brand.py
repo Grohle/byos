@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Marca HiByOS en los recursos de fabrica (litegui theme2/theme3 y raiz).
+"""Marca ByOS en los recursos de fabrica (litegui theme2/theme3 y raiz).
 
  - boot_animation/en/0.png: fotograma de reposo de la animacion (identico al ultimo
    que deja hibyboot, para que el relevo al reproductor no tenga salto).
- - Acerca de (hiby_about_dev.view): logo de HiByOS, sin redes sociales, email ni web
+ - Acerca de (hiby_about_dev.view): logo de ByOS, sin redes sociales, email ni web
    de HiBy; un unico boton "GitHub" que abre el QR del repositorio.
  - etc/logo*.jpeg: logo fijo de respaldo (si hibyboot no puede arrancar).
 

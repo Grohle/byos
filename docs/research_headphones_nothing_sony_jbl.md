@@ -23,7 +23,7 @@ This document extends `docs/research_codecs_earbuds.md` §3 (AirPods AAP, Galaxy
 | race-toolkit, github.com/auracast-research/race-toolkit | none stated | RACE header layout and UUIDs |
 | Google Fast Pair specification (developers.google.com/nearby/fast-pair) | public spec | advert and Message Stream formats |
 
-Byte layouts, opcodes and enum values are facts, so they can be used. **No code from these projects may be copied** into HiByOS (our "HiByOS Community License 1.0" is incompatible with GPL/AGPL). Everything below is written in our own words. Test vectors must come from **our own captures**, not from their fixtures.
+Byte layouts, opcodes and enum values are facts, so they can be used. **No code from these projects may be copied** into ByOS (our "ByOS Community License 1.0" is incompatible with GPL/AGPL). Everything below is written in our own words. Test vectors must come from **our own captures**, not from their fixtures.
 
 ---
 
@@ -567,7 +567,7 @@ JBL does **not** have one protocol. The JBL Headphones app (`jbl.stc.com`) bundl
   | RFCOMM | `00000000-0000-0000-0099-AABBCCDDEEFF`; Sony `8901DFA8-…`; Bose and Beyerdynamic variants; sometimes the plain SPP UUID |
 
 - Known ids are **flash/RAM/link-key/FOTA** commands (e.g. `0403` flash read, `0CC0` link key, `1C0x` FOTA). That is exactly the CVE-2025-20700/20701/20702 problem (unauthenticated RACE).
-- **Policy for HiByOS:** never send RACE. It is a factory and debug interface, and using it would mean exploiting a vulnerability. Any JBL that is Airoha-based is controlled only through whatever app-level protocol the capture shows.
+- **Policy for ByOS:** never send RACE. It is a factory and debug interface, and using it would mean exploiting a vulnerability. Any JBL that is Airoha-based is controlled only through whatever app-level protocol the capture shows.
 
 ### 4.5 Capture plan for the owner's JBL (this is what completes the spec)
 1. **Identify the model.** Exact name on the box or in the app; firmware version in the JBL app's "About".
@@ -754,4 +754,4 @@ These messages flow only on an HFP **Service Level Connection**. Today bluealsa 
 - CERT@VDE VDE-2024-076 / CVE-2024-2104 (JBL Live Pro 2 TWS, Tune Flex GATT without authentication): https://certvde.com/en/advisories/VDE-2024-076 · https://harman.csaf-tp.certvde.com/.well-known/csaf/white/2025/hbsa-2025-0001.json
 - Airoha RACE: ERNW white paper https://ernw.de/en/whitepapers/issue-74.html · 39C3 talk https://app.media.ccc.de/v/39c3-bluetooth-headphone-jacking-a-key-to-your-phone · race-toolkit https://github.com/auracast-research/race-toolkit · CVE-2025-20700 https://dbugs.ptsecurity.com/vulnerability/CVE-2025-20700
 - Google Fast Pair specification: provider adverts https://developers.google.com/nearby/fast-pair/specifications/service/provider · battery notification https://developers.google.com/nearby/fast-pair/specifications/extensions/batterynotification · Message Stream https://developers.google.com/nearby/fast-pair/specifications/extensions/messagestream · device information https://developers.google.com/nearby/fast-pair/specifications/extensions/deviceinformation · device action (ring) https://developers.google.com/nearby/fast-pair/specifications/extensions/deviceaction · MAC https://developers.google.com/nearby/fast-pair/specifications/extensions/mac
-- Earlier HiByOS research (stack facts, AirPods, Galaxy Buds, HFP notes): `docs/research_codecs_earbuds.md`
+- Earlier ByOS research (stack facts, AirPods, Galaxy Buds, HFP notes): `docs/research_codecs_earbuds.md`

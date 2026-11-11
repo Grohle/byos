@@ -138,7 +138,7 @@ static void t_library(void)
     /* round trip */
     char *buf = 0; size_t blen = 0; FILE *f = open_memstream(&buf, &blen);
     ra_lib_write(&L, f); fclose(f);
-    CHECK(!strncmp(buf, "# HiByOS Radio 1\n", 17), "header");
+    CHECK(!strncmp(buf, "# ByOS Radio 1\n", 15), "header");
     ra_lib_parse(&M, buf);
     CHECK(M.nfav == L.nfav && M.nrec == L.nrec && M.nown == L.nown, "counts %d/%d %d/%d %d/%d", M.nfav, L.nfav, M.nrec, L.nrec, M.nown, L.nown);
     for (int i = 0; i < L.nfav && i < M.nfav; i++)
@@ -149,7 +149,7 @@ static void t_library(void)
     free(buf);
 
     /* robustness: CRLF, junk, bad url, unknown flag, missing fields, duplicates */
-    char t[] = "# HiByOS Radio 1\r\nF\tu-9\tNueve\thttps://n.example.com/9\tFR\tMP3\t96\tjazz\r\n"
+    char t[] = "# ByOS Radio 1\r\nF\tu-9\tNueve\thttps://n.example.com/9\tFR\tMP3\t96\tjazz\r\n"
                "F\tu-9\tNueve otra vez\thttps://n.example.com/9\r\nX\tz\tz\thttps://z.example.com\r\n"
                "C\tshould-drop\tPropia\thttp://p.example.com/p.mp3\r\nR\t\tSin url\tnot-a-url\r\n"
                "garbage line\r\nF\tu-10\t\thttps://noname.example.com\r\nF\tu-11\tOgg\thttps://o.example.com\t\tOGG\t0\t\r\n";

@@ -1,4 +1,4 @@
-/* settings_app.inc.c - "Ajustes": la app de ajustes de HiByOS con listas agrupadas estilo iOS.
+/* settings_app.inc.c - "Ajustes": la app de ajustes de ByOS con listas agrupadas estilo iOS.
  * Sustituye a los Ajustes de sistema y al "DAC USB" de HiBy (las paginas del sistema estan en
  * sysset.inc.c, incluido al final). Paginas propias: General (idioma), Inicio, Gestos (con
  * animacion de ejemplo), Teclado, Desarrollador (ADB) y Acerca de. Navegacion con transicion

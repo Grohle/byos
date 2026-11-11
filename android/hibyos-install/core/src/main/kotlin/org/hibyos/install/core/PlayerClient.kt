@@ -139,7 +139,7 @@ class PlayerClient(
     }
 
     private fun head(method: String, target: String, extra: String = ""): ByteArray =
-        ("$method $target HTTP/1.1\r\nHost: $host:$port\r\nUser-Agent: HiByOS-Install\r\nAccept: */*\r\n" +
+        ("$method $target HTTP/1.1\r\nHost: $host:$port\r\nUser-Agent: ByOS-Install\r\nAccept: */*\r\n" +
             "Connection: close\r\n$extra\r\n").toByteArray(Charsets.ISO_8859_1)
 
     private fun line(input: InputStream, limit: Int = 8192): String? {
@@ -337,7 +337,7 @@ class PlayerClient(
         if (name.isEmpty() || name.any { it == '/' || it == '\\' || it < ' ' }) {
             throw TransferException(TransferException.Kind.LOCAL, "bad file name: $name")
         }
-        val boundary = "----HiByOSInstall" + java.lang.Long.toHexString(System.nanoTime()) + java.lang.Long.toHexString(size)
+        val boundary = "----ByOSInstall" + java.lang.Long.toHexString(System.nanoTime()) + java.lang.Long.toHexString(size)
         val pre = ("--$boundary\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n$dir\r\n" +
             "--$boundary\r\nContent-Disposition: form-data; name=\"files[]\"; filename=\"${name.replace("\"", "%22")}\"\r\n" +
             "Content-Type: application/octet-stream\r\n\r\n").toByteArray(Charsets.UTF_8)

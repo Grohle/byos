@@ -1,11 +1,11 @@
 /* ota.inc.c - Ajustes > General > Actualizacion de software.
- *  1. En Internet (docs/OTA.md): busca la ultima version de HiByOS en GitHub, la descarga a la
+ *  1. En Internet (docs/OTA.md): busca la ultima version de ByOS en GitHub, la descarga a la
  *     SD (reanudable), verifica firma Ed25519 + sha256 e instala el payload con el instalador de
  *     siempre (hibyos_install.sh). Guarda la version anterior en la SD para volver a ella.
  *     Todo en segundo plano (ota_net.inc.c): la pagina solo pinta ota_st.
- *  2. En la tarjeta SD: elegir que firmware (.upt) instalar, HiByOS o el oficial de HiBy. Usa el
+ *  2. En la tarjeta SD: elegir que firmware (.upt) instalar, ByOS o el oficial de HiBy. Usa el
  *     recovery oficial (`hibymod reinstall`), que instala el r3ii_2025.upt de la raiz de la SD.
- *       SD/HiByOS/firmware/<x>.upt     -> HiByOS (compilado por el usuario, ver README)
+ *       SD/ByOS/firmware/<x>.upt     -> ByOS (compilado por el usuario, ver README)
  *       SD/hibymod/oficial/<x>.upt     -> oficial de HiBy
  *       SD/r3ii_2025.upt              -> se identifica por tamano con la copia oficial
  *     Volver al oficial NO esta probado: se avisa antes. Los datos de /usr/data se conservan. */
@@ -30,7 +30,7 @@ static void fw_scan(void)
 {
     nfw = 0;
     long long offsz = -1;
-    const char *dirs[2] = { SD_ROOT "/HiByOS/firmware", SD_ROOT "/hibymod/oficial" };
+    const char *dirs[2] = { SD_ROOT "/ByOS/firmware", SD_ROOT "/hibymod/oficial" };
     for (int d = 0; d < 2; d++) {
         DIR *dd = opendir(dirs[d]); struct dirent *e;
         while (dd && (e = readdir(dd)) && nfw < 7) {
@@ -45,7 +45,7 @@ static void fw_scan(void)
     if (rs > 0 && nfw < 8) {
         struct fw_c *f = &fws[nfw++]; snprintf(f->path, sizeof f->path, SD_ROOT "/r3ii_2025.upt");
         f->size = rs; f->official = offsz > 0 && rs == offsz;
-        snprintf(f->label, sizeof f->label, "%s", f->official ? tr("Oficial (raíz de la SD)") : tr("HiByOS (raíz de la SD)"));
+        snprintf(f->label, sizeof f->label, "%s", f->official ? tr("Oficial (raíz de la SD)") : tr("ByOS (raíz de la SD)"));
     }
 }
 static void fw_install(int i)
@@ -150,7 +150,7 @@ static int ota_pre_ok(void)   /* lo que se puede decir antes de empezar */
 static void act_ota_install(void)
 {
     if (!ota_pre_ok()) return;
-    char t[96]; snprintf(t, sizeof t, otr("¿Instalar HiByOS %s?"), ota_ui.version);
+    char t[96]; snprintf(t, sizeof t, otr("¿Instalar ByOS %s?"), ota_ui.version);
     if (!ss_alert(t, ota_note(ota_ui.restart), tr("Instalar"), 0)) return;
     ota_st.allow_down = 0; ota_last_op = OTA_OP_INSTALL; ota_inst_t0 = 0; ota_start_ui(OTA_OP_INSTALL);
 }
@@ -158,7 +158,7 @@ static void act_ota_resume(void) { if (!ota_pre_ok()) return; ota_last_op = OTA_
 static void act_ota_downgrade(void)
 {
     if (!ota_pre_ok()) return;
-    char t[96]; snprintf(t, sizeof t, otr("¿Instalar HiByOS %s?"), ota_ui.version);
+    char t[96]; snprintf(t, sizeof t, otr("¿Instalar ByOS %s?"), ota_ui.version);
     if (!ss_alert(t, otr("OTA_DOWNGRADE"), otr("Instalar de todos modos"), 1)) return;
     ota_st.allow_down = 1; ota_last_op = OTA_OP_INSTALL; ota_start_ui(OTA_OP_INSTALL);
 }
@@ -166,7 +166,7 @@ static void act_ota_pause(void) { ota_cancel(); }
 static void act_ota_rollback(void)
 {
     if (!ota_pre_ok()) return;
-    char t[96]; snprintf(t, sizeof t, otr("¿Volver a HiByOS %s?"), ota_st.prev);
+    char t[96]; snprintf(t, sizeof t, otr("¿Volver a ByOS %s?"), ota_st.prev);
     if (!ss_alert(t, otr("OTA_NOTE_REBOOT"), otr("Restaurar"), 1)) return;
     ota_last_op = OTA_OP_ROLLBACK; ota_inst_t0 = 0; ota_start_ui(OTA_OP_ROLLBACK);
 }
@@ -194,7 +194,7 @@ static void page_ota(struct spage *p)
                     s == OS_EXTRACTING || s == OS_INSTALLING || (s == OS_ERROR && ota_last_op == OTA_OP_INSTALL));
     char cl[1600]; cl[0] = 0;
     if (with_info) {
-        snprintf(ota_hdr, sizeof ota_hdr, "HiByOS %s", ota_ui.version); o->header = ota_hdr;
+        snprintf(ota_hdr, sizeof ota_hdr, "ByOS %s", ota_ui.version); o->header = ota_hdr;
         ota_changelog_ui(cl, sizeof cl);
         o->rows[o->n++] = ROW(otr("Tamaño"), R_INFO, 0, 0, 0, 0, v_ota_size, 0);
         long long t = ota_st.total > 0 ? ota_st.total : ota_ui.size;
@@ -202,7 +202,7 @@ static void page_ota(struct spage *p)
         else if (s == OS_INSTALLING) { if (!ota_inst_t0) ota_inst_t0 = now_ms(); ota_pm = (int)((now_ms() - ota_inst_t0) / 25); if (ota_pm > 950) ota_pm = 950; }
         else ota_pm = (int)(1000 * ota_st.frac);
         if (s == OS_AVAILABLE && ota_needs_fw()) {
-            struct srow r = ROW(otr("Necesita el HiByOS Patcher"), R_INFO, 0, 0, 0, 0, 0, 0); r.dis = 1; o->rows[o->n++] = r;
+            struct srow r = ROW(otr("Necesita el ByOS Patcher"), R_INFO, 0, 0, 0, 0, 0, 0); r.dis = 1; o->rows[o->n++] = r;
             snprintf(ota_foot[0], sizeof ota_foot[0], "%s", otr("OTA_NEEDS_FW"));
         } else if (s == OS_AVAILABLE && ota_too_old()) {
             snprintf(ota_foot[0], sizeof ota_foot[0], otr("OTA_MINVER"), ota_ui.min_version);
@@ -244,7 +244,7 @@ static void page_ota(struct spage *p)
         if (s == OS_CHECKING) o->rows[o->n++] = ROW(otr("Buscando…"), R_INFO, 0, 0, 0, 0, 0, 0);
         else o->rows[o->n++] = ROW(otr("Buscar actualizaciones"), R_ACTION, 0, 0, 0, busy ? 0 : act_ota_check, 0, 0);
         char ck[96]; ota_checked_line(ck, sizeof ck);
-        if (s == OS_UPTODATE) snprintf(ota_foot[0], sizeof ota_foot[0], ck[0] ? "%s · %s" : "%s", otr("HiByOS está actualizado"), ck);
+        if (s == OS_UPTODATE) snprintf(ota_foot[0], sizeof ota_foot[0], ck[0] ? "%s · %s" : "%s", otr("ByOS está actualizado"), ck);
         else if (s == OS_NEWER) {
             snprintf(ota_foot[0], sizeof ota_foot[0], otr("OTA_NEWER"), ota_ui.version);
             if (!busy && !ota_needs_fw()) o->rows[o->n++] = ROW(otr("Instalar de todos modos"), R_ACTION, 0, 0, 0, act_ota_downgrade, 0, 0);

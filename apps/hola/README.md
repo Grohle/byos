@@ -1,6 +1,6 @@
 # Hello (`hola`): the example app
 
-**The smallest complete external app for HiByOS, for developers: a dithered gradient, a
+**The smallest complete external app for ByOS, for developers: a dithered gradient, a
 greeting in the interface language, and a circle that follows your finger. Use it as the
 template for your own `.hpk` app.** "Hola" is Spanish for "hello"; the package id is
 `org.hibymod.hola` and its name is shown as Hello / Hola / Bonjour.
@@ -10,7 +10,7 @@ template for your own `.hpk` app.** "Hola" is Spanish for "hello"; the package i
   <img src="../../docs/media/apps/store/02_apps.png" width="160" alt="Apps">
 </p>
 
-Status: **Stable (example)**. It is published in the HiByOS repository (release `apps-1`) and
+Status: **Stable (example)**. It is published in the ByOS repository (release `apps-1`) and
 can be installed from the **Apps** store.
 
 ## Features
@@ -105,7 +105,7 @@ present) and `bin/hola` with `tools/hpk.py build`.
 ### Publishing
 
 Add your package to a repository `index.json` (format in `docs/STORE.md` §2) with its size and
-SHA-256; `tools/mkrepo.py` generates the HiByOS one. Users add your repository in
+SHA-256; `tools/mkrepo.py` generates the ByOS one. Users add your repository in
 **Apps › Installed › Add Repository…**.
 
 ### Testing without the device

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerates the reference data of the :core unit tests from the Python tools of HiByOS.
+"""Regenerates the reference data of the :core unit tests from the Python tools of ByOS.
 
   python android/hibyos-install/tools/gen_test_vectors.py lzo iso      (needs pycdlib)
   python3 android/hibyos-install/tools/gen_test_vectors.py squashfs    (Linux or WSL, needs

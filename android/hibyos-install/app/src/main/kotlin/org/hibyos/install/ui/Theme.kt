@@ -7,7 +7,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 
-/** The colours of HiByOS on the player: black, dark grey cards and the system accents. */
+/** The colours of ByOS on the player: black, dark grey cards and the system accents. */
 object C {
     val bg = Color(0xFF000000)
     val card = Color(0xFF1C1C1E)

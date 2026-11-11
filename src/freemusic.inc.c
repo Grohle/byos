@@ -4,7 +4,7 @@
  * Sources (fm_srcs, Settings > Sources; reorder, disable, add, remove): Internet Archive
  * (archive.org: Live Music Archive, netlabels, community audio; no key), Jamendo (Creative
  * Commons; needs a free client_id, entered in the app's settings or read from
- * SD/HiByOS/jamendo_client_id.txt) and the ones the user adds by URL: archive.org collections,
+ * SD/ByOS/jamendo_client_id.txt) and the ones the user adds by URL: archive.org collections,
  * Vinyl catalogs (an open JSON format anyone can host), RSS/Atom/OPML feeds with audio
  * enclosures and Subsonic-API servers (freemusic_src.inc.c). "All sources" merges the results
  * of every enabled source, each row with its source badge. The quality is shown in the results themselves: badges
@@ -32,7 +32,7 @@
 #define FM_CACHE "/usr/data/hibymod/cache/freemusic"
 #define FM_MUSIC SD_ROOT "/Music/Free"
 #define FM_LCACHE FM_MUSIC "/.cache"
-#define FM_KEYFILE_SD SD_ROOT "/HiByOS/jamendo_client_id.txt"
+#define FM_KEYFILE_SD SD_ROOT "/ByOS/jamendo_client_id.txt"
 #define FM_KEYFILE FM_DATA "/jamendo_client_id"
 #define FM_TH 56                 /* thumbnail in the rows */
 #define FM_BIG 128               /* cover on the album page */

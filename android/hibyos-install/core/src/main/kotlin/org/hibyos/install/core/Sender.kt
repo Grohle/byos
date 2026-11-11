@@ -2,7 +2,7 @@ package org.hibyos.install.core
 
 import java.io.InputStream
 
-/** One file to put on the player's SD card. [path] is relative to the card ("HiByOS/bin/x"). */
+/** One file to put on the player's SD card. [path] is relative to the card ("ByOS/bin/x"). */
 class SendItem(val path: String, val size: Long, val sha256: String?, val open: () -> InputStream)
 
 class SendResult(

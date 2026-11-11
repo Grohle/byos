@@ -1,11 +1,11 @@
 # Licence texts of third-party components
 
 This folder holds the full licence texts of the third-party software, fonts and data
-contained in the files HiByOS distributes. The list of components, with versions,
+contained in the files ByOS distributes. The list of components, with versions,
 copyright notices and where each one ends up, is in
 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-HiByOS's own licence is the `LICENSE` file at the root of the repository; it is not in this
+ByOS's own licence is the `LICENSE` file at the root of the repository; it is not in this
 folder.
 
 `tools/notices.py` copies `THIRD_PARTY_NOTICES.md` and the files each release needs:

@@ -1,4 +1,4 @@
-# fetch.sh - shared helpers for the HiByOS build scripts. Source this file; do not run it.
+# fetch.sh - shared helpers for the ByOS build scripts. Source this file; do not run it.
 #
 #     . "$(dirname "$0")/fetch.sh"
 #

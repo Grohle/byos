@@ -1,6 +1,6 @@
 # Third-party notices
 
-HiByOS is published under its own licence (see `LICENSE`). The files that HiByOS
+ByOS is published under its own licence (see `LICENSE`). The files that ByOS
 distributes also contain software, fonts and data written by other people. This document
 lists every such component, with its version, where it comes from, its licence, its
 copyright notice as written by its authors, and where it ends up.
@@ -11,9 +11,9 @@ file set carries a copy of this document together with the licence texts that ap
 folder as this document, so read `LICENSES/name.txt` below as `name.txt`.
 
 Nothing in this document changes the licence of any component. Each component stays under
-its own licence, which takes precedence over the HiByOS licence for that component.
+its own licence, which takes precedence over the ByOS licence for that component.
 
-HiByOS does not distribute HiBy's firmware. The patcher works on the user's own copy of
+ByOS does not distribute HiBy's firmware. The patcher works on the user's own copy of
 the official firmware; HiBy's software is not covered here.
 
 Where something could not be established with certainty from the upstream files, it is
@@ -23,10 +23,10 @@ marked **Uncertain**.
 
 | Name used by `tools/notices.py` | What it is |
 | --- | --- |
-| `firmware` | The files HiByOS adds to the firmware image (the `overlay/` tree). MIPS programs: `usr/bin/hibyboot`, `usr/bin/hibyctl`, `usr/lib/hibymod/bin/wpa_cli`. |
-| `sd-payload` | The `HiByOS/payload/` folder for the SD card. MIPS programs in `bin/`: `hibyshell`, `hibywall`, `hibymix`, `hibytag`, `hibynet`, `hibymod_disp.so`; plus `bin/cacert.pem`. |
-| `patcher-python` | `HiByOS-Patcher-<version>-python.zip`: the patcher as Python scripts, a copy of pycdlib in `vendor/`, and a copy of the `firmware` files. |
-| `patcher-windows` | `HiByOS-Patcher.exe` (and the zip that contains it): the same patcher frozen with PyInstaller, with a Python runtime inside, and a copy of the `firmware` files. |
+| `firmware` | The files ByOS adds to the firmware image (the `overlay/` tree). MIPS programs: `usr/bin/hibyboot`, `usr/bin/hibyctl`, `usr/lib/hibymod/bin/wpa_cli`. |
+| `sd-payload` | The `ByOS/payload/` folder for the SD card. MIPS programs in `bin/`: `hibyshell`, `hibywall`, `hibymix`, `hibytag`, `hibynet`, `hibymod_disp.so`; plus `bin/cacert.pem`. |
+| `patcher-python` | `ByOS-Patcher-<version>-python.zip`: the patcher as Python scripts, a copy of pycdlib in `vendor/`, and a copy of the `firmware` files. |
+| `patcher-windows` | `ByOS-Patcher.exe` (and the zip that contains it): the same patcher frozen with PyInstaller, with a Python runtime inside, and a copy of the `firmware` files. |
 | `hpk:org.hibymod.navegador` | The "Browser" app package: `bin/nsfb` (NetSurf), `bin/navegador` (launcher), `res/` (NetSurf resources), `ca.pem`. |
 | `hpk:org.hibymod.hola` | The "Hello" sample app package: `bin/hola`. |
 
@@ -63,7 +63,7 @@ The two patcher packages contain a copy of the `firmware` files, so everything l
 - Licence: MIT (SPDX `MIT`). Some files have their own permissive notices; they are all
   listed in the musl `COPYRIGHT` file.
 - Copyright: `Copyright © 2005-2020 Rich Felker, et al.`
-- Where: linked statically into every MIPS executable HiByOS builds (all programs listed in
+- Where: linked statically into every MIPS executable ByOS builds (all programs listed in
   section 1 except `hibymod_disp.so`, which uses the C library already on the player).
 - Licence text: `LICENSES/musl-COPYRIGHT.txt`
 
@@ -94,7 +94,7 @@ The two patcher packages contain a copy of the `firmware` files, so everything l
   exact wording is reproduced in the notice file).
 - Copyright: `Copyright (C) 1996-2020 Free Software Foundation, Inc.`
 - Where: `hibymod_disp.so` in the SD payload. This shared object is linked dynamically
-  against the C library already installed on the player (glibc is not shipped by HiByOS),
+  against the C library already installed on the player (glibc is not shipped by ByOS),
   but the tool chain adds a few small glibc helper objects to it (for example the `stat` /
   `fstat` wrappers of `libc_nonshared`).
 - Licence text: `LICENSES/glibc-nonshared-NOTICE.txt`, `LICENSES/LGPL-2.1.txt`,
@@ -214,9 +214,9 @@ The two patcher packages contain a copy of the `firmware` files, so everything l
 
 `bin/nsfb` is the NetSurf web browser, framebuffer front end, built from the
 `netsurf-all-3.11` source archive with the changes in `apps/netsurf-hiby/build/` of the
-HiByOS repository. It is one statically linked program that contains everything listed in
+ByOS repository. It is one statically linked program that contains everything listed in
 this section, plus IJG libjpeg (3.6), Mbed TLS (3.7), musl libc and the Zig runtime (3.1,
-3.2). `bin/navegador` is a small HiByOS launcher that contains only musl libc and the Zig
+3.2). `bin/navegador` is a small ByOS launcher that contains only musl libc and the Zig
 runtime.
 
 The following optional parts of NetSurf are **not** built in: JavaScript (Duktape),
@@ -242,7 +242,7 @@ OpenSSL, libsvgtiny, librosprite, WebP, PDF export.
   `LICENSES/GPL-2.0.txt`
 - Notes: `bin/nsfb` as a whole is a program based on NetSurf; the GPL text sets the
   conditions for distributing it, including access to the corresponding source code. The
-  HiByOS changes to NetSurf are in `apps/netsurf-hiby/build/` (`build_hf.sh` is the build
+  ByOS changes to NetSurf are in `apps/netsurf-hiby/build/` (`build_hf.sh` is the build
   script; `patch_gui.py` modifies `frontends/framebuffer/gui.c`; `nsfb_hiby.c` is an added
   libnsfb surface).
 
@@ -396,7 +396,7 @@ and 3.10 apply).
 - Copyright: `Copyright (C) 2015-2022  Chris Lalancette <clalancette@gmail.com>`
 - Where: Python package: unmodified source files in `vendor/pycdlib/` (with
   `vendor/pycdlib-LICENSE.txt`). Windows program: the same modules, unmodified, as Python
-  bytecode inside `HiByOS-Patcher.exe`. The corresponding source code is the `pycdlib`
+  bytecode inside `ByOS-Patcher.exe`. The corresponding source code is the `pycdlib`
   1.22.0 release at the upstream address above (the package is also published on PyPI as
   `pycdlib` 1.22.0, which is where the build takes it from).
 - Licence text: `LICENSES/pycdlib-COPYING.txt`
@@ -412,12 +412,12 @@ and 3.10 apply).
   the older BeOpen, CNRI and CWI licences reproduced in the same file.
 - Copyright: `Copyright © 2001 Python Software Foundation. Copyright © 2000 BeOpen.com.
   Copyright © 1995-2001 CNRI. Copyright © 1991-1995 SMC.` (as written in `python314.dll`)
-- Where: inside `HiByOS-Patcher.exe`.
+- Where: inside `ByOS-Patcher.exe`.
 - Licence text: `LICENSES/Python-LICENSE.txt` (the `LICENSE.txt` of the Windows build),
   `LICENSES/Python-incorporated-software.rst` (the "History and License" page of the
   Python 3.14.7 documentation, with the notices of the software incorporated in Python).
 - Software that the Python Windows build brings with it and that is inside
-  `HiByOS-Patcher.exe`:
+  `ByOS-Patcher.exe`:
   - OpenSSL 3.5.7 (`libssl-3.dll`, `libcrypto-3.dll`): Apache License 2.0 (SPDX
     `Apache-2.0`), `Copyright 1998-2026 The OpenSSL Authors. All rights reserved.`
     https://www.openssl.org . Text: `LICENSES/Apache-2.0.txt`, also in
@@ -452,7 +452,7 @@ and 3.10 apply).
 - Copyright: `Copyright (c) 2010-2023, PyInstaller Development Team`,
   `Copyright (c) 2005-2009, Giovanni Bajo`,
   `Based on previous work under copyright (c) 2002 McMillan Enterprises, Inc.`
-- Where: the start-up code of `HiByOS-Patcher.exe` (bootloader `run.exe`) and the small
+- Where: the start-up code of `ByOS-Patcher.exe` (bootloader `run.exe`) and the small
   loader modules inside it (`pyimod01_archive`, `pyimod02_importers`,
   `pyimod03_ctypes`, `pyimod04_pywin32`, `pyiboot01_bootstrap`, `pyi_rth_inspect`).
 - Licence text: `LICENSES/PyInstaller-COPYING.txt` (contains the GPL and Apache texts),
@@ -471,7 +471,7 @@ and 3.10 apply).
   rights reserved.` These files are not open source. The conditions Python passes on for
   the Microsoft code in its Windows build are in the section "Additional Conditions for
   this Windows binary build" of `LICENSES/Python-LICENSE.txt`.
-- Where: inside `HiByOS-Patcher.exe`, collected automatically by PyInstaller so that the
+- Where: inside `ByOS-Patcher.exe`, collected automatically by PyInstaller so that the
   program starts on systems without these libraries.
 - Licence text: none reproduced (no licence file accompanies these DLLs).
 - **Uncertain**: the Universal C Runtime files were taken by PyInstaller from another
@@ -479,7 +479,7 @@ and 3.10 apply).
 
 ## 7. Not included in any file set
 
-- HiBy's firmware and applications: never distributed by HiByOS.
+- HiBy's firmware and applications: never distributed by ByOS.
 - Tools used only to build (Zig/clang, Python packages such as Pillow, the NetSurf build
   tools apart from the generated code mentioned in 5.2): not distributed.
 - The fonts installed on the player, which `hibyshell` loads at run time: not distributed.

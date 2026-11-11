@@ -96,7 +96,7 @@ fun rich(s: String): AnnotatedString = buildAnnotatedString {
     }
 }
 
-/** "HiByOS Install" with the two colours of the HiByOS logo. */
+/** "ByOS Install" with the two colours of the ByOS logo. */
 fun wordmark(): AnnotatedString = buildAnnotatedString {
     append("HiBy")
     withStyle(SpanStyle(color = C.cyan)) { append("OS") }

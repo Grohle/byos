@@ -7,7 +7,7 @@
 #ifndef RADIO_CORE_INC
 #define RADIO_CORE_INC
 
-#define RA_UA "HiByOS-Radio/1.0 (https://github.com/Grohle/hibyos)"
+#define RA_UA "ByOS-Radio/1.0 (https://github.com/Grohle/hibyos)"
 #define RA_URLN 400
 struct ra_station {
     char uuid[40];               /* stationuuid del directorio; "" en las propias */
@@ -280,7 +280,7 @@ static void ra_own_del(struct ra_lib *L, int i)
 static void ra_lib_write(const struct ra_lib *L, FILE *f)
 {
     const struct ra_station *a[3] = { L->fav, L->rec, L->own }; const int n[3] = { L->nfav, L->nrec, L->nown };
-    fputs("# HiByOS Radio 1\n", f);
+    fputs("# ByOS Radio 1\n", f);
     for (int k = 0; k < 3; k++) for (int i = 0; i < n[k]; i++) {
         const struct ra_station *s = &a[k][i];
         fprintf(f, "%c\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", "FRC"[k], s->uuid, s->name, s->url, s->cc, s->codec, s->br, s->tags);
@@ -354,7 +354,7 @@ static int ra_state_parse(const char *text, struct ra_hstate *o)
 /* ------------------------------------------------------------------ ajustes
  * El audio va a la tarjeta SD: el motor de fabrica no toca ficheros de /tmp y la RAM no da para
  * un bufer (docs/RADIO.md). En /tmp solo el fichero de estado del ayudante (unos bytes). */
-#define RA_SDDIR "/usr/data/mnt/sd_0/HiByOS/cache/radio"
+#define RA_SDDIR "/usr/data/mnt/sd_0/ByOS/cache/radio"
 #define RA_STDIR "/tmp/hibyradio"
 struct ra_conf {
     int lead_s;                  /* segundos escritos antes de dar el fichero al reproductor */

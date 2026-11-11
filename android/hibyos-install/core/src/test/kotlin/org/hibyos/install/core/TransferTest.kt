@@ -133,28 +133,28 @@ class TransferTest {
     fun listsCreatesMovesDeletes() {
         val c = client()
         assertTrue(c.list(home).isEmpty())
-        assertTrue(c.createDir(home + "HiByOS/"))
-        assertFalse("409 means it is already there", c.createDir(home + "HiByOS/"))
+        assertTrue(c.createDir(home + "ByOS/"))
+        assertFalse("409 means it is already there", c.createDir(home + "ByOS/"))
         val data = TestData.gen("text", 3, 70000)
-        c.upload(home + "HiByOS/", "a file & more (1).txt", data.size.toLong(), { ByteArrayInputStream(data) })
+        c.upload(home + "ByOS/", "a file & more (1).txt", data.size.toLong(), { ByteArrayInputStream(data) })
         c.upload(home, "música ñ 音.upt", 3, { ByteArrayInputStream(byteArrayOf(1, 2, 3)) })
         val top = c.list(home).associateBy { it.name }
-        assertEquals(setOf("HiByOS", "música ñ 音.upt"), top.keys)
-        assertTrue(top["HiByOS"]!!.isDir)
+        assertEquals(setOf("ByOS", "música ñ 音.upt"), top.keys)
+        assertTrue(top["ByOS"]!!.isDir)
         assertEquals(3L, top["música ñ 音.upt"]!!.size)
-        val inside = c.list(home + "HiByOS/")
+        val inside = c.list(home + "ByOS/")
         assertEquals(1, inside.size)
         assertEquals(data.size.toLong(), inside[0].size)
-        assertEquals(home + "HiByOS/a file & more (1).txt", inside[0].path)
-        assertArrayEquals(data, File(sd, "HiByOS/a file & more (1).txt").readBytes())
+        assertEquals(home + "ByOS/a file & more (1).txt", inside[0].path)
+        assertArrayEquals(data, File(sd, "ByOS/a file & more (1).txt").readBytes())
         val md = sha256()
         assertEquals(data.size.toLong(), c.digest(inside[0].path, md))
         assertEquals(sha256Hex(data), Hex.of(md.digest()))
-        c.move(inside[0].path, home + "HiByOS/b.txt")
-        assertEquals(listOf("b.txt"), c.list(home + "HiByOS/").map { it.name })
-        c.delete(home + "HiByOS/b.txt")
-        assertTrue(c.list(home + "HiByOS/").isEmpty())
-        val e = expect(TransferException.Kind.REFUSED) { c.delete(home + "HiByOS/b.txt") }
+        c.move(inside[0].path, home + "ByOS/b.txt")
+        assertEquals(listOf("b.txt"), c.list(home + "ByOS/").map { it.name })
+        c.delete(home + "ByOS/b.txt")
+        assertTrue(c.list(home + "ByOS/").isEmpty())
+        val e = expect(TransferException.Kind.REFUSED) { c.delete(home + "ByOS/b.txt") }
         assertEquals(404, e.status)
         expect(TransferException.Kind.REFUSED) { c.list(home + "nothing/") }
         expect(TransferException.Kind.REFUSED) { c.createDir("/etc/x/") }
@@ -281,12 +281,12 @@ class TransferTest {
     // ------------------------------------------------------------------ whole deliveries
 
     private fun tree(): List<SendItem> = listOf(
-        item("HiByOS/bin/hibyshell", TestData.gen("copies", 11, 300_000)),
-        item("HiByOS/bin/tool", TestData.gen("random", 12, 5_000)),
-        item("HiByOS/shell/icons/a.png", TestData.gen("runs", 13, 40_000)),
-        item("HiByOS/theme/dark/list.view", TestData.gen("text", 14, 2_000)),
-        item("HiByOS/VERSION", "9.9.9\n".toByteArray()),
-        item("HiByOS/empty", ByteArray(0)),
+        item("ByOS/bin/hibyshell", TestData.gen("copies", 11, 300_000)),
+        item("ByOS/bin/tool", TestData.gen("random", 12, 5_000)),
+        item("ByOS/shell/icons/a.png", TestData.gen("runs", 13, 40_000)),
+        item("ByOS/theme/dark/list.view", TestData.gen("text", 14, 2_000)),
+        item("ByOS/VERSION", "9.9.9\n".toByteArray()),
+        item("ByOS/empty", ByteArray(0)),
         item("test.upt", TestData.gen("copies", 15, 1_500_000)),
     )
 
@@ -320,7 +320,7 @@ class TransferTest {
         onCard(items)
         // folders are made once each, parents first
         val created = synchronized(player.log) { player.log.filter { it.startsWith("CREATE ") }.map { it.substring(7) } }
-        assertEquals(listOf("HiByOS/", "HiByOS/bin/", "HiByOS/shell/", "HiByOS/shell/icons/", "HiByOS/theme/", "HiByOS/theme/dark/")
+        assertEquals(listOf("ByOS/", "ByOS/bin/", "ByOS/shell/", "ByOS/shell/icons/", "ByOS/theme/", "ByOS/theme/dark/")
             .map { home + it }, created)
         assertEquals(items.size, player.uploads().size)
         // the firmware goes last, when everything else is safely there
@@ -354,16 +354,16 @@ class TransferTest {
     @Test
     fun replacesADifferentFileOfTheSameName() {
         val items = tree()
-        File(sd, "HiByOS/bin").mkdirs()
-        File(sd, "HiByOS/bin/tool").writeBytes(ByteArray(5_000) { 9 })      // same size, other contents
+        File(sd, "ByOS/bin").mkdirs()
+        File(sd, "ByOS/bin/tool").writeBytes(ByteArray(5_000) { 9 })      // same size, other contents
         File(sd, "test.upt").writeBytes(ByteArray(77))                       // another size
-        File(sd, "HiByOS/keep.txt").writeText("mine")
+        File(sd, "ByOS/keep.txt").writeText("mine")
         player.renameOnClash = true   // a server that would keep the old file under the old name
         val r = Sender.send(client(), items)
         assertEquals(0, r.skipped)
         onCard(items)
-        assertEquals("what was there and is not ours stays", "mine", File(sd, "HiByOS/keep.txt").readText())
-        assertEquals(listOf("DELETE ${home}HiByOS/bin/tool", "DELETE ${home}test.upt"),
+        assertEquals("what was there and is not ours stays", "mine", File(sd, "ByOS/keep.txt").readText())
+        assertEquals(listOf("DELETE ${home}ByOS/bin/tool", "DELETE ${home}test.upt"),
             synchronized(player.log) { player.log.filter { it.startsWith("DELETE ") } })
         assertFalse(File(sd, "test.upt (1)").exists())
     }
@@ -372,7 +372,7 @@ class TransferTest {
     fun noticesAFileThatArrivedShort() {
         player.storeShort = true
         val e = expect(TransferException.Kind.MISMATCH) { Sender.send(client(), tree()) }
-        assertTrue(e.message!!, e.message!!.contains("the player stored 299999 of 300000 bytes of \"HiByOS/bin/hibyshell\""))
+        assertTrue(e.message!!, e.message!!.contains("the player stored 299999 of 300000 bytes of \"ByOS/bin/hibyshell\""))
         // and puts it right at the next try
         val r = Sender.send(client(), tree())
         assertEquals(0, r.skipped)
@@ -383,7 +383,7 @@ class TransferTest {
     fun noticesAFileThatArrivedDamaged() {
         player.storeDamaged = true
         val e = expect(TransferException.Kind.MISMATCH) { Sender.send(client(), tree()) }
-        assertTrue(e.message!!, e.message!!.contains("\"HiByOS/bin/hibyshell\" did not arrive intact"))
+        assertTrue(e.message!!, e.message!!.contains("\"ByOS/bin/hibyshell\" did not arrive intact"))
         Sender.send(client(), tree())
         onCard(tree())
     }
@@ -418,10 +418,10 @@ class TransferTest {
 
     @Test
     fun aFileInTheWayOfAFolder() {
-        File(sd, "HiByOS").writeText("not a folder")
+        File(sd, "ByOS").writeText("not a folder")
         val e = expect(TransferException.Kind.REFUSED) { Sender.send(client(), tree()) }
-        assertTrue(e.message!!, e.message!!.contains("a file named \"HiByOS\" is where the folder"))
-        File(sd, "HiByOS").delete()
+        assertTrue(e.message!!, e.message!!.contains("a file named \"ByOS\" is where the folder"))
+        File(sd, "ByOS").delete()
         File(sd, "test.upt").mkdirs()
         val e2 = expect(TransferException.Kind.REFUSED) { Sender.send(client(), tree()) }
         assertTrue(e2.message!!, e2.message!!.contains("a folder named \"test.upt\" is where the file"))

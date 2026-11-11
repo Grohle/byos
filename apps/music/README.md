@@ -24,7 +24,7 @@ verified on the device. See [Limitations](#limitations--known-issues).
 - **Albums** in a two-column cover grid; **album page** with a large cover, title, artist,
   genre and year, **Play** / **Shuffle**, the track list with durations, and the total.
 - **Artists** with their albums, **Songs** with Play / Shuffle, **Genres**.
-- **Search** while you type (albums, artists and songs), with the HiByOS keyboard.
+- **Search** while you type (albums, artists and songs), with the ByOS keyboard.
 - **Playlists**: Favourites (the stock player's favourites) and the player's playlists and
   `.m3u` lists.
 - **Mixes**, generated on demand from your listening history: *Daily Mix*, *Discover*
@@ -127,9 +127,9 @@ System gestures work everywhere in the app:
 | Source | `src/music.inc.c` (library, lists, search, covers), `src/nowui.inc.c` (Now Playing, context menu), `src/lrc_core.inc.c` (LRC parser), `src/lyrics.inc.c` (lyrics and cover search), `src/tageditor.inc.c` (tag editor), `src/nowplaying.inc.c` (what is playing), `src/playctl.inc.c` (play / pause / lists) |
 | Helpers | `hibymix` (`src/hibymix.c`: read-only library queries `lib`, `playlists`, `playlist`, and the mixes `make` / `radio`), `hibytag` (`src/hibytag.c`: tag reading/writing, cover embedding, library database updates), `hibynet` (`src/hibynet.c`: LRCLIB, iTunes, MusicBrainz / Cover Art Archive), `hibywall` (image decoding to RGB565) |
 | Data read | the player's database `/usr/data/usrlocal_media.db` (SQLite, through `hibymix` in a separate process, read-only) |
-| Cache | `SD/HiByOS/cache/music/` (library snapshot `lib.tsv`, covers at 48, 140 and 232 px, capped at 48 MB); rebuilt when the database changes |
+| Cache | `SD/ByOS/cache/music/` (library snapshot `lib.tsv`, covers at 48, 140 and 232 px, capped at 48 MB); rebuilt when the database changes |
 | Written | lyrics: `<song>.lrc` next to the audio file (UTF-8 with BOM); covers: `cover.jpg` in the album folder and embedded in the files; mixes: `SD/Mezclas/<name>.m3u` plus a row in the player's list table |
-| Network | only when you search for lyrics or covers (LRCLIB, iTunes Search, MusicBrainz, Cover Art Archive). No account, no tracking; the User-Agent identifies HiByOS |
+| Network | only when you search for lyrics or covers (LRCLIB, iTunes Search, MusicBrainz, Cover Art Archive). No account, no tracking; the User-Agent identifies ByOS |
 | Performance | nothing is allocated per frame; only the visible strip is drawn; covers are decoded in a low-priority thread, never on the UI thread |
 
 More: `docs/LYRICS_AND_COVERS.md`, `docs/research_play_list.md`, `docs/research_playback.md`,

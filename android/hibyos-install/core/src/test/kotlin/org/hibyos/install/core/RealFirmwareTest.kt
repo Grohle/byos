@@ -14,10 +14,10 @@ import java.util.TimeZone
  * The firmware belongs to HiBy and is never part of this repository, so the test only runs
  * when it is told where the pieces are:
  *   HIBYOS_FIRMWARE       the official r3ii_2025.upt
- *   HIBYOS_REPO           the HiByOS repository (tools/, overlay/)
+ *   HIBYOS_REPO           the ByOS repository (tools/, overlay/)
  *   HIBYOS_PYTHON         a Python with pycdlib (default "python")
  *   HIBYOS_EXPORT_PYTHON  a Python with Pillow, for the SD-card files (default "python")
- *   HIBYOS_SD             optional: a folder that contains HiByOS/ (skips make_payload.py)
+ *   HIBYOS_SD             optional: a folder that contains ByOS/ (skips make_payload.py)
  *   HIBYOS_WORK           optional: where to put the results
  */
 class RealFirmwareTest {

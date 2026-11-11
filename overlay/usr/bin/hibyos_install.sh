@@ -1,12 +1,12 @@
 #!/bin/sh
 # HIBYOS_SYS_REV=2
-# HiByOS: instala/actualiza en /usr/data/hibymod el payload de la SD (HiByOS/payload).
+# ByOS: instala/actualiza en /usr/data/hibymod el payload de la SD (ByOS/payload).
 # El rootfs no tiene sitio: shell, binarios, libreria de pantalla y tema viven en la
 # particion de datos (UBIFS, sobrevive al flasheo). Ver docs/INSTALLER.md.
 #
 #   hibyos_install.sh boot      antes del reproductor (hiby_player.sh). Sin nada que hacer
 #                               no espera a la SD; solo la espera (como mucho $WAIT s) si
-#                               HiByOS aun no esta instalado.
+#                               ByOS aun no esta instalado.
 #   hibyos_install.sh late      desde S95hibymod con la SD ya montada. Sale con 0 si ha
 #                               instalado (el que llama reinicia), 1 si no habia nada que hacer.
 #   hibyos_install.sh install   a mano (ADB): instala aunque la version sea la misma.
@@ -39,14 +39,31 @@ FLAGS=${HIBYOS_FLAGS:-/data}
 SYSD=$HM/sys
 ROOTBIN=${HIBYOS_ROOTBIN:-/usr/bin}
 
-PL=$SDM/HiByOS/payload
-LOG=$SDM/HiByOS/install.log
+PL=$SDM/ByOS/payload
+LOG=$SDM/ByOS/install.log
 TH=$HM/theme
 ALLSUBS="layout/theme2 layout/theme3 litegui/theme2 litegui/theme3"
 PRISTINE=$TMPD/rootfs_ro
 DRV=$TMPD/derive
 
 sd_ok() { grep -qE "$SD_RE" $MOUNTS 2>/dev/null; }
+
+# The project was called HiByOS: its SD folder becomes ByOS. Entries that already exist in
+# ByOS win; an old payload or cache is dropped (rebuilt), anything else is left in HiByOS.
+sd_migrate() {
+    O=$SDM/HiByOS
+    [ -d $O ] || return 0
+    if [ ! -e $SDM/ByOS ]; then mv $O $SDM/ByOS 2>/dev/null; return 0; fi
+    for e in $O/* $O/.[!.]*; do
+        [ -e "$e" ] || continue
+        b=${e##*/}
+        if [ ! -e "$SDM/ByOS/$b" ]; then mv "$e" "$SDM/ByOS/$b"
+        else case $b in payload|cache|install.log|ota) rm -rf "$e";; esac
+        fi
+    done
+    rmdir $O 2>/dev/null
+    return 0
+}
 
 # ------------------------------------------------------------------ sustitutos (sys/)
 # Los scripts del rootfs solo cambian reflasheando. Con las actualizaciones por Internet
@@ -83,7 +100,7 @@ log()
     m="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*"
     [ -t 1 ] && echo "$*"
     mkdir -p $TMPD 2>/dev/null; echo "$m" >> $TMPD/install.txt 2>/dev/null
-    [ -d $SDM/HiByOS ] && echo "$m" >> $LOG 2>/dev/null
+    [ -d $SDM/ByOS ] && echo "$m" >> $LOG 2>/dev/null
 }
 
 ver_of() { [ -f "$1" ] && head -n 1 "$1" 2>/dev/null | tr -d '\r\n\t '; }
@@ -310,9 +327,9 @@ do_install()
     NEWV=$(sd_ver)
     OLDV=$(installed_ver)
     first=0; [ -n "$OLDV" ] || first=1
-    log "instalando HiByOS $NEWV (instalada: ${OLDV:-ninguna})"
+    log "instalando ByOS $NEWV (instalada: ${OLDV:-ninguna})"
     [ -f $PL/MANIFEST.md5 ] || { fail "falta MANIFEST.md5"; return 1; }
-    (cd $PL && md5sum -c MANIFEST.md5 >/dev/null 2>&1) || { fail "payload danado o incompleto en la SD (vuelve a copiar la carpeta HiByOS)"; return 1; }
+    (cd $PL && md5sum -c MANIFEST.md5 >/dev/null 2>&1) || { fail "payload danado o incompleto en la SD (vuelve a copiar la carpeta ByOS)"; return 1; }
     mkdir -p $HM || { fail "no puedo crear $HM"; return 1; }
 
     # derived files (derive/): built and checked in $DRV before anything is changed
@@ -409,7 +426,7 @@ do_install()
     rm -rf $DRV
     echo "$NEWV" > $HM/payload_version
     sync
-    log "HiByOS $NEWV instalado ($(du -sk $HM/shell $HM/preload $TH 2>/dev/null | awk '{s+=$1} END{print s}') KB)"
+    log "ByOS $NEWV instalado ($(du -sk $HM/shell $HM/preload $TH 2>/dev/null | awk '{s+=$1} END{print s}') KB)"
     return 0
 }
 
@@ -421,7 +438,7 @@ pending()
     [ "$v" = "$(installed_ver)" ] && return 1
     fr=$(sed -n '2s/^rev //p' $HM/install_failed 2>/dev/null)
     if [ "$v" = "$(ver_of $HM/install_failed)" ] && [ "${fr:-1}" = "$MYREV" ]; then
-        [ -f $TMPD/install_failed_logged ] || { log "HiByOS $v ya fallo antes: no se reintenta (hibyos_install.sh install para forzar)"; touch $TMPD/install_failed_logged; }
+        [ -f $TMPD/install_failed_logged ] || { log "ByOS $v ya fallo antes: no se reintenta (hibyos_install.sh install para forzar)"; touch $TMPD/install_failed_logged; }
         return 1
     fi
     return 0
@@ -439,29 +456,32 @@ case "$1" in
         while [ $i -lt $((WAIT * 2)) ] && ! sd_ok; do sleep 0.5; i=$((i + 1)); done
         if ! sd_ok; then
             mkdir -p $HM && touch $HM/install_nowait
-            log "sin SD tras ${WAIT} s: HiByOS no instalado (se instalara al montarse la SD)"
+            log "sin SD tras ${WAIT} s: ByOS no instalado (se instalara al montarse la SD)"
             exit 0
         fi
     fi
+    sd_migrate
     if pending; then
         do_install
     elif [ -z "$(installed_ver)" ] && [ ! -f $PL/VERSION ]; then
-        mkdir -p $HM && [ ! -f $HM/install_nowait ] && touch $HM/install_nowait && log "no hay HiByOS/payload en la SD"
+        mkdir -p $HM && [ ! -f $HM/install_nowait ] && touch $HM/install_nowait && log "no hay ByOS/payload en la SD"
     fi
     exit 0
     ;;
   late)
     sd_ok || exit 1
+    sd_migrate
     pending || exit 1
     do_install || exit 1
     exit 0
     ;;
   install)
     sd_ok || { echo "SD no montada"; exit 1; }
+    sd_migrate
     [ -f $PL/VERSION ] || { echo "no hay $PL/VERSION"; exit 1; }
     rm -f $HM/install_failed
     do_install || exit 1
-    echo "reinicia para usar HiByOS $(installed_ver)"
+    echo "reinicia para usar ByOS $(installed_ver)"
     ;;
   sysok)
     sys_ok "$2"

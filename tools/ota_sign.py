@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release signing key and signatures for HiByOS online updates (docs/OTA.md).
+"""Release signing key and signatures for ByOS online updates (docs/OTA.md).
 
   python tools/ota_sign.py genkey --key PATH [--install]   new key OUTSIDE the repository;
                                                            --install writes its public key in
@@ -103,7 +103,7 @@ def load_seed(path):
     with open(path, encoding="ascii") as f:
         t = f.read().strip()
     if not t.startswith(PREFIX) or len(t) != len(PREFIX) + 64:
-        raise SystemExit(f"ERROR: {path} is not a HiByOS OTA key file")
+        raise SystemExit(f"ERROR: {path} is not a ByOS OTA key file")
     return bytes.fromhex(t[len(PREFIX):])
 
 

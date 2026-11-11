@@ -1,4 +1,4 @@
-/* qr.inc.c - codificador de codigos QR (ISO/IEC 18004), escrito para HiByOS.
+/* qr.inc.c - codificador de codigos QR (ISO/IEC 18004), escrito para ByOS.
  *
  * Modo byte, nivel de correccion M, versiones 1 a 10 (hasta 213 bytes: de sobra para una URL).
  * qr_encode() elige la version mas pequena que cabe y la mascara de menor penalizacion (o la

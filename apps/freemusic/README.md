@@ -64,7 +64,7 @@ hold still for 1 s for multitasking.
    - in the app: **⋯** (top right) › **Key (client_id)**, type it and press OK; the app
      tests it at once ("Valid key" / "Invalid key" / "No connection"). **Test key** repeats the
      test and **Remove key** deletes it;
-   - without typing: create the text file **`HiByOS/jamendo_client_id.txt`** on the SD card
+   - without typing: create the text file **`ByOS/jamendo_client_id.txt`** on the SD card
      with the Client ID on the first line. The app reads it when it opens and copies it to its
      settings, so the file can then be deleted.
 3. Choose **Jamendo** in the source chip. Without a key, Jamendo only shows the row "Add your

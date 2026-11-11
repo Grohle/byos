@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds the HiByOS bundle that the HiByOS Install app carries (and can download).
+"""Builds the ByOS bundle that the ByOS Install app carries (and can download).
 
   python android/hibyos-install/tools/export_bundle.py            (from the repository root)
 
@@ -11,10 +11,10 @@ lockstep.
 Output (default app/src/main/assets/hibyos-bundle.zip), a ZIP with:
   bundle.json     supported firmware (hashes only), limits and the ordered list of steps;
                   the changes to HiBy's own files are stored as edits (what to keep of the
-                  official file, by offset, and the text written for HiByOS), never as files
-  overlay/...     the HiByOS files for the root filesystem, already normalised by
+                  official file, by offset, and the text written for ByOS), never as files
+  overlay/...     the ByOS files for the root filesystem, already normalised by
                   build.overlay_file() (line endings) with the mode they get when new
-  sd/HiByOS/...   the files for the SD card (tools/make_payload.py, or --sd FOLDER)
+  sd/ByOS/...   the files for the SD card (tools/make_payload.py, or --sd FOLDER)
   notices/...     licence texts (LICENSE, THIRD_PARTY_NOTICES.md, LICENSES/*) when present
 
 It contains no HiBy firmware. The ZIP is reproducible: same inputs, same bytes.
@@ -155,7 +155,7 @@ def overlay_files(build, overlay):
 
 
 def sd_files(repo, sd, work):
-    """(path below the SD card root, data) of the HiByOS folder."""
+    """(path below the SD card root, data) of the ByOS folder."""
     if sd is None:
         os.makedirs(work, exist_ok=True)
         r = subprocess.run([sys.executable, os.path.join(repo, "tools", "make_payload.py"), "--out", work],
@@ -163,11 +163,11 @@ def sd_files(repo, sd, work):
         sys.stdout.write("".join("   " + l + "\n" for l in r.stdout.splitlines()))
         if r.returncode != 0:
             die("tools/make_payload.py failed:\n" + r.stderr + r.stdout +
-                "\nBuild the SD-card files first or pass --sd <folder that contains HiByOS/>.")
+                "\nBuild the SD-card files first or pass --sd <folder that contains ByOS/>.")
         sd = work
-    top = os.path.join(sd, "HiByOS")
+    top = os.path.join(sd, "ByOS")
     if not os.path.isfile(os.path.join(top, "payload", "VERSION")):
-        die(f"{top} is not a HiByOS SD-card folder (payload/VERSION is missing)")
+        die(f"{top} is not a ByOS SD-card folder (payload/VERSION is missing)")
     out = []
     for d, dirs, names in os.walk(top):
         dirs.sort()
@@ -181,7 +181,7 @@ def sd_files(repo, sd, work):
 def notice_files(repo):
     """Licence texts for the "Open-source licences" screen: (path, title, data)."""
     out = []
-    for name, title in (("LICENSE", "HiByOS licence"), ("THIRD_PARTY_NOTICES.md", "Third-party notices")):
+    for name, title in (("LICENSE", "ByOS licence"), ("THIRD_PARTY_NOTICES.md", "Third-party notices")):
         p = os.path.join(repo, name)
         if os.path.isfile(p):
             with open(p, "rb") as f:
@@ -210,7 +210,7 @@ INDEX_NAME = "hibyos-install-bundle.json"
 
 
 def release_keys(repo):
-    """The Ed25519 public keys of the HiByOS releases (src/ota_net.inc.c), without empty slots."""
+    """The Ed25519 public keys of the ByOS releases (src/ota_net.inc.c), without empty slots."""
     path = os.path.join(repo, "src", "ota_net.inc.c")
     if not os.path.isfile(path):
         return []
@@ -222,9 +222,9 @@ def release_keys(repo):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--repo", default=REPO, help="HiByOS repository (default: the one this script is in)")
+    ap.add_argument("--repo", default=REPO, help="ByOS repository (default: the one this script is in)")
     ap.add_argument("--overlay", help="overlay folder (default: <repo>/overlay)")
-    ap.add_argument("--sd", help="folder that contains HiByOS/ for the SD card (default: run tools/make_payload.py)")
+    ap.add_argument("--sd", help="folder that contains ByOS/ for the SD card (default: run tools/make_payload.py)")
     ap.add_argument("--out", default=os.path.join(APP, "app", "src", "main", "assets", "hibyos-bundle.zip"))
     ap.add_argument("--work", default=os.path.join(APP, "build", "bundle-work"))
     ap.add_argument("--index", default=os.path.join(APP, "build", "hibyos-install-bundle.json"),
@@ -251,7 +251,7 @@ def main():
         die("these overlay files are also built by tools/vendor_edits.json: " + ", ".join(clash))
     sd = sd_files(repo, a.sd, a.work)
     notices = notice_files(repo)
-    sd_version = next((d.decode().strip() for p, d in sd if p == "HiByOS/payload/VERSION"), "")
+    sd_version = next((d.decode().strip() for p, d in sd if p == "ByOS/payload/VERSION"), "")
     if sd_version != version:
         die(f"the SD-card files are version {sd_version!r} but the overlay is {version!r}")
 
@@ -318,7 +318,7 @@ def main():
     with open(release_copy, "wb") as f:
         f.write(blob)
 
-    print(f"HiByOS {version} bundle: {a.out}")
+    print(f"ByOS {version} bundle: {a.out}")
     print(f"   from {meta['generated_from']}, definitions {meta['definitions_sha256'][:16]}")
     print(f"   firmware: {known['label']} (md5 {md5})")
     print(f"   steps: {len(meta['steps'])} ({len(edited)} edits of official files)   overlay: {len(ov)} files {sum(len(d) for _p, d, _m in ov)} bytes"

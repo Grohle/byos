@@ -1,4 +1,4 @@
-/* hibybudsd - headphone control daemon of HiByOS (docs/HEADPHONES.md).
+/* hibybudsd - headphone control daemon of ByOS (docs/HEADPHONES.md).
  *
  * Watches BlueZ for connected headphones, recognises brand and model, opens the vendor control
  * channel next to the A2DP stream (AirPods/Beats: L2CAP PSM 0x1001 "AAP"; Galaxy Buds: RFCOMM

@@ -1,4 +1,4 @@
-/* digits.h: cifras de la barra de estado de HiByOS (generado por theme/topbar.py) */
+/* digits.h: cifras de la barra de estado de ByOS (generado por theme/topbar.py) */
 #define TOPBAR_VOL_X0 143   /* zona de las cifras del volumen en la barra */
 #define TOPBAR_VOL_X1 172
 struct dtpl { int w, h; const char *rows[16]; };

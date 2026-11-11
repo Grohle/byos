@@ -169,7 +169,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         return n
     }
 
-    // ---- start: the HiByOS files, and what a previous run left -------------------------------
+    // ---- start: the ByOS files, and what a previous run left -------------------------------
 
     private fun start() {
         try {
@@ -187,7 +187,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
                 val tmp = File(bundleDir, "builtin.tmp")
                 app.assets.open("hibyos-bundle.zip").use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o, 1 shl 16) } }
                 asset.delete()
-                if (!tmp.renameTo(asset)) throw IOException("the HiByOS files could not be unpacked")
+                if (!tmp.renameTo(asset)) throw IOException("the ByOS files could not be unpacked")
                 stamp.writeText(want)
             }
             val base = Bundle.open(asset)
@@ -460,7 +460,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     // ---- step 3: sending --------------------------------------------------------------------
 
     private fun items(b: Bundle, firmware: Boolean): List<SendItem> {
-        // the HiByOS folder first and the firmware last: a transfer that stops half way never
+        // the ByOS folder first and the firmware last: a transfer that stops half way never
         // leaves an update file on the card without the files it needs
         val list = ArrayList<SendItem>()
         for (f in b.sd) list += SendItem(f.path, f.size, f.sha256) { b.open(f.entry) }
@@ -597,7 +597,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         host?.pickFolder()
     }
 
-    /** Writes the firmware and the HiByOS folder under the folder the user chose. */
+    /** Writes the firmware and the ByOS folder under the folder the user chose. */
     fun saveTo(tree: Uri) {
         val b = bundle ?: return
         if (state.patch !is PatchState.Done) return
@@ -628,8 +628,8 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         state = state.copy(manual = ManualState.Preparing(0f))
         worker.execute {
             try {
-                val zip = File(shareDir, "HiByOS.zip")
-                val stamp = File(shareDir, "HiByOS.version")
+                val zip = File(shareDir, "ByOS.zip")
+                val stamp = File(shareDir, "ByOS.version")
                 val want = "${b.hibyosVersion}:${b.generatedFrom}"
                 if (!zip.isFile || !stamp.isFile || stamp.readText() != want) {
                     val pace = Pace()
@@ -654,7 +654,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         }
     }
 
-    // ---- about: newer HiByOS files, licences, space -----------------------------------------
+    // ---- about: newer ByOS files, licences, space -----------------------------------------
 
     override fun checkUpdate() {
         val base = builtIn ?: return
@@ -697,7 +697,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
                 if (old != null && old !== builtIn) old.close()
                 val dest = File(bundleDir, "updated.zip")
                 dest.delete()
-                if (!staged.renameTo(dest)) throw IOException("the HiByOS files could not be saved")
+                if (!staged.renameTo(dest)) throw IOException("the ByOS files could not be saved")
                 val b = Bundle.open(dest)
                 bundle = b
                 remote = null

@@ -24,7 +24,7 @@ Status: **Stable**.
   - **Rename** (one item);
   - **Move**: choose the destination folder (on the same storage), then **Move Here**;
   - **Delete**, with confirmation and a progress card.
-- **+** at the top right: new folder, named with the HiByOS keyboard.
+- **+** at the top right: new folder, named with the ByOS keyboard.
 - **Image viewer** (JPEG, PNG, BMP, GIF): swipe left / right for the previous / next image.
 - **Text viewer and editor** for `.txt`, `.lrc`, `.cue`, `.m3u`, `.json`, `.ini`, `.md` and
   similar files: tap **Edit**, type, then **Save** (written atomically).

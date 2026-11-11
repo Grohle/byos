@@ -3,7 +3,7 @@ package org.hibyos.install.core
 /**
  * LZO1X decompressor and LZO1X-1 style compressor.
  *
- * This is a line-by-line port of tools/lzo1x.py of the HiByOS repository. The compressor
+ * This is a line-by-line port of tools/lzo1x.py of the ByOS repository. The compressor
  * must produce exactly the same bytes as the Python one (the firmware built on the phone is
  * compared byte for byte with the one built by the desktop patcher), so its parsing
  * decisions must not be "improved" here without changing the Python side as well.

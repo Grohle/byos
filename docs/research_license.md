@@ -1,5 +1,11 @@
 # Licensing research for HiByOS
 
+> **Update (2026-11-11):** the project was renamed **ByOS** (the name no longer contains HiBy's
+> product name), and the boot animation and logo were redrawn from scratch
+> (`theme/bootanim/intro.html`, Inter font under the SIL OFL): item 22 no longer applies.
+> The text below is kept as written.
+
+
 Date: 2026-11-10. Scope: which licence(s) HiByOS should use, what has to be fixed in the
 repository regardless of that choice, and how to roll it out.
 

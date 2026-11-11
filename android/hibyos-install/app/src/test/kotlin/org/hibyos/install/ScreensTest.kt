@@ -70,7 +70,7 @@ class ScreensTest {
         sdSize = 7_101_010,
         port = 4399,
         notices = listOf(
-            NoticeItem("HiByOS: licence (GPL-3.0-or-later)", "notices/LICENSE"),
+            NoticeItem("ByOS: licence (GPL-3.0-or-later)", "notices/LICENSE"),
             NoticeItem("Third-party notices", "notices/THIRD_PARTY_NOTICES.md"),
             NoticeItem("GNU General Public License 2.0", "notices/LICENSES/GPL-2.0.txt"),
             NoticeItem("GNU Lesser General Public License 2.1", "notices/LICENSES/LGPL-2.1.txt"),
@@ -164,7 +164,7 @@ class ScreensTest {
         shot("wifi_7_sending", Screen.WIFI, patched.copy(wifi = WifiState("192.168.1.20", player = player,
             phase = WifiPhase.Sending(31_457_280, total, "r3ii_2025.upt", SendListener.Phase.SEND))))
         shot("wifi_8_checking", Screen.WIFI, patched.copy(wifi = WifiState("192.168.1.20", player = player,
-            phase = WifiPhase.Sending(total - 900_000, total, "HiByOS/payload/theme/layout/theme3/hiby_launcher_apps.view", SendListener.Phase.CHECK))))
+            phase = WifiPhase.Sending(total - 900_000, total, "ByOS/payload/theme/layout/theme3/hiby_launcher_apps.view", SendListener.Phase.CHECK))))
         shot("wifi_9_done", Screen.WIFI, patched.copy(delivered = true, wifi = WifiState("192.168.1.20", player = player,
             phase = WifiPhase.Done(207, 0, 207, false))), full = true)
         shot("wifi_10_done_resumed", Screen.WIFI, patched.copy(delivered = true, wifi = WifiState("192.168.1.20", player = player,
@@ -187,11 +187,11 @@ class ScreensTest {
     @Test
     fun manual() {
         shot("manual_1_idle", Screen.MANUAL, patched, full = true)
-        shot("manual_2_saving", Screen.MANUAL, patched.copy(manual = ManualState.Saving(21_495_808, total, "HiByOS/payload/bin/hibyshell")))
+        shot("manual_2_saving", Screen.MANUAL, patched.copy(manual = ManualState.Saving(21_495_808, total, "ByOS/payload/bin/hibyshell")))
         shot("manual_3_preparing", Screen.MANUAL, patched.copy(manual = ManualState.Preparing(0.4f)))
         shot("manual_4_saved", Screen.MANUAL, patched.copy(delivered = true, manual = ManualState.Saved("SD card", 207)), full = true)
         shot("manual_5_failed", Screen.MANUAL, patched.copy(manual = ManualState.Failed(
-            ErrorInfo(R.string.err_save, "HiByOS/payload/bin/hibyshell: No space left on device", R.string.hint_save))), full = true)
+            ErrorInfo(R.string.err_save, "ByOS/payload/bin/hibyshell: No space left on device", R.string.hint_save))), full = true)
         shot("manual_6_not_built", Screen.MANUAL, ready)
     }
 
@@ -221,7 +221,7 @@ class ScreensTest {
             """
             # Third-party notices
 
-            HiByOS is free software under the GNU General Public License, version 3 or later.
+            ByOS is free software under the GNU General Public License, version 3 or later.
             The files it adds to the player include, or are built from, the works below. Each of
             them stays under its own licence.
 
@@ -232,7 +232,7 @@ class ScreensTest {
             Licence: MIT.
 
             - it is started only when you turn it on in Settings
-            - its source code is downloaded when HiByOS is built
+            - its source code is downloaded when ByOS is built
 
             | Component | Licence |
             |-----------|---------|

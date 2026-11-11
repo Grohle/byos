@@ -28,7 +28,7 @@ pairing a new Bluetooth device have not been verified on the device yet.
     scanning); pull down to rescan;
   - **Other…** for a hidden network (name, security, password);
   - **Known Networks**: the saved list, tap one for its details or to forget it;
-  - joining a secured network opens a password sheet with the HiByOS keyboard (masked, with an
+  - joining a secured network opens a password sheet with the ByOS keyboard (masked, with an
     eye button, no automatic capitals); a wrong password brings the sheet back with "Incorrect
     password" and returns to the previous network;
   - WPA/WPA2 PSK, WPA2/WPA3 transition, WEP and SAE; 802.1X (enterprise) is refused with a
@@ -88,7 +88,7 @@ saved in the system's own Wi-Fi configuration, the same file HiBy uses.
 | Source | `src/wireless.inc.c` (UI, two worker threads, wpa_supplicant and BlueZ clients), `src/wireless_parse.inc.c` (pure parsers), `src/lang/wireless_tr.inc.c`; PC tests `tests/wireless_test.sh` |
 | How it works | radio on/off, AirPlay, DLNA and HiBy Link only through the player's own settings (`hibyset.inc.c`), so its UI and `user.ini` agree. Networks through wpa_supplicant's control socket `/var/run/wpa_supplicant/wlan0` (the firmware's `sys_server` then runs DHCP and tells the player). Bluetooth through BlueZ 5.54 over D-Bus (`dbus-send`), discovery held by a `bluetoothctl` child; pairing prompts are answered by HiBy's own `bt-agent` |
 | Data | networks in `/data/wpa_supplicant.conf` (`SAVE_CONFIG`); the last Bluetooth device in `/data/bt_lastused.txt` (reconnection at boot), like the stock firmware |
-| Helper | `wpa_cli_fast` (`src/wpa_cli_fast.c`), a fast replacement for the `wpa_cli` that the player runs every 3 s (installed by HiByOS; this app does not use `wpa_cli`) |
+| Helper | `wpa_cli_fast` (`src/wpa_cli_fast.c`), a fast replacement for the `wpa_cli` that the player runs every 3 s (installed by ByOS; this app does not use `wpa_cli`) |
 | Privacy | passwords are wiped from memory after use and never logged |
 | Performance | threads sleep while the app is hidden; while visible, Wi-Fi state every 3 s and a scan every 15 s on the Wi-Fi page; the UI never blocks |
 

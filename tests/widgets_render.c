@@ -129,7 +129,7 @@ int main(int argc, char **argv)
     if (!text_init()) { printf("no font\n"); return 2; }
     mkdir(outdir(), 0755);
     {   /* default wallpaper of the shell (RGB565, 320x480) */
-        FILE *f = fopen(argv[1] ? argv[1] : "out/sd/HiByOS/payload/shell/wall.raw", "rb");
+        FILE *f = fopen(argv[1] ? argv[1] : "out/sd/ByOS/payload/shell/wall.raw", "rb");
         if (!f || fread(wall, 2, W * H, f) != W * H) { printf("no wall.raw\n"); return 2; }
         fclose(f);
     }

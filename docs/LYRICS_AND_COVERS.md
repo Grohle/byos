@@ -70,7 +70,7 @@ Environment variables:
 
 ### Network, timeouts and TLS
 - Custom HTTP/1.1 (`Connection: close`, `Accept-Encoding: identity`, *chunked* and `Content-Length`) and 301/302/303/307/308 redirects.
-  User-Agent on every request: `HiByOS/0.6 (https://github.com/Grohle/hibyos)`.
+  User-Agent on every request: `ByOS/0.6 (https://github.com/Grohle/hibyos)`.
 - Timeout: **15 s per network call** (connection, TLS and the complete response). In `get` and `cover-get` the timeout works as an
   *inactivity* timeout: it is renewed on every read, so large downloads are not cut off. There is also a global 90 s alarm
   on the search commands, in case DNS hangs.
@@ -153,7 +153,7 @@ real database `/data/usrlocal_media.db`. Nothing was played and no process was r
   That is what `ht_set_cover(audio, jpeg)` in `src/hibytag.c` is for and, from the command line, `hibytag setcover IMG.jpg FILE...`.
   It works with FLAC, MP3 (ID3v2.3/2.4) and M4A; Ogg/Opus is not supported.
   Writing is atomic and streamed, and leaves the audio byte-for-byte intact. The image can be at most 1 MB.
-- Meanwhile, the HiByOS UI should save `cover.jpg` in the album folder, which is what almost every
+- Meanwhile, the ByOS UI should save `cover.jpg` in the album folder, which is what almost every
   player uses and what our own UI can read. Next to it, it should save `cover.thumb.raw` (the 96×96 RGB565 thumbnail
   for lists). Usage: `hibynet cover-get URL "/data/mnt/sd_0/Artista/Álbum/cover.jpg"`.
   To embed it later, use the 500 px `cover.jpg`: it is baseline and weighs about 60–80 KB, a reasonable size for the player.

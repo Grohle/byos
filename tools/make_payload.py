@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Builds the HiByOS/ folder for the SD card of a public release (see docs/INSTALLER.md).
+"""Builds the ByOS/ folder for the SD card of a public release (see docs/INSTALLER.md).
 
   python tools/make_payload.py [--version 0.6.0] [--out out/sd]
 
-Result: out/sd/HiByOS/payload/
+Result: out/sd/ByOS/payload/
   VERSION        payload version (default: the one in overlay/usr/bin/hibymod)
   MANIFEST.md5   md5 of every file (the installer verifies it before touching anything)
   bin/           hibyshell hibywall hibymix hibytag hibymod_disp.so ...  (from bin/, built in WSL)
@@ -39,7 +39,7 @@ Format of derive/ (version 1), applied by overlay/usr/bin/hibyos_install.sh:
                  id     "-" = the base already is the result (copy it); otherwise the name of
                         derive/<id>.ops and derive/<id>.add.
                  Several lines may have the same dest: the first one whose base has the stated
-                 sha256 is used (the firmware may already carry an older HiByOS version of that
+                 sha256 is used (the firmware may already carry an older ByOS version of that
                  file). "req": if none matches, the installation is refused before anything is
                  changed. "opt": the file is skipped (the copy in the firmware stays) and the
                  installer logs it.
@@ -113,17 +113,17 @@ OFFICIAL = {
     "usr/resource/layout/theme3/dialog/volume.dlg":
         (873, "48f8d119a02b653792c279df8edad4b5b1e7a0266f13692dc5a60bd1b9c0b227"),
 }
-# derived files without which HiByOS must not be installed (the rest are optional)
+# derived files without which ByOS must not be installed (the rest are optional)
 REQUIRED = ("layout/theme3/launcher/hiby_launcher_apps.view",)
 IMAGES = (".png", ".jpg", ".jpeg")
-# an alternative base (an older HiByOS version of a file) is not used if the bytes we would
+# an alternative base (an older ByOS version of a file) is not used if the bytes we would
 # have to store contain a run of HiBy's text this long
 MAX_SHARED = VE.MIN_MATCH_SCRIPT
 
 
 def version_default():
     with open(os.path.join(ROOT, "overlay", "usr", "bin", "hibymod"), encoding="utf-8") as f:
-        m = re.search(r'echo "HiByOS ([0-9][0-9A-Za-z.\-]*)"', f.read())
+        m = re.search(r'echo "ByOS ([0-9][0-9A-Za-z.\-]*)"', f.read())
     return m.group(1) if m else "0.0.0"
 
 
@@ -231,7 +231,7 @@ class Derive:
         self.items.append((dest, root_rel, result))
 
     def bases(self, root_rel):
-        """What a player may have at that path, best first: the HiByOS versions written by the
+        """What a player may have at that path, best first: the ByOS versions written by the
         firmware builders (current, then older ones) and the official file."""
         stock = official(root_rel, self.entries)
         out = []
@@ -247,7 +247,7 @@ class Derive:
             return 0
         d = os.path.join(pl, "derive")
         os.makedirs(d)
-        lines = ["# HiByOS: files rebuilt on the player from the copy in its own firmware.\n",
+        lines = ["# ByOS: files rebuilt on the player from the copy in its own firmware.\n",
                  "# <req|opt> <dest> <sha256 result> <base> <sha256 base> <strip CR> <id>   (tools/make_payload.py)\n"]
         blobs = {}
         for dest, root_rel, result in sorted(self.items):
@@ -297,7 +297,7 @@ class Derive:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Build the HiByOS/ folder for the SD card.")
+    ap = argparse.ArgumentParser(description="Build the ByOS/ folder for the SD card.")
     ap.add_argument("--version", default=version_default())
     ap.add_argument("--out", default=os.path.join(ROOT, "out", "sd"))
     ap.add_argument("--expect", help="for tests: also write here the full files that the player will "
@@ -313,7 +313,7 @@ def main():
     except (OSError, ValueError, KeyError, VE.EditError) as e:
         sys.exit(f"ERROR: tools/vendor_edits.json: {e}")
 
-    top = os.path.join(a.out, "HiByOS")
+    top = os.path.join(a.out, "ByOS")
     pl = os.path.join(top, "payload")
     if os.path.isdir(top):
         shutil.rmtree(top)
@@ -481,7 +481,7 @@ def main():
         tot.setdefault(k, [0, 0])
         tot[k][0] += 1
         tot[k][1] += os.path.getsize(os.path.join(pl, rel))
-    print(f"HiByOS {a.version}: {os.path.abspath(top)}")
+    print(f"ByOS {a.version}: {os.path.abspath(top)}")
     for k, (n, b) in sorted(tot.items()):
         print(f"  {k:9s} {n:4d} files {b / 1024:8.1f} KB")
     print(f"  total     {len(lines):4d} files {sum(b for _n, b in tot.values()) / 1024:8.1f} KB")

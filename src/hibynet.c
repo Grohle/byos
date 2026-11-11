@@ -1,5 +1,5 @@
 /* hibynet: letras (LRCLIB) y caratulas (iTunes Search + MusicBrainz/Cover Art Archive)
- * para HiByOS. Binario estatico pequeno: HTTP/1.1 propio + mbedTLS 2.28 + libjpeg + stb.
+ * para ByOS. Binario estatico pequeno: HTTP/1.1 propio + mbedTLS 2.28 + libjpeg + stb.
  *
  *   hibynet lyrics ARTIST TITLE [ALBUM] [DURATION_S] [OUTDIR]
  *       -> id \t artist \t title \t album \t duration \t synced(0/1) \t primer verso
@@ -64,7 +64,7 @@
 #define STBI_WRITE_NO_STDIO
 #include "stb_image_write.h"
 
-#define UA "HiByOS/0.6 (https://github.com/Grohle/hibyos)"
+#define UA "ByOS/0.6 (https://github.com/Grohle/hibyos)"
 static const char *g_ua = UA;     /* HIBYNET_UA lo cambia (la radio se identifica ante su directorio) */
 #define NET_TIMEOUT 15.0          /* s por llamada de red */
 #define API_CAP (512 * 1024)      /* tope de respuesta JSON */

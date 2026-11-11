@@ -1,4 +1,4 @@
-/* cc.inc.c - Centro de control de HiByOS (estilo iOS 26).
+/* cc.inc.c - Centro de control de ByOS (estilo iOS 26).
  *
  * Se abre deslizando desde arriba (o desde el borde configurado) siguiendo al dedo:
  * la pantalla de debajo se desenfoca y oscurece y los controles aparecen con ella.

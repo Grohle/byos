@@ -1,4 +1,4 @@
-# HiByOS installer (SD payload)
+# ByOS installer (SD payload)
 
 The rootfs has barely any room (~0.5 MB free), so the shell, its binaries, the display
 library and the theme live on the data partition (`/usr/data/hibymod`, UBIFS, survives
@@ -7,12 +7,12 @@ flashing). A public release is distributed in two pieces:
 | Piece | Where it goes | What it is |
 |---|---|---|
 | `r3ii_2025.upt` | SD root | firmware (rootfs with `hibyos_install.sh` and the hooks) |
-| `HiByOS/` | SD root | payload that the installer copies to `/usr/data/hibymod` |
+| `ByOS/` | SD root | payload that the installer copies to `/usr/data/hibymod` |
 
 ## Building the payload
 
 ```
-python tools\make_payload.py            # version = the one in overlay/usr/bin/hibymod ("HiByOS 0.6.0")
+python tools\make_payload.py            # version = the one in overlay/usr/bin/hibymod ("ByOS 0.6.0")
 python tools\make_payload.py --version 0.6.1
 python tools\make_payload.py --out DIR --expect DIR2   # another output folder; --expect: see "Testing on the PC"
 ```
@@ -27,7 +27,7 @@ Beforehand: build in WSL (`~/hiby/tools/zbuild_shell.sh`, `zbuild_so.sh`, `zbuil
 `python theme\build_theme.py`, `python theme\topbar.py`, `python theme\hibyos_brand.py`.
 The script warns if a binary is older than its source code.
 
-Output `out/sd/HiByOS/payload/` (~4 MB):
+Output `out/sd/ByOS/payload/` (~4 MB):
 
 ```
 VERSION, MANIFEST.md5        version and md5 of everything (verified before installing)
@@ -73,7 +73,7 @@ derive/<id>.add   the bytes we add, concatenated (our text only)
 The result is the concatenation of the pieces in the order of the `.ops` file. Several
 lines may have the same `dest`: the first one whose base has the stated SHA-256 is used.
 That is how one payload fits the official firmware layout, the layout as the current
-patcher leaves it, and the layouts left by older HiByOS versions (`previous` in
+patcher leaves it, and the layouts left by older ByOS versions (`previous` in
 `tools/vendor_edits.json`). `MANIFEST.md5` covers every file of `derive/`.
 
 What the installer does with it, before changing anything on the player:
@@ -98,11 +98,11 @@ does it again byte by byte with `dd`. A payload in the old format (full files, n
 
 | When | Command | What it does |
 |---|---|---|
-| `hiby_player.sh`, before the theme and the player | `boot` | If the SD is already mounted and its version differs, installs. If HiByOS is **not** installed, waits up to 15 s for the SD (the boot animation keeps running). Installed and no SD: exits immediately (0 ms wait). It also enables the home-screen mirror and removes a half-finished `theme2`. |
+| `hiby_player.sh`, before the theme and the player | `boot` | If the SD is already mounted and its version differs, installs. If ByOS is **not** installed, waits up to 15 s for the SD (the boot animation keeps running). Installed and no SD: exits immediately (0 ms wait). It also enables the home-screen mirror and removes a half-finished `theme2`. |
 | `S95hibymod`, with the SD mounted (~8 s) | `late` | If the SD version differs, installs and S95 **reboots** (the SD is mounted ~4 s after the player starts, so an update costs one reboot). |
 | ADB | `install` / `status` | Force the installation / show versions and the tail of the log. |
 
-Never in safe mode; `/data/.hibymod_noinstall` disables it. Log in `HiByOS/install.log`
+Never in safe mode; `/data/.hibymod_noinstall` disables it. Log in `ByOS/install.log`
 on the SD (and `/tmp/hibymod/install.txt`).
 
 Installation steps:
@@ -136,9 +136,9 @@ next boot `boot` applies the mirror view and transparent icons (`mirror_on`).
 
 ## Flows
 
-- **Fresh install**: copy `r3ii_2025.upt` and `HiByOS/` to the SD → update the
+- **Fresh install**: copy `r3ii_2025.upt` and `ByOS/` to the SD → update the
   firmware from the SD. On first boot it is installed before the player.
-- **Update**: replace `HiByOS/` on the SD and reboot: S95 installs and reboots by itself.
+- **Update**: replace `ByOS/` on the SD and reboot: S95 installs and reboots by itself.
 - **No SD or no payload**: boots like the stock firmware + patches; it is installed as
   soon as the folder appears (S95, with one reboot).
 
@@ -161,7 +161,7 @@ payload.
 `derive/` (they contain HiBy's text: keep that folder out of git and out of releases); the
 simulation compares the rebuilt files with them byte by byte. Environment of the simulation
 (all optional): `STOCKRES` (the `usr/resource` folder of your unpacked official firmware),
-`SRC_SD` (the `HiByOS` folder to install, default `out/sd/HiByOS`), `EXPECT` (default
+`SRC_SD` (the `ByOS` folder to install, default `out/sd/ByOS`), `EXPECT` (default
 `out/sd_expect`) and `SIM_BB`, a command that runs the player's own busybox, for example
 `"qemu-mipsel-static -L ROOTFS ROOTFS/bin/busybox"`: the installer and every tool it calls
 (`awk`, `dd`, `sha256sum`, `cp`...) then run with that busybox instead of the PC's tools.

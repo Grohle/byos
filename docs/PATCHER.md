@@ -1,25 +1,25 @@
-# HiByOS patcher
+# ByOS patcher
 
-HiByOS cannot redistribute HiBy's firmware. The patcher is a small program that users run
+ByOS cannot redistribute HiBy's firmware. The patcher is a small program that users run
 on their own computer to turn **their own copy** of the official HiBy R3 II (2025) firmware
-v1.3 (`r3ii_2025.upt`, md5 `0d16d09c1458dd2f2cdaf38d0047917a`) into the HiByOS firmware.
-It ships only HiByOS files (the `overlay/` folder) and the list of changes. No file of the
-official firmware is inside it, and no text of one: the few official files that HiByOS edits
+v1.3 (`r3ii_2025.upt`, md5 `0d16d09c1458dd2f2cdaf38d0047917a`) into the ByOS firmware.
+It ships only ByOS files (the `overlay/` folder) and the list of changes. No file of the
+official firmware is inside it, and no text of one: the few official files that ByOS edits
 (two start-up scripts and five screen layouts) are described as a list of edits that the
 patcher applies to the copy in the user's own firmware (see "Edits to HiBy's own files").
 
 It needs no external tools, no WSL and no administrator/root rights: it is pure Python
-(plus the pure-Python `pycdlib` library), packaged as a single `HiByOS-Patcher.exe` for
+(plus the pure-Python `pycdlib` library), packaged as a single `ByOS-Patcher.exe` for
 Windows. The same code runs with `python3` on macOS and Linux.
 
 ## Using it
 
-- Windows: drag `r3ii_2025.upt` onto `HiByOS-Patcher.exe`, or double-click the .exe and
-  drop the file into the window, or run `HiByOS-Patcher.exe C:\path\to\r3ii_2025.upt`.
-- macOS/Linux: unzip `HiByOS-Patcher-<version>-python.zip` and run
+- Windows: drag `r3ii_2025.upt` onto `ByOS-Patcher.exe`, or double-click the .exe and
+  drop the file into the window, or run `ByOS-Patcher.exe C:\path\to\r3ii_2025.upt`.
+- macOS/Linux: unzip `ByOS-Patcher-<version>-python.zip` and run
   `python3 hibyos_patcher.py /path/to/r3ii_2025.upt` (pycdlib is bundled in `vendor/`).
 
-The result is `HiByOS-<version>/r3ii_2025.upt`, next to the input file. The input is never
+The result is `ByOS-<version>/r3ii_2025.upt`, next to the input file. The input is never
 modified. Any other input file is refused (md5 check) and nothing is written.
 Options: `--out-dir DIR` (another output folder), `--no-pause` (Windows: do not wait for
 Enter at the end).
@@ -63,7 +63,7 @@ shared, not copied), `tools/squashfs.py` and `tools/lzo1x.py`:
 6. Checks the size against the rootfs partition limit used by `build.py`
    (95 % of 0x2D00000 bytes).
 7. Verifies the new image by reading it back: every entry's type, mode, owner, link target
-   and hard links, and the full content of every file (all of HiByOS and HiBy's files are
+   and hard links, and the full content of every file (all of ByOS and HiBy's files are
    decompressed and compared by SHA-256 with the intended content).
 8. Writes the `.upt` exactly like `build.py` (same chunking, `ota_update.in` changes only
    in the rootfs `img_md5`/`img_size`), to a temporary file, re-reads it like the recovery
@@ -82,7 +82,7 @@ the status bar (`usr/resource/layout/theme2|theme3/topbar/topbar.view`) and the 
 screen (`usr/resource/layout/theme2|theme3/hiby_about_dev.view`,
 `usr/resource/litegui/theme3/hiby_about_dev.view`). The repository and the patcher do not
 contain those files. `tools/vendor_edits.json` holds, for each one, how to rebuild the
-HiByOS version from the official copy, storing only the text written for HiByOS.
+ByOS version from the official copy, storing only the text written for ByOS.
 
 Format (version 1; `tools/vendor_edits.py` is the reference implementation and its
 docstring repeats this):
@@ -94,7 +94,7 @@ docstring repeats this):
     "stock":  {"size": N, "sha256": "..."},    the official file, as found in the firmware
     "strip_cr": false,                         true: delete every 0x0D byte of the official
                                                file BEFORE applying the ops
-    "result": {"size": N, "sha256": "..."},    the file HiByOS installs
+    "result": {"size": N, "sha256": "..."},    the file ByOS installs
     "ops": [ {"copy": [offset, length]}        bytes of the official file (after strip_cr)
            | {"add": ["line", "line", ...]}    our text: the lines joined with one
                                                line feed (0x0A) between them, UTF-8
@@ -115,7 +115,7 @@ To apply an entry:
 4. the size and SHA-256 of the result must be `result`, otherwise stop;
 5. the result replaces the file; the mode and owner of the official file are kept.
 
-`previous` lists older HiByOS versions of the same file (same base, same kind of ops). The
+`previous` lists older ByOS versions of the same file (same base, same kind of ops). The
 firmware builders ignore it; `tools/make_payload.py` uses it so that a new SD payload can
 also update a player whose firmware carries one of those older versions (docs/INSTALLER.md).
 
@@ -186,15 +186,15 @@ python tools/build_patcher.py [--out DIR]
 Creates (in `out/patcher/`, not tracked by git) a private venv with PyInstaller and
 pycdlib if they are missing, then writes to `out/patcher/` (or `DIR`):
 
-- `HiByOS-Patcher.exe` (Windows only) and `HiByOS-Patcher-<version>-windows.zip`
+- `ByOS-Patcher.exe` (Windows only) and `ByOS-Patcher-<version>-windows.zip`
   (the .exe, `README.txt` and `licenses/`);
-- `HiByOS-Patcher-<version>-python.zip`: the patcher modules (`hibyos_patcher.py`,
+- `ByOS-Patcher-<version>-python.zip`: the patcher modules (`hibyos_patcher.py`,
   `build.py`, `vendor_edits.py`, `squashfs.py`, `lzo1x.py`), `vendor_edits.json`,
   `overlay/`, pycdlib in `vendor/` (LGPL-2.1, license included), a README and `licenses/`.
 
 `licenses/` holds `THIRD_PARTY_NOTICES.md` and the licence texts of the third-party
 components inside that package (`tools/notices.py` decides which; the build stops if one
-is missing). Publish the two zips, not the bare `HiByOS-Patcher.exe`: a single .exe cannot
+is missing). Publish the two zips, not the bare `ByOS-Patcher.exe`: a single .exe cannot
 carry the notices next to it.
 
-`<version>` comes from `overlay/usr/bin/hibymod` (`HiByOS 0.6.1` -> `0.6.1`).
+`<version>` comes from `overlay/usr/bin/hibymod` (`ByOS 0.6.1` -> `0.6.1`).

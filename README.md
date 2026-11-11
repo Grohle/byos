@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/media/hibyos_intro.gif" width="480" alt="HiByOS boot animation">
+  <img src="docs/media/byos_intro.gif" width="480" alt="ByOS boot animation">
 </p>
 
-<h1 align="center">HiByOS</h1>
+<h1 align="center">ByOS</h1>
 
 <p align="center">
   <b>An iOS-style system for the HiBy R3 II: a new home screen, gestures, a Control Center, widgets and apps, running on top of the stock player.</b>
@@ -23,7 +23,7 @@
 
 ---
 
-HiByOS is a community firmware for the **HiBy R3 II (2025)** digital audio player. It keeps
+ByOS (formerly HiByOS) is a community firmware for the **HiBy R3 II (2025)** digital audio player. It keeps
 HiBy's own music player and audio path exactly as they are and builds a new system around
 them:
 - an iOS-style home screen with a dock of four apps and a widgets page;
@@ -55,7 +55,7 @@ on these pages were taken on a real HiBy R3 II (2025).
 ## Contents
 
 - [Apps](#apps)
-- [Install HiByOS (step by step)](#install-hibyos-step-by-step)
+- [Install ByOS (step by step)](#install-hibyos-step-by-step)
 - [Update, uninstall and recovery](#update-uninstall-and-recovery)
 - [What it does](#what-it-does)
 - [Installing apps](#installing-apps)
@@ -86,25 +86,25 @@ known limitations: see the **[app index](apps/README.md)**.
 | <img src="docs/media/apps/icons/navegador_64.png" width="32" alt=""> | [Browser](apps/navegador/README.md) | NetSurf web browser | Experimental (blocked) |
 | <img src="docs/media/apps/icons/hola_64.png" width="32" alt=""> | [Hello](apps/hola/README.md) | Example app for developers | Stable (example) |
 
-## Install HiByOS (step by step)
+## Install ByOS (step by step)
 
-> ⚠️ **At your own risk.** HiByOS has been developed and tested on one HiBy R3 II (2025)
+> ⚠️ **At your own risk.** ByOS has been developed and tested on one HiBy R3 II (2025)
 > with the official firmware of 2 March 2026. It never touches the bootloader or HiBy's
 > recovery, so you can always reinstall the official firmware from the SD card.
 
-> **Start from the official firmware v1.3.** HiByOS was built and tested starting from a
+> **Start from the official firmware v1.3.** ByOS was built and tested starting from a
 > player that already had HiBy's official **v1.3** installed. Install v1.3 first if your
 > player has another version (in the stock menus: **System › About** shows the version;
 > **System › Firmware update** installs it).
 
-**No computer?** The Android app **[HiByOS Install](android/hibyos-install/README.md)** does
-steps 1 to 4 on your phone: it downloads the official v1.3, builds HiByOS on the phone and
+**No computer?** The Android app **[ByOS Install](android/hibyos-install/README.md)** does
+steps 1 to 4 on your phone: it downloads the official v1.3, builds ByOS on the phone and
 sends it to the player over Wi-Fi (the player's own "Import Music via Wi-Fi" screen) or lets
 you copy it by hand. Get the APK and its SHA-256 from the project's releases page.
 
 **Why do I have to build the firmware myself?** HiBy's firmware belongs to HiBy, so this
 project does not share it, not even modified. You download the official firmware from HiBy
-and a script adds HiByOS to *your* copy. It takes one command and about 5 minutes.
+and a script adds ByOS to *your* copy. It takes one command and about 5 minutes.
 
 ### What you need
 
@@ -122,7 +122,7 @@ and a script adds HiByOS to *your* copy. It takes one command and about 5 minute
 2. Keep this file somewhere safe and **never rename or edit it**. It is also what you use
    to go back to the official firmware.
 
-### Step 2. Build the HiByOS firmware
+### Step 2. Build the ByOS firmware
 
 Choose **one** option.
 
@@ -163,7 +163,7 @@ Choose **one** option.
    bash tools/build_hibyos.sh /mnt/c/Users/YOUR_NAME/Downloads/r3ii_2025.upt
    ```
 
-3. When it says **`Done`**, the HiByOS firmware is at `\\wsl$\Ubuntu\home\<user>\hibyos\out\r3ii_2025.upt`.
+3. When it says **`Done`**, the ByOS firmware is at `\\wsl$\Ubuntu\home\<user>\hibyos\out\r3ii_2025.upt`.
    Paste that path in File Explorer's address bar to find it.
 
 #### Option C: on Linux
@@ -176,11 +176,11 @@ bash tools/build_hibyos.sh ~/Downloads/r3ii_2025.upt
 
 The result is `out/r3ii_2025.upt`. macOS cannot run the build directly: use option A.
 
-### Step 3. Download the HiByOS files for the SD card
+### Step 3. Download the ByOS files for the SD card
 
 1. Open the [latest release](https://github.com/Grohle/hibyos/releases/latest).
-2. Under **Assets**, download **`HiByOS-sd-<version>.zip`**.
-3. Unzip it. You get a folder called **`HiByOS`**.
+2. Under **Assets**, download **`ByOS-sd-<version>.zip`**.
+3. Unzip it. You get a folder called **`ByOS`**.
 
 ### Step 4. Copy the files to the SD card
 
@@ -190,15 +190,15 @@ The result is `out/r3ii_2025.upt`. macOS cannot run the build directly: use opti
    card's drive in File Explorer › **Properties** › **Tools** › **Check**. File-system
    errors can make the player restart while it reads the card.
 3. Copy these two items to the **root of the card** (the top level, not inside a folder):
-   - the HiByOS firmware from step 2, named exactly **`r3ii_2025.upt`** (rename
+   - the ByOS firmware from step 2, named exactly **`r3ii_2025.upt`** (rename
      `hibyos_r3ii_2025.upt` back to that name);
-   - the **`HiByOS`** folder from step 3.
+   - the **`ByOS`** folder from step 3.
 
    The root of the card should then look like this:
 
    ```
    SD card
-   ├── HiByOS/            <- from the release zip
+   ├── ByOS/            <- from the release zip
    ├── r3ii_2025.upt      <- the firmware YOU built (not the official one)
    └── (your music and other folders, unchanged)
    ```
@@ -210,16 +210,16 @@ The result is `out/r3ii_2025.upt`. macOS cannot run the build directly: use opti
 1. On the player, open **System › Firmware update › Via SD-card** (the stock menu) and confirm.
 2. The player restarts and shows an update progress bar for **about 1 minute**.
    **Do not turn it off or remove the card.**
-3. It restarts again and plays the **HiByOS boot animation**. The first boot takes a few
-   seconds longer, because HiByOS copies its files from the `HiByOS` folder.
-4. The HiByOS home screen appears. Done.
+3. It restarts again and plays the **ByOS boot animation**. The first boot takes a few
+   seconds longer, because ByOS copies its files from the `ByOS` folder.
+4. The ByOS home screen appears. Done.
 
 After installing:
-- **Keep the `HiByOS` folder on the card.** It is used for updates and for some caches.
+- **Keep the `ByOS` folder on the card.** It is used for updates and for some caches.
 - You can delete `r3ii_2025.upt` from the card.
 - Recommended: in HiBy's music settings, set the library update to **Manual**. Big
   libraries then don't rescan at every boot.
-- HiByOS follows the system language. To pick another one, open **Settings › Language**.
+- ByOS follows the system language. To pick another one, open **Settings › Language**.
 
 **First steps:**
 - Swipe up from the bottom bar to go home.
@@ -233,13 +233,13 @@ After installing:
 ### Updating to a new version
 
 **Over the air (easiest).** With Wi-Fi on, open **Settings › General › Software Update** and
-tap **Check for Updates**. HiByOS downloads the update from this project's GitHub releases,
-checks its signature (ed25519) and installs it. Only HiByOS's own files are downloaded,
+tap **Check for Updates**. ByOS downloads the update from this project's GitHub releases,
+checks its signature (ed25519) and installs it. Only ByOS's own files are downloaded,
 never HiBy's firmware.
 
 **By hand.** Each release says whether the firmware changed.
 - **Only the SD files changed:**
-  1. Replace the `HiByOS` folder on the card with the new one.
+  1. Replace the `ByOS` folder on the card with the new one.
   2. Restart the player.
 
   The new version is installed during start-up, followed by one automatic restart.
@@ -247,7 +247,7 @@ never HiBy's firmware.
   1. Repeat steps 2 to 5 with your official `r3ii_2025.upt`, using the new version of the
      repository (option A: create a new codespace).
   2. Instead of HiBy's update menu, you can also put the new firmware at the root of the
-     card and use **Settings › Software update** in HiByOS.
+     card and use **Settings › Software update** in ByOS.
 
 Your settings are kept in both cases: home layout, wallpaper, widgets, gestures, Control
 Centre, power mode, DAC filter and installed apps.
@@ -255,7 +255,7 @@ Centre, power mode, DAC filter and installed apps.
 ### Going back to the official firmware
 
 1. Copy the **official, unmodified** `r3ii_2025.upt` to the root of the card.
-2. On the player, open **Settings › Software update** in HiByOS, choose the official
+2. On the player, open **Settings › Software update** in ByOS, choose the official
    firmware and confirm. HiBy's own **Firmware update › Via SD card** menu also works.
 3. Your music and the card are not touched.
 
@@ -263,11 +263,11 @@ Centre, power mode, DAC filter and installed apps.
 
 | Problem | What to do |
 |---|---|
-| The build says *"This is not the supported official firmware"* | Your `.upt` is a different version or was changed. Download it again from HiBy. HiByOS only patches the exact supported version, so that nothing unexpected is written to your player. |
+| The build says *"This is not the supported official firmware"* | Your `.upt` is a different version or was changed. Download it again from HiBy. ByOS only patches the exact supported version, so that nothing unexpected is written to your player. |
 | The screen is frozen | Hold the power button for about 10 seconds until the player turns off, then turn it on again. |
-| The player keeps restarting | After three failed starts in a row HiByOS starts in **safe mode**: HiBy's original look, without HiByOS. To leave safe mode, use the `NORMAL` command below. |
-| HiByOS does not start at all | Use a command file (below). As a last resort, use `REINSTALL` with the official firmware at the root of the card. |
-| Something else went wrong | Look in the card's `hibymod/logs/` folder and in `HiByOS/install.log`, and attach them to an [issue](https://github.com/Grohle/hibyos/issues). |
+| The player keeps restarting | After three failed starts in a row ByOS starts in **safe mode**: HiBy's original look, without ByOS. To leave safe mode, use the `NORMAL` command below. |
+| ByOS does not start at all | Use a command file (below). As a last resort, use `REINSTALL` with the official firmware at the root of the card. |
+| Something else went wrong | Look in the card's `hibymod/logs/` folder and in `ByOS/install.log`, and attach them to an [issue](https://github.com/Grohle/hibyos/issues). |
 
 **Command files.** For problems that happen while the player starts:
 1. Put the card in a computer.
@@ -282,7 +282,7 @@ The player applies the command once and renames the file to `<name>.done`.
 |---|---|
 | `SAFE` | start in safe mode (HiBy's original look) |
 | `NORMAL` | leave safe mode |
-| `NO_SHELL` | start without the HiByOS interface; `SHELL_ON` turns it back on |
+| `NO_SHELL` | start without the ByOS interface; `SHELL_ON` turns it back on |
 | `REINSTALL` | reinstall the `r3ii_2025.upt` that is at the root of the card (put the official one there to go back to stock) |
 | `ADB_WIFI` | turn on ADB over Wi-Fi |
 
@@ -290,7 +290,7 @@ The player applies the command once and renames the file to `<name>.done`.
 
 ### A new system on top of the stock player
 
-- **Boot animation.** The HiByOS logo animation loops on a black background while the
+- **Boot animation.** The ByOS logo animation loops on a black background while the
   system starts, and hands over to the home screen without a visible cut.
 - **Home screen.**
   - iOS-style pages and a dock of four: Books, Headphones, Now Playing and Music;
@@ -363,7 +363,7 @@ The player applies the command once and renames the file to `<name>.done`.
   Soundcore and Fast Pair headphones, with an iOS-style battery card when they connect.
 - **App Store.** Install `.hpk` apps from online repositories (this project's by default,
   others can be added) or from the SD card. Apps can be installed on the card or on the
-  player, backed up and uninstalled. The apps included with HiByOS (Gutenberg, Vinyl,
+  player, backed up and uninstalled. The apps included with ByOS (Gutenberg, Vinyl,
   Headphones, Hello) appear there too, so you can uninstall and reinstall them.
 - **13 languages:** English, Spanish, French, German, Italian, Polish, Russian, Ukrainian,
   Japanese, Korean, Thai, and Simplified and Traditional Chinese.
@@ -372,7 +372,7 @@ The player applies the command once and renames the file to `<name>.done`.
 
 | Feature | What changed |
 |---|---|
-| **8 DAC digital filters** | The ES9219 driver forced every filter except one to "fast". HiByOS patches the kernel module so all 8 shapes work: fast and slow, linear and minimum phase, apodizing, hybrid, brickwall. Choose one in Settings › Audio & system or from the Control Center |
+| **8 DAC digital filters** | The ES9219 driver forced every filter except one to "fast". ByOS patches the kernel module so all 8 shapes work: fast and slow, linear and minimum phase, apodizing, hybrid, brickwall. Choose one in Settings › Audio & system or from the Control Center |
 | Car mode | Plays when USB power appears and turns off when it goes. Now visible in HiBy's System settings |
 | Standby, double-tap to wake, no charging in DAC mode | Present in the firmware but hidden; now visible in System settings |
 | EU volume warning | Can be turned off, with a hearing-safety confirmation. It removes the prompt only and adds no power |
@@ -429,13 +429,13 @@ Raising the clock brings a high risk of instability for no visible gain. See
   <img src="docs/media/apps/system/10_app_menu.png" width="160" alt="App menu: open, edit, uninstall">
 </p>
 
-These screenshots were taken in English on a real HiBy R3 II (2025) running HiByOS, with
+These screenshots were taken in English on a real HiBy R3 II (2025) running ByOS, with
 the player's own music library. Network names and addresses are blurred. More screenshots
 on each [app's page](apps/README.md).
 
 ## Installing apps
 
-HiByOS apps are `.hpk` packages: a tar archive with a `manifest.ini`, an `icon.png` and a
+ByOS apps are `.hpk` packages: a tar archive with a `manifest.ini`, an `icon.png` and a
 static MIPS executable.
 
 - **From the store:** open **Apps** on the home screen, find an app and tap **GET**.
@@ -508,7 +508,7 @@ bash tools/wsl/zbuild_mix.sh; bash tools/wsl/zbuild_tag.sh; bash tools/wsl/zbuil
 python3 tools/bootanim.py theme/bootanim/source.mp4 theme/bootanim   # animation (HBA1)
 python3 theme/topbar.py; python3 theme/hibyos_brand.py; python3 tools/shell_assets.py
 bash tools/build_hibyos.sh /path/to/official/r3ii_2025.upt          # firmware -> out/r3ii_2025.upt
-python3 tools/make_payload.py        # SD folder HiByOS/ -> out/sd/
+python3 tools/make_payload.py        # SD folder ByOS/ -> out/sd/
 ```
 
 `tools/build.py` does the following:
@@ -526,13 +526,13 @@ How the SD installer works is described in [docs/INSTALLER.md](docs/INSTALLER.md
 stock interface and plays the audio. Around it:
 
 - **The display shim** `hibymod_disp.so` is loaded into the player with `LD_PRELOAD`. It
-  intercepts the player's page flips (`FBIOPAN_DISPLAY`). That lets HiByOS:
+  intercepts the player's page flips (`FBIOPAN_DISPLAY`). That lets ByOS:
   - hold the player's frames, capture them, or replace them with its own;
   - blend an overlay sprite into them;
-  - swap the stock home screen for the HiByOS one before it is ever shown.
+  - swap the stock home screen for the ByOS one before it is ever shown.
 
   It also clones the touch screen with `uinput`, so the player only sees the touches
-  HiByOS passes on, and it gives HiByOS a safe way to start playlists in the player
+  ByOS passes on, and it gives ByOS a safe way to start playlists in the player
   ([docs/research_play_list.md](docs/research_play_list.md)).
 - **`hibyshell`** draws everything new in software, into a 320×480 RGB565 buffer:
   - a single C program, statically linked;
@@ -543,7 +543,7 @@ stock interface and plays the audio. Around it:
   - it is measured with frame-by-frame recordings
     ([docs/UI_GUIDE_FOR_AGENTS.md](docs/UI_GUIDE_FOR_AGENTS.md) is the quality bar every
     change must pass).
-- **Theme files.** HiBy's interface is defined by JSON `.view` files and PNGs. HiByOS
+- **Theme files.** HiBy's interface is defined by JSON `.view` files and PNGs. ByOS
   restyles them and bind-mounts its copies at boot, so the system partition stays
   untouched. That is how the status bar, the About page and the boot screen are
   restyled everywhere.
@@ -567,17 +567,17 @@ stock interface and plays the audio. Around it:
 
 - **Tested on one device.** Reports from other R3 II (2025) units are welcome.
 - **Partly restyled.** Tidal, Qobuz and a few of HiBy's own pages (the USB connection screen,
-  some system dialogs) keep the stock look apart from the status bar and the HiByOS
+  some system dialogs) keep the stock look apart from the status bar and the ByOS
   gestures.
 - **The browser app** is not available yet: it needs more memory than the player leaves
   free, and stays blocked until it passes the off-device tests.
 - **YouTube Music is not included.** The research is in `docs/`.
 - **USB only (no charging).** The battery charger driver re-enables charging a few seconds
-  after every plug-in, so HiByOS reasserts the setting every 30 s while USB is connected.
+  after every plug-in, so ByOS reasserts the setting every 30 s while USB is connected.
 
 ## Support the project
 
-HiByOS is free and will stay free. If you enjoy it and want to support the time that goes
+ByOS is free and will stay free. If you enjoy it and want to support the time that goes
 into it, you can buy me a coffee:
 
 <p>
@@ -592,13 +592,13 @@ requests help just as much.
 
 ## Licence
 
-HiByOS is **free for any non-commercial use**:
+ByOS is **free for any non-commercial use**:
 - use, modify and share it, keeping the licence;
 - **selling it or distributing it for money needs a commercial licence**;
 - for that or any other special licence, open an issue to contact
   [Grohle](https://github.com/Grohle).
 
-See [LICENSE](LICENSE). HiByOS is an independent project, not affiliated with HiBy. The
+See [LICENSE](LICENSE). ByOS is an independent project, not affiliated with HiBy. The
 official HiBy firmware is not part of it and is never redistributed.
 
 ## Acknowledgments
@@ -606,7 +606,7 @@ official HiBy firmware is not part of it and is never redistributed.
 - **HiBy**, for an excellent little player whose firmware is open enough (Linux, JSON
   views, a stock recovery) to be extended safely.
 - **[stb](https://github.com/nothings/stb)** by Sean Barrett, **SQLite**, **Mbed TLS** and
-  the **Independent JPEG Group**, used inside HiByOS.
+  the **Independent JPEG Group**, used inside ByOS.
 - **[LRCLIB](https://lrclib.net)**, the **iTunes Search API** and the
   **[Cover Art Archive](https://coverartarchive.org)** for lyrics and covers.
 - **[Zig](https://ziglang.org)**, whose `zig cc` made cross-compiling for this MIPS device

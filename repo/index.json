@@ -1,9 +1,9 @@
 {
  "format": 1,
  "name": {
-  "es": "HiByOS",
-  "en": "HiByOS",
-  "fr": "HiByOS"
+  "es": "ByOS",
+  "en": "ByOS",
+  "fr": "ByOS"
  },
  "homepage": "https://github.com/Grohle/hibyos",
  "apps": [

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Third-party notices for the files HiByOS distributes.
+Third-party notices for the files ByOS distributes.
 
 Every distributed file set (an "artefact") must carry THIRD_PARTY_NOTICES.md and the
 licence texts of the third-party components it contains. This module knows which licence
@@ -52,7 +52,7 @@ ARTEFACTS = {
     # The files added to the firmware image (the overlay/ tree).
     "firmware": _FIRMWARE,
 
-    # out/sd/HiByOS/payload: hibyshell, hibywall, hibymix, hibytag, hibynet,
+    # out/sd/ByOS/payload: hibyshell, hibywall, hibymix, hibytag, hibynet,
     # hibymod_disp.so and cacert.pem.
     "sd-payload": _MIPS_RUNTIME + [
         "LICENSES/stb-LICENSE.txt",              # hibyshell, hibywall, hibynet
@@ -68,12 +68,12 @@ ARTEFACTS = {
         "LICENSES/OFL-1.1-Inter.txt",            # digits and images drawn with Inter
     ],
 
-    # HiByOS-Patcher-<version>-python.zip: Python scripts, vendor/pycdlib and a copy of overlay/.
+    # ByOS-Patcher-<version>-python.zip: Python scripts, vendor/pycdlib and a copy of overlay/.
     "patcher-python": _FIRMWARE + [
         "LICENSES/pycdlib-COPYING.txt",
     ],
 
-    # HiByOS-Patcher.exe (PyInstaller one-file program) and the zip that contains it:
+    # ByOS-Patcher.exe (PyInstaller one-file program) and the zip that contains it:
     # Python runtime, PyInstaller bootloader, pycdlib and a copy of overlay/.
     "patcher-windows": _FIRMWARE + [
         "LICENSES/pycdlib-COPYING.txt",

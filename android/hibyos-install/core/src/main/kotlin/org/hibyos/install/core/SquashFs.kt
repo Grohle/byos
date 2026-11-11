@@ -6,7 +6,7 @@ import java.io.RandomAccessFile
 import java.security.MessageDigest
 
 /**
- * Minimal SquashFS 4.0 (LZO) reader and writer: a port of tools/squashfs.py of the HiByOS
+ * Minimal SquashFS 4.0 (LZO) reader and writer: a port of tools/squashfs.py of the ByOS
  * repository that streams the image from/to storage instead of holding it in memory.
  *
  * The writer does not recompress existing data: the compressed data and fragment blocks of

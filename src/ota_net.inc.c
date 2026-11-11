@@ -1,4 +1,4 @@
-/* ota_net.inc.c - HiByOS online updates (OTA) from GitHub releases. See docs/OTA.md.
+/* ota_net.inc.c - ByOS online updates (OTA) from GitHub releases. See docs/OTA.md.
  *
  * Core (no UI, also built on the PC by tests/ota_test.c):
  *   - SHA-256 and SHA-512;
@@ -521,7 +521,7 @@ static int ota_name_ok(const char *n)
     for (const char *p = n; *p; p++) if (!isalnum((unsigned char)*p) && *p != '.' && *p != '_' && *p != '-') return 0;
     return !strcmp(n + l - 4, ".tar");
 }
-/* 0 = ok; -1 = not a valid HiByOS update description (assumes the signature was checked) */
+/* 0 = ok; -1 = not a valid ByOS update description (assumes the signature was checked) */
 static int ota_parse(const char *js, struct ota_info *o)
 {
     memset(o, 0, sizeof *o);
@@ -855,9 +855,9 @@ static void ota_paths_init(void)
 #undef OTA_ENV
 #endif
 }
-static void ota_path(char *out, int cap, const char *rel)   /* SD/HiByOS/<rel> */
+static void ota_path(char *out, int cap, const char *rel)   /* SD/ByOS/<rel> */
 {
-    snprintf(out, cap, "%s/HiByOS/%s", OP.sd, rel);
+    snprintf(out, cap, "%s/ByOS/%s", OP.sd, rel);
 }
 static int ota_sd_ok(void)
 {
@@ -882,13 +882,15 @@ static int ota_wifi_up(void)   /* a default route that is not loopback */
     while (fgets(l, sizeof l, f)) if (sscanf(l, "%31s %lx", ifc, &dst) == 2 && dst == 0 && strcmp(ifc, "lo")) ok = 1;
     fclose(f); return ok;
 }
-/* firmware (rootfs) version: the `hibymod status` line of /usr/bin/hibymod ("HiByOS 0.6.1") */
+/* firmware (rootfs) version: the `hibymod status` line of /usr/bin/hibymod ("ByOS 0.6.1") */
 static void ota_firmware_version(char *out, int cap)
 {
     out[0] = 0;
     size_t n; char *b = ota_read_file(OP.cli, 256 * 1024, &n); if (!b) return;
-    char *p = strstr(b, "echo \"HiByOS ");
-    if (p) { p += 13; int k = 0; while (k < cap - 1 && (isalnum((unsigned char)p[k]) || p[k] == '.' || p[k] == '-')) { out[k] = p[k]; k++; } out[k] = 0; }
+    /* "ByOS x.y" (a firmware from before the rename says "HiByOS x.y") */
+    char *p = strstr(b, "echo \"ByOS ");
+    if (p) p += 11; else if ((p = strstr(b, "echo \"HiByOS "))) p += 13;
+    if (p) { int k = 0; while (k < cap - 1 && (isalnum((unsigned char)p[k]) || p[k] == '.' || p[k] == '-')) { out[k] = p[k]; k++; } out[k] = 0; }
     free(b);
 }
 static void ota_versions_refresh(void)
@@ -1073,7 +1075,7 @@ static void op_check(void)
     }
     ota_set(s, OE_NONE);
 }
-/* SD/HiByOS/payload <-> ota/previous/payload and the staged one */
+/* SD/ByOS/payload <-> ota/previous/payload and the staged one */
 static int ota_swap_in(const char *stage_pl, const char *pl, const char *prevdir)
 {
     char prev_pl[320]; snprintf(prev_pl, sizeof prev_pl, "%s/payload", prevdir);
@@ -1172,7 +1174,7 @@ static void op_install(void)
     /* what has to restart: computed from the manifests (the JSON hint can only ask for more) */
     char oldm[320]; snprintf(oldm, sizeof oldm, "%s/MANIFEST.md5", pl);
     int rk = ota_restart_kind(oldm, b); if (in.restart > rk) rk = in.restart;
-    /* 4. the new payload becomes SD/HiByOS/payload (the old one -> ota/previous) and the
+    /* 4. the new payload becomes SD/ByOS/payload (the old one -> ota/previous) and the
      *    usual installer (MANIFEST check, .new + rename, user state untouched) installs it */
     ota_set(OS_INSTALLING, OE_NONE);
     char keep[320]; snprintf(keep, sizeof keep, "%s.old", prevdir);   /* the "previous" one, until it works */
@@ -1186,7 +1188,7 @@ static void op_install(void)
         if (!ota_swap_back(pl, prevdir, stage)) {
             ota_run_installer();
             ota_rm_rf(prevdir); rename(keep, prevdir);                /* the failed one is not kept */
-        }   /* else: SD untouched beyond this point; the next boot reinstalls SD/HiByOS/payload */
+        }   /* else: SD untouched beyond this point; the next boot reinstalls SD/ByOS/payload */
         sync();
         ota_versions_refresh();
         ota_set(OS_ERROR, space ? OE_SPACE_DATA : OE_INSTALL); return;
@@ -1195,7 +1197,7 @@ static void op_install(void)
     unlink(tar); ota_rm_rf(stage);
     ota_versions_refresh();
     ota_st.restart = rk;
-    lg("ota: HiByOS %s installed (restart %d)", ota_st.installed, rk);
+    lg("ota: ByOS %s installed (restart %d)", ota_st.installed, rk);
     ota_set(OS_DONE, OE_NONE);
 }
 static void op_rollback(void)

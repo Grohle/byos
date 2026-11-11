@@ -98,7 +98,7 @@ printf '#!/bin/sh\nexit 0\n' > $SIM/bin/sync
 chmod +x $SIM/bin/*
 echo "/dev/mmcblk0 $SIM/sd exfat rw 0 0" > $SIM/mounts
 echo 80 > $SIM/batt; echo 0 > $SIM/usb
-printf '#!/bin/sh\ncase "$1" in status) echo "HiByOS 0.9.0" ;; esac\n' > $SIM/hibymod_cli
+printf '#!/bin/sh\ncase "$1" in status) echo "ByOS 0.9.0" ;; esac\n' > $SIM/hibymod_cli
 H=$SIM/data/hibymod
 export PATH=$SIM/bin:$PATH HIBYOS_HM=$H HIBYOS_DATA=$SIM/data HIBYOS_SD=$SIM/sd HIBYOS_SD_RE=" $SIM/sd " \
     HIBYOS_RES=$SIM/res HIBYOS_MOUNTS=$SIM/mounts HIBYOS_ROOTFS=$SIM/proot HIBYOS_TMP=$SIM/tmp HIBYOS_WAIT=1 HIBYOS_FLAGS=$SIM/flags \
@@ -129,11 +129,11 @@ release() {   # version payload_dir [prev] [key]: publishes on the local server
 }
 op() { $T/ota_test op "$@" 2>>$T/worker.log | tail -1; }
 field() { echo "$1" | tr ' ' '\n' | grep "^$2=" | cut -d= -f2; }
-sdver() { head -1 $SIM/sd/HiByOS/payload/VERSION 2>/dev/null; }
-prevver() { head -1 $SIM/sd/HiByOS/ota/previous/payload/VERSION 2>/dev/null; }
+sdver() { head -1 $SIM/sd/ByOS/payload/VERSION 2>/dev/null; }
+prevver() { head -1 $SIM/sd/ByOS/ota/previous/payload/VERSION 2>/dev/null; }
 
 # device with 0.9.0 installed the usual way (SD payload + installer)
-mkdir -p $SIM/sd/HiByOS; cp -a $P/0.9.0 $SIM/sd/HiByOS/payload
+mkdir -p $SIM/sd/ByOS; cp -a $P/0.9.0 $SIM/sd/ByOS/payload
 dash $R/overlay/usr/bin/hibyos_install.sh install >/dev/null
 chk "0.9.0 installed by the installer" "[ \"\$(cat $H/payload_version)\" = 0.9.0 ]"
 printf 'lang en\n' > $H/shell/launcher.conf; echo 'cpu 1' > $H/power.conf; mkdir -p $H/apps/org.x $H/archivos
@@ -163,7 +163,7 @@ chk "check went through the /latest/download redirect" "grep -q '^GET /latest/do
 SIZE=$(stat -c %s $SRV/hibyos-payload-0.9.1.tar)
 echo $((SIZE / 3)) > $SRV/.cut
 r=$(op install); echo "     $r"
-PART=$SIM/sd/HiByOS/ota/hibyos-payload-0.9.1.tar.part
+PART=$SIM/sd/ByOS/ota/hibyos-payload-0.9.1.tar.part
 chk "dropped connection: paused (NET), .part kept" "[ \"$(field "$r" state)\" = PAUSED ] && [ \"$(field "$r" err)\" = NET ] && [ -s $PART ]"
 chk "nothing installed yet" "[ \"\$(cat $H/payload_version)\" = 0.9.0 ] && [ \"\$(sdver)\" = 0.9.0 ]"
 r=$(op load); echo "     $r"
@@ -179,7 +179,7 @@ chk "resumed again with Range from the kept bytes" "grep -q \"^GET /dl/hibyos-pa
 chk "installed 0.9.1, interface restart only" "[ \"$(field "$r" state)\" = DONE ] && [ \"$(field "$r" restart)\" = 1 ] && [ \"\$(cat $H/payload_version)\" = 0.9.1 ]"
 chk "new shell binary in place" "cmp -s $P/0.9.1/bin/hibyshell $H/shell/hibyshell"
 chk "SD payload = 0.9.1, ota/previous = 0.9.0 (boot will not reinstall the old one)" "[ \"\$(sdver)\" = 0.9.1 ] && [ \"\$(prevver)\" = 0.9.0 ]"
-chk "download and staging removed" "[ ! -e $PART ] && [ ! -e $SIM/sd/HiByOS/ota/hibyos-payload-0.9.1.tar ] && [ ! -e $SIM/sd/HiByOS/ota/stage ]"
+chk "download and staging removed" "[ ! -e $PART ] && [ ! -e $SIM/sd/ByOS/ota/hibyos-payload-0.9.1.tar ] && [ ! -e $SIM/sd/ByOS/ota/stage ]"
 chk "user state untouched" "userstate"
 touch $T/stamp; sleep 1
 dash $R/overlay/usr/bin/hibyos_install.sh boot; dash $R/overlay/usr/bin/hibyos_install.sh late
@@ -228,11 +228,11 @@ $PY -c "import sys; p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[700]^=1; 
 r=$(op check); echo "     $r"
 r=$(op install); echo "     $r"
 chk "tampered tar (same size): SHA error, nothing changed" "[ \"$(field "$r" state)\" = ERROR ] && [ \"$(field "$r" err)\" = SHA ] && [ \"\$(cat $H/payload_version)\" = 0.9.1 ] && [ \"\$(sdver)\" = 0.9.1 ]"
-chk "the bad download was deleted" "[ ! -e $SIM/sd/HiByOS/ota/hibyos-payload-0.9.2.tar ]"
+chk "the bad download was deleted" "[ ! -e $SIM/sd/ByOS/ota/hibyos-payload-0.9.2.tar ]"
 cp $T/good092.tar $SRV/hibyos-payload-0.9.2.tar
 echo 10 > $SIM/batt
 r=$(op install); echo "     $r"
-chk "battery 10% and not charging: refused" "[ \"$(field "$r" err)\" = BATT ] && [ ! -e $SIM/sd/HiByOS/ota/hibyos-payload-0.9.2.tar.part ]"
+chk "battery 10% and not charging: refused" "[ \"$(field "$r" err)\" = BATT ] && [ ! -e $SIM/sd/ByOS/ota/hibyos-payload-0.9.2.tar.part ]"
 echo 1 > $SIM/usb
 grep -v sd $SIM/mounts > $SIM/m2; cp $SIM/mounts $SIM/m1; cp $SIM/m2 $SIM/mounts
 r=$(op install); echo "     $r"
@@ -248,7 +248,7 @@ cp $SRV/hibyos-update.json $T/u.json
 sed 's/Faster scrolling/Install from evil.example/' $T/u.json > $SRV/hibyos-update.json
 r=$(op check); echo "     $r"
 chk "tampered JSON: SIG error" "[ \"$(field "$r" state)\" = ERROR ] && [ \"$(field "$r" err)\" = SIG ]"
-chk "the verified copy on the SD is kept" "grep -q 'Faster scrolling' $SIM/sd/HiByOS/ota/hibyos-update.json && [ ! -e $SIM/sd/HiByOS/ota/hibyos-update.json.new ]"
+chk "the verified copy on the SD is kept" "grep -q 'Faster scrolling' $SIM/sd/ByOS/ota/hibyos-update.json && [ ! -e $SIM/sd/ByOS/ota/hibyos-update.json.new ]"
 $PY $R/tests/ota_mkpayload.py $P/0.9.9 0.9.9 --shell 9 && release 0.9.9 $P/0.9.9 "" $FIX/test2.key
 r=$(op check); echo "     $r"
 chk "signed with another key: SIG error" "[ \"$(field "$r" err)\" = SIG ]"
@@ -271,7 +271,7 @@ r=$(op check); echo "     $r"
 r=$(op install); echo "     $r"
 chk "INSTALL error" "[ \"$(field "$r" state)\" = ERROR ] && [ \"$(field "$r" err)\" = INSTALL ]"
 chk "0.9.1 installed again (files, payload_version, SD payload)" "[ \"\$(cat $H/payload_version)\" = 0.9.1 ] && cmp -s $P/0.9.1/bin/hibyshell $H/shell/hibyshell && [ \"\$(sdver)\" = 0.9.1 ]"
-chk "the previous version (0.9.2) is still the rollback target" "[ \"\$(prevver)\" = 0.9.2 ] && [ ! -e $SIM/sd/HiByOS/ota/previous.old ]"
+chk "the previous version (0.9.2) is still the rollback target" "[ \"\$(prevver)\" = 0.9.2 ] && [ ! -e $SIM/sd/ByOS/ota/previous.old ]"
 chk "built-in installer retried after the override failed" "grep -q 'again with the built-in one' $T/worker.log"
 chk "user state untouched" "userstate"
 

@@ -10,7 +10,7 @@
  * Lo que se sabe del motor (probado en el aparato) y que manda en este diseño:
  *   - NO toca ficheros de /tmp (tmpfs): acepta la lista y no suena. En la tarjeta SD (exFAT)
  *     si, con la ruta Linux tal cual. DIR es una carpeta de la SD (el shell usa
- *     /usr/data/mnt/sd_0/HiByOS/cache/radio). El audio nunca va a la RAM: con 3-6 MB libres un
+ *     /usr/data/mnt/sd_0/ByOS/cache/radio). El audio nunca va a la RAM: con 3-6 MB libres un
  *     bufer en tmpfs hundia todo el sistema.
  *   - Sigue un fichero que crece (vuelve a mirar el tamano), PERO si la reproduccion alcanza el
  *     final del fichero se para. Con 5 s escritos antes de empezar se paraba; con 15 s seguia.
@@ -63,7 +63,7 @@
 #include <sys/statvfs.h>
 #include "radio_stream.inc.c"
 
-#define RD_UA "HiByOS-Radio/1.0 (https://github.com/Grohle/hibyos)"
+#define RD_UA "ByOS-Radio/1.0 (https://github.com/Grohle/hibyos)"
 #define RD_SNIFF (64 * 1024)
 #define RD_MINFREE (16LL << 20)   /* lo que se deja libre en la tarjeta */
 static double rd_high = 180;      /* s por delante del lector: mas, y se deja de pedir a la red (pausa) */
@@ -584,7 +584,7 @@ static int cmd_radio(int argc, char **argv)
     rd_state("connecting", 0);
     /* la carpeta: en la tarjeta montada y con sitio */
     if (!rd_mounted_ok(rd.dir)) rd_end("error", "nosd", E_IO);
-    { char up[300]; snprintf(up, sizeof up, "%s", rd.dir);          /* crea los padres (HiByOS/cache/radio) */
+    { char up[300]; snprintf(up, sizeof up, "%s", rd.dir);          /* crea los padres (ByOS/cache/radio) */
       for (char *p = up + 1; *p; p++) if (*p == '/') { *p = 0; mkdir(up, 0755); *p = '/'; }
       mkdir(up, 0755); }
     { char rp[4096]; snprintf(rd.realdir, sizeof rd.realdir, "%s", realpath(rd.dir, rp) ? rp : rd.dir); }

@@ -87,7 +87,7 @@ class PatcherTest {
             overlay += Triple("bin/tool", newTool, 420)                 // replaces: keeps mode and owner
             overlay += Triple("usr/share/new/added.bin", added, 493)    // new folders and file
             overlay += Triple("dir/hard", "no longer a link\n".toByteArray(), 420)
-            sd += "HiByOS/payload/VERSION" to "9.9.9\n".toByteArray()
+            sd += "ByOS/payload/VERSION" to "9.9.9\n".toByteArray()
         }
         val seen = HashSet<Stage>()
         val r = open(s).use { b ->
@@ -388,14 +388,14 @@ class PatcherTest {
         }
         mustNotOpen("a path that leaves the tree", spec { overlay += Triple("../evil", byteArrayOf(1), 420) })
         mustNotOpen("an absolute path", spec { steps = """[{"op":"remove","path":"/etc/passwd"}]""" })
-        mustNotOpen("a path with . in it", spec { sd += "HiByOS/./x" to byteArrayOf(1) })
+        mustNotOpen("a path with . in it", spec { sd += "ByOS/./x" to byteArrayOf(1) })
         mustNotOpen("a missing file", spec {
             overlay += Triple("x", byteArrayOf(1), 420)
             stored = { name, b -> if (name == "overlay/x") null else b }
         })
         mustNotOpen("a file with another size", spec {
-            sd += "HiByOS/a" to byteArrayOf(1, 2, 3)
-            stored = { name, b -> if (name == "sd/HiByOS/a") byteArrayOf(1) else b }
+            sd += "ByOS/a" to byteArrayOf(1, 2, 3)
+            stored = { name, b -> if (name == "sd/ByOS/a") byteArrayOf(1) else b }
         })
         mustNotOpen("broken JSON", spec(), "{\"format\":1,")
         mustNotOpen("no steps", spec(), """{"format":1,"hibyos_version":"1","firmware":{"label":"a","file":"b","md5":"c"},"chunk":1,"align":1,"rootfs_limit":1,"out_name":"a"}""")
@@ -420,15 +420,15 @@ class PatcherTest {
         }
         // verifyAll finds a changed SD-card file
         val s = spec {
-            sd += "HiByOS/bin/tool" to "abc".toByteArray()
-            stored = { name, b -> if (name == "sd/HiByOS/bin/tool") "abd".toByteArray() else b }
+            sd += "ByOS/bin/tool" to "abc".toByteArray()
+            stored = { name, b -> if (name == "sd/ByOS/bin/tool") "abd".toByteArray() else b }
         }
         open(s).use {
             try {
                 it.verifyAll()
                 fail("a changed SD-card file was accepted")
             } catch (e: BundleException) {
-                assertTrue(e.message!!.contains("HiByOS/bin/tool"))
+                assertTrue(e.message!!.contains("ByOS/bin/tool"))
             }
         }
     }
@@ -436,8 +436,8 @@ class PatcherTest {
     @Test
     fun readsTheBundleFields() {
         val s = spec {
-            sd += "HiByOS/payload/VERSION" to "9.9.9\n".toByteArray()
-            sd += "HiByOS/bin/x" to ByteArray(1000)
+            sd += "ByOS/payload/VERSION" to "9.9.9\n".toByteArray()
+            sd += "ByOS/bin/x" to ByteArray(1000)
             notices += Triple("LICENSE", "Licence", "text of the licence".toByteArray())
             extraFirmware = ""","sources":["https://example.com/a","https://example.org/b"],"page":"https://example.com/page""""
         }

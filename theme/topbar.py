@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Barra de estado de HiByOS: glifos para litegui/themeN/topbar y topbar.view.
+"""Barra de estado de ByOS: glifos para litegui/themeN/topbar y topbar.view.
 
 La barra de serie son solo imagenes PNG (cifras e iconos en celdas de 20 px de alto) que
 coloca layout/themeN/topbar/topbar.view; el reproductor de HiBy solo sabe dibujar PNG, asi
@@ -344,7 +344,7 @@ prev.save(os.path.join(HERE, "out", "topbar_preview_1x.png"))
 # ---- plantillas del OCR de volumen (src/digits.h) -----------------------------------
 rows_h = []
 with open(os.path.join(HERE, "..", "src", "digits.h"), "w", newline="\n") as f:
-    f.write("/* digits.h: cifras de la barra de estado de HiByOS (generado por theme/topbar.py) */\n")
+    f.write("/* digits.h: cifras de la barra de estado de ByOS (generado por theme/topbar.py) */\n")
     f.write(f"#define TOPBAR_VOL_X0 {X_VOLN - 2}   /* zona de las cifras del volumen en la barra */\n")
     f.write(f"#define TOPBAR_VOL_X1 {X_VOLN + 3 * DW}\n")
     f.write("struct dtpl { int w, h; const char *rows[16]; };\nstatic const struct dtpl DIGITS[10] = {\n")

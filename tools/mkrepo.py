@@ -53,7 +53,7 @@ for x in apps:
         x["available"] = False
         for k in ("hpk", "sha256"): x.pop(k)
 apps.sort(key=lambda x: (not x["featured"], x["name"]["es"].lower()))
-idx = {"format": 1, "name": {"es": "HiByOS", "en": "HiByOS", "fr": "HiByOS"},
+idx = {"format": 1, "name": {"es": "ByOS", "en": "ByOS", "fr": "ByOS"},
        "homepage": "https://github.com/%s" % REPO, "apps": apps}
 open(os.path.join(a.out, "index.json"), "w", encoding="utf-8", newline="\n").write(json.dumps(idx, ensure_ascii=False, indent=1) + "\n")
 print("repo/index.json:", len(apps), "apps; assets en", os.path.abspath(a.dist))

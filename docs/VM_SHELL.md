@@ -14,7 +14,7 @@ small stand-in replaces both:
 | `hm_vmplayer` | `apps/harness_vm/tools/hm_vmplayer.c` | Creates the shared state of `src/hm_shared.h` (`/dev/shm/hibymod_fbstate`, `/dev/shm/hibymod_frames`), the FIFO `/tmp/hibymod_disp` and the input socket. Emulates the panel: a `P` waits for the next 44.3 Hz frame edge and copies `frames[0]` (dirty rows) into `/dev/fb0`, so `present()` blocks like on the device. The "player" only shows a stock home (painted to match `home.sig`) and bumps `home_hits`, so the shell enters its launcher. Logs every present and can record frames. |
 | `hibyinput` | `apps/harness_vm/tools/hibyinput.c` | The harness input daemon (5 evdev devices named like the HiBy's, TCP control). It now also logs each touch to `/tmp/hibyinput.log` (`D/M/U ms x y`, CLOCK_MONOTONIC). |
 | `shell_vm.sh` | `apps/harness_vm/guest/shell_vm.sh` | Guest side: tmpfs `/usr/data` (24 MB, like the free space of the device) and a separate tmpfs at `/usr/data/mnt/sd_0` (so the store sees an SD card), copies the shell assets, writes `user.ini` (language), the extra repo URL, starts `hm_vmplayer` and `hibyshell`. |
-| `shell_vm_prep.sh` | `apps/harness_vm/shell_vm_prep.sh` | Host side (WSL): makes a **private** copy of the harness in `~/hiby/vm_store` (own rootfs, own `share/`, so it never collides with experiments in `~/hiby/vm`), builds the two tools, stages the shell, the HiByOS SD payload assets, `hibynet` + `cacert.pem`, the firmware font, `out/apps/hola.hpk` as an SD package and a local test repository. |
+| `shell_vm_prep.sh` | `apps/harness_vm/shell_vm_prep.sh` | Host side (WSL): makes a **private** copy of the harness in `~/hiby/vm_store` (own rootfs, own `share/`, so it never collides with experiments in `~/hiby/vm`), builds the two tools, stages the shell, the ByOS SD payload assets, `hibynet` + `cacert.pem`, the firmware font, `out/apps/hola.hpk` as an SD package and a local test repository. |
 | `mk_testrepo.py` | `apps/harness_vm/scripts/mk_testrepo.py` | Local store repository: the real `hola` package plus 24 filler apps with generated icons (some featured, some "in testing"), served over HTTP from the host. |
 | `vmdrive.py` | `apps/harness_vm/vmdrive.py` | Scriptable driver: taps, swipes, held drags, screenshots, frame recording, shell restarts; at the end it pulls the logs and writes a timing report. |
 
@@ -41,7 +41,7 @@ To swap the shell without rebooting: copy the binary to `~/hiby/vm_store/share/h
 and use `restart` in a script (or `sh /mnt/share/hs/shell_vm.sh restart [nocache]` in the guest).
 The guest's `/usr/data` is a tmpfs: it survives shell restarts but not a VM reboot. Options:
 `share/hs/lang` (`es`, `en`, `fr`), `share/hs/repo_url` (`none` for no extra repository),
-`share/hs/noauto` (do not start the shell at boot). The default HiByOS repository is fetched for
+`share/hs/noauto` (do not start the shell at boot). The default ByOS repository is fetched for
 real from GitHub through QEMU's user-mode network (`hibynet`, TLS) and works.
 
 ### Script commands (`vmdrive.py`)

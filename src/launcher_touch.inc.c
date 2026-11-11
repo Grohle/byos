@@ -385,7 +385,7 @@ static void launcher_touch(struct pkt *p)
     }
     if (sy < G_TOP && !V.edit && top_act == GA_NONE) { while (cur_down && read_pkt(p, 3000)) {} return; }
     if (sy < G_TOP && !V.edit) {
-        /* centro de control de HiByOS, siguiendo al dedo */
+        /* centro de control de ByOS, siguiendo al dedo */
         int moved = 0; while (read_pkt(p, 1000)) { if (!p->down) break; if (p->y - sy > 10) { moved = 1; break; } }
         if (moved) cc_open(sy);
         drain_until_up();

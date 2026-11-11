@@ -1,7 +1,7 @@
-HiByOS Community License 1.0
+ByOS Community License 1.0
 Copyright (c) 2026 Grohle (https://github.com/Grohle)
 
-HiByOS ("the Software") is the source code, scripts, tools, documentation, images
+ByOS ("the Software") is the source code, scripts, tools, documentation, images
 and firmware builds published in this repository and its releases.
 
 1. Free use. Anyone may use, study, modify and share the Software, in source or
@@ -25,7 +25,7 @@ and firmware builds published in this repository and its releases.
    components: stb_image, stb_image_write and stb_truetype (public domain / MIT),
    SQLite (public domain), IJG libjpeg (IJG licence), and any other component named
    in its source files. HiBy, the HiBy logo and the R3 II are trademarks of their
-   owners. HiByOS is an independent community project, not affiliated with or
+   owners. ByOS is an independent community project, not affiliated with or
    endorsed by HiBy. The original HiBy firmware is NOT part of the Software and is
    not licensed by this document.
 

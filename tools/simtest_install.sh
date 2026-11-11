@@ -6,18 +6,18 @@
 #
 # Environment (all optional):
 #   STOCKRES   usr/resource of YOUR unpacked official firmware (default ~/hiby/rootfs/usr/resource)
-#   SRC_SD     the HiByOS folder to install (default out/sd/HiByOS, from tools/make_payload.py)
+#   SRC_SD     the ByOS folder to install (default out/sd/ByOS, from tools/make_payload.py)
 #   EXPECT     folder written by "make_payload.py --expect": the full files the player must
 #              end up with for everything in payload/derive/ (compared byte by byte if present;
 #              default out/sd_expect)
 #   SIM_BB     command that runs the player's own busybox, e.g.
 #              "qemu-mipsel-static -L ROOTFS ROOTFS/bin/busybox": the installer and every tool
 #              it calls (awk, dd, sha256sum, cp...) then run with that busybox, not the PC's
-# The official files that HiByOS edits are rebuilt from STOCKRES with tools/vendor_edits.py
+# The official files that ByOS edits are rebuilt from STOCKRES with tools/vendor_edits.py
 # into /tmp/hisim_vendor (never inside the repository).
 R=$(cd "$(dirname "$0")/.." && pwd)
 INST=$R/overlay/usr/bin/hibyos_install.sh
-SRC_SD=${SRC_SD:-$R/out/sd/HiByOS}
+SRC_SD=${SRC_SD:-$R/out/sd/ByOS}
 STOCKRES=${STOCKRES:-$HOME/hiby/rootfs/usr/resource}
 STOCKROOT=$(cd "$STOCKRES/../.." && pwd)
 EXPECT=${EXPECT:-$R/out/sd_expect}
@@ -31,7 +31,7 @@ bad() { echo "  FALLO $*"; fails=$((fails + 1)); }
 chk() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 [ -f $SRC_SD/payload/VERSION ] || { echo "falta $SRC_SD (python tools/make_payload.py)"; exit 1; }
-# the official files with the HiByOS edits, as the patcher leaves them in the firmware
+# the official files with the ByOS edits, as the patcher leaves them in the firmware
 rm -rf $VEND
 python3 $R/tools/vendor_edits.py export --stock $STOCKROOT --out $VEND > $VEND.log 2>&1 || { cat $VEND.log; echo "vendor_edits.py export failed (is STOCKRES the official v1.3 firmware?)"; exit 1; }
 for f in $INST $R/overlay/etc/init.d/S95hibymod $VEND/usr/bin/hiby_player.sh $VEND/etc/init.d/S11jpeg_display_shell; do
@@ -72,7 +72,7 @@ X
 }
 sd_in()  { echo "/dev/mmcblk0 $T/sd exfat rw 0 0" >> $T/mounts; }
 sd_out() { sed -i "\# $T/sd #d" $T/mounts; }
-put_payload() { rm -rf $T/sd/HiByOS; cp -a ${1:-$SRC_SD} $T/sd/HiByOS; }
+put_payload() { rm -rf $T/sd/ByOS; cp -a ${1:-$SRC_SD} $T/sd/ByOS; }
 remanifest() { (cd $1 && find . -type f ! -name MANIFEST.md5 | sed 's#^\./##' | sort | xargs md5sum > MANIFEST.md5); }
 
 PCPATH=$PATH
@@ -126,9 +126,9 @@ chk "mirror_bak + launcher_view.bak + payload_mirror" "[ -f $H/mirror_bak/music.
 chk "payload_subs = layout/theme3 litegui/theme3" "[ \"\$(cat $H/payload_subs)\" = 'layout/theme3 litegui/theme3 ' ]"
 chk "no work files left in the temporary folder" "[ ! -e $T/tmp/derive ]"
 chk "9 fondos en /Pictures de la SD" "[ \$(ls $T/sd/Pictures | wc -l) = 9 ]"
-chk "install.log en la SD" "grep -q 'instalado' $T/sd/HiByOS/install.log"
+chk "install.log en la SD" "grep -q 'instalado' $T/sd/ByOS/install.log"
 chk "nada de estado de usuario creado (launcher.conf)" "[ ! -f $H/shell/launcher.conf ]"
-grep instalado $T/sd/HiByOS/install.log | tail -1 | sed 's/^/       /'
+grep instalado $T/sd/ByOS/install.log | tail -1 | sed 's/^/       /'
 
 echo; echo "=== 2. misma version: no hace nada"
 touch $T/stamp; sleep 1
@@ -195,7 +195,7 @@ run late; rc=$?
 chk "late sale con 1, sigue 9.9.9" "[ $rc = 1 ] && [ \"\$(cat $H/payload_version)\" = 9.9.9 ]"
 chk "solo escribe install_failed" "[ \"\$(snap)\" = './hibymod/install_failed' ]"
 run late; chk "no reintenta la misma version" "[ $? = 1 ]"
-grep -E 'ERROR|no se reintenta' $T/sd/HiByOS/install.log | tail -2 | sed 's/^/       /'
+grep -E 'ERROR|no se reintenta' $T/sd/ByOS/install.log | tail -2 | sed 's/^/       /'
 
 echo; echo "=== 7. aparato sin SD en el primer arranque -> espera $HIBYOS_WAIT s una vez; S95 instala al montarse"
 reset_dev
@@ -246,9 +246,9 @@ reset_dev; alter layout/theme3/topbar/topbar.view; sd_in; put_payload
 run boot
 chk "installed" "[ \"\$(cat $H/payload_version 2>/dev/null)\" = $V ]"
 chk "topbar.view: the firmware's own file stays" "cmp -s $T/proot$T/res/layout/theme3/topbar/topbar.view $H/theme/layout/theme3/topbar/topbar.view"
-chk "it is logged and not listed as ours" "grep -q 'derive: theme/layout/theme3/topbar/topbar.view skipped' $T/sd/HiByOS/install.log && ! grep -qx theme/layout/theme3/topbar/topbar.view $H/payload_files"
+chk "it is logged and not listed as ours" "grep -q 'derive: theme/layout/theme3/topbar/topbar.view skipped' $T/sd/ByOS/install.log && ! grep -qx theme/layout/theme3/topbar/topbar.view $H/payload_files"
 chk "the other derived files are right" "same theme/layout/theme3/launcher/hiby_launcher_apps.view $H/theme/layout/theme3/launcher/hiby_launcher_apps.view && same theme/layout/theme3/dialog/volume.dlg $H/theme/layout/theme3/dialog/volume.dlg && same theme/layout/theme3/hiby_about_dev.view $H/theme/layout/theme3/hiby_about_dev.view"
-grep 'derive:' $T/sd/HiByOS/install.log | tail -1 | sed 's/^/       /'
+grep 'derive:' $T/sd/ByOS/install.log | tail -1 | sed 's/^/       /'
 
 echo; echo "=== 12. the home screen layout of the firmware is not a known version: refused, nothing changed"
 reset_dev; alter layout/theme3/launcher/hiby_launcher_apps.view; sd_in; put_payload
@@ -256,9 +256,9 @@ touch $T/stamp; sleep 1
 run boot; rc=$?
 chk "boot goes on (0) and nothing is installed" "[ $rc = 0 ] && [ ! -f $H/payload_version ]"
 chk "the only file written is install_failed" "[ \"\$(snap)\" = './hibymod/install_failed' ]"
-chk "the reason is in the log" "grep -q 'ERROR: derive: theme/layout/theme3/launcher/hiby_launcher_apps.view cannot be built' $T/sd/HiByOS/install.log"
+chk "the reason is in the log" "grep -q 'ERROR: derive: theme/layout/theme3/launcher/hiby_launcher_apps.view cannot be built' $T/sd/ByOS/install.log"
 run late; chk "not tried again with the same version (1)" "[ $? = 1 ]"
-grep 'ERROR' $T/sd/HiByOS/install.log | tail -3 | sed 's/^/       /'
+grep 'ERROR' $T/sd/ByOS/install.log | tail -3 | sed 's/^/       /'
 
 echo; echo "=== 13. update where the firmware layout is unknown but the right file is already installed: kept"
 reset_dev; sd_in; put_payload; run boot

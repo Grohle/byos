@@ -1,12 +1,12 @@
 #!/bin/bash
-# Builds the HiByOS firmware from the OFFICIAL HiBy firmware that you download yourself.
-# HiByOS does not redistribute HiBy's firmware: this script modifies your copy, on your computer.
+# Builds the ByOS firmware from the OFFICIAL HiBy firmware that you download yourself.
+# ByOS does not redistribute HiBy's firmware: this script modifies your copy, on your computer.
 #
 # Usage (Linux, WSL on Windows, or a GitHub Codespace):
 #   bash tools/build_hibyos.sh /path/to/r3ii_2025.upt        # the official HiBy .upt
 # Result:
-#   out/r3ii_2025.upt      the HiByOS firmware (copy it to the root of the SD card)
-#   (the HiByOS/ folder for the SD card comes from the GitHub release)
+#   out/r3ii_2025.upt      the ByOS firmware (copy it to the root of the SD card)
+#   (the ByOS/ folder for the SD card comes from the GitHub release)
 set -e
 cd "$(dirname "$0")/.."
 UPT="$1"
@@ -43,7 +43,7 @@ if [ "$got" != "$SUPPORTED_MD5" ]; then
     echo "This is not the supported official firmware."
     echo "  your file: $got"
     echo "  expected:  $SUPPORTED_MD5  (HiBy R3 II 2025, firmware of 2 March 2026)"
-    echo "HiByOS only patches that exact version. Nothing was changed."
+    echo "ByOS only patches that exact version. Nothing was changed."
     exit 1
 fi
 echo "OK: supported official firmware."
@@ -51,7 +51,7 @@ echo "OK: supported official firmware."
 mkdir -p out
 # build.py also checks the original text and md5 of every file it patches, and that the
 # result fits the partition.
-echo "== Building HiByOS (about 1 minute)"
+echo "== Building ByOS (about 1 minute)"
 # The image must keep root ownership: use a user namespace, or sudo where namespaces are
 # not allowed (some containers).
 if unshare -r true 2>/dev/null; then
@@ -64,5 +64,5 @@ else
 fi
 echo
 echo "Done: out/r3ii_2025.upt"
-echo "Next: copy out/r3ii_2025.upt and the HiByOS/ folder from the release to the root of the"
+echo "Next: copy out/r3ii_2025.upt and the ByOS/ folder from the release to the root of the"
 echo "SD card, then on the player: Settings > Firmware update > Via SD card."

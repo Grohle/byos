@@ -1,4 +1,4 @@
-// Iconos del launcher de HiByOS (PNG con alfa, 48/56/64 px) + glifos del Centro de control (26 px).
+// Iconos del launcher de ByOS (PNG con alfa, 48/56/64 px) + glifos del Centro de control (26 px).
 // Uso: node launcher_icons.js <salida_dir> [tamanos]   (playwright-core en PWCORE, Chromium de ms-playwright)
 //   salida_dir/<app>_<tam>.png   iconos del launcher (mascara squircle ya aplicada)
 //   salida_dir/cc/cc_<n>.png     glifos del Centro de control (blancos, 26x26)

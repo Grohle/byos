@@ -154,7 +154,7 @@ static const char *ps_errmsg(int rc, int idx)
 {
     switch (rc) {
     case -ENXIO: case -ETIMEDOUT: case -ENOEXEC: return "El reproductor no responde";
-    case -ENOENT: return "Requiere actualizar HiByOS";
+    case -ENOENT: return "Requiere actualizar ByOS";
     case -EAGAIN: return "El reproductor está ocupado";
     case -EPERM: return idx == PS_MSEB ? "MSEB necesita velocidad 1x y sin MQA" : "No disponible con la salida actual";
     default: return "No se pudo cambiar el ajuste";
@@ -382,10 +382,12 @@ static const char *ss_count(int i, int n) { if (!si_ui.lib) return "…"; snprin
 static const char *v_songs(void) { return ss_count(0, si_ui.songs); }
 static const char *v_albums(void) { return ss_count(1, si_ui.albums); }
 static const char *v_artists(void) { return ss_count(2, si_ui.artists); }
-static const char *v_ver(void)   /* la fila ya dice "Version de HiByOS": solo el numero */
+static const char *v_ver(void)   /* la fila ya dice "Version de ByOS": solo el numero */
 {
     if (!si_ui.ver[0]) return si_ui.ready ? "?" : "…";
-    return strncmp(si_ui.ver, "HiByOS ", 7) ? si_ui.ver : si_ui.ver + 7;
+    if (!strncmp(si_ui.ver, "ByOS ", 5)) return si_ui.ver + 5;
+    if (!strncmp(si_ui.ver, "HiByOS ", 7)) return si_ui.ver + 7;      /* firmware from before the rename */
+    return si_ui.ver;
 }
 static const char *v_model(void) { return "HiBy R3 II"; }
 static const char *v_mem2(void) { if (!si_ui.ready) return "…"; snprintf(ss_buf[3], 64, "%.0f MB", si_ui.mem_kb / 1024.0); return ss_buf[3]; }
@@ -535,7 +537,7 @@ static void page_about(struct spage *p)
     ui_in_pm = si_ui.in_tot ? (int)((si_ui.in_tot - si_ui.in_free) * 1000 / si_ui.in_tot) : 0;
     *p = (struct spage){ "Información" };
     p->hero = 96;
-    p->secs[0] = (struct ssec){ 0, 0, { ROWV("Nombre del modelo", v_model), ROWV("Versión de HiByOS", v_ver), ROWV("Canciones", v_songs),
+    p->secs[0] = (struct ssec){ 0, 0, { ROWV("Nombre del modelo", v_model), ROWV("Versión de ByOS", v_ver), ROWV("Canciones", v_songs),
                                         ROWV("Álbumes", v_albums), ROWV("Apps instaladas", v_napps) }, 5 };
     p->secs[1] = (struct ssec){ "ALMACENAMIENTO", 0, { ROWB("Tarjeta SD", &ui_sd_pm, v_sd), ROWB("Memoria interna", &ui_in_pm, v_int),
                                                        ROWV("Memoria libre", v_mem2) }, 3 };

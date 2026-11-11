@@ -1,9 +1,9 @@
-# HiByOS online updates (OTA)
+# ByOS online updates (OTA)
 
-Once HiByOS is installed, it can update itself from GitHub releases:
+Once ByOS is installed, it can update itself from GitHub releases:
 **Settings › General › Software Update**. We never distribute HiBy's firmware; an online update
 only carries our own files (the *payload*, see [INSTALLER.md](INSTALLER.md)). Releases that
-also change the read-only system image ask the user to run the HiByOS Patcher
+also change the read-only system image ask the user to run the ByOS Patcher
 ([PATCHER.md](PATCHER.md)).
 
 | Piece | File |
@@ -69,7 +69,7 @@ rootfs version already delegates (for `hiby_player.sh`: when it contains the mar
 | `hibymod_fast.sh`, `hibymod_tune.sh`, `hibymod_adb*.sh`, `hibymod_crashlog.sh`, `hibymod_memmon.sh`, `hibyctl`, `/usr/lib/hibymod/bin/wpa_cli`, `theme2` resources of the overlay | No (firmware); candidates for the `sys/` pattern if they start changing often. |
 
 A release that changes any of the "No" rows is published with `--needs-firmware`: the page then
-shows **Needs the HiByOS Patcher** with instructions (download the Patcher from the release,
+shows **Needs the ByOS Patcher** with instructions (download the Patcher from the release,
 run it on the official firmware, copy `r3ii_2025.upt` to the root of the SD, install it from the
 **ON THE SD CARD** list on the same page).
 
@@ -80,7 +80,7 @@ counter in `if [ -z "$HIBYOS_SYS_COUNTED" ]; then ... fi` (so the override copy 
 the boot twice, restart `batd` twice or start a second 120 s timer), and right after it add:
 
 ```sh
-# HiByOS OTA (docs/OTA.md): newer supervisor installed by the payload. The boot counter above
+# ByOS OTA (docs/OTA.md): newer supervisor installed by the payload. The boot counter above
 # always runs from the rootfs; the copy is used only while fewer than 2 boots in a row failed.
 if [ -z "$HIBYOS_SYS_COUNTED" ] && [ -x /usr/bin/hibyos_install.sh ] && \
    /usr/bin/hibyos_install.sh sysok hiby_player.sh; then
@@ -114,7 +114,7 @@ the installer that failed); a newer installer retries a version that an older on
 
 One GitHub release per version, tag `vX.Y.Z`, marked **latest**, with two assets:
 
-- `hibyos-payload-X.Y.Z.tar`: the payload folder (`out/sd/HiByOS/payload`) as a plain ustar
+- `hibyos-payload-X.Y.Z.tar`: the payload folder (`out/sd/ByOS/payload`) as a plain ustar
   archive, every entry under `payload/`, sorted, root:root, fixed mtime (reproducible). Plain
   tar because the device has no streaming inflate (`stbi_zlib_decode_malloc` is whole-buffer
   and would need ~10 MB of the ~7 MB free RAM) and most of the payload is already compressed
@@ -143,8 +143,8 @@ One GitHub release per version, tag `vX.Y.Z`, marked **latest**, with two assets
 | Field | Meaning |
 |---|---|
 | `version` | Payload version (compared with `/usr/data/hibymod/payload_version`). |
-| `min_version` | Oldest installed payload that may take this update; older ones are told to copy the full `HiByOS` folder to the SD. |
-| `min_firmware`, `needs_firmware` | Rootfs version needed (read from `/usr/bin/hibymod`, "HiByOS X.Y.Z"); if the device is older, or `needs_firmware` is true, the Patcher instructions are shown instead of the button. |
+| `min_version` | Oldest installed payload that may take this update; older ones are told to copy the full `ByOS` folder to the SD. |
+| `min_firmware`, `needs_firmware` | Rootfs version needed (read from `/usr/bin/hibymod`, "ByOS X.Y.Z"); if the device is older, or `needs_firmware` is true, the Patcher instructions are shown instead of the button. |
 | `restart` | Announced before downloading: `shell` (the interface restarts, music keeps playing), `reboot` or `none`. The device recomputes it from the old and new `MANIFEST.md5` after extracting and takes the larger of the two. |
 | `payload` | `url` https (or http: integrity comes from the signature), `size` ≤ 64 MB, `sha256`. |
 | `changelog` | Per language (`es`, `en`, `fr` required; any of the shell's codes optional), string or list of bullets. Fallback: current language, `en`, `es`, first. |
@@ -193,24 +193,24 @@ Settings › General › Software Update (`src/ota.inc.c`):
 
 - **Installed version** (payload) and **Firmware** (rootfs).
 - **Check for Updates**: downloads the JSON in the background (`hibynet`, 25 s timeout per
-  network call), verifies it and shows a "HiByOS X.Y.Z" group (size, button, what will
-  restart) and a **WHAT'S NEW** text section with the changelog in the current language. Errors: no Internet, server unreachable, not signed by HiByOS, invalid.
+  network call), verifies it and shows a "ByOS X.Y.Z" group (size, button, what will
+  restart) and a **WHAT'S NEW** text section with the changelog in the current language. Errors: no Internet, server unreachable, not signed by ByOS, invalid.
 - **Download and Install**: confirmation alert (with "the HiBy will restart" or "the interface
   will restart; music keeps playing"), then a progress bar with MB done. Checks first and again
   before installing: SD present (and not exported over USB storage: then it is unmounted),
   battery ≥ 30 % or charging, free space on the SD ≥ 2 × size + 2 MB (the installer checks
   `/usr/data`).
-  1. download to `SD/HiByOS/ota/hibyos-payload-X.tar` (`.part` while downloading;
+  1. download to `SD/ByOS/ota/hibyos-payload-X.tar` (`.part` while downloading;
      **Pause Download** or a dropped connection keeps it, **Resume Download** continues with
      an HTTP Range request, also after a restart of the shell);
   2. size + sha256;
-  3. extraction to `SD/HiByOS/ota/stage/payload`, check that `VERSION` matches;
-  4. `SD/HiByOS/payload` (the installed version) moves to `SD/HiByOS/ota/previous/payload` and
+  3. extraction to `SD/ByOS/ota/stage/payload`, check that `VERSION` matches;
+  4. `SD/ByOS/payload` (the installed version) moves to `SD/ByOS/ota/previous/payload` and
      the new one takes its place, so the SD always holds what is installed and the boot-time
      installer never reinstalls an old payload;
   5. `hibyos_install.sh install` (the usual path: MANIFEST check, `.new` + rename, user state
      untouched). If it fails, the SD folders are swapped back, the previous version is
-     reinstalled and the error says so (details in `SD/HiByOS/install.log`).
+     reinstalled and the error says so (details in `SD/ByOS/install.log`).
   6. **Restart Interface** (hibyshell exits, the supervisor starts the new one in ~3 s) or
      **Restart Now** (reboot), as computed from the manifests.
 - **Restore Previous Version**: swaps `payload` and `ota/previous/payload` and reinstalls
@@ -233,7 +233,7 @@ Never touched by an update (from [INSTALLER.md](INSTALLER.md)): `shell/launcher.
 `audio.conf`, `ota.conf`, `apps/`, `appdata/`, `archivos/`, `fondos/`, `override/`, the SD
 wallpapers and the music database.
 
-Files: `SD/HiByOS/ota/hibyos-update.json` (last verified), `ota/*.tar(.part)`,
+Files: `SD/ByOS/ota/hibyos-update.json` (last verified), `ota/*.tar(.part)`,
 `ota/stage/`, `ota/previous/`; `/usr/data/hibymod/ota.conf` (`auto`, `last_check`).
 
 ## 5. Release procedure (owner)
@@ -267,9 +267,9 @@ Each release:
    `python tools\ota_sign.py verify out\release\vX.Y.Z\hibyos-update.json`, then run the
    printed command:
    ```
-   gh release create vX.Y.Z out\release\vX.Y.Z\hibyos-payload-X.Y.Z.tar out\release\vX.Y.Z\hibyos-update.json --repo Grohle/hibyos --title "HiByOS X.Y.Z" --notes-file out\release\vX.Y.Z\notes.md --latest
+   gh release create vX.Y.Z out\release\vX.Y.Z\hibyos-payload-X.Y.Z.tar out\release\vX.Y.Z\hibyos-update.json --repo Grohle/hibyos --title "ByOS X.Y.Z" --notes-file out\release\vX.Y.Z\notes.md --latest
    ```
-   Also attach the usual `HiByOS/` SD folder zip for fresh installs if you wish.
+   Also attach the usual `ByOS/` SD folder zip for fresh installs if you wish.
 
 To pull a broken release: publish a fixed higher version (devices never downgrade on their own),
 or mark an older release as latest only if users should be offered *Install Anyway*.

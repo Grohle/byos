@@ -2,13 +2,13 @@
 """
 Edits to HiBy's own files, stored WITHOUT HiBy's text.
 
-HiByOS changes a few files that belong to the official firmware (two start-up scripts and
+ByOS changes a few files that belong to the official firmware (two start-up scripts and
 some screen layouts). Those files are never stored in this repository or in anything built
 from it. tools/vendor_edits.json holds, for each of them, a list of operations that rebuilds
-the HiByOS version from the copy inside the user's own firmware:
+the ByOS version from the copy inside the user's own firmware:
 
     {"copy": [offset, length]}   take `length` bytes at `offset` of the official file
-    {"add":  ["line", "line"]}   insert text written for HiByOS (the lines joined with "\\n")
+    {"add":  ["line", "line"]}   insert text written for ByOS (the lines joined with "\\n")
 
 so the only text in the data file is ours. tools/build.py and tools/hibyos_patcher.py apply
 the list while they patch the firmware; tools/make_payload.py compiles the same kind of list
@@ -22,7 +22,7 @@ Format of tools/vendor_edits.json (version 1), precise enough to re-implement:
         "stock":  {"size": N, "sha256": "..."},      # the official file, as found in the firmware
         "strip_cr": false,                           # true: delete every 0x0D byte of the
                                                      #   official file BEFORE applying the ops
-        "result": {"size": N, "sha256": "..."},      # the file HiByOS installs
+        "result": {"size": N, "sha256": "..."},      # the file ByOS installs
         "ops": [ {"copy": [off, len]} | {"add": [str, ...]} , ... ],
         "previous": [ {"result": {...}, "ops": [...]}, ... ]   # optional, see below
        }, ...]}
@@ -36,7 +36,7 @@ To apply an entry:
   4. the size and SHA-256 of the result must be `result` (otherwise stop);
   5. the result replaces the file; mode and owner of the official file are kept.
 
-"previous" lists older HiByOS versions of the same file (same ops format, same base). The
+"previous" lists older ByOS versions of the same file (same ops format, same base). The
 firmware builders ignore it. make_payload.py uses it so that a new payload can also update a
 player whose firmware already carries one of those older versions (the pristine official file
 is no longer on such a player).
@@ -45,7 +45,7 @@ Developer commands (they need YOUR unpacked copy of the official root filesystem
 
     python tools/vendor_edits.py check  --stock ROOTFS          verify every entry, show numbers
     python tools/vendor_edits.py export --stock ROOTFS [--out DIR]
-                         write the full HiByOS versions to DIR (default out/vendor_files,
+                         write the full ByOS versions to DIR (default out/vendor_files,
                          not tracked by git) so they can be read and edited
     python tools/vendor_edits.py update --stock ROOTFS [--from DIR] [--keep-previous]
                          rebuild the entries from the full files in DIR
@@ -133,7 +133,7 @@ def run_ops(ops, base, what="?"):
 
 
 def apply(entry, stock_bytes, version=None):
-    """The HiByOS version of the file (steps 1 to 4). `version`: an item of "previous"."""
+    """The ByOS version of the file (steps 1 to 4). `version`: an item of "previous"."""
     v = version or entry
     res = run_ops(v["ops"], base_of(entry, stock_bytes), entry["path"])
     if len(res) != v["result"]["size"] or sha256(res) != v["result"]["sha256"]:

@@ -1,6 +1,6 @@
-# HiByOS apps
+# ByOS apps
 
-HiByOS ships a set of built-in apps (compiled into the shell, `src/`) and supports external
+ByOS ships a set of built-in apps (compiled into the shell, `src/`) and supports external
 apps packaged as `.hpk` files (installed from the **Apps** store or from the SD card). Each app
 below has its own page with screenshots, a how-to, its settings, known limitations and
 technical notes.
@@ -40,7 +40,7 @@ Status legend:
 - **In development**: being written; not part of a release yet.
 
 Other home screen icons: **Now Playing** opens the player on its own, and **Tidal** and
-**Qobuz** are HiBy's own apps (with the HiByOS gestures and status bar). The old
+**Qobuz** are HiBy's own apps (with the ByOS gestures and status bar). The old
 **Customize** app is now part of Settings (Personalization). Gutenberg, Vinyl, Headphones and
 Hello come preinstalled but are listed in **Apps**, where they can be uninstalled and
 reinstalled like any other app.
@@ -80,7 +80,7 @@ Every gesture can be changed in Settings › Gestures (see [settings/](settings/
 ## About the screenshots
 
 The screenshots on these pages were taken in English on a real HiBy R3 II (2025) running
-HiByOS, with the player's own music library and live results from the online sources. Wi-Fi
+ByOS, with the player's own music library and live results from the online sources. Wi-Fi
 network names, IP and MAC addresses are blurred. The Headphones screenshots show the app with
 no headphones connected; the per-model pages are PC renders (`tests/buds_render.sh`).
 

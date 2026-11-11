@@ -1,4 +1,4 @@
-/* hibyboot - animacion de arranque de HiByOS (formato HBA1, ver tools/bootanim.py).
+/* hibyboot - animacion de arranque de ByOS (formato HBA1, ver tools/bootanim.py).
  *
  * Lo lanza S11jpeg_display_shell en cuanto existe /dev/fb0. Reproduce la intro una vez
  * y repite el bucle hasta que el inicio esta listo (el shell crea /tmp/hibyos_boot_stop; la

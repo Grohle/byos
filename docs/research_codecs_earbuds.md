@@ -281,7 +281,7 @@ Design rules:
 ### 3.2 AirPods and Beats
 
 **Licence situation**
-- LibrePods (github.com/kavishdevar/librepods) is **GPL-3.0** [V, `gh api`]. Our licence is the custom non-commercial "HiByOS Community License 1.0", which adds restrictions the GPL forbids, so **no LibrePods code may be copied**.
+- LibrePods (github.com/kavishdevar/librepods) is **GPL-3.0** [V, `gh api`]. Our licence is the custom non-commercial "ByOS Community License 1.0", which adds restrictions the GPL forbids, so **no LibrePods code may be copied**.
 - Protocol facts (byte layouts, opcodes) are not copyrightable. We implement from our own notes, written below in our own words, and from captures made with our own AirPods.
 - Other public references: tyalie/AAP-Protocol-Defintion (Kaitai spec), pabloaul/apple-wireshark (dissector), furiousMAC/continuity (BLE adverts).
 

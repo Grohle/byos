@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Text between ** and ** is shown in bold (menu names of the player, file names). -->
 <resources>
-    <string name="app_name">HiByOS Install</string>
+    <string name="app_name">ByOS Install</string>
     <string name="back">Back</string>
     <string name="cancel">Cancel</string>
     <string name="go_on">Continue</string>
@@ -10,7 +10,7 @@
     <string name="menu_names_note">Menu names are those of the official firmware in English.</string>
 
     <!-- Home -->
-    <string name="home_subtitle">Builds HiByOS %1$s from the official firmware of your HiBy R3 II (2025) and puts it on the player.</string>
+    <string name="home_subtitle">Builds ByOS %1$s from the official firmware of your HiBy R3 II (2025) and puts it on the player.</string>
     <string name="home_loading">Getting ready…</string>
     <string name="home_before">Before you start</string>
     <string name="home_req_player">HiBy R3 II (2025)</string>
@@ -25,7 +25,7 @@
     <string name="step1_title">Firmware</string>
     <string name="step1_sub">Get the official firmware v%1$s from HiBy</string>
     <string name="step2_title">Patch</string>
-    <string name="step2_sub">Add HiByOS to it, on this phone</string>
+    <string name="step2_sub">Add ByOS to it, on this phone</string>
     <string name="step3_title">Send</string>
     <string name="step3_sub">Over Wi-Fi, or by hand with the SD card</string>
     <string name="step4_title">Install</string>
@@ -40,7 +40,7 @@
     <!-- Before you start -->
     <string name="check_title">Before you start</string>
     <string name="check_need_h">The starting point</string>
-    <string name="check_need">HiByOS is installed on top of HiBy\'s official firmware v%1$s. Use this app only with a HiBy R3 II (2025) that is already running that version.</string>
+    <string name="check_need">ByOS is installed on top of HiBy\'s official firmware v%1$s. Use this app only with a HiBy R3 II (2025) that is already running that version.</string>
     <string name="check_how_h">Check the version on the player</string>
     <string name="check_how_1">On the player\'s home screen, open **System**.</string>
     <string name="check_how_2">Scroll down the list and open **About**.</string>
@@ -50,10 +50,10 @@
     <string name="check_other_1">Put a micro SD card in the player and connect the player to Wi-Fi.</string>
     <string name="check_other_2">On the home screen, open **System › Firmware update** and choose **Via OTA**. Install the official v%1$s.</string>
     <string name="check_other_3">Or get the official v%1$s file from HiBy\'s page, copy **%2$s** to the top level of the SD card and choose **Via SD-card** in the same menu.</string>
-    <string name="check_other_footer">If the player is on, or offers, a version newer than v%1$s, this version of the app does not support it: look for a newer HiByOS Install.</string>
+    <string name="check_other_footer">If the player is on, or offers, a version newer than v%1$s, this version of the app does not support it: look for a newer ByOS Install.</string>
     <string name="check_page">Open HiBy\'s firmware page</string>
     <string name="check_card_h">The SD card</string>
-    <string name="check_card">HiByOS keeps its apps and files in a **HiByOS** folder on the card. Use a card the player already reads, with at least 100 MB free, and leave it in the player.</string>
+    <string name="check_card">ByOS keeps its apps and files in a **ByOS** folder on the card. Use a card the player already reads, with at least 100 MB free, and leave it in the player.</string>
 
     <!-- Step 1 -->
     <string name="fw_title">Firmware</string>
@@ -85,23 +85,23 @@
     <!-- Step 2 -->
     <string name="patch_title">Patch</string>
     <string name="patch_h">What happens</string>
-    <string name="patch_intro">The app opens your firmware file, adds the HiByOS files and settings, builds it again and checks every file of the result. Everything happens on this phone and takes about a minute.</string>
-    <string name="patch_row_version">HiByOS version</string>
+    <string name="patch_intro">The app opens your firmware file, adds the ByOS files and settings, builds it again and checks every file of the result. Everything happens on this phone and takes about a minute.</string>
+    <string name="patch_row_version">ByOS version</string>
     <string name="patch_row_files">Files added or replaced</string>
     <string name="patch_row_base">Built on</string>
     <string name="patch_row_base_value">Official v%1$s</string>
     <string name="patch_need_fw">Get the firmware first (step 1).</string>
-    <string name="patch_start">Build HiByOS %1$s</string>
-    <string name="patch_running">Building HiByOS %1$s</string>
+    <string name="patch_start">Build ByOS %1$s</string>
+    <string name="patch_running">Building ByOS %1$s</string>
     <string name="stage_check">Checking the firmware</string>
     <string name="stage_read">Unpacking it</string>
-    <string name="stage_apply">Adding HiByOS</string>
+    <string name="stage_apply">Adding ByOS</string>
     <string name="stage_build">Building the new system</string>
     <string name="stage_verify_rootfs">Checking every file</string>
     <string name="stage_write">Writing the update file</string>
     <string name="stage_verify_upt">Final check</string>
     <string name="keep_open">Keep the app open until it finishes.</string>
-    <string name="patch_done_title">HiByOS %1$s is ready</string>
+    <string name="patch_done_title">ByOS %1$s is ready</string>
     <string name="patch_done_sub">%1$d files checked one by one.</string>
     <string name="patch_out_h">Update file</string>
     <string name="patch_row_build">Build</string>
@@ -110,8 +110,8 @@
     <!-- Step 3 -->
     <string name="send_title">Send</string>
     <string name="send_what_h">What goes on the SD card</string>
-    <string name="send_item_fw_sub">The HiByOS firmware you just built · %1$s</string>
-    <string name="send_item_folder">HiByOS</string>
+    <string name="send_item_fw_sub">The ByOS firmware you just built · %1$s</string>
+    <string name="send_item_folder">ByOS</string>
     <string name="send_item_folder_sub">A folder with %1$d files · %2$s</string>
     <string name="send_what_footer">Both go to the top level of the player\'s SD card.</string>
     <string name="send_how_h">How do you want to send them?</string>
@@ -120,7 +120,7 @@
     <string name="send_manual">By hand</string>
     <string name="send_manual_sub">Save the files and copy them to the card with a card reader or a computer.</string>
     <string name="send_how_footer">Both ways give the same result. If Wi-Fi gives trouble, the manual way always works.</string>
-    <string name="send_need_patch">Build HiByOS first (step 2).</string>
+    <string name="send_need_patch">Build ByOS first (step 2).</string>
 
     <string name="wifi_title">Over Wi-Fi</string>
     <string name="wifi_player_h">On the player</string>
@@ -158,15 +158,15 @@
     <string name="manual_save">Save to a folder</string>
     <string name="manual_save_sub">The SD card in a reader connected to this phone, or any folder</string>
     <string name="manual_share">Share</string>
-    <string name="manual_share_sub">Send %1$s and HiByOS.zip to a computer or another app</string>
+    <string name="manual_share_sub">Send %1$s and ByOS.zip to a computer or another app</string>
     <string name="manual_save_footer">If you choose the top level of the player\'s SD card, everything lands in the right place at once.</string>
     <string name="manual_saving">Saving the files</string>
     <string name="manual_preparing">Preparing the files</string>
     <string name="manual_saved_title">Saved in “%1$s”</string>
-    <string name="manual_saved_sub">%1$s and the HiByOS folder (%2$d files), each one checked after writing.</string>
+    <string name="manual_saved_sub">%1$s and the ByOS folder (%2$d files), each one checked after writing.</string>
     <string name="manual_card_h">On the SD card</string>
-    <string name="manual_c1">The card needs **%1$s** and the **HiByOS** folder at the top level, not inside another folder.</string>
-    <string name="manual_c2">If you shared **HiByOS.zip**, unpack it: the card needs the folder, not the zip.</string>
+    <string name="manual_c1">The card needs **%1$s** and the **ByOS** folder at the top level, not inside another folder.</string>
+    <string name="manual_c2">If you shared **ByOS.zip**, unpack it: the card needs the folder, not the zip.</string>
     <string name="manual_c3">If the card already has a file called **%1$s**, replace it.</string>
     <string name="manual_c4">Eject the card safely and put it back in the player.</string>
     <string name="manual_next">The files are on the card</string>
@@ -174,7 +174,7 @@
     <!-- Step 4 -->
     <string name="install_title">Install</string>
     <string name="install_check_h">Check first</string>
-    <string name="install_k1">The SD card is in the player, with **%1$s** and the **HiByOS** folder at the top level.</string>
+    <string name="install_k1">The SD card is in the player, with **%1$s** and the **ByOS** folder at the top level.</string>
     <string name="install_k2" formatted="false">The battery is above 50 %.</string>
     <string name="install_k3">The player is running the official firmware v%1$s.</string>
     <string name="install_h">On the player</string>
@@ -182,7 +182,7 @@
     <string name="install_2">Go to the home screen and open **System › Firmware update**.</string>
     <string name="install_3">Choose **Via SD-card** and confirm **Update system firmware?**</string>
     <string name="install_4">Wait. The player installs the update and restarts by itself. Do not switch it off.</string>
-    <string name="install_5">HiByOS starts and finishes setting itself up from the card. Keep the **HiByOS** folder on the card from now on.</string>
+    <string name="install_5">ByOS starts and finishes setting itself up from the card. Keep the **ByOS** folder on the card from now on.</string>
     <string name="install_footer">If the player says “No firmware update file found!”, it does not see %1$s at the top level of the card.</string>
     <string name="install_back_h">Going back</string>
     <string name="install_back">To return to the official firmware at any time, put HiBy\'s original **%1$s** on the card and install it the same way.</string>
@@ -193,21 +193,21 @@
     <!-- About -->
     <string name="about_title">About</string>
     <string name="about_app_version">App version</string>
-    <string name="about_hibyos_version">HiByOS files</string>
+    <string name="about_hibyos_version">ByOS files</string>
     <string name="about_source">Made from</string>
     <string name="about_builtin">included in the app</string>
     <string name="about_updated">downloaded update</string>
-    <string name="about_update">Check for newer HiByOS files</string>
+    <string name="about_update">Check for newer ByOS files</string>
     <string name="update_checking">Checking</string>
-    <string name="update_uptodate">You have the latest HiByOS files (%1$s).</string>
-    <string name="update_available">HiByOS %1$s is available</string>
-    <string name="update_download">Download HiByOS %1$s · %2$s</string>
-    <string name="update_downloading">Downloading HiByOS %1$s</string>
-    <string name="update_installed">HiByOS %1$s is now in the app. Build it in step 2.</string>
-    <string name="about_update_footer">Newer HiByOS files come from the project\'s releases on GitHub. They are accepted only if they are signed with the project\'s release key and match their SHA-256.</string>
+    <string name="update_uptodate">You have the latest ByOS files (%1$s).</string>
+    <string name="update_available">ByOS %1$s is available</string>
+    <string name="update_download">Download ByOS %1$s · %2$s</string>
+    <string name="update_downloading">Downloading ByOS %1$s</string>
+    <string name="update_installed">ByOS %1$s is now in the app. Build it in step 2.</string>
+    <string name="about_update_footer">Newer ByOS files come from the project\'s releases on GitHub. They are accepted only if they are signed with the project\'s release key and match their SHA-256.</string>
     <string name="about_net_h">What the app sends over the network</string>
     <string name="about_net_1">**HiBy\'s download link** (Google Drive): only when you tap “Download from HiBy”.</string>
-    <string name="about_net_2">**GitHub**: only when you tap “Check for newer HiByOS files”.</string>
+    <string name="about_net_2">**GitHub**: only when you tap “Check for newer ByOS files”.</string>
     <string name="about_net_3">**Your player**, on your own Wi-Fi network: only when you use the Wi-Fi way.</string>
     <string name="about_net_footer">No accounts, no ads, no analytics. The app sends nothing about you or your devices to anyone.</string>
     <string name="about_licenses">Open-source licences</string>
@@ -215,11 +215,11 @@
     <string name="about_project_value">github.com/Grohle/hibyos</string>
     <string name="about_storage">Free space on this phone</string>
     <string name="about_storage_sub">Removes the downloaded firmware and the built file (%1$s)</string>
-    <string name="about_legal">HiByOS is an independent community project, not affiliated with HiBy. This app contains no HiBy firmware. Installing unofficial software on your player is at your own risk.</string>
+    <string name="about_legal">ByOS is an independent community project, not affiliated with HiBy. This app contains no HiBy firmware. Installing unofficial software on your player is at your own risk.</string>
 
     <string name="licenses_title">Licences</string>
-    <string name="licenses_hibyos_h">HiByOS</string>
-    <string name="licenses_hibyos_footer">Licences of HiByOS and of the open-source software that HiByOS puts on the player.</string>
+    <string name="licenses_hibyos_h">ByOS</string>
+    <string name="licenses_hibyos_footer">Licences of ByOS and of the open-source software that ByOS puts on the player.</string>
     <string name="licenses_app_h">This app</string>
     <string name="licenses_android">Android libraries</string>
     <string name="licenses_android_sub">AndroidX, Jetpack Compose, Kotlin · Apache License 2.0</string>
@@ -240,9 +240,9 @@
     <string name="err_read">The file could not be read</string>
     <string name="err_patch_damaged">The firmware file is damaged</string>
     <string name="hint_patch_damaged">Get the firmware again in step 1.</string>
-    <string name="err_patch_bundle">The HiByOS files cannot be used</string>
-    <string name="hint_patch_bundle">Update HiByOS Install to its latest version.</string>
-    <string name="err_patch_toobig">HiByOS does not fit in the player</string>
+    <string name="err_patch_bundle">The ByOS files cannot be used</string>
+    <string name="hint_patch_bundle">Update ByOS Install to its latest version.</string>
+    <string name="err_patch_toobig">ByOS does not fit in the player</string>
     <string name="err_patch_verify">The result did not pass its check</string>
     <string name="hint_patch_verify">Nothing was produced. Try again; if it happens again, please report it on the project page.</string>
     <string name="err_unreachable">The player does not answer</string>
@@ -258,14 +258,14 @@
     <string name="err_mismatch">A file did not arrive intact</string>
     <string name="hint_mismatch">Try again. If it keeps happening, use the manual way.</string>
     <string name="err_local">A file on this phone could not be read</string>
-    <string name="hint_local">Build HiByOS again in step 2.</string>
+    <string name="hint_local">Build ByOS again in step 2.</string>
     <string name="err_bad_address">That does not look like an address</string>
     <string name="hint_bad_address">Type the numbers the player shows, for example 192.168.1.20</string>
     <string name="err_none_found">No player found on this Wi-Fi network</string>
     <string name="hint_none_found">Make sure the player shows “Receive songs via Wi-Fi” and is on the same Wi-Fi as this phone. Guest networks often keep devices apart: then type the address by hand, or use the manual way.</string>
     <string name="err_no_wifi">This phone is not on a Wi-Fi network</string>
     <string name="hint_no_wifi">Connect this phone to the same Wi-Fi network as the player.</string>
-    <string name="err_untrusted">The newer HiByOS files were not accepted</string>
+    <string name="err_untrusted">The newer ByOS files were not accepted</string>
     <string name="hint_untrusted">The app keeps using the files it has.</string>
     <string name="err_update_offline">The check could not be made</string>
     <string name="hint_update_offline">Check the internet connection and try again.</string>

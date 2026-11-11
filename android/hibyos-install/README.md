@@ -1,6 +1,6 @@
-# HiByOS Install (Android)
+# ByOS Install (Android)
 
-An Android app that puts [HiByOS](https://github.com/Grohle/hibyos) on a **HiBy R3 II (2025)**
+An Android app that puts [ByOS](https://github.com/Grohle/hibyos) on a **HiBy R3 II (2025)**
 without a computer.
 
 > **Before anything else: your HiBy R3 II (2025) must already be running the official firmware v1.3.**
@@ -12,21 +12,21 @@ without a computer.
 1. **Firmware.** Downloads the official firmware v1.3 (`r3ii_2025.upt`, 44.6 MB) from HiBy's own
    download link, or lets you choose a copy you already downloaded. The file is checked
    (SHA-256); only the exact official v1.3 is accepted.
-2. **Build.** Turns that file into HiByOS on the phone. The result is checked again before it is
+2. **Build.** Turns that file into ByOS on the phone. The result is checked again before it is
    offered to you.
 3. **Send.** Puts two things on the player's micro SD card: the new `r3ii_2025.upt` and a folder
-   called `HiByOS`. Over Wi-Fi with the player's own "Import Music via Wi-Fi" screen, or by hand
+   called `ByOS`. Over Wi-Fi with the player's own "Import Music via Wi-Fi" screen, or by hand
    with a card reader or a computer.
 4. **Install.** You start the update from the player's own menu. The app shows the steps.
 
-The APK contains only the HiByOS project's own files and a list of changes to apply to the
+The APK contains only the ByOS project's own files and a list of changes to apply to the
 official firmware. **It contains no HiBy firmware and no file of HiBy's.**
 
 ## What you need
 
 - A **HiBy R3 II (2025)** on the **official firmware v1.3** (see "Check the version" below).
 - A **micro SD card** in the player that the player already reads, with at least 100 MB free.
-  HiByOS keeps its apps and files in the `HiByOS` folder of that card: leave the card in.
+  ByOS keeps its apps and files in the `ByOS` folder of that card: leave the card in.
 - The player's battery above 50 %.
 - An Android phone or tablet with Android 8.0 or newer and about 250 MB free.
 - For the Wi-Fi way: the phone and the player on the same Wi-Fi network.
@@ -48,7 +48,7 @@ If it shows something else, update the player to the official v1.3 first:
   **System › Firmware update › Via SD-card**.
 
 If the player is on, or offers, a version newer than v1.3, this version of the app does not
-support it: look for a newer HiByOS Install.
+support it: look for a newer ByOS Install.
 
 ## Install the app
 
@@ -68,7 +68,7 @@ Tap **Download from HiBy**, or **Choose a file on this phone** if you already ha
 
 ### 2. Build
 
-Tap **Build HiByOS**. It takes less than a minute. Nothing is sent anywhere: the work is done on
+Tap **Build ByOS**. It takes less than a minute. Nothing is sent anywhere: the work is done on
 the phone.
 
 ### 3. Send: over Wi-Fi
@@ -86,7 +86,7 @@ In the app:
 4. Type that address (the numbers are enough, for example `192.168.1.20`) and tap **Connect**.
    Or tap **Find my player**: only then does the app ask the devices of your own Wi-Fi network, on
    port 4399 only, which one is the player.
-5. Tap **Send**. The app creates the `HiByOS` folder on the card, sends every file, and reads
+5. Tap **Send**. The app creates the `ByOS` folder on the card, sends every file, and reads
    each one back to check it arrived intact. If the connection breaks, tap **Try again**: files
    that already arrived are not sent twice.
 
@@ -96,8 +96,8 @@ If Wi-Fi does not work for you:
 
 1. In the app choose **By hand**, then **Save to a folder** (pick the SD card if it is in a card
    reader connected to the phone) or **Share** (to send the files to a computer).
-2. The card needs `r3ii_2025.upt` and the `HiByOS` folder at the top level, not inside another
-   folder. If you shared `HiByOS.zip`, unpack it: the card needs the folder, not the zip.
+2. The card needs `r3ii_2025.upt` and the `ByOS` folder at the top level, not inside another
+   folder. If you shared `ByOS.zip`, unpack it: the card needs the folder, not the zip.
 3. Eject the card safely and put it back in the player.
 
 ![By hand](docs/screens/manual_1_idle.png)
@@ -108,7 +108,7 @@ If Wi-Fi does not work for you:
 2. Go to the home screen and open **System › Firmware update**.
 3. Choose **Via SD-card** and confirm **Update system firmware?**
 4. Wait. The player installs the update and restarts by itself. Do not switch it off.
-5. HiByOS starts and finishes setting itself up from the card. Keep the `HiByOS` folder on the
+5. ByOS starts and finishes setting itself up from the card. Keep the `ByOS` folder on the
    card from now on.
 
 If the player says "No firmware update file found!", it does not see `r3ii_2025.upt` at the top
@@ -125,7 +125,7 @@ level of the card.
 - Windows (PowerShell): `Get-FileHash hibyos-install-1.0.0.apk -Algorithm SHA256`
 - macOS / Linux: `shasum -a 256 hibyos-install-1.0.0.apk`
 
-**SHA-256 fingerprint of the signing certificate** (`CN=HiByOS Install, O=HiByOS`):
+**SHA-256 fingerprint of the signing certificate** (`CN=ByOS Install, O=ByOS`):
 
 ```
 2526c1b0e7a578d626888b0b9da789808980177dd46d534477e3980c0c93eef9
@@ -139,8 +139,8 @@ signed with the same certificate, so Android refuses an update signed by anyone 
 
 - **To HiBy's download link** (Google Drive, HTTPS): one download of the official firmware, only
   when you tap **Download from HiBy**.
-- **To GitHub** (HTTPS): only when you tap **Check for newer HiByOS files** on the About screen.
-  It downloads a small signed list and, if you accept, the newer HiByOS files. They are used
+- **To GitHub** (HTTPS): only when you tap **Check for newer ByOS files** on the About screen.
+  It downloads a small signed list and, if you accept, the newer ByOS files. They are used
   only if their signature (Ed25519, the project's release key) and SHA-256 are right.
 - **To your player**, inside your own Wi-Fi network, on port 4399: the files of step 3. With
   **Find my player**, a connection attempt to port 4399 of the addresses of your own network.
@@ -162,15 +162,15 @@ signed with the same certificate, so Android refuses an update signed by anyone 
 
 ## Build from source
 
-You need JDK 21, the Android SDK (platform 36, `ANDROID_HOME` set) and, to produce the HiByOS
-files, Python 3 and a built HiByOS tree (the repository this folder lives in).
+You need JDK 21, the Android SDK (platform 36, `ANDROID_HOME` set) and, to produce the ByOS
+files, Python 3 and a built ByOS tree (the repository this folder lives in).
 
 ```
 cd android/hibyos-install
 ./gradlew :app:assembleRelease
 ```
 
-- The HiByOS files that go into the APK (`app/src/main/assets/hibyos-bundle.zip`) are made by
+- The ByOS files that go into the APK (`app/src/main/assets/hibyos-bundle.zip`) are made by
   `tools/export_bundle.py` from the project's Python definitions (`tools/hibyos_patcher.py`,
   `tools/build.py`, `tools/vendor_edits.json`). The build runs it when the bundle is missing.
   To use a ready-made bundle instead (for example the one of a release):
@@ -185,7 +185,7 @@ cd android/hibyos-install
   one of `tools/hibyos_patcher.py`. `./gradlew :app:testDebugUnitTest` draws every screen into
   `docs/screens`.
 
-### Publishing newer HiByOS files for the app
+### Publishing newer ByOS files for the app
 
 `tools/export_bundle.py` also writes `build/hibyos-install-bundle-<version>.zip` and
 `build/hibyos-install-bundle.json`. Sign the `.json` with the release key
@@ -193,6 +193,6 @@ cd android/hibyos-install
 
 ## Licence
 
-GPL-3.0-or-later, like the rest of HiByOS. The licences of everything HiByOS includes are in the
+GPL-3.0-or-later, like the rest of ByOS. The licences of everything ByOS includes are in the
 app: **About › Open-source licences**. HiBy and R3 II are names of their owner; this project is
 not affiliated with HiBy.

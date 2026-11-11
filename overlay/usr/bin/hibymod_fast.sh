@@ -22,7 +22,7 @@ librt.so.1:librt-2.22.so libdl.so.2:libdl-2.22.so
 libatomic.so.1:libatomic.so.1.1.0 libasound.so.2:libasound.so.2.0.0 libz.so.1:libz.so.1.2.11"
 FONT=/usr/resource/fonts/default.otf
 RESDIRS="layout/theme2 layout/theme3 litegui/theme2 litegui/theme3"
-# con el tema de HiByOS en /usr/data (se monta encima de theme3) copiar las imagenes de fabrica
+# con el tema de ByOS en /usr/data (se monta encima de theme3) copiar las imagenes de fabrica
 # es duplicarlas: ~7 MB que no caben junto al resto. Solo hacen falta sin tema propio.
 [ -d /usr/data/hibymod/theme/litegui/theme3 ] && RESDIRS=""
 

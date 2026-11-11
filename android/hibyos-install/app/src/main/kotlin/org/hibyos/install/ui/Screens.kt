@@ -53,7 +53,7 @@ import org.hibyos.install.mb
 
 const val PROJECT_URL = "https://github.com/Grohle/hibyos"
 
-/** The whole app: the screen on top of the stack, sliding like the screens of HiByOS do. */
+/** The whole app: the screen on top of the stack, sliding like the screens of ByOS do. */
 @Composable
 fun App(state: UiState, actions: Actions) {
     AnimatedContent(
@@ -112,7 +112,7 @@ private fun stepScreen(n: Int): Screen = when (n) {
 
 private fun buttons(content: @Composable ColumnScope.() -> Unit): @Composable ColumnScope.() -> Unit = content
 
-/** The label of "back": the title of the screen it returns to when that is short, as HiByOS does. */
+/** The label of "back": the title of the screen it returns to when that is short, as ByOS does. */
 @Composable
 private fun backLabel(s: UiState, screen: Screen): String {
     val previous = remember { s.stack.getOrNull(s.stack.indexOf(screen) - 1) }

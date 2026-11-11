@@ -57,7 +57,7 @@ BIN_PATCHES = [
 ]
 
 
-# The overlay holds only files written for HiByOS. It may replace an official file only when
+# The overlay holds only files written for ByOS. It may replace an official file only when
 # that file is an image (our own artwork under HiBy's file name). Any other official file is
 # changed through TEXT_PATCHES, BIN_PATCHES or tools/vendor_edits.json, which carry the change
 # and not HiBy's text; putting an edited copy of it in overlay/ aborts the build.
@@ -227,7 +227,7 @@ def build_rootfs(stock_sqfs, overlay, work):
                 os.chmod(dst, mode)
                 print("  overlay:", rel)
 
-    # edits to HiBy's own files: the HiByOS version is rebuilt from the official copy and
+    # edits to HiBy's own files: the ByOS version is rebuilt from the official copy and
     # replaces it exactly like an overlay file would (new file, original mode and owner)
     for e in edits:
         p = os.path.join(root, e["path"])

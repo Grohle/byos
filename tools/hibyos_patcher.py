@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-HiByOS patcher: turns YOUR copy of the official HiBy R3 II (2025) firmware v1.3
-(r3ii_2025.upt) into the HiByOS firmware, on your own computer.
+ByOS patcher: turns YOUR copy of the official HiBy R3 II (2025) firmware v1.3
+(r3ii_2025.upt) into the ByOS firmware, on your own computer.
 
-HiByOS does not redistribute HiBy's firmware. This program only contains the HiByOS
+ByOS does not redistribute HiBy's firmware. This program only contains the ByOS
 files (the "overlay") and the list of changes (tools/build.py and tools/vendor_edits.json,
 which store our changes and none of HiBy's text); it modifies your copy locally.
 
 Pure Python, no external tools, no root/admin rights:
-  Windows:      HiByOS-Patcher.exe path\\to\\r3ii_2025.upt   (or drag the .upt onto the .exe)
+  Windows:      ByOS-Patcher.exe path\\to\\r3ii_2025.upt   (or drag the .upt onto the .exe)
   macOS/Linux:  python3 hibyos_patcher.py /path/to/r3ii_2025.upt
 
-The result is written to a "HiByOS-<version>" folder next to the input file.
+The result is written to a "ByOS-<version>" folder next to the input file.
 It produces the same root filesystem content as tools/build.py (the Linux build), see
 docs/PATCHER.md. Unlike build.py it does not recompress HiBy's data: the compressed blocks
 of untouched files are copied byte for byte.
@@ -70,14 +70,14 @@ def find_overlay(cli):
     for c in cands:
         if c and os.path.isfile(os.path.join(c, "usr", "bin", "hibymod")):
             return os.path.abspath(c)
-    raise PatchError("the HiByOS files (overlay folder) were not found next to the patcher")
+    raise PatchError("the ByOS files (overlay folder) were not found next to the patcher")
 
 
 def hibyos_version(overlay):
     t = open(os.path.join(overlay, "usr", "bin", "hibymod"), "rb").read().decode("utf-8", "replace")
-    m = re.search(r"HiByOS (\d+(?:\.\d+)+)", t)
+    m = re.search(r"ByOS (\d+(?:\.\d+)+)", t)
     if not m:
-        raise PatchError("cannot read the HiByOS version from the overlay")
+        raise PatchError("cannot read the ByOS version from the overlay")
     return m.group(1)
 
 
@@ -157,7 +157,7 @@ def apply_overlay(root, overlay, mtime, edited=()):
 
 
 def apply_vendor_edits(img, root, edits, mtime, log):
-    """tools/vendor_edits.json: rebuild the HiByOS version of a few official files from the copy
+    """tools/vendor_edits.json: rebuild the ByOS version of a few official files from the copy
     in this firmware. The new file replaces the official one exactly like an overlay file
     (new inode, original mode and owner)."""
     for e in edits:
@@ -269,7 +269,7 @@ def patch(upt_path, out_dir=None, overlay=None, build_id=None):
     t0 = time.time()
     overlay = find_overlay(overlay)
     version = hibyos_version(overlay)
-    print(f"HiByOS patcher {version}")
+    print(f"ByOS patcher {version}")
 
     step("Checking the official firmware")
     upt_path = os.path.abspath(upt_path)
@@ -280,7 +280,7 @@ def patch(upt_path, out_dir=None, overlay=None, build_id=None):
         raise PatchError("this is not the supported official firmware.\n"
                          f"   your file: {got}\n"
                          f"   expected:  {SUPPORTED_MD5}  (HiBy R3 II 2025, firmware v1.3 of 2 March 2026)\n"
-                         "   HiByOS only patches that exact file. Nothing was changed.")
+                         "   ByOS only patches that exact file. Nothing was changed.")
     info("OK: HiBy R3 II (2025) firmware v1.3")
 
     step("Reading the firmware")
@@ -300,14 +300,14 @@ def patch(upt_path, out_dir=None, overlay=None, build_id=None):
     root = img.read_tree()
     info(f"root filesystem: {img.inode_count} inodes, {len(list(squashfs.walk(root)))} entries")
 
-    step("Applying the HiByOS changes")
+    step("Applying the ByOS changes")
     normalize_like_build_py(root)
     try:
         edits = vendor_edits.load()
     except (OSError, ValueError, KeyError, vendor_edits.EditError) as e:
         raise PatchError(f"cannot read the list of edits (vendor_edits.json): {e}")
     n = apply_overlay(root, overlay, img.mtime, {e["path"] for e in edits})
-    info(f"{n} HiByOS files added or replaced")
+    info(f"{n} ByOS files added or replaced")
     n = apply_vendor_edits(img, root, edits, img.mtime, lambda m: None)
     info(f"{n} official files edited in place (start-up scripts and screen layouts)")
     bid = build_id or uuid.uuid4().hex
@@ -334,8 +334,8 @@ def patch(upt_path, out_dir=None, overlay=None, build_id=None):
     entries, nfiles = verify_rootfs(new_rdata, img, root)
     info(f"OK: {entries} entries, {nfiles} files identical to the intended content")
 
-    step("Writing the HiByOS firmware")
-    out_dir = os.path.abspath(out_dir or os.path.join(os.path.dirname(upt_path), f"HiByOS-{version}"))
+    step("Writing the ByOS firmware")
+    out_dir = os.path.abspath(out_dir or os.path.join(os.path.dirname(upt_path), f"ByOS-{version}"))
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, OUT_NAME)
     if os.path.normcase(os.path.abspath(out)) == os.path.normcase(upt_path):
@@ -370,18 +370,18 @@ def patch(upt_path, out_dir=None, overlay=None, build_id=None):
             os.remove(tmp)
         raise
     print(f"\nDONE in {time.time() - t0:.0f} s.\n"
-          f"HiByOS firmware: {out}\n"
+          f"ByOS firmware: {out}\n"
           f"   size {os.path.getsize(out)} bytes, md5 {file_md5(out)}\n\n"
-          "Next: copy this r3ii_2025.upt and the HiByOS/ folder from the release to the root\n"
+          "Next: copy this r3ii_2025.upt and the ByOS/ folder from the release to the root\n"
           "of the SD card, then on the player: Settings > Firmware update > Via SD card.")
     return out
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Turn the official HiBy R3 II (2025) firmware v1.3 "
-                                             "into the HiByOS firmware.")
+                                             "into the ByOS firmware.")
     ap.add_argument("upt", nargs="?", help="the official r3ii_2025.upt downloaded from HiBy")
-    ap.add_argument("--out-dir", help="output folder (default: HiByOS-<version> next to the input)")
+    ap.add_argument("--out-dir", help="output folder (default: ByOS-<version> next to the input)")
     ap.add_argument("--no-pause", action="store_true", help="do not wait for Enter at the end (Windows)")
     ap.add_argument("--overlay", help=argparse.SUPPRESS)
     ap.add_argument("--build-id", help=argparse.SUPPRESS)
@@ -391,7 +391,7 @@ def main(argv=None):
     try:
         path = a.upt
         if not path:
-            print("HiByOS patcher: turns the official HiBy R3 II (2025) firmware v1.3 into HiByOS.")
+            print("ByOS patcher: turns the official HiBy R3 II (2025) firmware v1.3 into ByOS.")
             print("Drag the official r3ii_2025.upt onto this window (or type its path) and press Enter.")
             path = input("> ").strip()
             if path.startswith("& "):

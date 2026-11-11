@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Packages the HiByOS patcher (tools/hibyos_patcher.py).
+Packages the ByOS patcher (tools/hibyos_patcher.py).
 
   python tools/build_patcher.py [--out DIR]   (Windows: builds the .exe too)
 
 Produces in out/patcher/ (or DIR):
-  HiByOS-Patcher.exe                        (Windows only, PyInstaller one-file console app)
-  HiByOS-Patcher-<version>-windows.zip      (the .exe + README.txt + licenses/)
-  HiByOS-Patcher-<version>-python.zip       (pure Python version for macOS/Linux/Windows:
+  ByOS-Patcher.exe                        (Windows only, PyInstaller one-file console app)
+  ByOS-Patcher-<version>-windows.zip      (the .exe + README.txt + licenses/)
+  ByOS-Patcher-<version>-python.zip       (pure Python version for macOS/Linux/Windows:
                                              patcher modules + overlay + bundled pycdlib
                                              + licenses/)
 
@@ -18,7 +18,7 @@ non-image file that would replace an official file.
 
 Both zips carry licenses/ (THIRD_PARTY_NOTICES.md and the licence texts of the third-party
 components inside that artefact, chosen by tools/notices.py). Publish the zips: the bare
-HiByOS-Patcher.exe has no room for the notices next to it.
+ByOS-Patcher.exe has no room for the notices next to it.
 
 If PyInstaller or pycdlib are missing, a private virtual environment is created in
 out/patcher/venv (out/ is not tracked by git) and the script re-runs itself there.
@@ -42,20 +42,20 @@ MODULES = ["hibyos_patcher.py", "build.py", "vendor_edits.py", "squashfs.py", "l
 DATA = ["vendor_edits.json"]
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
 
-README_WIN = """HiByOS patcher {v} for Windows
+README_WIN = """ByOS patcher {v} for Windows
 ================================
 
-HiByOS does not include HiBy's firmware. This program turns YOUR copy of the official
-HiBy R3 II (2025) firmware v1.3 into the HiByOS firmware, on your computer.
+ByOS does not include HiBy's firmware. This program turns YOUR copy of the official
+HiBy R3 II (2025) firmware v1.3 into the ByOS firmware, on your computer.
 
 1. Download the official firmware r3ii_2025.upt (v1.3) from HiBy's website.
-2. Drag r3ii_2025.upt onto HiByOS-Patcher.exe
-   (or double-click HiByOS-Patcher.exe and drag the file into the window, then Enter;
-    or from a terminal: HiByOS-Patcher.exe C:\\path\\to\\r3ii_2025.upt).
-3. The HiByOS firmware is written to a "HiByOS-{v}" folder next to your official file:
-      HiByOS-{v}\\r3ii_2025.upt
+2. Drag r3ii_2025.upt onto ByOS-Patcher.exe
+   (or double-click ByOS-Patcher.exe and drag the file into the window, then Enter;
+    or from a terminal: ByOS-Patcher.exe C:\\path\\to\\r3ii_2025.upt).
+3. The ByOS firmware is written to a "ByOS-{v}" folder next to your official file:
+      ByOS-{v}\\r3ii_2025.upt
    Your original file is never modified.
-4. Copy that r3ii_2025.upt and the HiByOS/ folder from the release to the root of the
+4. Copy that r3ii_2025.upt and the ByOS/ folder from the release to the root of the
    SD card, then on the player: Settings > Firmware update > Via SD card.
 
 The patcher only accepts the exact official file (md5 0d16d09c1458dd2f2cdaf38d0047917a).
@@ -67,11 +67,11 @@ pycdlib and a few small programs that it adds to the firmware. Their notices and
 texts are in the "licenses" folder; start with the file THIRD_PARTY_NOTICES.md in it.
 """
 
-README_PY = """HiByOS patcher {v} (Python version: macOS, Linux, Windows)
+README_PY = """ByOS patcher {v} (Python version: macOS, Linux, Windows)
 ==========================================================
 
-HiByOS does not include HiBy's firmware. This program turns YOUR copy of the official
-HiBy R3 II (2025) firmware v1.3 into the HiByOS firmware, on your computer.
+ByOS does not include HiBy's firmware. This program turns YOUR copy of the official
+HiBy R3 II (2025) firmware v1.3 into the ByOS firmware, on your computer.
 It is pure Python: no other tools, no root/administrator rights.
 
 Requirements: Python 3.8 or newer (macOS: python.org installer or Homebrew; Linux: the
@@ -82,10 +82,10 @@ vendor/pycdlib-LICENSE.txt), nothing to install.
 2. Open a terminal in this folder and run:
       python3 hibyos_patcher.py /path/to/r3ii_2025.upt
    (Windows: py hibyos_patcher.py C:\\path\\to\\r3ii_2025.upt)
-3. The HiByOS firmware is written to a "HiByOS-{v}" folder next to your official file:
-      HiByOS-{v}/r3ii_2025.upt
+3. The ByOS firmware is written to a "ByOS-{v}" folder next to your official file:
+      ByOS-{v}/r3ii_2025.upt
    Your original file is never modified.
-4. Copy that r3ii_2025.upt and the HiByOS/ folder from the release to the root of the
+4. Copy that r3ii_2025.upt and the ByOS/ folder from the release to the root of the
    SD card, then on the player: Settings > Firmware update > Via SD card.
 
 The patcher only accepts the exact official file (md5 0d16d09c1458dd2f2cdaf38d0047917a).
@@ -99,7 +99,7 @@ with licenses/THIRD_PARTY_NOTICES.md.
 
 def version():
     t = open(os.path.join(REPO, "overlay", "usr", "bin", "hibymod"), encoding="utf-8").read()
-    return re.search(r"HiByOS (\d+(?:\.\d+)+)", t).group(1)
+    return re.search(r"ByOS (\d+(?:\.\d+)+)", t).group(1)
 
 
 def ensure_tools():
@@ -166,11 +166,11 @@ def main():
     problems = notices.check()
     if problems:
         sys.exit("ERROR: third-party notices incomplete:\n  " + "\n  ".join(problems))
-    print("HiByOS patcher", v)
+    print("ByOS patcher", v)
 
     # ---- pure Python zip
-    pyzip = os.path.join(OUT, f"HiByOS-Patcher-{v}-python.zip")
-    top = f"HiByOS-Patcher-{v}"
+    pyzip = os.path.join(OUT, f"ByOS-Patcher-{v}-python.zip")
+    top = f"ByOS-Patcher-{v}"
     pkg, lic = pycdlib_files()
     with zipfile.ZipFile(pyzip, "w") as z:
         add_file(z, None, f"{top}/README.txt", README_PY.format(v=v).encode())
@@ -198,7 +198,7 @@ def main():
     work = os.path.join(OUT, "build")
     shutil.rmtree(work, ignore_errors=True)
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--console",
-           "--name", "HiByOS-Patcher", "--distpath", OUT, "--workpath", work, "--specpath", work,
+           "--name", "ByOS-Patcher", "--distpath", OUT, "--workpath", work, "--specpath", work,
            "--paths", TOOLS, "--hidden-import", "build", "--hidden-import", "squashfs",
            "--hidden-import", "lzo1x", "--hidden-import", "vendor_edits", "--exclude-module", "tkinter",
            "--add-data", os.path.join(REPO, "overlay") + os.pathsep + "overlay"]
@@ -207,13 +207,13 @@ def main():
     cmd.append(os.path.join(TOOLS, "hibyos_patcher.py"))
     print("+", " ".join(cmd))
     subprocess.check_call(cmd)
-    exe = os.path.join(OUT, "HiByOS-Patcher.exe")
-    winzip = os.path.join(OUT, f"HiByOS-Patcher-{v}-windows.zip")
+    exe = os.path.join(OUT, "ByOS-Patcher.exe")
+    winzip = os.path.join(OUT, f"ByOS-Patcher-{v}-windows.zip")
     with zipfile.ZipFile(winzip, "w") as z:
-        add_file(z, exe, f"HiByOS-Patcher-{v}/HiByOS-Patcher.exe")
-        add_file(z, None, f"HiByOS-Patcher-{v}/README.txt",
+        add_file(z, exe, f"ByOS-Patcher-{v}/ByOS-Patcher.exe")
+        add_file(z, None, f"ByOS-Patcher-{v}/README.txt",
                  README_WIN.format(v=v).replace("\n", "\r\n").encode())
-        add_notices(z, "patcher-windows", f"HiByOS-Patcher-{v}/licenses")
+        add_notices(z, "patcher-windows", f"ByOS-Patcher-{v}/licenses")
     print("->", exe, os.path.getsize(exe), "bytes")
     print("->", winzip, os.path.getsize(winzip), "bytes")
 

@@ -310,11 +310,11 @@ static void app_backup(const struct hpk_info *in)
 }
 /* ------------------------------------------------------------------ apps en la tarjeta SD
  * La SD (exfat, fmask 0022, sin noexec) admite ejecutar binarios. Una app "en la SD" se instala
- * con el mismo instalador atomico pero con la raiz en SD_APPROOT (SD/HiByOS/apps/<id>/), y en
+ * con el mismo instalador atomico pero con la raiz en SD_APPROOT (SD/ByOS/apps/<id>/), y en
  * /usr/data/hibymod/apps/<id>/ queda un "talon" pequeno: manifest.ini + icon_*.ov + sd_location
  * (ruta real). Asi el launcher y la lista de instaladas no cambian; run_ext_app() lanza desde la
  * ruta real. Sus datos (appdata/<id>) siguen en /usr/data. Ver docs/STORE.md. */
-#define SD_APPROOT SD_ROOT "/HiByOS"
+#define SD_APPROOT SD_ROOT "/ByOS"
 static int sd_present(void)
 {
     struct stat a, b;
@@ -464,7 +464,7 @@ static void sd_recover(void)
 
 static int st_open_after = -1;      /* app que abrir al salir de la tienda */
 /* Desinstalar desde el inicio (menu de la app) o desde Apps. Las de un paquete se desinstalan
- * (sus datos se conservan); las incluidas con HiByOS salen del inicio y se reinstalan desde Apps. */
+ * (sus datos se conservan); las incluidas con ByOS salen del inicio y se reinstalan desde Apps. */
 static int app_uninstall_home(int a)
 {
     if (!app_removable(a)) return 0;
@@ -731,7 +731,7 @@ static void st_repos_load(void)
 static void st_repos_save(void)
 {
     FILE *f = fopen(ST_REPOS_CONF ".tmp", "w"); if (!f) return;
-    fprintf(f, "# repositorios de la tienda (uno por linea; el de HiByOS siempre esta)\n");
+    fprintf(f, "# repositorios de la tienda (uno por linea; el de ByOS siempre esta)\n");
     for (int i = 1; i < st_nrepo; i++) fprintf(f, "%s\n", st_repos[i].url);
     fflush(f); fsync(fileno(f)); fclose(f);
     rename(ST_REPOS_CONF ".tmp", ST_REPOS_CONF);
@@ -803,7 +803,7 @@ static void st_parse_repo(int r)
         if (!hpk_valid_id(a.id) || hpk_semver(a.version, sv) || !a.name[0]) continue;
         if (!a.unavailable && (!st_url_ok(a.hpk_url) || !st_hex64(a.sha))) continue;
         int dup = st_app_find(a.id);
-        if (dup >= 0) continue;            /* el repositorio anterior (el de HiByOS primero) manda */
+        if (dup >= 0) continue;            /* el repositorio anterior (el de ByOS primero) manda */
         st_lower(a.name, a.lname, sizeof a.lname); st_lower(a.desc, a.ldesc, sizeof a.ldesc);
         st_apps[st_napp++] = a; R->napps++;
     }
@@ -1394,13 +1394,13 @@ static int st_render_today(uint16_t *d, int y0)
     if (!shown) y += st_status_msg(d, y);
     return y - y0 + 10;
 }
-/* apps incluidas con HiByOS que se pueden desinstalar (inst_only: solo las que siguen instaladas) */
+/* apps incluidas con ByOS que se pueden desinstalar (inst_only: solo las que siguen instaladas) */
 static int st_sys_rows(uint16_t *d, int y, int inst_only)
 {
     int y0 = y, n = 0;
     for (int k = 0; k < NSYSREM; k++) { int a = app_find(sys_removable[k]); if (a >= 0 && !(inst_only && app_removed[a])) n++; }
     if (!n) return 0;
-    y += 18; st_section(d, y + 14, tr("INCLUIDAS CON HiByOS")); y += 22;
+    y += 18; st_section(d, y + 14, tr("INCLUIDAS CON ByOS")); y += 22;
     for (int k = 0, m = 0; k < NSYSREM; k++) {
         int a = app_find(sys_removable[k]); if (a < 0 || (inst_only && app_removed[a])) continue;
         m++;
@@ -1409,7 +1409,7 @@ static int st_sys_rows(uint16_t *d, int y, int inst_only)
             st_icon_box(d, &apps[a].icon[0], 16, y + 8, 48);
             int pw = st_pill(d, W - 16, y + 18, app_removed[a] ? S_GET : S_OPEN, 0, 0, st_press_kind == HT_SYSPILL && st_press_idx == k);
             draw_text(d, 76, y + 28, app_label(a), 15, 0xFFFF, W - 76 - pw - 26, ST_TOP, ST_TABY);
-            draw_text(d, 76, y + 46, tr("Incluida con HiByOS"), 12, rgb(142, 142, 147), W - 76 - pw - 26, ST_TOP, ST_TABY);
+            draw_text(d, 76, y + 46, tr("Incluida con ByOS"), 12, rgb(142, 142, 147), W - 76 - pw - 26, ST_TOP, ST_TABY);
             st_hit_add(0, y, W - 16 - pw - 6, y + ST_ROW, HT_SYS, k);
             st_hit_add(W - 16 - pw - 6, y, W, y + ST_ROW, HT_SYSPILL, k);
             if (m < n) st_hline(d, 76, W, y + ST_ROW - 1, rgb(38, 38, 40));
@@ -1656,7 +1656,7 @@ static void st_render_detail(uint16_t *d, int rec)
         draw_text(d, 126 + (pw - tw_n(t, 14, -1)) / 2, y + 84, t, 14, s == S_OPEN ? rgb(10, 132, 255) : s == S_NEWER || s == S_TESTING ? rgb(99, 99, 102) : 0xFFFF, 0, ST_TOP, ST_TABY);
         st_hit_add(120, y + 58, 126 + pw + 8, y + 100, HT_PILL, st_detail);
     }
-    if (s == S_NEWER) draw_text(d, 126, y + 112, tr("Necesita una versión más nueva de HiByOS"), 11, rgb(255, 159, 10), W - 140, ST_TOP, ST_TABY);
+    if (s == S_NEWER) draw_text(d, 126, y + 112, tr("Necesita una versión más nueva de ByOS"), 11, rgb(255, 159, 10), W - 140, ST_TOP, ST_TABY);
     if (s == S_TESTING) draw_text(d, 126, y + 112, tr("En pruebas: todavía no se puede instalar"), 11, rgb(255, 159, 10), W - 140, ST_TOP, ST_TABY);
     y += 124;
     /* franja de datos: tamano, version, memoria */
@@ -1756,7 +1756,7 @@ static void st_action_pill(int i, int *quit)
     int s = st_state(i);
     if (s == S_LOADING) { st_job_kill(&st_dl); unlink(st_dl.out); st_dl_app = -1; return; }   /* tocar el anillo cancela */
     if (s == S_INSTALLING) return;
-    if (s == S_NEWER) { toast(tr("Necesita una versión más nueva de HiByOS")); return; }
+    if (s == S_NEWER) { toast(tr("Necesita una versión más nueva de ByOS")); return; }
     if (s == S_TESTING) { toast(tr("En pruebas: todavía no se puede instalar")); return; }
     const struct hpk_info *in = st_installed(st_apps[i].id);
     if (s == S_OPEN) {
@@ -2096,7 +2096,7 @@ static void store_app_ui(int ix, int iy)
     if (st_open_after >= 0) {                                     /* ABRIR: la app sale del centro */
         st_detail = -1;
         if (apps[st_open_after].act == ACT_EXT) run_ext_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);
-        else launch_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);    /* incluida con HiByOS */
+        else launch_app(st_open_after, W / 2 - L.icon / 2, H / 2 - L.icon / 2);    /* incluida con ByOS */
         return;
     }
     if (st_gone) { st_detail = -1; launcher_present(); return; }  /* el gesto de inicio ya lo animo */

@@ -91,7 +91,7 @@ home, swipe up and hold still for 1 s for multitasking.
 - Not implemented: AirPods "find" (not part of the protocol over classic Bluetooth), per-side
   press-and-hold actions for AirPods, Galaxy game mode and 360 audio.
 - Same open question as Wireless: whether the player switches its audio output after a
-  connection started by HiByOS.
+  connection started by ByOS.
 
 ## Technical notes
 

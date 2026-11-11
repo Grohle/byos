@@ -3,7 +3,7 @@
 # Prepares a private copy of the QEMU harness for running hibyshell (docs/VM_SHELL.md):
 #   $VMDIR (default ~/hiby/vm_store): run_vm.sh + own rootfs copy + own share/, so it never
 #   collides with experiments in ~/hiby/vm; qemu/ and out/ (kernel) are symlinked from there.
-#   $VMDIR/share/hs: hm_vmplayer, hibyinput (with touch log), the shell, its assets (HiByOS SD
+#   $VMDIR/share/hs: hm_vmplayer, hibyinput (with touch log), the shell, its assets (ByOS SD
 #   payload), hibynet + cacert.pem, the firmware font, a local test repository and SD packages.
 # The guest side is guest/shell_vm.sh (copied to share/hs) started by share/autorun.sh at boot.
 set -e
@@ -28,8 +28,8 @@ $Z -target mipsel-linux-musleabihf -I$R/src -o $S/bin/hm_vmplayer $H/tools/hm_vm
 $Z -target mipsel-linux-musleabi -msoft-float -o $S/bin/hibyinput $H/tools/hibyinput.c
 cp "$SHELL_BIN" $S/bin/hibyshell
 
-# /usr/data/hibymod/shell of the device: assets of the HiByOS SD payload + hibynet + CA bundle
-P=$R/out/sd/HiByOS/payload
+# /usr/data/hibymod/shell of the device: assets of the ByOS SD payload + hibynet + CA bundle
+P=$R/out/sd/ByOS/payload
 rm -rf $S/shell; mkdir -p $S/shell
 cp -r $P/shell/. $S/shell/
 cp $R/bin/hibynet $R/bin/cacert.pem $S/shell/

@@ -37,7 +37,7 @@ bar to go home.
 
 ## Install and uninstall
 
-Gutenberg comes preinstalled. It is listed in **Apps** under "Included with HiByOS", so you
+Gutenberg comes preinstalled. It is listed in **Apps** under "Included with ByOS", so you
 can uninstall it (long-press its icon › **Uninstall**, or from **Apps**) and reinstall it
 from the same place. Uninstalling it does not delete the books or audiobooks you downloaded.
 

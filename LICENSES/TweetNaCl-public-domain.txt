@@ -15,6 +15,6 @@ Contributors (alphabetical order, as listed on that page):
    Peter Schwabe, Radboud Universiteit Nijmegen
    Sjaak Smetsers, Radboud Universiteit Nijmegen
 
-HiByOS uses the Ed25519 field arithmetic and group law of tweetnacl.c, adapted,
+ByOS uses the Ed25519 field arithmetic and group law of tweetnacl.c, adapted,
 for signature verification only (src/ota_net.inc.c). The latest published
 version of TweetNaCl is 20140427.

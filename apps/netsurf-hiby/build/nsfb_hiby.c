@@ -1,5 +1,5 @@
 /*
- * libnsfb surface "linux" para HiBy R3 II dentro de HiByOS (app .hpk "Navegador").
+ * libnsfb surface "linux" para HiBy R3 II dentro de ByOS (app .hpk "Navegador").
  *
  * Pantalla: NetSurf pinta en un lienzo en RAM; al presentar se copia ENTERO al bufer oculto de
  * /dev/fb0 (320x480 RGB565, virtual 320x960) y despues se hace FBIOPAN_DISPLAY (que espera al

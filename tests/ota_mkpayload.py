@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic HiByOS payloads for tests/ota_test.sh (same layout as tools/make_payload.py, tiny
+"""Synthetic ByOS payloads for tests/ota_test.sh (same layout as tools/make_payload.py, tiny
 fake files; the real installer accepts them).
 
   ota_mkpayload.py OUT VERSION [--shell N] [--theme N] [--disp N] [--override] [--bad-manifest]

@@ -204,8 +204,8 @@ static const char *const TR[][3] = {
     { "Instalada", "Installed", "Installée" },
     { "Desinstalada", "Uninstalled", "Désinstallée" },
     { "Editar pantalla de inicio", "Edit Home Screen", "Modifier l’écran d’accueil" },
-    { "INCLUIDAS CON HiByOS", "INCLUDED WITH HiByOS", "INCLUSES AVEC HiByOS" },
-    { "Incluida con HiByOS", "Included with HiByOS", "Incluse avec HiByOS" },
+    { "INCLUIDAS CON ByOS", "INCLUDED WITH ByOS", "INCLUSES AVEC ByOS" },
+    { "Incluida con ByOS", "Included with ByOS", "Incluse avec ByOS" },
     { "¿Desinstalar la app? Puedes volver a instalarla desde Apps.", "Uninstall the app? You can install it again from Apps.", "Désinstaller l’app ? Vous pourrez la réinstaller depuis Apps." },
     { "¿Desinstalar la app? Sus datos se conservan.", "Uninstall the app? Its data is kept.", "Désinstaller l'app ? Ses données sont conservées." },
     { "ADB_HELP_WIFI", "On your computer run: adb connect ADDRESS (same Wi-Fi network). Android platform-tools must be installed.", "Sur l'ordinateur : adb connect ADRESSE (même réseau Wi-Fi). Les platform-tools d'Android doivent être installés." },
@@ -242,7 +242,7 @@ static const char *const TR[][3] = {
     { "REBOOT_HELP", "Some changes apply after restarting the HiBy.", "Certains changements s'appliquent après le redémarrage du HiBy." },
     { "PROYECTO", "PROJECT", "PROJET" },
     { "Código", "Source", "Code source" },
-    { "ABOUT_HELP", "HiByOS is a free community firmware for the HiBy R3 II, directed by Grohle and built mostly by AI agents. Not affiliated with HiBy.", "HiByOS est un firmware communautaire gratuit pour le HiBy R3 II, dirigé par Grohle et réalisé en grande partie par des agents d'IA. Non affilié à HiBy." },
+    { "ABOUT_HELP", "ByOS is a free community firmware for the HiBy R3 II, directed by Grohle and built mostly by AI agents. Not affiliated with HiBy.", "ByOS est un firmware communautaire gratuit pour le HiBy R3 II, dirigé par Grohle et réalisé en grande partie par des agents d'IA. Non affilié à HiBy." },
     { "Centro de control", "Control Center", "Centre de contrôle" },
     { "CONTROLES", "CONTROLS", "COMMANDES" },
     { "Solo USB", "USB only", "USB seul" },
@@ -306,15 +306,15 @@ static const char *const TR[][3] = {
     { "EN LA TARJETA SD", "ON THE SD CARD", "SUR LA CARTE SD" },
     { "Firmware oficial de HiBy", "Official HiBy firmware", "Firmware officiel HiBy" },
     { "Oficial (raíz de la SD)", "Official (SD root)", "Officiel (racine de la SD)" },
-    { "HiByOS (raíz de la SD)", "HiByOS (SD root)", "HiByOS (racine de la SD)" },
+    { "ByOS (raíz de la SD)", "ByOS (SD root)", "ByOS (racine de la SD)" },
     { "Instalar el oficial", "Install official", "Installer l'officiel" },
     { "¿Instalar este firmware? El HiBy se reiniciará y tardará un minuto.", "Install this firmware? The HiBy will restart and take about a minute.", "Installer ce firmware ? Le HiBy va redémarrer, cela prend une minute." },
     { "Preparando la actualización", "Preparing the update", "Préparation de la mise à jour" },
     { "No se pudo copiar el firmware", "Couldn't copy the firmware", "Impossible de copier le firmware" },
     { "Reiniciando para actualizar…", "Restarting to update…", "Redémarrage pour la mise à jour…" },
-    { "OTA_OFFICIAL_WARN", "Going back to the official firmware is untested. HiByOS will be removed; your data in /usr/data is kept. The HiBy will restart to install it.", "Le retour au firmware officiel n'est pas testé. HiByOS sera supprimé ; vos données de /usr/data sont conservées. Le HiBy va redémarrer pour l'installer." },
-    { "OTA_HELP", "Firmware found on the SD (SD/HiByOS/firmware for HiByOS, SD/hibymod/oficial for the official one, or r3ii_2025.upt at the root). Choose one to install it with the official recovery.", "Firmwares trouvés sur la SD (SD/HiByOS/firmware pour HiByOS, SD/hibymod/oficial pour l'officiel, ou r3ii_2025.upt à la racine). Choisissez-en un pour l'installer avec le recovery officiel." },
-    { "OTA_NONE", "No firmware on the SD. Copy HiByOS to SD/HiByOS/firmware, the official one to SD/hibymod/oficial, or an r3ii_2025.upt to the root of the SD.", "Aucun firmware sur la SD. Copiez celui de HiByOS dans SD/HiByOS/firmware, l'officiel dans SD/hibymod/oficial, ou un r3ii_2025.upt à la racine de la SD." },
+    { "OTA_OFFICIAL_WARN", "Going back to the official firmware is untested. ByOS will be removed; your data in /usr/data is kept. The HiBy will restart to install it.", "Le retour au firmware officiel n'est pas testé. ByOS sera supprimé ; vos données de /usr/data sont conservées. Le HiBy va redémarrer pour l'installer." },
+    { "OTA_HELP", "Firmware found on the SD (SD/ByOS/firmware for ByOS, SD/hibymod/oficial for the official one, or r3ii_2025.upt at the root). Choose one to install it with the official recovery.", "Firmwares trouvés sur la SD (SD/ByOS/firmware pour ByOS, SD/hibymod/oficial pour l'officiel, ou r3ii_2025.upt à la racine). Choisissez-en un pour l'installer avec le recovery officiel." },
+    { "OTA_NONE", "No firmware on the SD. Copy ByOS to SD/ByOS/firmware, the official one to SD/hibymod/oficial, or an r3ii_2025.upt to the root of the SD.", "Aucun firmware sur la SD. Copiez celui de ByOS dans SD/ByOS/firmware, l'officiel dans SD/hibymod/oficial, ou un r3ii_2025.upt à la racine de la SD." },
     { "45 Hz (de serie)", "45 Hz (stock)", "45 Hz (d'origine)" },
     { "60 Hz", "60 Hz", "60 Hz" },
     { "GitHub", "GitHub", "GitHub" },
@@ -348,7 +348,7 @@ static const char *const TR[][3] = {
     { "Mover al HiBy", "Move to HiBy", "Déplacer sur le HiBy" },
     { "La descarga está dañada (sha256)", "The download is damaged (sha256)", "Le téléchargement est endommagé (sha256)" },
     { "Espera a que termine la descarga", "Wait for the download to finish", "Attendez la fin du téléchargement" },
-    { "Necesita una versión más nueva de HiByOS", "Requires a newer HiByOS", "Nécessite un HiByOS plus récent" },
+    { "Necesita una versión más nueva de ByOS", "Requires a newer ByOS", "Nécessite un ByOS plus récent" },
     { "TAMAÑO", "SIZE", "TAILLE" },
     { "VERSIÓN", "VERSION", "VERSION" },
     { "MEMORIA", "MEMORY", "MÉMOIRE" },
@@ -521,15 +521,15 @@ static const char *tr_es_long(const char *k)
     if (!strcmp(k, "TF_HELP")) return "Guarda la base de datos de música y la caché de carátulas en la SD en lugar de la memoria interna: más rápido con bibliotecas grandes y menos desgaste. Requiere reiniciar y volver a escanear la biblioteca.";
     if (!strcmp(k, "HIDDEN_HELP")) return "El modo coche (reproduce al recibir corriente USB y se apaga al quitarla), el standby, el doble toque para despertar y no cargar en modo DAC aparecen ya en los Ajustes del sistema de HiBy.";
     if (!strcmp(k, "REBOOT_HELP")) return "Algunos cambios se aplican al reiniciar el HiBy.";
-    if (!strcmp(k, "ABOUT_HELP")) return "HiByOS es un firmware comunitario y gratuito para el HiBy R3 II, dirigido por Grohle y construido en su mayor parte por agentes de IA. Sin relación con HiBy.";
+    if (!strcmp(k, "ABOUT_HELP")) return "ByOS es un firmware comunitario y gratuito para el HiBy R3 II, dirigido por Grohle y construido en su mayor parte por agentes de IA. Sin relación con HiBy.";
     if (!strcmp(k, "CC_HELP")) return "Elige los controles del Centro de control (desliza desde arriba).";
     if (!strcmp(k, "POWER_HELP")) return "Ahorro: animaciones a 30 fps y brillo como mucho al 40 %. Normal: 45 fps, el máximo del panel, como el firmware de HiBy. Rendimiento: de momento igual que Normal (la pantalla se queda a 45 Hz por seguridad). En todos los modos el audio tiene prioridad de tiempo real: las animaciones nunca le quitan CPU.";
     if (!strcmp(k, "NOCHARGE_HELP")) return "El HiBy funciona con la corriente del USB sin cargar la batería: ideal para sesiones largas enchufado (DAC, escritorio).";
     if (!strcmp(k, "ADB_HELP_OFF")) return "ADB permite que un ordenador controle el HiBy (herramientas de desarrollo). Déjalo desactivado si no lo usas.";
     if (!strcmp(k, "LANG_SYS_HELP")) return "Sigue el idioma elegido en los ajustes del propio HiBy.";
-    if (!strcmp(k, "OTA_OFFICIAL_WARN")) return "Volver al firmware oficial no está probado. Se quitará HiByOS; tus datos de /usr/data se conservan. El HiBy se reiniciará para instalarlo.";
-    if (!strcmp(k, "OTA_HELP")) return "Firmwares encontrados en la SD (SD/HiByOS/firmware para HiByOS, SD/hibymod/oficial para el oficial, o r3ii_2025.upt en la raíz). Elige uno para instalarlo con el recovery oficial.";
-    if (!strcmp(k, "OTA_NONE")) return "No hay firmware en la SD. Copia el de HiByOS en SD/HiByOS/firmware, el oficial en SD/hibymod/oficial, o un r3ii_2025.upt en la raíz de la SD.";
+    if (!strcmp(k, "OTA_OFFICIAL_WARN")) return "Volver al firmware oficial no está probado. Se quitará ByOS; tus datos de /usr/data se conservan. El HiBy se reiniciará para instalarlo.";
+    if (!strcmp(k, "OTA_HELP")) return "Firmwares encontrados en la SD (SD/ByOS/firmware para ByOS, SD/hibymod/oficial para el oficial, o r3ii_2025.upt en la raíz). Elige uno para instalarlo con el recovery oficial.";
+    if (!strcmp(k, "OTA_NONE")) return "No hay firmware en la SD. Copia el de ByOS en SD/ByOS/firmware, el oficial en SD/hibymod/oficial, o un r3ii_2025.upt en la raíz de la SD.";
     if (!strcmp(k, "WIDGETS_HELP")) return "Elige qué widgets aparecen en la página a la izquierda del inicio.";
     return 0;
 }

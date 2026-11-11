@@ -4,7 +4,7 @@ LZO1X-1 style compressor whose output is a standard LZO1X stream (readable by
 liblzo2's lzo1x_decompress_safe and by the Linux kernel's lzo decompressor, which is
 what squashfs uses).
 
-Used by the HiByOS patcher (tools/hibyos_patcher.py) so that it needs no native
+Used by the ByOS patcher (tools/hibyos_patcher.py) so that it needs no native
 libraries. Speed is modest (a few MB/s at best), which is fine for the small amount of
 data the patcher has to (de)compress.
 """

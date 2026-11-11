@@ -1,4 +1,4 @@
-# HiByOS App Store
+# ByOS App Store
 
 The **Apps** app (`src/store.inc.c`) is a lightweight store in the style of the iOS App Store that
 serves three purposes:
@@ -66,7 +66,7 @@ A repository is **the URL of an `index.json`** over HTTPS (`http://` also works)
   `https://raw.githubusercontent.com/Grohle/hibyos/main/repo/index.json`.
 - The others are stored in `/usr/data/hibymod/store_repos.conf`, one per line, with a maximum of
   8 repositories.
-- If two repositories publish the same `id`, the one earlier in the list wins (HiByOS's comes
+- If two repositories publish the same `id`, the one earlier in the list wins (ByOS's comes
   first).
 
 ### `index.json` format (version 1)
@@ -74,7 +74,7 @@ A repository is **the URL of an `index.json`** over HTTPS (`http://` also works)
 ```json
 {
  "format": 1,
- "name": {"es": "HiByOS", "en": "HiByOS", "fr": "HiByOS"},
+ "name": {"es": "ByOS", "en": "ByOS", "fr": "ByOS"},
  "homepage": "https://github.com/Grohle/hibyos",
  "apps": [
   {
@@ -106,13 +106,13 @@ A repository is **the URL of an `index.json`** over HTTPS (`http://` also works)
 | `sha256` | yes | 64 hex digits of the `.hpk`. If it does not match, the package is deleted and not installed. |
 | `size` | recommended | Size of the `.hpk` in bytes. Used for progress, free-space checks and as an extra check. |
 | `icon` | recommended | Small square PNG (128×128 is enough, 512 px max, 1 MB max), absolute or relative. The house icon mask is applied to it. |
-| `min_hibymod` | recommended | If it is greater than the installer's version, the button is greyed out with the notice "Requires a newer version of HiByOS". |
+| `min_hibymod` | recommended | If it is greater than the installer's version, the button is greyed out with the notice "Requires a newer version of ByOS". |
 | `ram_kb`, `stop_player`, `author`, `category`, `featured` | no | Data for the app page and the Today tab. |
 
 Apps with any required field missing or invalid are ignored. Unknown fields are ignored too,
 for forward compatibility. The index can be at most 256 KB and list at most 64 apps in total.
 
-### Where the HiByOS repository is published
+### Where the ByOS repository is published
 
 - **Index and icons** on the `main` branch, folder `repo/`. They are served by `raw.githubusercontent.com`:
   direct response with no redirect and a cache of about 5 minutes.
@@ -146,7 +146,7 @@ regenerated `index.json`. Devices see UPDATE the next time they refresh.
   - `icons/<fnv32(url)>.png`: the icons;
   - `dl/<id>.hpk`: the package while it downloads, if it is being installed on the HiBy.
 
-  If it is being installed on the SD card, the package is downloaded to `SD/HiByOS/dl/`. In both cases it is deleted
+  If it is being installed on the SD card, the package is downloaded to `SD/ByOS/dl/`. In both cases it is deleted
   after installing.
 - When the store opens, everything comes from memory/cache: the indexes are re-read only if their cache files
   changed, decoded icons are kept between sessions, and the SD/installed state is computed once. The network is
@@ -179,7 +179,7 @@ Layout:
 
 | Path | Content |
 |---|---|
-| `SD/HiByOS/apps/<id>/` | The complete app, installed by the same atomic installer with its root at `SD/HiByOS` (`hpk_set_root`). |
+| `SD/ByOS/apps/<id>/` | The complete app, installed by the same atomic installer with its root at `SD/ByOS` (`hpk_set_root`). |
 | `/usr/data/hibymod/apps/<id>/` | A **stub**: `manifest.ini`, `icon_48/56/64.ov` and `sd_location` (the real path). It takes about 30 KB. |
 | `/usr/data/hibymod/appdata/<id>/` | The app's data, always on the HiBy. |
 
@@ -209,7 +209,7 @@ alpha 0.4.
   `sd_recover()`, which is `hpk_recover` with its root on the SD card and runs when the store opens.
 
 Uninstalling deletes the copy on the SD card, if the card is present, and then the stub. If it is uninstalled
-without the card, an orphan folder `HiByOS/apps/<id>` remains on the SD card, which can be deleted by hand.
+without the card, an orphan folder `ByOS/apps/<id>` remains on the SD card, which can be deleted by hand.
 
 ## 5. Memory and performance
 
@@ -329,7 +329,7 @@ It stays blocked. There are three options to move forward:
 GitHub release `apps-1`. Everything is fetched by `hibynet get` in background processes and cached
 in `/usr/data/hibymod/cache/store/`. Packages are verified (size + sha256) before installation.
 Tabs: Today, Apps, Search and Installed (installed apps, updates and repositories). Apps can be
-installed on the SD card (`SD/HiByOS/apps/<id>`, executed in place because exfat is mounted
+installed on the SD card (`SD/ByOS/apps/<id>`, executed in place because exfat is mounted
 without `noexec`, with a small stub in `/usr/data`) or on the device, and moved between the two
 crash-safely.
 
@@ -379,7 +379,7 @@ used in the code and must stay exactly as written. This table gives the English 
 | INFORMACIÓN | INFORMATION | INFORMATIONS |
 | Repositorio / Categoría / Identificador | Repository / Category / Identifier | Dépôt / Catégorie / Identifiant |
 | Al abrirla se pausa la música para dejarle memoria. | Music pauses when it opens, to free memory. | La musique se met en pause à l'ouverture pour libérer de la mémoire. |
-| Necesita una versión más nueva de HiByOS | Requires a newer version of HiByOS | Nécessite une version plus récente de HiByOS |
+| Necesita una versión más nueva de ByOS | Requires a newer version of ByOS | Nécessite une version plus récente de ByOS |
 | EN PRUEBAS | IN TESTING | EN TEST |
 | En pruebas: todavía no se puede instalar | In testing: can't be installed yet | En test : installation pas encore possible |
 | Esta app está en pruebas y todavía no se puede abrir | This app is in testing and can't be opened yet | Cette app est en test et ne peut pas encore s'ouvrir |

@@ -10,7 +10,7 @@
    "ops": [
     {"add": [
       "#!/bin/sh",
-      "# HiByOS: animacion de arranque en bucle (hibyboot) hasta que arranca el reproductor.",
+      "# ByOS: animacion de arranque en bucle (hibyboot) hasta que arranca el reproductor.",
       "# Si hibyboot o la animacion faltan, se usa el logo fijo de serie ("
     ]},
     {"copy": [298, 16]},
@@ -82,9 +82,9 @@
       "# si el reproductor sigue vivo a los 2 minutos, el arranque cuenta como bueno",
       "( sleep 120; pidof hiby_player >/dev/null && echo 0 > /data/.hibymod_bootfail && sync ) &",
       "",
-      "# ---------------------------------------------------------------- instalador HiByOS",
-      "# Instala/actualiza shell, libreria y tema desde la SD (HiByOS/payload) ANTES del tema y del",
-      "# reproductor. Sin nada que hacer no espera a la SD (solo si HiByOS aun no esta instalado).",
+      "# ---------------------------------------------------------------- instalador ByOS",
+      "# Instala/actualiza shell, libreria y tema desde la SD (ByOS/payload) ANTES del tema y del",
+      "# reproductor. Sin nada que hacer no espera a la SD (solo si ByOS aun no esta instalado).",
       "# Nunca en modo seguro; /data/.hibymod_noinstall lo desactiva. Ver hibyos_install.sh.",
       "if [ ! -f /data/.hibymod_safe ] && [ ! -f /data/.hibymod_noinstall ] && [ -x /usr/bin/hibyos_install.sh ]; then",
       "    /usr/bin/hibyos_install.sh boot </dev/null >/dev/null 2>&1",

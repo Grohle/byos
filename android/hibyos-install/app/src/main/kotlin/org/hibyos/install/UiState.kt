@@ -10,7 +10,7 @@ data class ErrorInfo(val title: Int, val detail: String? = null, val hint: Int =
 
 data class NoticeItem(val title: String, val entry: String)
 
-/** What the screens need to know about the HiByOS files in use. */
+/** What the screens need to know about the ByOS files in use. */
 data class BundleInfo(
     val hibyosVersion: String,
     val generatedFrom: String,

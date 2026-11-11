@@ -28,7 +28,7 @@
 #define MU_GS 140                        /* caratula de la cuadricula */
 #define MU_SS 48                         /* caratula de las listas */
 #define MU_BS 232                        /* caratula de la pagina del album */
-#define MU_CACHE "/usr/data/mnt/sd_0/HiByOS/cache/music"   /* en la SD: /usr/data va justo */
+#define MU_CACHE "/usr/data/mnt/sd_0/ByOS/cache/music"   /* en la SD: /usr/data va justo */
 #define MU_CAP (48LL << 20)                               /* tope de la cache de caratulas */
 #define MU_BIN ASSETS "/hibymix"
 #define MU_DB "/usr/data/usrlocal_media.db"
@@ -255,7 +255,7 @@ static int mu_capture(char *const argv[], char **out)
     b[n] = 0; *out = b;
     return WIFEXITED(stt) && WEXITSTATUS(stt) == 0 ? n : (n ? n : -1);
 }
-static void mu_mkcache(void) { mkdir("/usr/data/mnt/sd_0/HiByOS", 0755); mkdir("/usr/data/mnt/sd_0/HiByOS/cache", 0755); mkdir(MU_CACHE, 0755); }
+static void mu_mkcache(void) { mkdir("/usr/data/mnt/sd_0/ByOS", 0755); mkdir("/usr/data/mnt/sd_0/ByOS/cache", 0755); mkdir(MU_CACHE, 0755); }
 static void *mu_load_thread(void *arg)
 {
     (void)arg;

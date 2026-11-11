@@ -115,7 +115,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-// ---- the HiByOS files that go into the APK --------------------------------------------------
+// ---- the ByOS files that go into the APK --------------------------------------------------
 // app/src/main/assets/hibyos-bundle.zip holds our own files and the list of edits (never any
 // HiBy firmware). It is made from the project's Python definitions by tools/export_bundle.py,
 // or taken ready-made with -PhibyosBundle=<file> (for example the bundle of a release).
@@ -125,7 +125,7 @@ val exportPython = providers.gradleProperty("hibyosPython").orNull ?: System.get
 val exporter = rootProject.file("tools/export_bundle.py")
 
 val prepareHibyosBundle = tasks.register("prepareHibyosBundle") {
-    description = "Puts the HiByOS bundle in the assets (from -PhibyosBundle=<file>, or by running tools/export_bundle.py)."
+    description = "Puts the ByOS bundle in the assets (from -PhibyosBundle=<file>, or by running tools/export_bundle.py)."
     outputs.upToDateWhen { givenBundle == null && bundleAsset.isFile }
     doLast {
         bundleAsset.parentFile.mkdirs()
@@ -133,13 +133,13 @@ val prepareHibyosBundle = tasks.register("prepareHibyosBundle") {
             val src = File(givenBundle)
             if (!src.isFile) throw GradleException("hibyosBundle: $src not found")
             src.copyTo(bundleAsset, overwrite = true)
-            logger.lifecycle("HiByOS bundle taken from $src")
+            logger.lifecycle("ByOS bundle taken from $src")
         } else if (!bundleAsset.isFile) {
-            logger.lifecycle("No HiByOS bundle in the assets: running $exporter")
+            logger.lifecycle("No ByOS bundle in the assets: running $exporter")
             val p = ProcessBuilder(exportPython, exporter.path).directory(rootProject.projectDir).inheritIO().start()
             if (p.waitFor() != 0 || !bundleAsset.isFile) {
                 throw GradleException(
-                    "The HiByOS bundle could not be made. Build the HiByOS files first (see the README, \"Build from source\"), " +
+                    "The ByOS bundle could not be made. Build the ByOS files first (see the README, \"Build from source\"), " +
                         "or pass a ready-made bundle with -PhibyosBundle=<path to hibyos-install-bundle-x.y.z.zip>.",
                 )
             }

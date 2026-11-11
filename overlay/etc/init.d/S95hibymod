@@ -9,7 +9,7 @@
 #      ADB_WIFI  -> activa ADB por Wi-Fi
 #    Cada fichero se renombra a *.hecho al aplicarse, para no repetirse.
 #  - ADB por Wi-Fi si esta activado.
-#  - Instalacion/actualizacion de HiByOS desde la SD (hibyos_install.sh late).
+#  - Instalacion/actualizacion de ByOS desde la SD (hibyos_install.sh late).
 
 MARK=/data/.hibymod_running
 SD=/data/mnt/sd_0
@@ -58,7 +58,7 @@ boot_tasks()
             fi
         done
         sync
-        # HiByOS: version nueva en la SD (HiByOS/payload) que no se pudo instalar antes del
+        # ByOS: version nueva en la SD (ByOS/payload) que no se pudo instalar antes del
         # reproductor (la SD se monta ~4 s despues): se instala ahora y se reinicia
         if [ -x /usr/bin/hibyos_install.sh ] && [ ! -f /data/.hibymod_noinstall ] && /usr/bin/hibyos_install.sh late; then
             sync; reboot; return

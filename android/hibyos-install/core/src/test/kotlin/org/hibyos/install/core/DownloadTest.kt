@@ -16,7 +16,7 @@ import java.net.ServerSocket
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Downloads (firmware, newer HiByOS files) against a local web server. */
+/** Downloads (firmware, newer ByOS files) against a local web server. */
 class DownloadTest {
     private lateinit var server: HttpServer
     private lateinit var dir: File
@@ -225,7 +225,7 @@ class DownloadTest {
         assertFalse("a wrong file is not kept", dest.exists())
     }
 
-    // ------------------------------------------------------------------ newer HiByOS files
+    // ------------------------------------------------------------------ newer ByOS files
 
     private val seed = ByteArray(32) { (it * 5 + 9).toByte() }
     private val keys: List<String> get() = listOf(Hex.of(TestSigner.publicKey(seed)))
@@ -260,7 +260,7 @@ class DownloadTest {
             expect(DownloadException.Kind.UNTRUSTED) { BundleUpdater.parseIndex(data, k, p) }
         // signed by somebody else, not signed, changed after signing, no keys in the app
         val other = ByteArray(32) { 3 }
-        assertTrue(untrusted(index("9.9.10", prefix + "b.zip", 5000, sha, seed = other)).message!!.contains("not signed by HiByOS"))
+        assertTrue(untrusted(index("9.9.10", prefix + "b.zip", 5000, sha, seed = other)).message!!.contains("not signed by ByOS"))
         untrusted(String(good).replace(Regex("ed25519:[0-9a-f]{128}"), "ed25519:" + "0".repeat(128)).toByteArray())
         untrusted(String(good).replace("5000", "5001").toByteArray())
         untrusted(String(good).replace("b.zip", "c.zip").toByteArray())
@@ -282,13 +282,13 @@ class DownloadTest {
     private fun makeBundle(name: String, change: (Synthetic.BundleSpec) -> Unit = {}): ByteArray {
         val s = Synthetic.BundleSpec(firmwareMd5 = "0".repeat(32))
         s.overlay += Triple("etc/hello", "hello\n".toByteArray(), 420)
-        s.sd += "HiByOS/VERSION" to "9.9.9\n".toByteArray()
+        s.sd += "ByOS/VERSION" to "9.9.9\n".toByteArray()
         change(s)
         return Synthetic.bundle(File(dir, name), s).readBytes()
     }
 
     @Test
-    fun updatesTheHiByOSFilesFromASignedRelease() {
+    fun updatesTheByOSFilesFromASignedRelease() {
         val data = makeBundle("made.zip")
         files["/download/v9.9.9/bundle.zip"] = data
         val prefix = "$base/download/"
@@ -334,7 +334,7 @@ class DownloadTest {
         val e = unchanged(DownloadException.Kind.MISMATCH, RemoteBundle("9.9.10", prefix + "c.zip", data.size.toLong(), sha256Hex(data)))
         assertTrue(e.message!!, e.message!!.contains("not version 9.9.10"))
         // correctly signed, but a file inside is not what its own list says
-        val broken = makeBundle("broken.zip") { it.stored = { n, b -> if (n == "sd/HiByOS/VERSION") "9.9.8\n".toByteArray() else b } }
+        val broken = makeBundle("broken.zip") { it.stored = { n, b -> if (n == "sd/ByOS/VERSION") "9.9.8\n".toByteArray() else b } }
         files["/download/d.zip"] = broken
         unchanged(DownloadException.Kind.MISMATCH, RemoteBundle("9.9.9", prefix + "d.zip", broken.size.toLong(), sha256Hex(broken)))
         // correctly signed, but for a later version of the app

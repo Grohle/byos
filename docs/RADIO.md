@@ -29,7 +29,7 @@ written to a file on the card while it plays (see *How playback works*).
 - Radio keeps playing when you leave the app (volume, EQ, Bluetooth and the hardware buttons work as
   with any song). Playing any local music stops the radio by itself.
 
-Gestures are the same as in the other HiByOS apps: swipe in from either edge to go back, swipe up
+Gestures are the same as in the other ByOS apps: swipe in from either edge to go back, swipe up
 from the bottom bar to go home.
 
 ## Sources
@@ -60,7 +60,7 @@ click counter).
 
 ### The JSON station list format
 
-An open, minimal format; HiByOS reads it and anyone can write it by hand:
+An open, minimal format; ByOS reads it and anyone can write it by hand:
 
 ```json
 {
@@ -93,17 +93,17 @@ from a list.
 ## The directory
 
 The Radio Browser stations come from [Radio Browser](https://www.radio-browser.info/), a free,
-community-run directory with an open API that needs no account or key. HiByOS follows its client
+community-run directory with an open API that needs no account or key. ByOS follows its client
 guidelines:
 
-- it identifies itself with the User-Agent `HiByOS-Radio/1.0 (https://github.com/Grohle/hibyos)`;
+- it identifies itself with the User-Agent `ByOS-Radio/1.0 (https://github.com/Grohle/hibyos)`;
 - it reports every station you start to the directory's click counter (`/json/url/<station id>`),
   which is how the directory ranks popular stations;
 - if a server does not answer, it tries the next one (`de1`, `fi1`, `de2` `.api.radio-browser.info`).
 
 Only stations that the directory currently sees working and that stream MP3 or AAC (directly or
 over HLS) are listed (see *Limits*). Streams, names and logos belong to their broadcasters;
-HiByOS only plays what the station publishes.
+ByOS only plays what the station publishes.
 
 ## Where data is stored
 
@@ -115,8 +115,8 @@ the station lists you added and the stream itself.
 | `/usr/data/hibymod/appdata/radio/stations.tsv` | favourites (`F`), recents (`R`) and own stations (`C`), one per line, tab separated: kind, directory id, name, URL, country, codec, kbit/s, tags |
 | `/usr/data/hibymod/appdata/radio/sources.tsv` | the sources, one per line, tab separated: type, on, renamed, stations, last download (Unix time), last error, name (if renamed), URL (a few hundred bytes) |
 | `/usr/data/hibymod/appdata/radio/config` | chosen country, last tab, `lead_s` (seconds written before playback starts, 15) and `cap_mb` (session limit, 128) |
-| `/usr/data/mnt/sd_0/HiByOS/cache/radio/lists/` | the downloaded station lists (SD card; the internal storage is nearly full) |
-| `/usr/data/mnt/sd_0/HiByOS/cache/radio/` | while playing: the stream file `<station>.mp3` / `.aac` (deleted on stop) |
+| `/usr/data/mnt/sd_0/ByOS/cache/radio/lists/` | the downloaded station lists (SD card; the internal storage is nearly full) |
+| `/usr/data/mnt/sd_0/ByOS/cache/radio/` | while playing: the stream file `<station>.mp3` / `.aac` (deleted on stop) |
 | `/tmp/hibyradio/` | while playing: the helper's small state file and pid (a few hundred bytes of RAM) |
 
 ## How playback works
@@ -149,7 +149,7 @@ So when you start a station:
      reused (one TLS handshake per server, not one per segment). A playlist sent gzip-compressed
      is inflated. Encrypted streams (`EXT-X-KEY` other than `NONE`) are refused with a clear
      error, and so are fMP4 (`EXT-X-MAP`) and byte-range playlists.
-2. It writes the audio to `/usr/data/mnt/sd_0/HiByOS/cache/radio/<station>.mp3` (or `.aac`), an
+2. It writes the audio to `/usr/data/mnt/sd_0/ByOS/cache/radio/<station>.mp3` (or `.aac`), an
    ordinary file that grows (exFAT has no sparse files or hole punching), and counts the frames, so
    it knows how many seconds of audio the file holds.
 3. When 15 seconds of audio are written (`lead_s`), the shell hands the file to the player as a

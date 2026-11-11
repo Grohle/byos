@@ -1,5 +1,5 @@
 """
-Minimal pure-Python SquashFS 4.0 (LZO) reader and writer, used by the HiByOS patcher.
+Minimal pure-Python SquashFS 4.0 (LZO) reader and writer, used by the ByOS patcher.
 
 The writer does NOT recompress existing data: compressed data blocks and fragment blocks
 of files that are kept from the source image are copied byte for byte (only relocated).

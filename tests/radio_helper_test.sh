@@ -166,7 +166,7 @@ t=$(grep -o "eof gen=1 pos=[0-9]*" $B/pk.log | head -1 | sed 's/.*pos=//')
 sleep 0.5; noaudio $D/k && ok "no audio file left" || bad "audio left behind"
 
 echo "== 10. no SD card"
-timeout 10 $B/hibynet radio $U/icy /usr/data/mnt/sd_9/HiByOS/cache/radio "X" 15 128 $D/nosd 2>/dev/null || true
+timeout 10 $B/hibynet radio $U/icy /usr/data/mnt/sd_9/ByOS/cache/radio "X" 15 128 $D/nosd 2>/dev/null || true
 [ "$(st $D/nosd st)" = error ] && [ "$(st $D/nosd err)" = nosd ] && ok "err=nosd" || bad "nosd: st=$(st $D/nosd st) err=$(st $D/nosd err)"
 [ -e /usr/data/mnt/sd_9 ] && bad "created the mount point folder" || ok "nothing created on internal storage"
 
