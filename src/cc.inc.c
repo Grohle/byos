@@ -688,7 +688,7 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
         if (hit < 0) break;                                   /* toque fuera: cerrar */
         if (hit == 100 && sy > CC_Y + BR_H - 40) {          /* controles de reproduccion */
             int cx = NP_X + NP_W / 2;
-            if (sx < cx - 22) pc_prev(); else if (sx > cx + 22) pc_next(); else pc_toggle();
+            if (sx < cx - 22) pc_prev(); else if (sx > cx + 22) pc_next(); else pc_toggle_or_replay();
             msleep(350); npx_changed = 1;
             { struct np_info ni; memset(&ni, 0, sizeof ni); if (np_get(&ni) > 0) { pthread_mutex_lock(&npx_mu); npx = ni; pthread_mutex_unlock(&npx_mu); } }
             cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();

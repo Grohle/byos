@@ -159,6 +159,23 @@ static int pc_list_send(const char *const *paths, int n, int index, const char *
     if (!paths || n <= 0) return -EINVAL;
     return pc_list_write(paths, n, index, title, mode, 0);
 }
+#ifdef NP_COVER
+/* play/pausa que tambien sirve cuando la cola se acabo: con la ultima pista terminada el
+ * reproductor queda parado y su tecla de play no hace nada; entonces se vuelve a poner la
+ * ultima pista conocida (desde el principio) */
+static int pc_toggle_or_replay(void)
+{
+    struct np_info i; memset(&i, 0, sizeof i);
+    if (np_get(&i) > 0 && i.stopped && !i.playing && i.path[0] && !access(i.path, R_OK)) {
+        const char *pp = i.path;
+        lg("play: la cola habia terminado; otra vez %s", i.path);
+        return pc_list_send(&pp, 1, 0, i.title[0] ? i.title : 0, 0) > 0 ? 0 : -1;
+    }
+    return pc_toggle();
+}
+#else
+static int pc_toggle_or_replay(void) { return pc_toggle(); }
+#endif
 /* lo mismo empezando en pos_ms dentro de la pista "index" (audiolibros: reanudar) */
 static int pc_list_send_pos(const char *const *paths, int n, int index, const char *title, int mode, int pos_ms)
 {

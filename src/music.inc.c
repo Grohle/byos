@@ -1715,7 +1715,7 @@ static void music_app(int ix, int iy)
             while (cur_down && read_pkt(&p, 3000)) {}
             if (abs(cur_x - sx) > 30) continue;
             if (sx >= W - 54) { pc_next(); continue; }
-            if (sx >= W - 100) { pc_toggle(); mu_np.playing = !mu_np.playing; mu_present(); continue; }
+            if (sx >= W - 100) { pc_toggle_or_replay(); mu_np.playing = !mu_np.playing; mu_present(); continue; }
             mu_present(); continue;
         }
         if (sy >= 456) continue;

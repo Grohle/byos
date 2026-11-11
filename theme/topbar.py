@@ -105,14 +105,14 @@ def headphones():
     return im
 
 
-def pill(t, w=None, sz=7.6, maxw=None, minsz=5.6):
+def pill(t, w=None, sz=7.6, maxw=None, minsz=5.6, pad=7):
     """capsula con texto en negrita (salida: LO, 4.4, OPT, BT, ADB; codecs Bluetooth). Con maxw,
-    la letra se reduce hasta que quepa."""
+    la letra se reduce hasta que quepa; pad = margen total (borde incluido)."""
     f = font(sz, bold=True)
     tw = f.getlength(t) / S
-    while maxw and tw + 7 > maxw and sz > minsz:
+    while maxw and tw + pad > maxw and sz > minsz:
         sz -= 0.2; f = font(sz, bold=True); tw = f.getlength(t) / S
-    w = w or int(round(tw + 7))
+    w = w or int(round(tw + pad))
     im, d = canvas(w)
     d.rounded_rectangle([P(0.8, 5.0), P(w - 0.8, 15.0)], 3.0 * S, outline=WHITE, width=int(1.3 * S))
     d.text((w * S / 2, (CY + 0.1) * S), t, font=f, fill=WHITE, anchor="mm")
@@ -224,8 +224,10 @@ else:
         return battery_bg(GREEN, 255)
 
 done("speaker", speaker()); done("po", headphones())
-done("lo", pill("LO", maxw=19)); done("balance", pill("4.4", maxw=19)); done("spdif", pill("OPT", maxw=19))
-done("usb", usb()); done("a2dp", pill("BT", maxw=19)); done("adb", pill("ADB", sz=7.0, maxw=19))
+# 19 px (no cabe mas antes del Bluetooth): margen interior 5 en vez de 7, asi "OPT" y "ADB" no
+# se encogen hasta que la O toca el borde (se leia "DPT")
+done("lo", pill("LO", maxw=19)); done("balance", pill("4.4", maxw=19)); done("spdif", pill("OPT", maxw=18, pad=5))
+done("usb", usb()); done("a2dp", pill("BT", maxw=19)); done("adb", pill("ADB", sz=7.0, maxw=18, pad=5))
 # codec del Bluetooth (los de serie median 32 px y pisaban al altavoz)
 for n, t in (("sbc", "SBC"), ("aptx", "aptX"), ("aptx_hd", "aptX HD"), ("ldac", "LDAC"), ("uat", "UAT"), ("aac", "AAC")):
     done(n, pill(t, maxw=27, minsz=5.0))
@@ -301,7 +303,9 @@ for th in ("theme2", "theme3"):
         if n == "topbar_nv_battery": V.set_(el, "w", 3 * DW + wd("percent"))
         if n == "topbar_nv_speaker": V.set_(el, "w", 3 * DW)
         if n == "topbar_nv_clock": V.set_(el, "w", 4 * DW + wd("colon"))
-    rel = f"layout/{th}/topbar/topbar.view"; p = os.path.join(OVL, rel)
+    # HiBy's layout with our changes: never in overlay/ or git (tools/vendor_edits.json rebuilds
+    # it from the user's firmware). Written to theme/work/ for --deploy and vendor_edits update.
+    rel = f"layout/{th}/topbar/topbar.view"; p = os.path.join(HERE, "work", "topbar", "usr", "resource", rel)
     os.makedirs(os.path.dirname(p), exist_ok=True); V.save(p, root); out.append((rel, p))
 
 

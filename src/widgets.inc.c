@@ -1970,7 +1970,7 @@ static void wg_edit_from_settings(void)
 }
 
 static void animate_scroll_to(int page);
-static void *wg_pc_th(void *a) { long k = (long)a; if (k == 0) pc_prev(); else if (k == 1) pc_toggle(); else pc_next(); return 0; }
+static void *wg_pc_th(void *a) { long k = (long)a; if (k == 0) pc_prev(); else if (k == 1) pc_toggle_or_replay(); else pc_next(); return 0; }
 /* toque con la pagina de widgets en pantalla (desde launcher_touch) */
 static void widgets_touch(struct pkt *p)
 {

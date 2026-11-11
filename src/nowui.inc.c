@@ -169,7 +169,7 @@ static void nu_npx_refresh(void)
     pthread_mutex_lock(&npx_mu); npx_cov_track = 0xffffffffu; np_mc.key[0] = 0; pthread_mutex_unlock(&npx_mu);
 }
 /* teclas del reproductor en otro hilo: pc_key espera 80 ms y la animacion no se para */
-static void *nu_key_thread(void *a) { int k = (int)(intptr_t)a; if (k == 0) pc_prev(); else if (k == 1) pc_toggle(); else pc_next(); return 0; }
+static void *nu_key_thread(void *a) { int k = (int)(intptr_t)a; if (k == 0) pc_prev(); else if (k == 1) pc_toggle_or_replay(); else pc_next(); return 0; }
 static void nu_key(int k)
 {
     pthread_t th;
