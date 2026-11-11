@@ -543,13 +543,16 @@ static void cc_slider_draw(uint16_t *d, const uint16_t *blur, float lv, float sc
 {
     cc_slider_paint(d, blur, lv, scale, stretch); present_rows(CC_Y - 14, CC_Y + BR_H + 14);
 }
-static void cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
+/* 1 = se mantuvo pulsado sin mover (abrir Pantalla y brillo) */
+static int cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
 {
-    float lv0 = cc_bl_level() / 101.f, lv = lv0, scale = 1, stretch = 0; int last = -1;
-    struct pkt p; double lt = now_ms();
+    float lv0 = cc_bl_level() / 101.f, lv = lv0, scale = 1, stretch = 0; int last = -1, moved = 0, held = 0;
+    struct pkt p; double lt = now_ms(), tstart = lt;
     memcpy(fr0, panel, HM_FRAME_BYTES);
     while (cur_down) {
         int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
+        if (!moved && abs(cur_y - sy) > 8) moved = 1;
+        if (!moved && now_ms() - tstart > 550) { held = 1; break; }
         float raw = lv0 + (sy - cur_y) / (float)BR_H;          /* 1:1 con el dedo */
         float over = raw > 1 ? raw - 1 : raw < 0 ? raw : 0;
         lv = raw < 0 ? 0 : raw > 1 ? 1 : raw;
@@ -572,6 +575,7 @@ static void cc_brightness_drag(uint16_t *panel, const uint16_t *blur, int sy)
         if (t >= 1) break;
     }
     cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+    return held;
 }
 
 
@@ -630,15 +634,46 @@ static void cc_session(uint16_t *under, uint16_t *panel, uint16_t *blur, double 
         }
         if (!p.down) continue;
         int sx = p.x, sy = p.y, hit = cc_hit(sx, sy);
-        if (hit == 101) { cc_brightness_drag(panel, blur, sy); continue; }   /* brillo (iOS) */
+        if (hit == 101) {                                    /* brillo (iOS); mantener: sus ajustes */
+            if (cc_brightness_drag(panel, blur, sy) && !cc_in_app) {
+                while (cur_down && read_pkt(&p, 3000)) {}
+                cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_DISPLAY); return;
+            }
+            continue;
+        }
         if (hit >= 0) { cc_render(fr0, blur, hit); present(); }
         /* decidir pronto: toque, pagina horizontal o subir al inicio */
-        int dir = 0;
-        while (cur_down && read_pkt(&p, 3000)) {
+        int dir = 0; double tdown = now_ms();
+        while (cur_down) {
+            if (!dir && hit >= 0 && hit != 100 && now_ms() - tdown > 550) { dir = 4; break; }   /* mantener pulsado */
+            if (!read_pkt(&p, 50)) continue;
             int dx = cur_x - sx, dy = cur_y - sy;
             if (dx < -14 && -dx > abs(dy)) { dir = 1; break; }        /* izquierda: reproductor */
             if (dy < -14 && -dy > abs(dx)) { dir = 2; break; }        /* arriba: inicio */
             if (abs(dx) > 14 || dy > 14) { dir = 3; }
+        }
+        if (dir == 4) {
+            /* mantener pulsado: la pagina de Ajustes de ese control (como en iOS) */
+            int tl = hit == 101 ? -1 : cc_tiles[hit >= 200 ? hit - 200 : hit];
+            if (cc_in_app) {
+                while (cur_down && read_pkt(&p, 3000)) {}
+                cc_set_caption(tr("Vuelve al inicio para abrirlo"));
+                cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
+                continue;
+            }
+            lg("cc: mantener pulsado %d", tl);
+            while (cur_down && read_pkt(&p, 3000)) {}
+            cc_animate(under, panel, 1, 0, 160);
+            switch (tl) {
+            case -1: cc_open_settings(SET_DISPLAY); return;
+            case CT_AIRPLANE: case CT_BT: case CT_WIRELESS: cc_open_settings(SET_WIRELESS); return;
+            case CT_NOISE: cc_open_app("headphones"); return;
+            case CT_NOCHARGE: case CT_POWER: cc_open_settings(SET_POWER); return;
+            case CT_DAC: cc_open_settings(SET_USB); return;
+            case CT_FILTER: cc_open_settings(SET_SOUND); return;
+            case CT_FILES: cc_open_app("files"); return;
+            default: cc_open_settings(SET_CCPAGE); return;
+            }
         }
         if (dir == 1) { if (cc_to_player(panel, sx)) return; continue; }
         if (dir == 2) { if (cc_close_drag(under, panel, blur, sy, from_launcher, sy >= 440)) return; continue; }

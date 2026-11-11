@@ -946,6 +946,10 @@ static int app_back_gesture(int sx, int sy);
 #include "files.inc.c"
 #include "gestures.inc.c"
 #include "power.inc.c"
+/* gestor de memoria y de recursos (mas abajo): datos para Ajustes > General > Memoria */
+static int memg_trims, memg_last_before, memg_last_after, guard_changes; static double memg_last_t;
+static int mem_avail_kb(void);
+static void mem_trim(const char *why);
 #include "settings_app.inc.c"
 #include "cc.inc.c"
 #include "ota.inc.c"
@@ -1296,7 +1300,7 @@ static void guard_tick(void)
         }
     }
     closedir(d);
-    if (changed) lg("recursos: %d prioridades ajustadas", changed);
+    if (changed) { guard_changes += changed; lg("recursos: %d prioridades ajustadas", changed); }
 }
 
 /* ------------------------------------------------------------------ guardian de memoria
@@ -1311,6 +1315,16 @@ static int mem_avail_kb(void)
     int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return -1; b[n] = 0;
     char *m = strstr(b, "MemAvailable:"); return m ? atoi(m + 13) : -1;
 }
+static void mem_trim(const char *why)
+{
+    int kb = mem_avail_kb();
+    lazy_release();
+    have_cache_plane = 0; drop_pages(img_cache_plane, sizeof img_cache_plane);
+    have_under = 0; drop_pages(img_under, sizeof img_under); drop_pages(img_sheet, sizeof img_sheet);
+    shell_trim_extra();
+    memg_trims++; memg_last_t = now_ms(); memg_last_before = kb; memg_last_after = mem_avail_kb();
+    lg("memoria (%s): %d KB libres -> lienzos y caches devueltos (ahora %d KB)", why, kb, memg_last_after);
+}
 static void mem_guard(void)
 {
     static double next, last_trim; double t = now_ms();
@@ -1319,11 +1333,7 @@ static void mem_guard(void)
     int kb = mem_avail_kb();
     if (kb < 0 || kb >= MEM_LOW_KB || t - last_trim < 20000) return;
     last_trim = t;
-    lazy_release();
-    have_cache_plane = 0; drop_pages(img_cache_plane, sizeof img_cache_plane);
-    have_under = 0; drop_pages(img_under, sizeof img_under); drop_pages(img_sheet, sizeof img_sheet);
-    shell_trim_extra();
-    lg("memoria: %d KB libres -> lienzos y caches devueltos (ahora %d KB)", kb, mem_avail_kb());
+    mem_trim("auto");
 }
 
 int main(int argc, char **argv)

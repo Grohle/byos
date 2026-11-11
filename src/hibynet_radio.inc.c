@@ -322,6 +322,13 @@ static int rd_connect(rd_src *s, const char *url, int depth, int *pren, char *hl
 
 /* ------------------------------------------------------------------ el lector (reproductor) */
 static int rd_pid;
+/* the player renames its main thread: its comm is "system_main_thr", not "hiby_player".
+ * Looking only for "hiby_player" it was never found, so the radio stopped after 20 s with
+ * err=player while it was playing. Both names (and the one given for tests) count. */
+static int rd_is_player(const char *comm)
+{
+    return !strcmp(comm, rd.player) || !strcmp(comm, "system_main_thr") || !strcmp(comm, "hiby_player");
+}
 static int rd_player_pid(void)
 {
     char p[64], b[64];
@@ -330,7 +337,7 @@ static int rd_player_pid(void)
             snprintf(p, sizeof p, "/proc/%d/comm", rd_pid);
             int f = open(p, O_RDONLY); ssize_t n = f >= 0 ? read(f, b, sizeof b - 1) : -1;
             if (f >= 0) close(f);
-            if (n > 0) { b[n] = 0; b[strcspn(b, "\n")] = 0; if (!strcmp(b, rd.player)) return rd_pid; }
+            if (n > 0) { b[n] = 0; b[strcspn(b, "\n")] = 0; if (rd_is_player(b)) return rd_pid; }
             rd_pid = 0;
         }
         if (pass) break;
@@ -343,7 +350,7 @@ static int rd_player_pid(void)
             ssize_t n = read(f, b, sizeof b - 1); close(f);
             if (n <= 0) continue;
             b[n] = 0; b[strcspn(b, "\n")] = 0;
-            if (!strcmp(b, rd.player) && atoi(e->d_name) != getpid()) { rd_pid = atoi(e->d_name); break; }
+            if (rd_is_player(b) && atoi(e->d_name) != getpid()) { rd_pid = atoi(e->d_name); break; }
         }
         closedir(d);
     }

@@ -4,6 +4,7 @@ static void settings_app(int ix, int iy);
 static void usbdac_app_at(int ix, int iy);
 static void wireless_app_at(int ix, int iy);
 static void personalize_app(int ix, int iy);
+static void settings_deep_app(int ix, int iy, int start);
 static void books_app_at(int ix, int iy);
 static int bk_gut;
 static void freemusic_app_at(int ix, int iy);
@@ -195,7 +196,9 @@ static void launch_app(int a, int ix, int iy)
         int st = settings_start; settings_start = SET_ROOT;
         V.pressed_app = -1; last_app = a;
         if (st == SET_USB) usbdac_app_at(ix, iy); else if (st == SET_WIRELESS) wireless_app_at(ix, iy);
-        else if (st == SET_PERS) personalize_app(ix, iy); else settings_app(ix, iy);
+        else if (st == SET_PERS) personalize_app(ix, iy);
+        else if (st >= SET_POWER && st <= SET_CCPAGE) settings_deep_app(ix, iy, st);
+        else settings_app(ix, iy);
         return;
     }
     if (ap->act == ACT_WIRELESS) { V.pressed_app = -1; last_app = a; wireless_app_at(ix, iy); return; }

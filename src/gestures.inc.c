@@ -125,7 +125,9 @@ static void card_label(uint16_t *dst, int x, int y, const struct sprite *ic, con
     draw_text(dst, x0 + (ic ? iw + 6 : 0), y - 10, name, 13, 0xFFFF, 0, 0, H);
 }
 static int sw_player_first;   /* la tarjeta 0 es el reproductor (no hay app reciente) */
-#define SW_HOLD_MS 1000   /* mantener el gesto de inicio este tiempo: multitarea */
+#define SW_HOLD_MS 300    /* pausar el gesto de inicio este tiempo: multitarea (iOS: ~0,3 s) */
+/* muelle con un poco de rebote (encaje de la tarjeta al armar la multitarea) */
+static double ease_back(double t) { const double c = 1.4; t -= 1; return 1 + (c + 1) * t * t * t + c * t * t; }
 static int sw_lift_card;      /* tarjeta que se levanta con "lift" (0 = la de la app) */
 static void switcher_frame(const uint16_t *bg, const uint16_t *c0, const uint16_t *c1, double off, float s0, double lift, int show1, int labels)
 {
@@ -307,23 +309,26 @@ static void app_switch_gesture(int sy, int sx)
         for (int i = 1; i < 16 && i < hn; i++) { int j = (hn - 1 - i) % 16; if (t - ht[j] >= 80) { spd = abs(cur_y - hy[j]) / (t - ht[j]); break; } }
         prog = (sy - cur_y) / 300.0; if (prog < 0) prog = 0; if (prog > 1.2) prog = 1.2;
         /* mantener la tarjeta quieta 1 s = multitarea (antes se asoma el reproductor) */
-        if (!armed && prog > 0.12 && hn > 3 && spd < 0.15) { if (!still_t) still_t = t; else if (t - still_t > SW_HOLD_MS) { armed = 1; arm_t = t; lg("multitarea armada"); } }
-        else if (spd >= 0.15) still_t = 0;
+        /* pausa = dedo casi quieto (el ruido del panel tactil no la rompe: 0,3 px/ms) */
+        if (!armed && prog > 0.12 && hn > 3 && spd < 0.3) { if (!still_t) still_t = t; else if (t - still_t > SW_HOLD_MS) { armed = 1; arm_t = t; lg("multitarea armada"); } }
+        else if (spd >= 0.3) still_t = 0;
         float s = 1 - 0.40f * (float)(prog > 1 ? 1 : prog);
         double a = armed ? (t - arm_t) / 200.0 : 0; if (a > 1) a = 1;
+        /* armada: la tarjeta ENCAJA en su tamano de multitarea con un pequeno rebote, aunque el
+         * dedo siga abajo, y el reproductor entra por la izquierda: se nota el "clic" */
+        if (armed) { double k = (t - arm_t) / 260.0; if (k > 1) k = 1; s = (float)(s + (CARD_S - s) * ease_back(k)); }
         if (!ph && ph_card && (armed || (still_t && t - still_t > 200))) { player_card(ph_card); ph = ph_card; }
         int peek = ph && (armed || (still_t && t - still_t > 300));
         /* la tarjeta sigue al dedo (tambien de lado) */
         double off = (lx - sx) / (W * CARD_S + 18.0);
-        switcher_frame(armed && a > 0.5 ? bg2 : bg, app, ph, off, s, (sy - cur_y) * 0.35, peek, armed && a >= 1);
+        switcher_frame(armed && a > 0.5 ? bg2 : bg, app, ph, off, s, (sy - cur_y) * (armed ? 0.35 * (1 - a * 0.6) : 0.35), peek, armed && a >= 1);
         if (!cur_down) break;
     }
     if (armed) {
         /* asentar en la multitarea y elegir */
         double off = 0;
         { double t0 = now_ms(); int ly0 = sy - cur_y; for (;;) { double t = (now_ms() - t0) / 220.0; if (t > 1) t = 1; double e = ease_out(t);
-            float s = (float)((1 - 0.40 * (prog > 1 ? 1 : prog)) + (CARD_S - (1 - 0.40 * (prog > 1 ? 1 : prog))) * e);
-            switcher_frame(bg2, app, ph, off, s, ly0 * 0.35 * (1 - e), 1, 1); if (t >= 1) break; } }
+            switcher_frame(bg2, app, ph, off, CARD_S, ly0 * 0.35 * 0.4 * (1 - e), 1, 1); if (t >= 1) break; } }
         lg("multitarea");
         int r = sw_loop(bg2, app, ph, 1, &off);
         if (r == SW_APP) { cmd('R'); lg("multitarea: donde estabas"); return; }

@@ -941,7 +941,14 @@ static void settings_run(int ix, int iy, int mode)
     /* la tarjeta de multitarea es la del icono que nos abrio (launch_app pone last_app) */
     int a = last_app >= 0 && last_app < NAPPS ? last_app : app_by_id("settings");
     sp_self = a; sp_gone = 0;
-    void (*root_fn)(struct spage *) = mode == 1 ? page_usb_root : mode == 2 ? page_pers : page_root;
+    void (*root_fn)(struct spage *) = mode == 1 ? page_usb_root : mode == 2 ? page_pers
+        : mode == 3 ? page_power : mode == 4 ? page_sound : mode == 5 ? page_display : mode == 6 ? page_cc : page_root;
+    /* paginas abiertas directamente (mantener pulsado en el Centro de control): lo mismo que
+     * hace su fila de Ajustes antes de abrirla */
+    if (mode == 3) set_nocharge = pw_nocharge;
+    if (mode == 4) audio_sync();
+    if (mode == 5) { int b = sysfs_get(BL_PATH, -1); ui_bright = b < 0 ? (ps_ok[PS_BRIGHT] ? ps_v[PS_BRIGHT] : 50) : b * 100 / 101;
+                     if (ui_bright < 1) ui_bright = 1; if (ui_bright > 100) ui_bright = 100; }
     sp_root_name = mode == 2 ? "Personalizar" : "Ajustes";
     struct spage root; root_fn(&root);
     sp_scroll = 0;
@@ -973,6 +980,8 @@ static void settings_run(int ix, int iy, int mode)
 /* Ajustes: lo tiene todo. "Personalizar" es un acceso directo a su grupo de personalizacion */
 static void settings_app(int ix, int iy) { settings_run(ix, iy, 0); }
 static void personalize_app(int ix, int iy) { settings_run(ix, iy, 2); }
+/* una pagina concreta como raiz (SET_POWER, SET_SOUND, SET_DISPLAY, SET_CCPAGE) */
+static void settings_deep_app(int ix, int iy, int start) { settings_run(ix, iy, 3 + (start - SET_POWER)); }
 /* DAC USB: abre directamente la pagina USB (sustituye a la app DAC USB de HiBy) */
 static void usbdac_app_at(int ix, int iy) { settings_run(ix, iy, 1); }
 static void usbdac_app(void) { usbdac_app_at((W - L.icon) / 2, (H - L.icon) / 2); }

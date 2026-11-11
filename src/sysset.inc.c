@@ -740,11 +740,68 @@ static const char *ss_sleep_footer(void)
     char hm[8]; snprintf(hm, sizeof hm, "%02d:%02d", tm.tm_hour, tm.tm_min);
     snprintf(ss_buf[9], 64, tr("Se apagará a las %s."), hm); return ss_buf[9];
 }
+/* ------------------------------------------------------------------ Memoria (gestor de recursos)
+ * Lo que hace el gestor (hibyshell.c: mem_guard, mem_trim, guard_tick): memoria libre, lo que
+ * ocupa cada parte, cuantas veces ha devuelto memoria y la ultima. Se lee al abrir la pagina. */
+static char mm_v[8][48];
+static int mm_rss_of(const char *comm, int all)       /* KB; all = suma de todos los procesos */
+{
+    DIR *d = opendir("/proc"); if (!d) return 0;
+    struct dirent *e; int sum = 0;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+        char p[64], b[1200]; snprintf(p, sizeof p, "/proc/%s/status", e->d_name);
+        int f = open(p, O_RDONLY | O_CLOEXEC); if (f < 0) continue;
+        int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) continue; b[n] = 0;
+        char *nm = strstr(b, "Name:"), *rs = strstr(b, "VmRSS:");
+        if (!nm || !rs) continue;
+        nm += 5; while (*nm == ' ' || *nm == '\t') nm++;
+        size_t L = strcspn(nm, "\n");
+        if (all || (strlen(comm) == L && !strncmp(nm, comm, L))) sum += atoi(rs + 6);
+    }
+    closedir(d);
+    return sum;
+}
+static const char *mm_fmt(int i, int kb) { snprintf(mm_v[i], sizeof mm_v[i], "%.1f MB", kb / 1024.0); return mm_v[i]; }
+static int mm_free, mm_player, mm_shell, mm_all;
+static void mm_read(void)
+{
+    mm_free = mem_avail_kb(); mm_player = mm_rss_of("system_main_thr", 0); mm_shell = mm_rss_of("hibyshell", 0);
+    mm_all = mm_rss_of(0, 1);
+}
+static const char *v_mm_free(void) { return mm_fmt(0, mm_free); }
+static const char *v_mm_player(void) { return mm_fmt(1, mm_player); }
+static const char *v_mm_shell(void) { return mm_fmt(2, mm_shell); }
+static const char *v_mm_rest(void) { return mm_fmt(3, mm_all - mm_player - mm_shell); }
+static const char *v_mm_trims(void) { snprintf(mm_v[4], sizeof mm_v[4], "%d", memg_trims); return mm_v[4]; }
+static const char *v_mm_last(void)
+{
+    if (!memg_trims) return tr("Nunca");
+    int ago = (int)((now_ms() - memg_last_t) / 60000);
+    snprintf(mm_v[5], sizeof mm_v[5], "+%.1f MB · %d min", (memg_last_after - memg_last_before) / 1024.0, ago);
+    return mm_v[5];
+}
+static const char *v_mm_prio(void) { snprintf(mm_v[6], sizeof mm_v[6], "%d", guard_changes); return mm_v[6]; }
+static void page_memory(struct spage *p);
+static void mm_free_now(void) { mem_trim("manual"); mm_read(); toast(tr("Memoria liberada")); }
+static void page_memory(struct spage *p)
+{
+    *p = (struct spage){ "Memoria" };
+    p->secs[0] = (struct ssec){ "EN USO", "MEM_USE_HELP", { ROWV("Memoria libre", v_mm_free), ROWV("Reproductor", v_mm_player),
+                                                         ROWV("ByOS", v_mm_shell), ROWV("Resto del sistema", v_mm_rest) }, 4 };
+    p->secs[1] = (struct ssec){ "GESTOR", "MEM_GUARD_HELP", { ROWV("Memoria devuelta", v_mm_trims), ROWV("La última vez", v_mm_last),
+                                                            ROWV("Prioridades ajustadas", v_mm_prio) }, 3 };
+    p->secs[2] = (struct ssec){ 0, 0, { ROW("Liberar memoria ahora", R_ACTION, 0, 0, 0, mm_free_now, 0, 0) }, 1 };
+    p->nsec = 3;
+}
+static void nav_memory(void) { mm_read(); open_page(page_memory, "General"); }
+
 static void page_general(struct spage *p)
 {
     ss_derive();
     *p = (struct spage){ "General" };
-    p->secs[0] = (struct ssec){ 0, 0, { ROWI("Información", nav_about, 0, 0), ROWI("Actualización de software", nav_ota, 0, 0) }, 2 };
+    p->secs[0] = (struct ssec){ 0, 0, { ROWI("Información", nav_about, 0, 0), ROWI("Actualización de software", nav_ota, 0, 0),
+                                        ROWI("Memoria", nav_memory, 0, 0) }, 3 };
     p->secs[1] = (struct ssec){ 0, 0, { ROWI("Fecha y hora", nav_datetime, 0, 0), ROW("Idioma", R_NAV, 0, 0, 0, nav_lang, v_lang, 0) }, 2 };
     p->secs[2] = (struct ssec){ "APAGADO AUTOMÁTICO", ss_sleep_footer(), {
         ROWC("Temporizador", &ui_sleep_i, O_SLEEP, 7, ssa_sleep, 0),

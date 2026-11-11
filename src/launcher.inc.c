@@ -91,7 +91,7 @@ static int app_sys_removable(int a)
 static int app_removable(int a) { return a >= 0 && a < NAPPS && (apps[a].act == ACT_EXT || app_sys_removable(a)); }
 /* pagina en la que se abre Ajustes la proxima vez (la pone el Centro de control y se consume
  * en launch_app): 0 raiz, 1 USB, 2 Wi-Fi y Bluetooth, 3 personalizacion (icono "Personalizar") */
-enum { SET_ROOT, SET_USB, SET_WIRELESS, SET_PERS };
+enum { SET_ROOT, SET_USB, SET_WIRELESS, SET_PERS, SET_POWER, SET_SOUND, SET_DISPLAY, SET_CCPAGE };
 static int settings_start;
 
 static int per_page(void);
