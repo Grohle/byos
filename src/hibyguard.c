@@ -92,6 +92,13 @@ static void on_signal(int s)
     signal(s, SIG_DFL); raise(s);
 }
 
+/* the card really mounted (in USB storage mode the empty mount point is internal storage) */
+static int sd_mounted(void)
+{
+    static char b[4096]; int f = open("/proc/mounts", O_RDONLY | O_CLOEXEC); if (f < 0) return 0;
+    int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return 0; b[n] = 0;
+    return strstr(b, " /usr/data/mnt/sd_0 ") || strstr(b, " /data/mnt/sd_0 ");
+}
 static void logl(int to_sd, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 static void logl(int to_sd, const char *fmt, ...)
@@ -105,8 +112,8 @@ static void logl(int to_sd, const char *fmt, ...)
     if (!stat(LOG_TMP, &sb) && sb.st_size > 96 * 1024) rename(LOG_TMP, LOG_TMP ".old");
     int f = open(LOG_TMP, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (f >= 0) { if (write(f, line, n) != n) {} close(f); }
-    if (to_sd && !stat("/usr/data/mnt/sd_0/ByOS", &sb)) mkdir(SD_LOGDIR, 0755);
-    if (to_sd && !stat(SD_LOGDIR, &sb)) {
+    if (to_sd && sd_mounted()) { mkdir("/usr/data/mnt/sd_0/ByOS", 0755); mkdir(SD_LOGDIR, 0755); }
+    if (to_sd && sd_mounted() && !stat(SD_LOGDIR, &sb)) {
         if (!stat(SD_LOGDIR "/guard.log", &sb) && sb.st_size > 256 * 1024) rename(SD_LOGDIR "/guard.log", SD_LOGDIR "/guard.log.old");
         f = open(SD_LOGDIR "/guard.log", O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
         if (f >= 0) { if (write(f, line, n) != n) {} fsync(f); close(f); }
