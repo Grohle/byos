@@ -319,6 +319,27 @@ static int cc_from_launcher, cc_player_right;   /* de donde venimos; el reproduc
 static int cc_in_app;
 static uint16_t *cc_app_frame;
 static void cc_app_restore(void) { if (cc_app_frame) memcpy(fr0, cc_app_frame, HM_FRAME_BYTES); present(); }
+/* abrir una app (o Ajustes en una pagina) desde el Centro de control. Desde el inicio, directo.
+ * Dentro de una app de ByOS (solo una a la vez): se apunta, se cierra el panel sobre la app, y la
+ * app se va con su gesto de inicio (sintetico, read_pkt); el bucle principal abre la pedida. Antes
+ * decia "Vuelve al inicio para abrirlo". */
+static void cc_go_app(const uint16_t *under, uint16_t *panel, const char *id)
+{
+    cc_animate(under, panel, 1, 0, 160);
+    if (!cc_in_app) { cc_open_app(id); return; }
+    snprintf(pend_id, sizeof pend_id, "%s", id); pend_kind = 1; fake_home_req = 1; fk_step = 0;
+    lg("cc: abrir %s al cerrar la app", id);
+    cc_app_restore();
+}
+static void cc_go_settings(const uint16_t *under, uint16_t *panel, int start)
+{
+    cc_animate(under, panel, 1, 0, 160);
+    if (!cc_in_app) { cc_open_settings(start); return; }
+    pend_start = start; pend_kind = 2; fake_home_req = 1; fk_step = 0;
+    lg("cc: abrir Ajustes (%d) al cerrar la app", start);
+    cc_app_restore();
+}
+
 /* dos pantallas lado a lado: a en x = o, b en x = o + W (o en [-W, 0]) */
 static void cc_hpage(const uint16_t *a, const uint16_t *b, int o)
 {
@@ -677,24 +698,17 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         if (dir == 4) {
             /* mantener pulsado: la pagina de Ajustes de ese control (como en iOS) */
             int tl = hit == 101 ? -1 : cc_tiles[hit >= 200 ? hit - 200 : hit];
-            if (cc_in_app) {
-                while (cur_down && read_pkt(&p, 3000)) {}
-                cc_set_caption(tr("Vuelve al inicio para abrirlo"));
-                cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
-                continue;
-            }
             lg("cc: mantener pulsado %d", tl);
             while (cur_down && read_pkt(&p, 3000)) {}
-            cc_animate(under, panel, 1, 0, 160);
             switch (tl) {
-            case -1: cc_open_settings(SET_DISPLAY); return;
-            case CT_AIRPLANE: case CT_BT: case CT_WIRELESS: cc_open_settings(SET_WIRELESS); return;
-            case CT_NOISE: cc_open_app("headphones"); return;
-            case CT_NOCHARGE: case CT_POWER: cc_open_settings(SET_POWER); return;
-            case CT_DAC: cc_open_settings(SET_USB); return;
-            case CT_FILTER: cc_open_settings(SET_SOUND); return;
-            case CT_FILES: cc_open_app("files"); return;
-            default: cc_open_settings(SET_CCPAGE); return;
+            case -1: cc_go_settings(under, panel, SET_DISPLAY); return;
+            case CT_AIRPLANE: case CT_BT: case CT_WIRELESS: cc_go_settings(under, panel, SET_WIRELESS); return;
+            case CT_NOISE: cc_go_app(under, panel, "headphones"); return;
+            case CT_NOCHARGE: case CT_POWER: cc_go_settings(under, panel, SET_POWER); return;
+            case CT_DAC: cc_go_settings(under, panel, SET_USB); return;
+            case CT_FILTER: cc_go_settings(under, panel, SET_SOUND); return;
+            case CT_FILES: cc_go_app(under, panel, "files"); return;
+            default: cc_go_settings(under, panel, SET_CCPAGE); return;
             }
         }
         if (dir == 1) { if (cc_to_player(panel, sx)) return; continue; }
@@ -728,11 +742,6 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             continue;
         }
         int tile = cc_tiles[hit];
-        if (cc_in_app && (tile == CT_BT || tile == CT_DAC || tile == CT_WIRELESS || tile == CT_FILES || tile == CT_SETTINGS)) {
-            cc_set_caption(tr("Vuelve al inicio para abrirlo"));
-            cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
-            continue;
-        }
         switch (tile) {
         case CT_AIRPLANE: {
             const char *why = 0; int r = cc_air_toggle(&why);
@@ -752,11 +761,11 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             au_filt_i = (i + 1) % n; apply_filter();
             cc_set_caption(tr(n == 7 ? O_FILT8[au_filt_i] : O_FILT2[au_filt_i])); break; }
         case CT_BT:                                            /* el modulo: auriculares conectados o Inalambrico */
-            cc_animate(under, panel, 1, 0, 160); if (cc_bt_connected()) cc_open_app("headphones"); else cc_open_settings(SET_WIRELESS); return;
-        case CT_DAC: cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_USB); return;
-        case CT_WIRELESS: cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_WIRELESS); return;
-        case CT_FILES: cc_animate(under, panel, 1, 0, 160); cc_open_app("files"); return;
-        case CT_SETTINGS: cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_ROOT); return;
+            if (cc_bt_connected()) cc_go_app(under, panel, "headphones"); else cc_go_settings(under, panel, SET_WIRELESS); return;
+        case CT_DAC: cc_go_settings(under, panel, SET_USB); return;
+        case CT_WIRELESS: cc_go_settings(under, panel, SET_WIRELESS); return;
+        case CT_FILES: cc_go_app(under, panel, "files"); return;
+        case CT_SETTINGS: cc_go_settings(under, panel, SET_ROOT); return;
         }
         cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
     }

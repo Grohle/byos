@@ -579,9 +579,37 @@ static void touch_resync(void)
     if (!ioctl(ts, EVIOCGABS(ABS_MT_POSITION_X), &ai)) cur_x = ai.value;
     if (!ioctl(ts, EVIOCGABS(ABS_MT_POSITION_Y), &ai)) cur_y = ai.value;
 }
+/* Gesto de inicio sintetico: el Centro de control, abierto dentro de una app de ByOS, pide abrir
+ * otra (USB, Archivos, Ajustes...). Solo hay una app a la vez: la de ahora se cierra con su
+ * propio gesto de inicio (read_pkt devuelve un deslizamiento hacia arriba desde la barra) y el
+ * bucle principal abre la pedida (pend_*). */
+static int fake_home_req, fk_step;
+static int pend_kind, pend_start; static char pend_id[24];   /* 1 app por id, 2 Ajustes en una pagina */
+static int fake_pkt(struct pkt *p)
+{
+    static const int ys[] = { 476, 466, 440, 400, 350, 300, 250, 200, 160 };
+    int n = 0, k = fk_step++;
+    if (k < 9) {
+        cur_down = 1; cur_x = 160; cur_y = ys[k];
+        if (k == 0) n += mkev(&p->ev[n], EV_KEY, BTN_TOUCH, 1);
+        n += mkev(&p->ev[n], EV_ABS, ABS_MT_POSITION_X, cur_x);
+        n += mkev(&p->ev[n], EV_ABS, ABS_MT_POSITION_Y, cur_y);
+        n += mkev(&p->ev[n], EV_SYN, SYN_MT_REPORT, 0);
+        n += mkev(&p->ev[n], EV_SYN, SYN_REPORT, 0);
+        msleep(12);
+    } else {
+        cur_down = 0; fake_home_req = 0; fk_step = 0;
+        n += mkev(&p->ev[n], EV_KEY, BTN_TOUCH, 0);
+        n += mkev(&p->ev[n], EV_SYN, SYN_MT_REPORT, 0);
+        n += mkev(&p->ev[n], EV_SYN, SYN_REPORT, 0);
+    }
+    p->n = n; p->x = cur_x; p->y = cur_y; p->down = cur_down;
+    return 1;
+}
 static int read_pkt(struct pkt *p, int timeout_ms)
 {
     p->n = 0;
+    if (fake_home_req) return fake_pkt(p);
     for (;;) {
         struct pollfd pf = { ts, POLLIN, 0 };
         int left = p->n ? 50 : timeout_ms, r;
@@ -1702,6 +1730,11 @@ int main(int argc, char **argv)
             }
         }
         starts_tick();
+        if (pend_kind && !fake_home_req && launcher_on) {      /* lo que pidio el Centro de control dentro de una app */
+            int k = pend_kind; pend_kind = 0;
+            if (k == 1) cc_open_app(pend_id); else cc_open_settings(pend_start);
+            continue;
+        }
         if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); first_setup_tick(); guard_tick(); } } continue; }
         struct pkt p;
         if (!read_pkt(&p, 300)) continue;
