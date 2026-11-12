@@ -48,7 +48,7 @@ TOURS = {
     "headphones":   ["tap:124,420", "wait:2.5", *SCROLL, HOME_UP, "wait:2"],
     "nowplaying":   ["tap:196,420", "wait:2.5", "swipe:160,150,160,420,250", "wait:2"],
     "music":        ["tap:268,420", "wait:2.5", *SCROLL, "tap:60,120", "wait:2", "swipe:2,240,250,240,300", "wait:1.5", HOME_UP, "wait:2"],
-    "control":      ["swipe:60,5,60,300,250", "wait:2", "tap:274,252", "wait:1.5", "tap:274,252", "wait:1.5", "swipe:160,470,160,150,200", "wait:2"],
+    "control":      ["swipe:60,5,60,300,250", "wait:2", "tap:274,252", "wait:1.5", "tap:274,252", "wait:1.5", "tap:274,252", "wait:1.5", "swipe:160,470,160,150,200", "wait:2"],   # power mode cycles 3 states: back to where it was
     "volume":       ["key:106,event3", "wait:0.3", "key:106,event3", "wait:0.3", "key:105,event3", "wait:0.3", "key:105,event3", "wait:3"],
     "volume_in_app": ["tap:53,74", "wait:2.5", "key:106,event3", "wait:0.3", "key:105,event3", "wait:3", HOME_UP, "wait:2"],
 }

@@ -714,12 +714,16 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
     int from_launcher = cc_from_launcher;
     struct pkt p;
     if (start_y >= 0) {           /* tirar hacia abajo */
-        double vel = 0, lt = now_ms(); int ly = start_y;
+        double vel = 0, lt = now_ms(), ft = now_ms(); int ly = start_y;
         while (cur_down) {
             int got = read_pkt(&p, 0); while (got && p.down && read_pkt(&p, 0)) {}
             double t = now_ms(); if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lt = t; }
-            e = (cur_y - start_y) / 240.0; if (e < 0) e = 0; if (e > 1) e = 1;
-            cc_frame(under, blur, panel, e); present();
+            /* el panel alcanza al dedo a un ritmo suave: preparar el fondo tarda y el dedo ya iba
+             * lejos, asi que el primer fotograma salia con el panel entero (revisor, 12-11) */
+            double tgt = (cur_y - start_y) / 240.0; if (tgt < 0) tgt = 0; if (tgt > 1) tgt = 1;
+            double step = (t - ft) / 130.0; ft = t;
+            e = tgt > e + step ? e + step : tgt < e - step ? e - step : tgt;
+            cc_frame(under, blur, panel, e); dirty_y0 = dirty_y1 = 0; present();
             if (got && !p.down) break;
         }
         lg("cc: suelta e=%.2f vel=%.2f", e, vel);

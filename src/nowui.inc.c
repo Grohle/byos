@@ -1491,8 +1491,11 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
     if (ix == -2) { nu_sheet_build(); nu_sheet_anim((float)H, 0, 0, 0.32f, 1, 0); }   /* sube desde abajo (como iOS) */
     else if (ix >= 0) {
         uint16_t *pg = img_app; nu_render(pg, 1);
+        /* el reloj de la animacion empieza aqui: con t0 de antes de preparar las capas (~370 ms)
+         * el zoom ya estaba "acabado" al empezar y Reproduciendo aparecia de golpe (revisor, 12-11) */
+        double tz = now_ms();
         for (;;) {
-            double t = (now_ms() - t0) / 300; if (t > 1) t = 1; double e = ease_out(t);
+            double t = (now_ms() - tz) / 300; if (t > 1) t = 1; double e = ease_out(t);
             int w = (int)(L.icon + (W - L.icon) * e), h = (int)(L.icon + (H - L.icon) * e);
             zoom_frame(fr0, home, 32 - (int)(8 * e), pg, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
             present(); if (t >= 1) break;
