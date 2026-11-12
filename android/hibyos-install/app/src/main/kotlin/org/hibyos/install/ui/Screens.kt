@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import org.hibyos.install.Actions
+import org.hibyos.install.AppUpdateState
 import org.hibyos.install.BundleInfo
 import org.hibyos.install.FirmwareState
 import org.hibyos.install.ManualState
@@ -172,6 +173,7 @@ private fun Home(s: UiState, a: Actions) {
                 Txt(stringResource(R.string.home_loading), T.lead, Modifier.padding(start = 10.dp))
             }
         }
+        AppUpdateNotice(s, a)
         Section(header = stringResource(R.string.home_before), footer = stringResource(R.string.home_before_footer, v)) {
             row {
                 Item(title = stringResource(R.string.home_req_player), subtitle = stringResource(R.string.home_req_player_sub, v),
@@ -210,6 +212,7 @@ private fun Home(s: UiState, a: Actions) {
                         if (next == 4) 1 else 0, null) { a.go(Screen.INSTALL) }
                 }
             }
+            ByosCheckSection(s, a)
         }
         Section(header = stringResource(R.string.sync_home_h), footer = stringResource(R.string.sync_home_footer)) {
             row {
@@ -395,8 +398,13 @@ private fun Patch(s: UiState, a: Actions) {
                     row { Item(title = stringResource(R.string.patch_row_build), value = p.buildId) }
                     row { CodeItem(stringResource(R.string.fw_sha), checksum(p.sha256)) }
                 }
+                ByosCheckSection(s, a)
+                StartOverSection(s, a)
             }
             else -> {
+                if (s.buildDiscarded) {
+                    Section { row { Item(title = stringResource(R.string.build_discarded), icon = { IconTile(Glyphs.Info, C.blue) }) } }
+                }
                 if (p is PatchState.Failed) ErrorSection(p.error)
                 if (!hasFirmware) {
                     Notice(stringResource(R.string.patch_need_fw)) { a.go(Screen.FIRMWARE) }
@@ -410,6 +418,8 @@ private fun Patch(s: UiState, a: Actions) {
                     row { Item(title = stringResource(R.string.patch_row_files), value = b.overlayFiles.toString()) }
                     row { Item(title = stringResource(R.string.patch_row_base), value = stringResource(R.string.patch_row_base_value, b.firmwareVersion)) }
                 }
+                ByosCheckSection(s, a)
+                if (p is PatchState.Failed || s.buildDiscarded || s.startedOver) StartOverSection(s, a)
             }
         }
     }
@@ -658,6 +668,134 @@ private fun Install(s: UiState, a: Actions) {
     }
 }
 
+// ---- newer ByOS, app updates, start over ----------------------------------------------------
+
+/** A row with a title, a percentage and a bar. */
+@Composable
+private fun ProgressRow(title: String, done: Long, total: Long) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Txt(title, T.body, Modifier.weight(1f))
+            Txt(stringResource(R.string.percent, if (total > 0) (done * 100 / total).toInt() else 0), T.value)
+        }
+        ProgressBar(if (total > 0) done.toFloat() / total else 0f, Modifier.padding(top = 10.dp, bottom = 3.dp))
+    }
+}
+
+/**
+ * "Check for a Newer ByOS" right on the home and build screens: the same signed check and
+ * download of the ByOS files as in About, with the result in place.
+ */
+@Composable
+private fun ByosCheckSection(s: UiState, a: Actions) {
+    val b = s.bundle ?: return
+    if (!b.canUpdate) return
+    val u = s.update
+    Section(header = stringResource(R.string.bcheck_h), footer = stringResource(R.string.bcheck_footer)) {
+        when (u) {
+            UpdateState.Checking -> row { Item(title = stringResource(R.string.bcheck_checking), trailing = { Spinner() }) }
+            is UpdateState.Available -> {
+                row {
+                    Item(title = stringResource(R.string.bcheck_available, u.version), subtitle = stringResource(R.string.bcheck_available_sub, b.hibyosVersion),
+                        icon = { IconTile(Glyphs.Download, C.green) })
+                }
+                row(iconInset) {
+                    Item(title = stringResource(R.string.bcheck_download, u.version, mb(u.size)), titleColor = C.blue) { a.downloadUpdate() }
+                }
+            }
+            is UpdateState.Downloading -> row { ProgressRow(stringResource(R.string.bcheck_downloading, u.version), u.done, u.total) }
+            else -> {
+                row {
+                    Item(title = stringResource(R.string.bcheck_check), subtitle = stringResource(R.string.bcheck_current, b.hibyosVersion),
+                        titleColor = C.blue, icon = { IconTile(Glyphs.Refresh, C.blue) }) { a.checkUpdate() }
+                }
+                if (u is UpdateState.UpToDate) row(iconInset) { TextRow(stringResource(R.string.bcheck_uptodate, u.version), T.sub) }
+                if (u is UpdateState.Installed) row(iconInset) { TextRow(stringResource(R.string.bcheck_done, u.version), T.sub.copy(color = C.green)) }
+            }
+        }
+    }
+    if (u is UpdateState.Failed) ErrorSection(u.error)
+}
+
+/** A newer version of this app was found (by the daily check or by hand): a row that leads to About. */
+@Composable
+private fun AppUpdateNotice(s: UiState, a: Actions) {
+    val version = when (val u = s.appUpdate) {
+        is AppUpdateState.Available -> u.version
+        is AppUpdateState.Ready -> u.version
+        is AppUpdateState.NeedsPermission -> u.version
+        is AppUpdateState.Downloading -> u.version
+        else -> return
+    }
+    Section {
+        row {
+            Item(title = stringResource(R.string.appupd_available, version), subtitle = stringResource(R.string.appupd_available_sub, s.appVersion),
+                icon = { IconTile(Glyphs.Download, C.green) }, chevron = true) { a.go(Screen.ABOUT) }
+        }
+    }
+}
+
+/** About: this app's version, its updates (with notes, download, install) and the daily check. */
+@Composable
+private fun AppUpdateSection(s: UiState, a: Actions) {
+    val u = s.appUpdate
+    Section(header = stringResource(R.string.appupd_h), footer = stringResource(R.string.appupd_footer)) {
+        when (u) {
+            AppUpdateState.Checking -> row { Item(title = stringResource(R.string.appupd_checking), trailing = { Spinner() }) }
+            is AppUpdateState.Available -> {
+                row { Item(title = stringResource(R.string.appupd_available, u.version), icon = { IconTile(Glyphs.Download, C.green) }) }
+                row(iconInset) { Item(title = stringResource(R.string.appupd_download, mb(u.size)), titleColor = C.blue) { a.downloadAppUpdate() } }
+            }
+            is AppUpdateState.Downloading -> row { ProgressRow(stringResource(R.string.appupd_downloading, u.version), u.done, u.total) }
+            is AppUpdateState.NeedsPermission -> row {
+                Item(title = stringResource(R.string.appupd_permission), subtitle = stringResource(R.string.appupd_permission_sub),
+                    titleColor = C.blue, icon = { IconTile(Glyphs.Alert, C.orange) }, chevron = true) { a.installAppUpdate() }
+            }
+            is AppUpdateState.Ready -> row {
+                Item(title = stringResource(R.string.appupd_install, u.version), subtitle = stringResource(R.string.appupd_ready_sub),
+                    titleColor = C.blue, icon = { IconTile(Glyphs.Download, C.green) }) { a.installAppUpdate() }
+            }
+            else -> {
+                row {
+                    Item(title = stringResource(R.string.appupd_check), titleColor = C.blue,
+                        icon = { IconTile(Glyphs.Refresh, C.blue) }) { a.checkAppUpdate() }
+                }
+                if (u is AppUpdateState.UpToDate) row(iconInset) { TextRow(stringResource(R.string.appupd_uptodate, u.version), T.sub) }
+            }
+        }
+        row {
+            Item(title = stringResource(R.string.appupd_auto), trailing = {
+                Toggle(s.appUpdateAuto, label = stringResource(R.string.appupd_auto)) { a.setAppUpdateAuto(it) }
+            })
+        }
+    }
+    val notes = when (u) {
+        is AppUpdateState.Available -> u.version to u.notes
+        is AppUpdateState.Downloading -> u.version to u.notes
+        is AppUpdateState.Ready -> u.version to u.notes
+        is AppUpdateState.NeedsPermission -> u.version to u.notes
+        else -> null
+    }
+    if (notes != null && notes.second.isNotBlank()) {
+        Section(header = stringResource(R.string.appupd_notes_h, notes.first)) {
+            row { TextRow(notes.second, T.sub.copy(fontSize = T.callout.fontSize, lineHeight = T.callout.lineHeight)) }
+        }
+    }
+    if (u is AppUpdateState.Failed) ErrorSection(u.error)
+}
+
+/** "Start Over" on the build screen: the build goes, the checked official firmware stays. */
+@Composable
+private fun StartOverSection(s: UiState, a: Actions) {
+    val b = s.bundle ?: return
+    Section(footer = stringResource(R.string.startover_sub, b.firmwareVersion)) {
+        row {
+            Item(title = stringResource(R.string.startover), titleColor = C.red, icon = { IconTile(Glyphs.Trash, C.red) }) { a.startOver() }
+        }
+        if (s.startedOver) row(iconInset) { TextRow(stringResource(R.string.startover_done), T.sub.copy(color = C.green)) }
+    }
+}
+
 // ---- about ----------------------------------------------------------------------------------
 
 @Composable
@@ -706,6 +844,7 @@ private fun About(s: UiState, a: Actions) {
             }
             if (u is UpdateState.Failed) ErrorSection(u.error)
         }
+        AppUpdateSection(s, a)
         Section(header = stringResource(R.string.about_net_h), footer = stringResource(R.string.about_net_footer)) {
             row { TextRow(stringResource(R.string.about_net_1), T.sub.copy(fontSize = T.callout.fontSize, lineHeight = T.callout.lineHeight)) }
             row { TextRow(stringResource(R.string.about_net_2), T.sub.copy(fontSize = T.callout.fontSize, lineHeight = T.callout.lineHeight)) }

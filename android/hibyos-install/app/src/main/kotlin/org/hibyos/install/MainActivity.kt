@@ -121,6 +121,49 @@ class MainActivity : ComponentActivity(), Host {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        vm.resumed()
+    }
+
+    override fun canInstallPackages(): Boolean = packageManager.canRequestPackageInstalls()
+
+    override fun askInstallPermission() {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
+    /**
+     * The system installer with the checked APK (from the app's own files, through the
+     * FileProvider). Signed with the same key, it installs as an update of this app.
+     */
+    override fun installPackage(file: File): Boolean = try {
+        val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+        @Suppress("DEPRECATION")
+        val i = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, false)
+            putExtra(Intent.EXTRA_RETURN_RESULT, false)
+        }
+        startActivity(i)
+        true
+    } catch (e: ActivityNotFoundException) {
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            true
+        } catch (e2: Exception) {
+            false
+        }
+    } catch (e: IllegalArgumentException) {
+        false
+    }
+
     override fun onDestroy() {
         if (vm.host === this) vm.host = null
         super.onDestroy()

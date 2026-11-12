@@ -233,8 +233,20 @@ const STEP_MS = Number(process.env.BYOS_MOCK_STEP_MS || (SCENARIO === 'slow' ? 4
 const STAGES = [['check', 4], ['read', 10], ['apply', 4], ['build', 26], ['verify_rootfs', 26], ['write', 14], ['verify_upt', 16]];
 const CACHE = 'C:\\ByOS\\cli\\cache';
 
+function versionNewer(a, b) {
+  const p = (v) => String(v).split('.').map((x) => Number.parseInt(x, 10) || 0);
+  const x = p(a); const y = p(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+}
+
+// The ByOS files of the demo's latest release (BYOS_MOCK_BUNDLE_LATEST=0.9.0: none newer).
+const BUNDLE_LATEST = process.env.BYOS_MOCK_BUNDLE_LATEST || '0.9.1';
+
 function byos(state) {
   state.byos ??= { fwReady: false, built: false, installed: '0.8.0' };
+  // newer ByOS files taken with bundle-update
+  if (state.byos.bundle) BUILD.version = state.byos.bundle;
   return state.byos;
 }
 
@@ -431,8 +443,33 @@ const commands = {
   },
 
   async 'bundle-update'() {
+    const state = load();
+    const b = byos(state);
     await tick(STEP_MS);
-    return { current: BUILD.version, latest: BUILD.version, available: false, updated: false };
+    if (SCENARIO === 'offline') throw new Fail('no_device', 'no connection: github.com');
+    const current = BUILD.version;
+    const size = 5514631;
+    if (!versionNewer(BUNDLE_LATEST, current)) return { current, latest: current, available: false, updated: false };
+    if (opts.check) return { current, latest: BUNDLE_LATEST, available: true, updated: false, size };
+    for (let i = 1; i <= 10; i++) {
+      await tick(STEP_MS);
+      emit('progress', { op: 'download', path: 'hibyos-bundle', done: Math.round((size * i) / 10), total: size, rate: 2400000, unit: 'bytes' });
+    }
+    // newer ByOS files: a build of the older ones no longer counts (the firmware stays)
+    b.bundle = BUNDLE_LATEST;
+    b.built = false;
+    save(state);
+    return { current: BUNDLE_LATEST, latest: BUNDLE_LATEST, available: true, updated: true, size };
+  },
+
+  // "Start over": the build goes, the checked firmware stays (BYOS_CLI.md, build-clean)
+  async 'build-clean'() {
+    const state = load();
+    const b = byos(state);
+    const removed = b.built ? 4 : 0;
+    b.built = false;
+    save(state);
+    return { dir: `${CACHE}\\build`, removed, firmware_kept: true };
   },
 
   async 'firmware-fetch'() {

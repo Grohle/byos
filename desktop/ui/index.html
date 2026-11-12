@@ -47,6 +47,10 @@
         <button class="side-item side-action" id="btn-pair"><span class="ico ico-plus"></span><span data-i18n="pairDevice"></span></button>
       </nav>
       <footer class="side-footer">
+        <button class="side-item about-btn" id="btn-about" aria-haspopup="dialog" aria-controls="about">
+          <span data-i18n="auAbout"></span>
+          <span class="about-dot" id="about-dot" hidden data-i18n="auBadge"></span>
+        </button>
         <label><span class="sr" data-i18n="language"></span>
           <select id="lang-select"></select>
         </label>
@@ -178,6 +182,15 @@
             </div>
             <span class="pill" id="upd-pill" hidden></span>
           </div>
+          <div class="card bc-card" id="bc-card">
+            <div class="bc-text">
+              <h3 data-i18n="bcTitle"></h3>
+              <p class="muted small-text" id="bc-status" role="status" aria-live="polite"></p>
+              <div class="step-bar" id="bc-bar" hidden><span id="bc-fill"></span></div>
+            </div>
+            <button class="btn" id="btn-bc-check" data-i18n="bcCheck"></button>
+            <button class="btn primary" id="btn-bc-get" hidden></button>
+          </div>
           <div class="card upd-card">
             <div class="upd-head">
               <div>
@@ -190,6 +203,7 @@
             <div class="upd-actions">
               <button class="btn link" id="btn-fw-file" data-i18n="updPickFile"></button>
               <input type="file" id="fw-input" accept=".upt" hidden>
+              <button class="btn link" id="btn-upd-clean" data-i18n="soStart" hidden></button>
               <span class="spacer"></span>
               <button class="btn" id="btn-upd-cancel" data-i18n="cancel" hidden></button>
               <button class="btn primary" id="btn-upd-go"></button>
@@ -216,6 +230,33 @@
   </dialog>
 
   <dialog class="sheet preview" id="sync-preview" aria-label="Sync preview"></dialog>
+
+  <!-- About ByOS Desktop: its version and its own updates (lib/app-update.mjs) -->
+  <dialog class="sheet about" id="about" aria-labelledby="au-title">
+    <div class="about-body">
+      <div class="about-head">
+        <img src="/icon-192.png" alt="" width="56" height="56">
+        <div>
+          <h2 id="au-title" data-i18n="auTitle"></h2>
+          <p class="muted" id="au-version"></p>
+        </div>
+      </div>
+      <p id="au-status" role="status" aria-live="polite"></p>
+      <div class="step-bar" id="au-bar" hidden><span id="au-fill"></span></div>
+      <div class="au-notes" id="au-notes" hidden>
+        <h3 data-i18n="auNotes"></h3>
+        <p id="au-notes-text"></p>
+      </div>
+      <label class="au-auto"><input type="checkbox" id="au-auto"> <span data-i18n="auAuto"></span></label>
+      <p class="muted small-text" data-i18n="auFoot"></p>
+      <div class="sheet-buttons">
+        <button class="btn" id="au-close" data-i18n="auClose"></button>
+        <span class="spacer"></span>
+        <button class="btn" id="au-check" data-i18n="auCheck"></button>
+        <button class="btn primary" id="au-main" hidden></button>
+      </div>
+    </div>
+  </dialog>
 
   <div class="ctx-menu" id="ctx-menu" role="menu" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>

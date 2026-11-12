@@ -423,16 +423,33 @@ DIR/r3ii_2025.upt   the ByOS firmware (the patched official firmware)
 DIR/ByOS/...        the ByOS folder for the card (the bundle's SD files, each checked)
 DIR/result.txt      the core's build record (the same file the Android app keeps)
 DIR/build.json      what build-send copies, in copy order, with sizes and SHA-256
+DIR/build.stamp     what the build is made from: ByOS version, SHA-256 of the ByOS files, byos-cli version
 ```
 
 Progress: `op "patch"` with `unit "permille"` for the whole patch and an extra `stage` key
 (`check`, `read`, `apply`, `build`, `verify_rootfs`, `write`, `verify_upt`, in this order),
-then `op "export"` (bytes) for the ByOS folder. A finished build of the same ByOS files is
-reused (`cached: true`) unless `--force` or `--firmware` is given. The patch takes a few
-seconds on a PC. Wrong firmware: `error verify`. No firmware yet: `error usage`.
+then `op "export"` (bytes) for the ByOS folder. A finished build of the same ByOS files by the
+same byos-cli (same `build.stamp`) is reused (`cached: true`) unless `--force` or `--firmware`
+is given. Anything else an earlier run left in `DIR` (a build that stopped half way, one made
+from other ByOS files or by another byos-cli, partial files, the work folder) is removed first,
+so it never blocks the new build; `build-info` reports `build: null` for it. Only names a build
+makes are removed, and never the official firmware. The patch takes a few seconds on a PC.
+Wrong firmware: `error verify`. No firmware yet: `error usage`.
 
 Result: `out`, `upt`, `size`, `md5`, `sha256`, `hibyos_version`, `build_id`, `files` (files
 in the ByOS folder), `sd_size`, `cached`.
+
+### build-clean
+
+```
+byos-cli build-clean [--dir DIR]
+```
+
+"Start Over": removes the build steps in `DIR` (default `cache/build/`): the record, the stamp,
+`build.json`, the patched firmware and partial files, the ByOS folder and the work folder. The
+official firmware in `cache/firmware/` is kept, so `build` can start again at once.
+
+Result: `dir`, `removed` (entries removed), `firmware_kept` (always `true`).
 
 ### build-send
 

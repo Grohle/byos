@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- HTTPS to HiBy's download link and to the project's releases (only when asked), and the
-         player's own Wi-Fi transfer on the local network. Nothing else. -->
+    <!-- HTTPS to HiBy's download link and to the project's releases (when asked, and the app's
+         own update check at most once a day unless turned off), and the player's own Wi-Fi
+         transfer on the local network. Nothing else. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To hand a checked update of this app to Android's installer (the user confirms it). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- ByOS connected: to receive the UDP answers of players on the Wi-Fi network (discovery). -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />

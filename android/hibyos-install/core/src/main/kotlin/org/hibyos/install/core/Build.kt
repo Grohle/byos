@@ -190,24 +190,92 @@ object ByosBuild {
      * The build of [bundle] kept in [outDir], or null when there is none, it is incomplete, or
      * it was made from other ByOS files.
      */
-    fun restore(bundle: Bundle, outDir: File): BuildRecord? {
+    fun restore(bundle: Bundle, outDir: File, stamp: String? = null): BuildRecord? {
         val f = File(outDir, bundle.outName)
         val mark = File(outDir, RECORD)
-        if (!f.isFile || !mark.isFile) return null
+        if (!f.isFile || !mark.isFile || !stampOk(outDir, stamp)) return null
         val l = mark.readLines()
         if (l.size < 6 || l[0] != bundle.hibyosVersion || l[5] != bundle.generatedFrom || l[1].toLongOrNull() != f.length()) return null
         return BuildRecord(l[0], f.length(), l[2], l[3], l[4].toIntOrNull() ?: 0, l[5])
     }
 
     /**
+     * What a build in a folder was made from: the ByOS files (version, origin and SHA-256 of the
+     * bundle) and the program that made it. Written before a build starts; a build whose stamp
+     * differs (newer ByOS files, a newer app) or that has no record (it stopped half way) is
+     * discarded by [sweep] instead of being reused or getting in the way of the next build.
+     */
+    const val STAMP = "build.stamp"
+
+    /** byos-cli's description of a finished build, next to the record. */
+    const val MANIFEST = "build.json"
+
+    /** Names a build leaves in its folder (the patched firmware and partial files are matched by their ending). */
+    private val OWN = setOf(RECORD, STAMP, MANIFEST, "ByOS", ".work")
+    private val OWN_SUFFIX = listOf(".upt", ".part", ".new", ".tmp")
+
+    /** The stamp of a build of [bundle] made by [app] (for example "android 1.2.0" or "byos-cli 0.1.0"). */
+    fun stamp(bundle: Bundle, app: String): String =
+        "format 1\nbyos ${bundle.hibyosVersion}\nfrom ${bundle.generatedFrom}\nbundle ${fileSha256(bundle.file)}\napp $app\n"
+
+    private fun stampOk(outDir: File, stamp: String?): Boolean {
+        if (stamp == null) return true
+        val f = File(outDir, STAMP)
+        return f.isFile && f.readText() == stamp
+    }
+
+    private fun same(a: File, b: File?): Boolean = b != null && a.absoluteFile.normalize() == b.absoluteFile.normalize()
+
+    /**
+     * Makes the build folder ready for [bundle]: a finished build of the same ByOS files made by
+     * the same program ([stamp]) is kept, and only what an interrupted run left around it goes
+     * (the work folder, partial files, firmware files of other versions). Anything else (a build
+     * that stopped half way, one made from other ByOS files or by another version of the app) is
+     * removed. The official firmware lives in its own folder and is never touched here; [keep]
+     * is a file that stays even if it is in [outDir]. Returns true when a finished build was kept.
+     */
+    fun sweep(bundle: Bundle, outDir: File, workDir: File, stamp: String?, keep: File? = null): Boolean {
+        if (restore(bundle, outDir, stamp) != null) {
+            if (!same(workDir, keep)) workDir.deleteRecursively()
+            outDir.listFiles()?.forEach { f ->
+                val junk = f.name == ".work" || (f.isFile && f.name != bundle.outName && OWN_SUFFIX.any { f.name.endsWith(it) })
+                if (junk && !same(f, keep)) f.deleteRecursively()
+            }
+            return true
+        }
+        startOver(outDir, workDir, keep)
+        return false
+    }
+
+    /**
+     * "Start over": removes every step of the build in [outDir] (the record, the stamp, the
+     * patched firmware and its partial files, the exported ByOS folder) and [workDir]. Only names
+     * a build makes are removed, so a folder given by the user keeps its other files, and [keep]
+     * stays. The official firmware's cache is another folder and is never touched.
+     */
+    fun startOver(outDir: File, workDir: File, keep: File? = null) {
+        workDir.deleteRecursively()
+        outDir.listFiles()?.forEach { f ->
+            val own = f.name in OWN || (f.isFile && OWN_SUFFIX.any { f.name.endsWith(it) })
+            if (own && !same(f, keep)) f.deleteRecursively()
+        }
+    }
+
+    /**
      * Patches [firmware] into `outDir/<bundle.outName>` and records the result. The record is
-     * removed first, so a build that stops half way is never taken for a finished one.
+     * removed first, so a build that stops half way is never taken for a finished one. With a
+     * [stamp], what an earlier run left in [outDir] is cleared first and the stamp is written
+     * before the patch starts, so a later run can tell what this build was made from.
      */
     fun patch(firmware: File, bundle: Bundle, outDir: File, workDir: File, options: PatchOptions = PatchOptions(),
-              listener: PatchListener? = null): Pair<PatchResult, BuildRecord> {
+              listener: PatchListener? = null, stamp: String? = null): Pair<PatchResult, BuildRecord> {
         outDir.mkdirs()
         val mark = File(outDir, RECORD)
         mark.delete()
+        if (stamp != null) {
+            startOver(outDir, workDir, firmware)
+            File(outDir, STAMP).writeText(stamp)
+        }
         val r = Patcher.patch(firmware, bundle, File(outDir, bundle.outName), workDir, options, listener)
         val rec = BuildRecord(r.hibyosVersion, r.size, r.sha256, r.buildId, r.files, bundle.generatedFrom)
         rec.write(mark)

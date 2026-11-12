@@ -1011,3 +1011,41 @@ svg.i { width: 18px; height: 18px; flex: none; }
 @media (prefers-reduced-motion: reduce) {
   .album, .album-detail, .lib-loading-art span, .applying-icon svg, .toast, .sy-kind, .sy-options, .pv-banner, .sheet[open] { animation: none !important; }
 }
+
+/* ---- About ByOS Desktop and its updates; the ByOS check and Start Over of the Updates tab - */
+
+.about-btn {
+  width: 100%; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  color: var(--text-2); border-radius: 6px;
+}
+.about-btn:hover { background: var(--line); color: var(--text); }
+.about-btn > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a blue dot; its word ("Update") is for screen readers */
+.about-dot {
+  margin-left: auto; flex: none; width: 8px; height: 8px; border-radius: 50%; overflow: hidden;
+  font-size: 0; color: transparent; background: var(--accent); animation: pop 360ms var(--spring);
+}
+.about .about-body { padding: 20px 22px 18px; }
+.about-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.about-head img { border-radius: 13px; flex: none; }
+.about-head h2 { margin: 0; }
+.about-head p { margin: 2px 0 0; font-variant-numeric: tabular-nums; }
+.about #au-status { color: var(--text); margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+.about #au-status.fail { color: var(--danger); }
+.about #au-status.ok { color: var(--ok); }
+.about .step-bar { margin: 4px 0 12px; }
+.au-notes { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; margin: 8px 0 12px; animation: rise 300ms var(--ease-out); }
+.au-notes h3 { margin: 0 0 4px; font-size: 12px; color: var(--text-2); font-weight: 600; }
+.au-notes p { margin: 0; white-space: pre-line; color: var(--text); }
+.au-auto { display: flex; align-items: center; gap: 8px; margin: 8px 0 10px; }
+
+.bc-card { display: flex; align-items: center; gap: 10px; }
+.bc-card .bc-text { flex: 1; min-width: 0; }
+.bc-card h3 { margin: 0 0 2px; }
+.bc-card p { margin: 0; font-variant-numeric: tabular-nums; }
+.bc-card p.fail { color: var(--danger); }
+.bc-card p.ok { color: var(--ok); }
+.bc-card .btn { flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .about-dot, .au-notes { animation: none !important; }
+}

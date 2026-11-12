@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appupd_h">App ByOS Install</string>
+    <string name="appupd_check">Rechercher des mises à jour de l\'app</string>
+    <string name="appupd_checking">Recherche de mises à jour de l\'app</string>
+    <string name="appupd_uptodate">ByOS Install %1$s est la dernière version.</string>
+    <string name="appupd_available">ByOS Install %1$s est disponible</string>
+    <string name="appupd_available_sub">Vous avez la %1$s. Touchez pour voir les nouveautés.</string>
+    <string name="appupd_download">Télécharger et installer · %1$s</string>
+    <string name="appupd_downloading">Téléchargement de ByOS Install %1$s</string>
+    <string name="appupd_install">Installer ByOS Install %1$s</string>
+    <string name="appupd_ready_sub">Téléchargée et vérifiée. Android vous demande de confirmer la mise à jour.</string>
+    <string name="appupd_permission">Autoriser ByOS Install à installer les mises à jour</string>
+    <string name="appupd_permission_sub">Android le demande une seule fois : activez « Autoriser cette source », puis revenez à cet écran.</string>
+    <string name="appupd_auto">Vérifier une fois par jour</string>
+    <string name="appupd_footer">Les mises à jour de l\'app viennent des versions publiées du projet sur GitHub. Une mise à jour n\'est installée que si sa description est signée avec la clé de publication du projet et si le fichier correspond à sa taille et à son SHA-256. Android vérifie ensuite qu\'elle vient du même développeur.</string>
+    <string name="appupd_notes_h">Nouveautés de la %1$s</string>
+    <string name="err_appupd_untrusted">La mise à jour de l\'app n\'a pas été acceptée</string>
+    <string name="hint_appupd_untrusted">L\'app garde sa version actuelle.</string>
+    <string name="err_appupd_offline">La recherche de mises à jour de l\'app a échoué</string>
+    <string name="hint_appupd_offline">Vérifiez la connexion à internet et réessayez.</string>
+    <string name="err_appupd_limit">GitHub demande d\'attendre avant la prochaine recherche</string>
+    <string name="hint_appupd_limit">Réessayez plus tard.</string>
+    <string name="err_appupd_os">Cette mise à jour nécessite une version plus récente d\'Android</string>
+    <string name="hint_appupd_os">ByOS Install continue de fonctionner avec la version que vous avez.</string>
+    <string name="err_appupd_open">Le programme d\'installation n\'a pas pu s\'ouvrir</string>
+    <string name="hint_appupd_open">Réessayez. Si cela échoue encore, téléchargez l\'app depuis la page du projet.</string>
+
+    <string name="bcheck_h">Version de ByOS</string>
+    <string name="bcheck_check">Rechercher un ByOS plus récent</string>
+    <string name="bcheck_checking">Recherche d\'un ByOS plus récent</string>
+    <string name="bcheck_current">Cette app crée ByOS %1$s</string>
+    <string name="bcheck_uptodate">ByOS %1$s est la dernière version.</string>
+    <string name="bcheck_available">ByOS %1$s est disponible</string>
+    <string name="bcheck_available_sub">Vous avez la %1$s.</string>
+    <string name="bcheck_download">Télécharger et utiliser ByOS %1$s · %2$s</string>
+    <string name="bcheck_downloading">Téléchargement de ByOS %1$s</string>
+    <string name="bcheck_done">ByOS %1$s est prêt à être créé.</string>
+    <string name="bcheck_footer">Les fichiers ByOS plus récents viennent des versions publiées du projet sur GitHub et ne sont utilisés que s\'ils sont signés avec la clé de publication du projet.</string>
+
+    <string name="startover">Recommencer</string>
+    <string name="startover_sub">Supprime cette compilation et ce qui restait d\'une précédente. Le firmware officiel v%1$s est conservé : inutile de le télécharger à nouveau.</string>
+    <string name="startover_done">La compilation a été supprimée. Le firmware officiel est conservé.</string>
+    <string name="build_discarded">Une compilation précédente avait été faite avec d\'autres fichiers ByOS, par une autre version de l\'app, ou s\'était arrêtée en cours. Elle a été supprimée ; recréez-la.</string>
+</resources>

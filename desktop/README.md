@@ -27,6 +27,26 @@ Build it: `gradlew :cli:fatJar` (android/hibyos-install), `bash tools/wsl/zbuild
 packs). The program is not code-signed yet: Windows SmartScreen may ask for **More info › Run
 anyway** the first time.
 
+### Updating the app
+
+**About ByOS Desktop** (bottom of the sidebar) shows the version and **Check for Updates**. When a
+newer ByOS Desktop is published, it shows what is new, **Download** (with progress) and then
+**Restart to Update**: the window closes and the new version opens. The app also checks quietly
+once a day when its window opens (switch in the same window); a badge "Update" appears when there
+is something new.
+
+The runner does the work (`lib/app-update.mjs`, Node.js only): it lists the project's GitHub
+releases, takes the newest `desktop-vX.Y.Z`, checks its signed `byos-app-update.json` with the
+release keys built into the app, downloads `ByOS.exe` and keeps it only if its size and SHA-256
+are the signed ones, as `%LOCALAPPDATA%\ByOS Desktop\updates\ByOS-X.Y.Z.exe`. The page only says
+"check", "download", "restart": it never names a file or a link. The launcher passes
+`--app-version` and `--app-home` to the runner, starts the new program on restart, and an older
+`ByOS.exe` started later hands over to the newest one. Without those options (running
+`node server.mjs` from the source folder) the About window only shows that updates come with the
+Windows program. In demo mode (`--mock`) a made-up signed 0.9.1 is served from memory, without
+network; `BYOS_MOCK_APP_UPDATE=none` makes the demo up to date. Details and the release steps:
+[docs/APP_UPDATES.md](../docs/APP_UPDATES.md).
+
 ## Try it without a HiBy (demo mode)
 
 ```
@@ -91,6 +111,14 @@ Open a HiBy, then the **Updates** tab:
 3. The app copies the ByOS folder and the ByOS firmware to the card, starts the HiBy's own
    reinstall through HiBy's recovery, and waits until the HiBy is back with the new ByOS
    (a few minutes). The page ends with "ByOS 0.9.0 is installed."
+
+Above the steps, **Check for a Newer ByOS** asks the project's releases for newer ByOS files
+(`byos-cli bundle-update --check`) and shows the result in place ("ByOS 0.9.1 is available. You
+have 0.9.0."), with **Download and Use ByOS 0.9.1** (`bundle-update`, signed and checked by
+byos-cli). A build that stopped half way, or one made from other ByOS files or by another
+version of byos-cli, is removed by `build` itself before it builds again. **Start Over**
+(`build-clean`) removes the build by hand; the checked official firmware is always kept. In demo
+mode the fake releases have ByOS 0.9.1 (`BYOS_MOCK_BUNDLE_LATEST=0.9.0`: none newer).
 
 A HiBy on Wi-Fi can only get the build ready: firmware never travels over Wi-Fi. The details
 are in [docs/DESKTOP_APP.md](../docs/DESKTOP_APP.md) section 5.7 and the commands in

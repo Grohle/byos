@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appupd_h">App ByOS Install</string>
+    <string name="appupd_check">Buscar actualizaciones de la app</string>
+    <string name="appupd_checking">Buscando actualizaciones de la app</string>
+    <string name="appupd_uptodate">ByOS Install %1$s es la última versión.</string>
+    <string name="appupd_available">ByOS Install %1$s está disponible</string>
+    <string name="appupd_available_sub">Tienes la %1$s. Toca para ver las novedades.</string>
+    <string name="appupd_download">Descargar e instalar · %1$s</string>
+    <string name="appupd_downloading">Descargando ByOS Install %1$s</string>
+    <string name="appupd_install">Instalar ByOS Install %1$s</string>
+    <string name="appupd_ready_sub">Descargada y comprobada. Android te pide que confirmes la actualización.</string>
+    <string name="appupd_permission">Permitir que ByOS Install instale actualizaciones</string>
+    <string name="appupd_permission_sub">Android lo pide una sola vez: activa «Permitir de esta fuente» y vuelve a esta pantalla.</string>
+    <string name="appupd_auto">Buscar una vez al día</string>
+    <string name="appupd_footer">Las actualizaciones de la app vienen de las versiones publicadas del proyecto en GitHub. Solo se instala una si su descripción está firmada con la clave de publicación del proyecto y el archivo coincide con su tamaño y su SHA-256. Después Android comprueba que viene del mismo desarrollador.</string>
+    <string name="appupd_notes_h">Novedades de la %1$s</string>
+    <string name="err_appupd_untrusted">No se aceptó la actualización de la app</string>
+    <string name="hint_appupd_untrusted">La app sigue con su versión actual.</string>
+    <string name="err_appupd_offline">No se pudo buscar actualizaciones de la app</string>
+    <string name="hint_appupd_offline">Comprueba la conexión a internet y vuelve a intentarlo.</string>
+    <string name="err_appupd_limit">GitHub pide esperar antes de volver a buscar</string>
+    <string name="hint_appupd_limit">Vuelve a intentarlo más tarde.</string>
+    <string name="err_appupd_os">Esta actualización necesita una versión más reciente de Android</string>
+    <string name="hint_appupd_os">ByOS Install sigue funcionando con la versión que tienes.</string>
+    <string name="err_appupd_open">No se pudo abrir el instalador</string>
+    <string name="hint_appupd_open">Vuelve a intentarlo. Si sigue fallando, descarga la app desde la página del proyecto.</string>
+
+    <string name="bcheck_h">Versión de ByOS</string>
+    <string name="bcheck_check">Buscar un ByOS más reciente</string>
+    <string name="bcheck_checking">Buscando un ByOS más reciente</string>
+    <string name="bcheck_current">Esta app crea ByOS %1$s</string>
+    <string name="bcheck_uptodate">ByOS %1$s es la última versión.</string>
+    <string name="bcheck_available">ByOS %1$s está disponible</string>
+    <string name="bcheck_available_sub">Tienes la %1$s.</string>
+    <string name="bcheck_download">Descargar y usar ByOS %1$s · %2$s</string>
+    <string name="bcheck_downloading">Descargando ByOS %1$s</string>
+    <string name="bcheck_done">ByOS %1$s está listo para crearse.</string>
+    <string name="bcheck_footer">Los archivos de ByOS más recientes vienen de las versiones publicadas del proyecto en GitHub y solo se usan si están firmados con la clave de publicación del proyecto.</string>
+
+    <string name="startover">Empezar de nuevo</string>
+    <string name="startover_sub">Borra esta compilación y lo que quedara de una anterior. El firmware oficial v%1$s se conserva, así que no hay que volver a descargarlo.</string>
+    <string name="startover_done">Se borró la compilación. El firmware oficial se conserva.</string>
+    <string name="build_discarded">Una compilación anterior se hizo con otros archivos de ByOS, con otra versión de la app o se quedó a medias. Se ha borrado; vuelve a crearla.</string>
+</resources>

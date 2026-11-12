@@ -668,6 +668,29 @@ class CliTest {
     }
 
     @Test
+    fun buildCleanStartsOverAndKeepsTheFirmware() {
+        val out = File(cfg, "cache/build")
+        out.mkdirs()
+        val fwDir = File(cfg, "cache/firmware").apply { mkdirs() }
+        File(fwDir, "r3ii_2025.upt").writeBytes(data(5000, 1))
+        File(fwDir, "firmware.ok").writeText("5000\n" + "ab".repeat(32) + "\n")
+        // what a build stopped half way leaves
+        File(out, "build.stamp").writeText("format 1\nbyos 0.0.1\n")
+        File(out, "r3ii_2025.upt.part").writeBytes(data(1000, 2))
+        File(out, ".work/rootfs.new").apply { parentFile.mkdirs(); writeBytes(data(1000, 3)) }
+        File(out, "ByOS/payload/VERSION").apply { parentFile.mkdirs(); writeText("0.0.1\n") }
+        val r = run("build-clean", device = null)
+        assertEquals(r.raw, 0, r.code)
+        assertEquals(true, r.last["firmware_kept"])
+        assertTrue(out.list()!!.isEmpty())
+        assertTrue(File(fwDir, "r3ii_2025.upt").isFile)
+        assertTrue(File(fwDir, "firmware.ok").isFile)
+        // a build without the stamp of this byos-cli and these ByOS files is not offered as ready
+        val built = fakeBuild()
+        assertNull(run("build-info", "--dir", built.path, device = null).last["build"])
+    }
+
+    @Test
     fun buildSendCopiesParksAndInstalls() {
         val out = fakeBuild()
         File(dev.sd, "update.upt").writeBytes(data(1000, 9)) // would be flashed first by the recovery

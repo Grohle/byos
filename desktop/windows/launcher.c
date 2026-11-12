@@ -13,6 +13,13 @@
  *  3. It opens the app in its own Microsoft Edge window (app mode, its own profile folder, so the
  *     launcher can wait for that window) and, when the window closes, stops the server.
  *     Without Edge it opens the default browser and a message box keeps the app running.
+ *  4. Updates of the app itself (desktop/lib/app-update.mjs, docs/APP_UPDATES.md): the server is
+ *     told this version and %LOCALAPPDATA%\ByOS Desktop (--app-version, --app-home). It downloads a
+ *     newer ByOS.exe only after checking its signed description, size and SHA-256, keeps it as
+ *     updates\ByOS-<version>.exe and names it in updates\latest.txt. On "Restart to Update" the
+ *     server writes updates\restart and ends; the launcher closes the window and starts the new
+ *     program, which unpacks itself and removes the older version's folder. Any older copy of the
+ *     exe started later hands over to the newest one named there (forward_to_newer).
  *
  * Build: tools/wsl/zbuild_desktop_exe.sh (zig cc, x86_64-windows-gnu, GUI subsystem).
  */
@@ -171,6 +178,74 @@ static void ensure_unpacked(const wchar_t *self, const wchar_t *base, const wcha
     }
 }
 
+/* "1.10.2" > "1.9.0": compares dotted numbers */
+static int version_cmp(const wchar_t *a, const wchar_t *b)
+{
+    while (*a || *b) {
+        unsigned long x = wcstoul(a, (wchar_t **)&a, 10), y = wcstoul(b, (wchar_t **)&b, 10);
+        if (x != y) return x > y ? 1 : -1;
+        if (*a == L'.') a++;
+        if (*b == L'.') b++;
+        if ((*a && (*a < L'0' || *a > L'9')) || (*b && (*b < L'0' || *b > L'9'))) break;
+    }
+    return 0;
+}
+
+/* "ByOS-1.2.3.exe": the version part, or 0 when the name is anything else */
+static const wchar_t *update_version(const wchar_t *name, wchar_t *ver, size_t cap)
+{
+    size_t n = wcslen(name);
+    if (n < 14 || n > 40 || wcsncmp(name, L"ByOS-", 5) || _wcsicmp(name + n - 4, L".exe")) return 0;
+    size_t vl = n - 9, dots = 0;
+    if (vl + 1 > cap) return 0;
+    for (size_t i = 0; i < vl; i++) {
+        wchar_t c = name[5 + i];
+        if (c == L'.') { if (!i || name[5 + i - 1] == L'.') return 0; dots++; }
+        else if (c < L'0' || c > L'9') return 0;
+    }
+    if (dots < 1 || dots > 3 || name[5 + vl - 1] == L'.') return 0;
+    wcsncpy(ver, name + 5, vl); ver[vl] = 0;
+    return ver;
+}
+
+/* A newer ByOS Desktop that the app downloaded and checked (its signature, size and SHA-256:
+ * desktop/lib/app-update.mjs) is named in updates\latest.txt. When it is newer than this program
+ * and is not this program, it is started instead and this one ends. Returns 1 when it started. */
+static int forward_to_newer(const wchar_t *base, const wchar_t *self, HANDLE *mutex)
+{
+    wchar_t latest[MAX_PATH], name[64] = L"", ver[32], exe[MAX_PATH], full_self[MAX_PATH], full_exe[MAX_PATH];
+    swprintf(latest, MAX_PATH, L"%ls\\updates\\latest.txt", base);
+    FILE *f = _wfopen(latest, L"rb");
+    if (!f) return 0;
+    char line[64] = ""; size_t n = fread(line, 1, sizeof line - 1, f); fclose(f); line[n] = 0;
+    char *e = strpbrk(line, "\r\n"); if (e) *e = 0;
+    MultiByteToWideChar(CP_UTF8, 0, line, -1, name, 64);
+    if (!update_version(name, ver, 32) || version_cmp(ver, BYOS_VERSION) <= 0) return 0;
+    swprintf(exe, MAX_PATH, L"%ls\\updates\\%ls", base, name);
+    if (!exists(exe)) return 0;
+    GetFullPathNameW(self, MAX_PATH, full_self, 0); GetFullPathNameW(exe, MAX_PATH, full_exe, 0);
+    if (!_wcsicmp(full_self, full_exe)) return 0;
+    wchar_t cmd[MAX_PATH + 4], dir[MAX_PATH];
+    swprintf(cmd, MAX_PATH + 4, L"\"%ls\"", full_exe);
+    swprintf(dir, MAX_PATH, L"%ls\\updates", base);
+    /* the newer program takes the single-instance mutex: this one lets it go first */
+    if (*mutex) { ReleaseMutex(*mutex); CloseHandle(*mutex); *mutex = 0; }
+    STARTUPINFOW si = { sizeof si }; PROCESS_INFORMATION pi;
+    if (!CreateProcessW(0, cmd, 0, 0, FALSE, 0, 0, dir, &si, &pi)) {
+        *mutex = CreateMutexW(0, TRUE, L"Local\\ByOSDesktop");
+        return 0;
+    }
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    return 1;
+}
+
+static BOOL CALLBACK close_window(HWND w, LPARAM pid)
+{
+    DWORD p = 0; GetWindowThreadProcessId(w, &p);
+    if (p == (DWORD)pid && IsWindowVisible(w)) PostMessageW(w, WM_CLOSE, 0, 0);
+    return TRUE;
+}
+
 static int find_edge(wchar_t *out)
 {
     const wchar_t *vars[] = { L"ProgramFiles(x86)", L"ProgramFiles", L"LOCALAPPDATA" };
@@ -197,6 +272,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR args, int show)
     if (!GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) fail(L"LOCALAPPDATA is not set.");
     swprintf(base, MAX_PATH, L"%ls\\ByOS Desktop", local);
     CreateDirectoryW(base, 0);
+    /* an older copy (for example the one first downloaded) hands over to the newer one the app
+       installed, so the update is not undone by starting the old file again */
+    if (forward_to_newer(base, self, &once)) return 0;
     splash_show(inst);                 /* until the app's window is there (the server needs a few seconds) */
     swprintf(appdir, MAX_PATH, L"%ls\\%ls", base, BYOS_VERSION);
     ensure_unpacked(self, base, appdir, inst);
@@ -211,9 +289,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR args, int show)
                          fail(L"ByOS Desktop is incomplete. Start it again to unpack it again."); }
     SetEnvironmentVariableW(L"JAVA_HOME", java);
     DeleteFileW(urlf);
+    /* --app-version and --app-home: the app checks for its own updates and keeps them in
+       <base>\updates (desktop/lib/app-update.mjs) */
+    wchar_t restartf[MAX_PATH];
+    swprintf(restartf, MAX_PATH, L"%ls\\updates\\restart", base);
+    DeleteFileW(restartf);
     swprintf(cmd, 8 * MAX_PATH,
-             L"\"%ls\" \"%ls\\app\\server.mjs\" --cli \"%ls\\byos-cli.jar\" --adb \"%ls\\platform-tools\\adb.exe\" --url-file \"%ls\"",
-             node, appdir, appdir, appdir, urlf);
+             L"\"%ls\" \"%ls\\app\\server.mjs\" --cli \"%ls\\byos-cli.jar\" --adb \"%ls\\platform-tools\\adb.exe\" --url-file \"%ls\""
+             L" --app-version %ls --app-home \"%ls\"",
+             node, appdir, appdir, appdir, urlf, BYOS_VERSION, base);
 
     SECURITY_ATTRIBUTES sa = { sizeof sa, 0, TRUE };
     HANDLE log = CreateFileW(logf, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, 0, 0);
@@ -261,6 +345,18 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR args, int show)
                 DWORD r = MsgWaitForMultipleObjects(2, two, FALSE, INFINITE, QS_ALLINPUT);
                 if (r == WAIT_OBJECT_0 || r == WAIT_OBJECT_0 + 1) break;
                 MSG m; while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); }
+            }
+            /* "Restart to Update": the server ended after it checked the new program again and
+               named it in updates\latest.txt; the window closes and the new program starts */
+            if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0 && exists(restartf)) {
+                DeleteFileW(restartf);
+                EnumWindows(close_window, (LPARAM)ep.dwProcessId);
+                if (WaitForSingleObject(ep.hProcess, 5000) != WAIT_OBJECT_0) TerminateProcess(ep.hProcess, 0);
+                CloseHandle(ep.hProcess); CloseHandle(ep.hThread);
+                if (job) TerminateJobObject(job, 0);
+                DeleteFileW(urlf);
+                forward_to_newer(base, self, &once);
+                return 0;
             }
             CloseHandle(ep.hProcess); CloseHandle(ep.hThread);
             goto done;

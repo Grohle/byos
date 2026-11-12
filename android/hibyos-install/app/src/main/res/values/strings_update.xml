@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Updates of the app itself, the ByOS version check on the build screens, and "Start Over".
+     Translated in values-es and values-fr (TranslationsTest checks that every text is there). -->
+<resources>
+    <!-- the app's own updates (About, and the notice on the home screen) -->
+    <string name="appupd_h">ByOS Install app</string>
+    <string name="appupd_check">Check for App Updates</string>
+    <string name="appupd_checking">Checking for app updates</string>
+    <string name="appupd_uptodate">ByOS Install %1$s is the latest version.</string>
+    <string name="appupd_available">ByOS Install %1$s is available</string>
+    <string name="appupd_available_sub">You have %1$s. Tap to see what is new.</string>
+    <string name="appupd_download">Download and Install · %1$s</string>
+    <string name="appupd_downloading">Downloading ByOS Install %1$s</string>
+    <string name="appupd_install">Install ByOS Install %1$s</string>
+    <string name="appupd_ready_sub">Downloaded and checked. Android asks you to confirm the update.</string>
+    <string name="appupd_permission">Allow ByOS Install to Install Updates</string>
+    <string name="appupd_permission_sub">Android asks for this once: turn on “Allow from this source”, then come back to this screen.</string>
+    <string name="appupd_auto">Check once a day</string>
+    <string name="appupd_footer">App updates come from the project\'s releases on GitHub. One is installed only if its description is signed with the project\'s release key and the file matches its size and SHA-256. Android then checks that it comes from the same developer.</string>
+    <string name="appupd_notes_h">What is new in %1$s</string>
+    <string name="err_appupd_untrusted">The app update was not accepted</string>
+    <string name="hint_appupd_untrusted">The app keeps its current version.</string>
+    <string name="err_appupd_offline">The check for app updates could not be made</string>
+    <string name="hint_appupd_offline">Check the internet connection and try again.</string>
+    <string name="err_appupd_limit">GitHub asks to wait before the next check</string>
+    <string name="hint_appupd_limit">Try again later.</string>
+    <string name="err_appupd_os">This update needs a newer version of Android</string>
+    <string name="hint_appupd_os">ByOS Install keeps working with the version you have.</string>
+    <string name="err_appupd_open">The installer could not be opened</string>
+    <string name="hint_appupd_open">Try again. If it keeps failing, download the app from the project page.</string>
+
+    <!-- the ByOS version check on the home and build screens -->
+    <string name="bcheck_h">ByOS version</string>
+    <string name="bcheck_check">Check for a Newer ByOS</string>
+    <string name="bcheck_checking">Checking for a newer ByOS</string>
+    <string name="bcheck_current">This app builds ByOS %1$s</string>
+    <string name="bcheck_uptodate">ByOS %1$s is the latest version.</string>
+    <string name="bcheck_available">ByOS %1$s is available</string>
+    <string name="bcheck_available_sub">You have %1$s.</string>
+    <string name="bcheck_download">Download and Use ByOS %1$s · %2$s</string>
+    <string name="bcheck_downloading">Downloading ByOS %1$s</string>
+    <string name="bcheck_done">ByOS %1$s is ready to build.</string>
+    <string name="bcheck_footer">Newer ByOS files come from the project\'s releases on GitHub and are used only if they are signed with the project\'s release key.</string>
+
+    <!-- start over -->
+    <string name="startover">Start Over</string>
+    <string name="startover_sub">Removes this build and anything left from an earlier one. The official firmware v%1$s stays, so it is not downloaded again.</string>
+    <string name="startover_done">The build was removed. The official firmware is kept.</string>
+    <string name="build_discarded">An earlier build was made from other ByOS files, by another version of the app, or stopped half way. It was removed; build again.</string>
+</resources>
