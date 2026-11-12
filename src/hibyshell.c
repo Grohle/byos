@@ -935,7 +935,7 @@ static int music_session(void)
 /* Pildora de cristal vertical en el borde derecho, nivel blanco desde abajo; aparece
  * ensanchandose (12 -> 16 px), el nivel se anima y se desvanece a los 1,4 s sin teclas. */
 #define HUD_X 289
-#define HUD_Y 113
+#define HUD_Y 40      /* justo bajo la barra de estado: a la altura de la rueda fisica y lejos del teclado (peticion del usuario) */
 #define HUD_W 28
 #define HUD_H 160
 #define HUD_PILL_H 150
