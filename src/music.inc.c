@@ -1393,7 +1393,7 @@ static int mu_open_stock(void)
         if (t >= 1) break;
     }
     last_app = a; app_cache(a, 1);
-    have_under = 0; launcher_on = 0; V.edit = 0; home_publish();
+    have_under = 0; launcher_on = 0; V.edit = 0; launcher_park_publish();
     cmd('R');
     lg("musica -> biblioteca de HiBy");
     return 1;

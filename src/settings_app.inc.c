@@ -466,6 +466,7 @@ static void apply_look(void)
     if (dim) load_wall();
     if (wg_page_on != set_wgpage) { wg_page_on = set_wgpage; if (!wg_page_on && (widgets_on || V.scroll < 0)) { widgets_on = 0; V.scroll = cur_page * W; } if (!wg_page_on) wg_free_all(); }
     wg_cache_ok = 0; home_prev_ok = 0; lconf_save();
+    launcher_park_publish();                  /* la imagen del inicio que pone la libreria, al dia */
 }
 static void apply_gestures(void)
 {

@@ -209,8 +209,13 @@ static void lconf_save(void)
     cc_conf_save(f);
     wg_conf_save(f);
     fprintf(f, "lang %s\nkb %d %d %d\ncorners %d\nvolui %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, ui_corners, vol_ui);
-    fclose(f);
+    /* a prueba de cortes (UBIFS casi lleno, reinicio justo despues): solo se sustituye el
+     * fichero si se escribio entero y llego al disco; el anterior queda como .bak */
+    int bad = ferror(f) || fflush(f) || fsync(fileno(f));
+    if (fclose(f) || bad) { unlink(LCONF ".tmp"); lg("launcher.conf: no se pudo guardar (se conserva el anterior)"); return; }
+    if (!access(LCONF, F_OK)) { unlink(LCONF ".bak"); if (link(LCONF, LCONF ".bak")) {} }
     rename(LCONF ".tmp", LCONF);
+    { int d = open(ASSETS, O_RDONLY); if (d >= 0) { fsync(d); close(d); } }
 }
 
 /* distribucion de teclado por defecto segun el idioma: 0 ES, 1 EN (QWERTY), 2 FR (AZERTY) */
@@ -307,7 +312,11 @@ static void lconf_load0(void)
     if (!layout2) lconf_compact();                 /* una vez: todo arriba a la izquierda */
     lconf_drop_empty_pages();
 }
-static void lconf_load(void) { lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); }
+static void lconf_load(void)
+{
+    /* sin launcher.conf (apartado por la auto-reparacion o un guardado cortado): la copia buena anterior */
+    if (access(LCONF, F_OK) && !access(LCONF ".bak", F_OK) && !link(LCONF ".bak", LCONF)) lg("launcher.conf recuperado de la copia anterior");
+    lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); }
 
 /* ------------------------------------------------------------------ geometria */
 static int per_page(void)
@@ -860,6 +869,20 @@ static void home_publish(void)
     if (!home_shm || !have_cache_home) return;
     memcpy(home_shm + 30 * W, img_cache_home + 30 * W, (H - 30) * W * 2);
     memcpy(home_shm, wall, 30 * W * 2);
+}
+
+/* home_publish dejando antes el inicio en su pagina de iconos: si se sale con la pagina de
+ * widgets a la vista (Reproduciendo, panel -> reproductor, Musica -> biblioteca de HiBy), la
+ * libreria seguia poniendo esa imagen cada vez que aparecia el inicio de fabrica, aunque la
+ * pagina de widgets estuviera desactivada. */
+static void launcher_park_publish(void)
+{
+    if (widgets_on || V.scroll != cur_page * W || !have_cache_home) {
+        widgets_on = 0; V.scroll = cur_page * W;
+        int h = hud_active; hud_active = 0; V.pressed_app = -1; render_launcher(img_cache_home, now_ms()); hud_active = h;
+        have_cache_home = 1;
+    }
+    home_publish();
 }
 
 static void launcher_leave(void)

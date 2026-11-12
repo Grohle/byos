@@ -456,7 +456,7 @@ static int cc_to_player(const uint16_t *panel, int sx)
     if (!cc_player_right) {
         int ok = nav_wait(3000);
         if (ok == 1) { memcpy(fr0, fr1, HM_FRAME_BYTES); present(); memcpy(img_cache_plane, fr1, HM_FRAME_BYTES); have_cache_plane = 1; }
-        if (cc_from_launcher) { launcher_on = 0; home_publish(); }
+        if (cc_from_launcher) { launcher_on = 0; launcher_park_publish(); }
     }
     cmd('R');
     return 1;

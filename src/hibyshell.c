@@ -384,6 +384,7 @@ static int launcher_on;
 static void launcher_present(void);
 static void launcher_present_hud(void);
 static void home_publish(void);
+static void launcher_park_publish(void);
 static void plane_home_drag(int sy);
 /* gestos configurables (gestures.inc.c) */
 enum { GA_NONE, GA_HOME, GA_PLAYER, GA_CC, GA_BACK };
@@ -775,7 +776,7 @@ static int sheet_open_drag(int start_y)
         int ok = nav_wait(2500);
         if (ok == 1) {
             memcpy(img_cache_plane, fr1, sizeof img_cache_plane); have_cache_plane = 1;
-            if (launcher_on) { memcpy(img_cache_home, img_under, sizeof img_cache_home); have_cache_home = 1; launcher_on = 0; home_publish(); }
+            if (launcher_on) { memcpy(img_cache_home, img_under, sizeof img_cache_home); have_cache_home = 1; launcher_on = 0; launcher_park_publish(); }
             cmd('R');
             lg("Now Playing abierto en %.0f ms", now_ms() - t0);
             return 1;
@@ -1452,15 +1453,19 @@ static void self_heal(void)
 {
     int n = 0; FILE *f = fopen(STARTS_FILE, "r"); if (f) { if (fscanf(f, "%d", &n) != 1) n = 0; fclose(f); }
     if (n < 0 || n > 1000) n = 0;
-    if (n >= 2) {
+    /* Solo ante un bucle de cierres de verdad (5 arranques seguidos sin llegar a 25 s): con 2
+     * bastaban dos reinicios del vigilante o de desarrollo y el usuario perdia sus ajustes
+     * (widgets desactivados que volvian). */
+    if (n >= 4) {
         static const char *st_files[] = { ASSETS "/launcher.conf", "/usr/data/hibymod/power.conf", ASSETS "/airplane",
                                           "/usr/data/hibymod/appdata/radio/config", 0 };
         for (int i = 0; st_files[i]; i++) if (!access(st_files[i], F_OK)) {
             char bad[300]; snprintf(bad, sizeof bad, "%s.bad", st_files[i]);
             rename(st_files[i], bad); lg("auto-reparacion: %s apartado", st_files[i]);
         }
+        if (n >= 5) unlink(ASSETS "/launcher.conf.bak");   /* la copia anterior tampoco arranca */
     }
-    if (n >= 4) {
+    if (n >= 6) {
         struct stat sb;
         if (!lstat("/usr/data/hibymod/cache", &sb)) { if (S_ISLNK(sb.st_mode)) unlink("/usr/data/hibymod/cache"); else if (system("rm -rf /usr/data/hibymod/cache")) {} }
         if (sd_mounted() && system("rm -rf /usr/data/mnt/sd_0/ByOS/cache/int /usr/data/mnt/sd_0/ByOS/cache/music")) {}
