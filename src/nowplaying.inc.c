@@ -370,7 +370,14 @@ static int np_from_shim(struct np_info *o)
     const struct np_meta *m = np_meta_for(o->path);
     o->source = NP_SRC_SHIM; o->stopped = stopped;
     o->rate = (int)s->pcm_rate; o->bits = (int)s->pcm_bits; o->channels = (int)s->pcm_channels;
-    o->playing = !stopped && s->pcm_open && !s->pcm_paused && now - s->pcm_last_ms < 1500;   /* a 176,4/192 kHz escribe bloques de > 0,5 s */
+    /* Sonando = escribe al PCM. Con la CPU ocupada (abrir una app, poca memoria) el reproductor
+     * puede pasar >1,5 s sin escribir mientras el bufer del DMA sigue sonando: con el umbral de
+     * 1,5 s la interfaz decia "pausa" y volvia a "sonando" (parpadeo de los botones, medido al
+     * abrir Reproduciendo). Ahora: 3,5 s sin escribir, o 300 ms si ademas vacio el PCM despues
+     * de la ultima escritura (parar, saltar). Los botones de ByOS ya son optimistas. */
+    uint32_t gap = now - s->pcm_last_ms;
+    int dropped = s->pcm_drops && (int32_t)(s->pcm_drop_ms - s->pcm_last_ms) >= 0;
+    o->playing = !stopped && s->pcm_open && !s->pcm_paused && gap < (dropped ? 300u : 3500u);
     o->track_id = np_hash(o->path, e->gen * 2654435761u);
     /* posicion: tramas escritas desde que se abrio la pista; si el usuario salto (lseek del
      * decodificador junto a un vaciado del PCM), desde ese punto (bytes -> tiempo) */

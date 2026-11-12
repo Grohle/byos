@@ -108,7 +108,14 @@ static volatile int wg_loaded;              /* el hilo ya publico datos al menos
 /* reproduccion: copia propia (con caratula) y estado "optimista" tras pulsar play/pausa */
 static struct np_info wg_ni; static uint16_t wg_cov[128 * 128]; static int wg_cok, wg_np_force, wg_tint = -1; static double wg_np_until;
 static volatile int wg_np_drawn;            /* clave del progreso con la que se dibujo (ver wg_prog_key) */
-static int wg_playing(void) { return now_ms() < wg_np_until ? wg_np_force : wg_ni.playing; }
+/* lo pedido hasta que el estado real coincida (max 8 s): el real tarda (ver nowplaying.inc.c) */
+static int wg_playing(void)
+{
+    if (!wg_np_until) return wg_ni.playing;
+    double t = now_ms();
+    if (t >= wg_np_until || (wg_ni.playing == wg_np_force && t - (wg_np_until - 8000) > 300)) { wg_np_until = 0; return wg_ni.playing; }
+    return wg_np_force;
+}
 /* clave del progreso que se ve: segundos si hay un Reproduciendo grande (muestra los tiempos), si
  * no el pixel de la barra mas ancha. Cuando cambia hay que redibujar */
 static int wg_prog_key(int pos, int dur)
@@ -2043,7 +2050,7 @@ static void widgets_touch(struct pkt *p)
     int type = wg_it[k].type; const struct wspr *sp = &wg_spr[type][wg_it[k].size];
     if (btn >= 0 && btn < sp->nb) {          /* boton del widget (Reproduciendo) */
         int act = sp->b[btn].k;
-        if (act == 1) { wg_np_force = !wg_playing(); wg_np_until = now_ms() + 2500; }
+        if (act == 1) { wg_np_force = !wg_playing(); wg_np_until = now_ms() + 8000; }
         pthread_t th; if (!pthread_create(&th, 0, wg_pc_th, (void *)(long)act)) pthread_detach(th);
         wg_fresh = 1; launcher_present(); return;
     }

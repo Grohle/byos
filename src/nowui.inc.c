@@ -670,7 +670,7 @@ static int nu_init(void)
     if (!cf) nu.cov_ok = 0;
     if (!cf && mu_npcov_ok) { memcpy(nu.cov, mu_npcov, sizeof nu.cov); nu.cov_ok = 1; }   /* la del mini reproductor */
     nu.playing = nu.ni.playing; nu.sc = nu.playing ? 1 : NU_PAUSE; nu.pressed = -1; nu.lcur = -1;
-    if (now_ms() - nu_start_playing_t < 4000) { nu.playing = 1; nu.sc = 1; nu.hold = 1; nu.hold_t = now_ms() + 2500; }   /* hasta ~5 s */
+    if (now_ms() - nu_start_playing_t < 4000) { nu.playing = 1; nu.sc = 1; nu.hold = 1; nu.hold_t = now_ms(); }   /* hasta que suene de verdad (max 8 s) */
     nu_start_playing_t = 0;
     nu_anchor_init(now_ms());
     nu_build_all();
@@ -809,7 +809,8 @@ static int nu_poll(void)
     }
     /* reproducir/pausa (respetando lo que se acaba de tocar) */
     int held = nu.hold;                   /* reproducir/pausa tocado aqui: ya se anclo al tocar */
-    if (nu.hold && (n.playing == nu.playing || now - nu.hold_t > 2500)) nu.hold = 0;
+    /* hasta que el estado real coincida (o 8 s si la orden fallo): con 2,5 s volvia al real atrasado */
+    if (nu.hold && ((n.playing == nu.playing && now - nu.hold_t > 300) || now - nu.hold_t > 8000)) nu.hold = 0;
     if (!nu.hold && n.playing != nu.playing) { nu.playing = n.playing; r |= NB_CTL; }
     /* posicion: se ancla cuando el hilo publica un valor nuevo y se extrapola mientras suena */
     if (!nu.ni.playing && n.playing && !held) { nu.anc = nu_pos(); nu.anc_t = now; }   /* vuelve a sonar: extrapolar desde ahora */
