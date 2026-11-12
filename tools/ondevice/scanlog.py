@@ -8,6 +8,10 @@ of the buffer on screen every 2 ms (status bar, top, middle, home indicator) and
 flashes: a band that changes and returns to its previous picture within 120 ms. The 13 fps screen
 recorder misses those; this does not (2 ms sampling, the panel scans every ~22 ms).
 
+Pictures of one band go to /dev/shm/hibymod_scanimg (48 most recent changes): the first byte of
+scanlog_on picks it, re-read every second: "0" status bar (320x32), "3" home bar (320x32), "p" the
+volume pill (32x160, x 288-320 y 40-200, stored in the first 5120 pixels of each slot).
+
     python tools/ondevice/scanlog.py [--dev SERIAL] [--clear] [--keep FILE]
       --clear   empty the ring (start of a test)
 """

@@ -425,7 +425,18 @@ static void blend_sprite(uint16_t *img, const struct sprite *s, int x, int y)
         for (int i = 0; i < s->w; i++) {
             unsigned a = s->a[r * s->w + i]; if (!a) continue;
             unsigned d = row[i], c = s->rgb[r * s->w + i], na = 255 - a;
-            row[i] = (uint16_t)((((c >> 11) * a + (d >> 11) * na) / 255) << 11 | (((((c >> 5) & 63) * a + ((d >> 5) & 63) * na) / 255) << 5) | (((c & 31) * a + (d & 31) * na) / 255));
+            /* rounded, not truncated: truncating the 5- and 6-bit channels apart tinted a grey sprite
+             * brown/blue/green from frame to frame while it faded over a dark screen (the pill) */
+            unsigned rx = (c >> 11) * a + (d >> 11) * na, gx = ((c >> 5) & 63) * a + ((d >> 5) & 63) * na, bx = (c & 31) * a + (d & 31) * na;
+            unsigned r5 = (rx + 127) / 255, g6 = (gx + 127) / 255, b5 = (bx + 127) / 255;
+            /* a near-grey result keeps green = 2 x red: at low levels the 5-bit red and the 6-bit
+             * green round apart and a grey fade went greenish/reddish frame by frame */
+            if (r5 <= 10) {                                    /* only dark: bright greys round fine */
+                int dg = (int)(2 * rx) - (int)gx, db = (int)bx - (int)rx; if (dg < 0) dg = -dg; if (db < 0) db = -db;
+                if (dg < 255) g6 = 2 * r5;
+                if (db < 255 && dg < 255) b5 = r5;
+            }
+            row[i] = (uint16_t)(r5 << 11 | g6 << 5 | b5);
         }
     }
 }
@@ -1029,7 +1040,9 @@ static void hud_draw(double vis, double width, double level)
     }
     /* altavoz abajo, dentro de la pildora (oscuro sobre el relleno, claro sobre el cristal) */
     if (width > 13) {
-        double cx = (left + right) / 2, cy = bot - 11;
+        /* on whole pixels: a fractional centre moving with the width changed the (unsmoothed) glyph
+         * from frame to frame, so the speaker shimmered between shapes */
+        double cx = floor((left + right) / 2) + 0.5, cy = floor(bot - 11) + 0.5;
         for (int y = (int)cy - 5; y <= (int)cy + 5; y++) for (int x = (int)cx - 5; x <= (int)cx + 5; x++) {
             if (x < 0 || x >= HUD_W || y < 0 || y >= HUD_H) continue;
             double px = x + 0.5 - cx, py = y + 0.5 - cy, on = 0;
@@ -1263,7 +1276,7 @@ static void hud_key(int code)
     if (hiby_modal) { lcd_boost(); lg("volumen: tecla %d (dialogo de HiBy en pantalla)", code); return; }
     /* indicador de HiBy: en sus pantallas lo dibuja el reproductor; nada que hacer aqui */
     if (!vol_ui && !st->capture) { lcd_boost(); lg("volumen: tecla %d (indicador de HiBy)", code); return; }
-    if (!hud_active) { hud_shown_at = t; hud_active = 1; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
+    if (!hud_active) { hud_shown_at = t; hud_active = 1; hud_bump = 0; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
     hud_last_key = t; lcd_boost();
     hud_bump_t = t;                                 /* la pildora se ensancha un instante (iOS), suave */
     /* sin barra de estado (Now Playing): se sigue el paso de la rueda */
@@ -1289,7 +1302,11 @@ static int hud_update(int present_it)
     hud_level += (target - hud_level) * (1 - exp(-dms / 45.0));
     if (fabs(target - hud_level) < 0.002) hud_level = target;
     if (hud_level < 0) hud_level = 0; if (hud_level > 1) hud_level = 1;
-    { double u = (t - hud_bump_t) / 260.0; hud_bump = u >= 0 && u < 1 ? sin(M_PI * u) : 0; }   /* pulso suave, sin salto */
+    /* the swell (iOS): grows while keys keep coming and relaxes after, never restarting. The old
+     * pulse, sin(pi*u) from 0 on every key, made the width saw-tooth on a quick wheel turn (the pill
+     * "flickering by itself", owner 12-11; seen frame by frame with the scan log) */
+    { double tgt = t - hud_bump_t < 160 ? 1 : 0, tau = tgt > hud_bump ? 55.0 : 140.0;
+      hud_bump += (tgt - hud_bump) * (1 - exp(-dms / tau)); if (fabs(tgt - hud_bump) < 0.01) hud_bump = tgt; }
     double in = (t - hud_shown_at) / 220.0; if (in > 1) in = 1;
     double idle = t - hud_last_key;
     double out = idle < 1400 ? 1 : 1 - (idle - 1400) / 300.0;

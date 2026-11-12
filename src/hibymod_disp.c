@@ -372,19 +372,40 @@ static inline uint16_t corner_px(uint16_t p, unsigned a)
     return (uint16_t)(rr << 11 | g << 5 | b);
 }
 static void vol_publish(void);              /* al final del fichero */
+/* Idempotent: every caller (partial 'P', 'O', 'R', HiBy's own partial redraws) applied the mask
+ * again over corners that already had it, so the anti-aliased corner pixels got darker frame after
+ * frame and jumped back to light whenever their rows were repainted: a shimmer at the four corners
+ * on every volume step (scan log 12-11: 0x0885 -> 0x0021 -> 0x0000 -> 0x0885). Now, per screen
+ * buffer, the value written to each edge pixel is remembered: a pixel that still holds it was not
+ * repainted and is left alone; new content gets the mask once. */
+static uint16_t corner_post[2][4][CORNER_MAX][CORNER_MAX];
+static int corner_post_r = -1;
+static inline void corner_one(uint16_t *px, uint16_t *post, unsigned a)
+{
+    if (*px == *post) return;                                /* still ours: already masked */
+    *px = *post = corner_px(*px, a);
+}
 static void corners_apply(unsigned char *buf)
 {
     uint32_t r = st->corner_r;
     if (!r || !buf) return;
     if (r > CORNER_MAX) r = CORNER_MAX;
     if ((int)r != corner_tab_r) corner_table((int)r);
+    long bi = fbmem && fsize ? (long)((buf - fbmem) / (long)fsize) : -1;
+    if (bi < 0 || bi > 1 || buf != fbmem + bi * fsize) bi = -1;
+    if ((int)r != corner_post_r) { memset(corner_post, 0xA5, sizeof corner_post); corner_post_r = (int)r; }   /* never a real value twice */
     for (uint32_t y = 0; y < r; y++) {
         uint16_t *top = (uint16_t *)(buf + y * fline), *bot = (uint16_t *)(buf + (HM_H - 1 - y) * fline);
         for (uint32_t x = 0; x < r; x++) {
             unsigned a = corner_cov[y][x];
             if (a >= 255) break;                             /* el resto de la fila ya esta dentro */
-            top[x] = corner_px(top[x], a); top[HM_W - 1 - x] = corner_px(top[HM_W - 1 - x], a);
-            bot[x] = corner_px(bot[x], a); bot[HM_W - 1 - x] = corner_px(bot[HM_W - 1 - x], a);
+            if (bi < 0) {
+                top[x] = corner_px(top[x], a); top[HM_W - 1 - x] = corner_px(top[HM_W - 1 - x], a);
+                bot[x] = corner_px(bot[x], a); bot[HM_W - 1 - x] = corner_px(bot[HM_W - 1 - x], a);
+                continue;
+            }
+            corner_one(&top[x], &corner_post[bi][0][y][x], a); corner_one(&top[HM_W - 1 - x], &corner_post[bi][1][y][x], a);
+            corner_one(&bot[x], &corner_post[bi][2][y][x], a); corner_one(&bot[HM_W - 1 - x], &corner_post[bi][3][y][x], a);
         }
     }
 }
@@ -443,13 +464,20 @@ static void *scan_thread(void *a)
     (void)a;
     static const int band[4][2] = { { 2, 28 }, { 60, 140 }, { 200, 280 }, { 440, 476 } };
     uint16_t last[4] = { 0 };
-    for (;;) {
+    for (unsigned it = 0;; it++) {
         usleep(2000);
+        if (!(it % 500)) {                                  /* la franja se puede cambiar en marcha (cada ~1 s) */
+            FILE *c = fopen("/usr/data/hibymod/scanlog_on", "r");
+            if (c) { int v = fgetc(c); scan_band = v == '3' ? 3 : v == 'p' ? 1 : 0; fclose(c); }
+        }
         if (!map_fb()) continue;
         const unsigned char *b = fbmem + (size_t)scan_shown_y * fline;
         uint16_t h[4];
         for (int k = 0; k < 4; k++) {
             uint32_t acc = 0;
+            if (k == 1 && scan_band == 1) {                 /* la pildora de volumen: x 288-320, y 40-200, entera */
+                for (int y = 40; y < 200; y++) { const uint16_t *row = (const uint16_t *)(b + (size_t)y * fline); for (int x = 288; x < HM_W; x++) acc = acc * 31 + row[x]; }
+            } else
             for (int y = band[k][0]; y < band[k][1]; y += 2) {
                 const uint16_t *row = (const uint16_t *)(b + (size_t)y * fline);
                 for (int x = 1; x < HM_W; x += 6) acc = acc * 31 + row[x];
@@ -460,9 +488,13 @@ static void *scan_thread(void *a)
             /* la franja que se guarda: 0 barra de estado (por defecto), 3 barra de inicio (scanlog_on con "3") */
             if (scan_im && h[scan_band] != last[scan_band]) {
                 uint32_t i = scan_im->idx++ % SCAN_IMG_N;
-                int y0 = scan_band == 3 ? HM_H - SCAN_IMG_ROWS : 0;
                 scan_im->im[i].t = scan_now();
-                for (int y = 0; y < SCAN_IMG_ROWS; y++) memcpy(scan_im->im[i].px + y * HM_W, b + (size_t)(y0 + y) * fline, HM_W * 2);
+                if (scan_band == 1)                         /* 32 x 160 (x 288-320, y 40-200) en las primeras 5120 */
+                    for (int y = 0; y < 160; y++) memcpy(scan_im->im[i].px + y * 32, b + (size_t)(40 + y) * fline + 288 * 2, 64);
+                else {
+                    int y0 = scan_band == 3 ? HM_H - SCAN_IMG_ROWS : 0;
+                    for (int y = 0; y < SCAN_IMG_ROWS; y++) memcpy(scan_im->im[i].px + y * HM_W, b + (size_t)(y0 + y) * fline, HM_W * 2);
+                }
             }
             memcpy(last, h, sizeof h); scan_put(0, h);
         }
@@ -472,7 +504,7 @@ static void *scan_thread(void *a)
 static void scan_start(void)
 {
     if (access("/usr/data/hibymod/scanlog_on", F_OK)) return;
-    { FILE *c = fopen("/usr/data/hibymod/scanlog_on", "r"); if (c) { int v = fgetc(c); if (v == '3') scan_band = 3; fclose(c); } }
+    { FILE *c = fopen("/usr/data/hibymod/scanlog_on", "r"); if (c) { int v = fgetc(c); if (v == '3') scan_band = 3; else if (v == 'p') scan_band = 1; fclose(c); } }
     int f = r_open("/dev/shm/hibymod_scan", O_RDWR | O_CREAT | O_TRUNC, 0644); if (f < 0) return;
     if (ftruncate(f, sizeof *scan)) { close(f); return; }
     void *m = mmap(0, sizeof *scan, PROT_READ | PROT_WRITE, MAP_SHARED, f, 0); close(f);

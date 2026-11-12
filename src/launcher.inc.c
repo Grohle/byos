@@ -827,7 +827,9 @@ static void launcher_present(void)
     if (wg_part_y1 > wg_part_y0 && widgets_on && V.scroll == -W && !hud_active && t0 >= toast_until + 40 && st->presents == lp_presents) { dirty_y0 = wg_part_y0; dirty_y1 = wg_part_y1; }
     wg_part_y0 = wg_part_y1 = 0;
     double t1 = now_ms();
-    present();
+    /* the pill is already in fr0: present()'s hook must not blend it a second time (one darker
+     * pill frame per volume key on the home screen, the "pill flickering by itself") */
+    { int hi = hud_in; hud_in = 1; present(); hud_in = hi; }
     lp_presents = st->presents;
     double t2 = now_ms();
     /* perfil: cada ~3 s con animacion continua, tiempo medio de dibujo y de presentacion */
@@ -840,7 +842,7 @@ static void launcher_present_hud(void)
     int y0 = vol_ui ? HUD_Y : VS_Y, h = vol_ui ? HUD_H : VS_H;   /* pildora de ByOS o dialogo de HiBy */
     memcpy(fr0 + y0 * W, img_cache_home + y0 * W, h * W * 2);
     if (hud_active) hud_overlay(fr0);
-    present_rows(y0, y0 + h);
+    { int hi = hud_in; hud_in = 1; present_rows(y0, y0 + h); hud_in = hi; }   /* drawn here, once */
 }
 static void launcher_statusbar(void)
 {
@@ -849,7 +851,7 @@ static void launcher_statusbar(void)
     if (!lclean_ok || V.scroll < 0) { launcher_present(); return; }
     compose_statusbar(img_cache_home);
     memcpy(fr0, img_cache_home, 30 * W * 2);
-    present_rows(0, 30);
+    { int hi = hud_in; hud_in = 1; present_rows(0, 30); hud_in = hi; }   /* the pill already in fr0 stays as is */
 }
 
 /* ------------------------------------------------------------------ entrar / salir */
