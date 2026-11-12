@@ -4,8 +4,12 @@
  *   posix_spawn and a socketpair (fd 3 in the child, nothing else inherited), when the Settings
  *   page is open or the Wi-Fi toggle is on (persisted in launcher.conf: "sync 0|1"). It stops it
  *   with QUIT, then SIGTERM after 2 s and SIGKILL after 4 s, without ever waiting on the UI
- *   thread (sync_tick reaps it). Low memory (mem_guard, mem_watch) stops it unless a transfer or
- *   an install is running; shell exit and rejuvenation stop it too.
+ *   thread (sync_tick reaps it). Memory: the daemon owns its oom_score_adj (-700 while a session
+ *   or the pairing window is open, 600 idle). The shell never stops it while it is needed
+ *   (sy_needed: a session, a pairing, a transfer, an install, or activity in the last 2 min);
+ *   low memory stops an idle USB-only daemon, the critical watcher an idle one. The Wi-Fi option
+ *   is switched at run time (WIFI line), and a shell rejuvenation (exec) hands the running daemon
+ *   over to the new shell (sync_handover / sync_adopt) instead of stopping it.
  * - Control pipe: line based, read without blocking from sync_tick (called from read_pkt, so it
  *   runs inside every app, and from the main loop when idle). Requests that need the user (the
  *   pairing code, an update install, a rescan while music plays) open an iOS alert above
@@ -42,6 +46,8 @@ static struct {
     int up_req, up_phase, up_noconfirm, up_last; char up_ver[24]; double up_t, up_sent;
     int dbstaged, page, modal, in_tick;
     double lowmem_t;
+    int was_ready, skip_line, resync; double busy_t, last_act;   /* READY seen since the start; adopted, RESYNC not answered yet; lock held by another daemon */
+    int ad_rescan, ad_up;                             /* adopted: RESCAN / UPDATE read before the RESYNC answer */
 } SY = { .fd = -1 };
 static volatile pid_t sy_pid_v;                       /* for mem_watch (another thread) */
 static volatile int sy_busy_v, sy_crit;
@@ -70,6 +76,13 @@ static void sy_send(const char *fmt, ...)
 }
 static const char *sy_bin(void) { return !access(SY_BIN, X_OK) ? SY_BIN : !access(SY_BIN2, X_OK) ? SY_BIN2 : 0; }
 static int sync_xfer_busy(void) { return (SY.xsid && now_ms() - SY.xt < 5000) || SY.up_phase == UP_RUN; }
+/* the daemon must not be stopped or cut now: a client is connected, a pairing or an install is
+ * under way, something was transferred, or a session opened or closed in the last 2 minutes (a
+ * client that reconnects between operations must find it where it left it) */
+static int sy_needed(void)
+{
+    return sync_xfer_busy() || SY.nc || SY.sas_sid || SY.pair_ui || SY.up_phase != UP_NONE || (SY.last_act && now_ms() - SY.last_act < 120000);
+}
 
 static void sy_session_reset(void)
 {
@@ -106,7 +119,7 @@ static int sy_spawn(int wifi)
     if (r) { close(sv[0]); lg("sync: hibysync does not start (%s)", strerror(r)); SY.failed++; SY.fail_t = now_ms(); return -1; }
     fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK);
     setpriority(PRIO_PROCESS, (id_t)pid, 19);          /* nice 19 (it sets its idle I/O class itself) */
-    SY.pid = pid; sy_pid_v = pid; SY.fd = sv[0]; SY.wifi = wifi; SY.t_start = now_ms();
+    SY.pid = pid; sy_pid_v = pid; SY.fd = sv[0]; SY.wifi = wifi; SY.t_start = now_ms(); SY.was_ready = 0; SY.skip_line = 0; SY.resync = 0;
     sy_session_reset();
     { static int reg; if (!reg) { reg = 1; atexit(sync_atexit); } }   /* shell exit: QUIT it first */
     lg("sync: hibysync %d started (%s)", (int)pid, wifi ? "USB + Wi-Fi" : "USB");
@@ -138,12 +151,25 @@ static void sy_reap(void)
     if (SY.pid > 0) {
         pid_t w = waitpid(SY.pid, &s, WNOHANG);
         if (w == SY.pid || (w < 0 && errno == ECHILD)) {
-            lg("sync: hibysync exited (%d)%s", w == SY.pid && WIFEXITED(s) ? WEXITSTATUS(s) : -1, SY.ready ? "" : " before READY");
-            if (!SY.ready) { SY.failed++; SY.fail_t = now_ms(); }
+            int code = w == SY.pid && WIFEXITED(s) ? WEXITSTATUS(s) : -1, sig = w == SY.pid && WIFSIGNALED(s) ? WTERMSIG(s) : 0;
+            /* Before, any exit counted as a failed start: sy_session_reset() clears SY.ready when
+             * the pipe closes, so a daemon cut by hibyguard or the critical watcher, or ended by
+             * its idle timer, was logged "before READY"; three of those and the shell never
+             * started it again until the ByOS Sync page was opened, and the phone could not find
+             * the player any more. Now only a start that never reached READY is a failure (or a
+             * crash right after it); 75 = the lock is held by a daemon still serving the sessions
+             * of a killed shell: try again a little later. */
+            lg("sync: hibysync exited (%d%s%s)%s", code, sig ? ", signal " : "", sig ? strsignal(sig) : "", SY.was_ready ? "" : " before READY");
+            if (code == 75) SY.busy_t = now_ms();
+            else if (!SY.was_ready || (sig && sig != SIGKILL && sig != SIGTERM && now_ms() - SY.t_start < 10000)) { SY.failed++; SY.fail_t = now_ms(); }
+            /* cut from outside (hibyguard, the kernel) while nothing needed it: memory is short,
+             * so the low-memory back-off applies (1 min with Wi-Fi sync on, else 5 min) instead
+             * of a spawn and cut loop every ~20 s. sy_busy_v is still the last tick's value. */
+            if (SY.was_ready && (sig == SIGKILL || sig == SIGTERM) && !sy_busy_v) { SY.lowmem_t = now_ms(); lg("sync: cut for memory, next start after the back-off"); }
             if (SY.fd >= 0) { close(SY.fd); SY.fd = -1; }
-            SY.pid = 0; sy_pid_v = 0; sy_busy_v = 0;
+            SY.pid = 0; sy_pid_v = 0; sy_busy_v = 0; SY.resync = 0;
             sy_session_reset();
-        } else if (!SY.ready && now_ms() - SY.t_start > 3000) {
+        } else if (!SY.was_ready && now_ms() - SY.t_start > 3000) {
             SY.failed++; SY.fail_t = now_ms();
             sy_stop("no READY after 3 s");
         }
@@ -156,18 +182,27 @@ static void sy_policy(void)
     if (SY.dying) return;                                          /* the next one waits for the port and the lock */
     int want = sync_wifi_on || SY.page || SY.up_phase != UP_NONE;
     if (SY.pid > 0) {
-        /* toggle changed: restart with the other option, but never under a connected client */
-        int quiet = SY.nc == 0 && !SY.sas_sid && SY.up_phase == UP_NONE && !sync_xfer_busy();
-        if (quiet && SY.wifi != sync_wifi_on && want) sy_stop("Wi-Fi option changed");
-        else if (quiet && SY.wifi && !want) sy_stop("Wi-Fi sync turned off");
+        if (!SY.ready || SY.resync || SY.wifi == sync_wifi_on) return;
+        /* The option changed: switched in the running daemon (WIFI line), so no session drops.
+         * Turning it off waits while a Wi-Fi client is connected or pairing ("applies when it
+         * disconnects"); USB sessions are not affected. */
+        int wconn = 0; for (int i = 0; i < SY.nc; i++) if (SY.c[i].wifi) wconn = 1;
+        if (sync_wifi_on) { sy_send("WIFI on 0"); SY.wifi = 1; lg("sync: Wi-Fi connections on"); }
+        else if (!wconn && !SY.sas_sid) {
+            if (!want && !sy_needed()) sy_stop("Wi-Fi sync turned off");
+            else { sy_send("WIFI off %d", SY_IDLE_USB); SY.wifi = 0; lg("sync: Wi-Fi connections off"); }
+        }
         return;
     }
     if (!want) return;
     if (SY.failed >= 3) return;                                   /* opening the page tries again */
+    if (SY.busy_t && t - SY.busy_t < 10000) return;               /* the previous daemon still serves its sessions */
     if (!SY.page) {
         static double t_first; if (!t_first) t_first = t;
         if (t - t_first < 20000) return;                           /* not during the shell's start */
-        if (SY.lowmem_t && t - SY.lowmem_t < 300000) return;      /* stopped for memory: 5 min */
+        /* stopped or cut for memory: wait before starting it again (1 min with Wi-Fi sync on,
+         * where an absent daemon means a player that cannot be found; it holds ~300 KB idle) */
+        if (SY.lowmem_t && t - SY.lowmem_t < (sync_wifi_on ? 60000 : 300000)) return;
     }
     if (SY.failed && t - SY.fail_t < (SY.page ? 3000 : 30000)) return;
     sy_spawn(sync_wifi_on);
@@ -191,18 +226,21 @@ static void sy_line(char *l)
     if (!n) return;
     const char *c = tk[0]; int sid = tk[1] ? atoi(tk[1]) : 0;
     if (!strcmp(c, "READY")) {
-        SY.ready = 1; SY.failed = 0;
+        SY.ready = 1; SY.was_ready = 1; SY.failed = 0; SY.resync = 0;
+        if (tk[2]) SY.wifi = atoi(tk[2]) != 0;                    /* also the answer to WIFI and RESYNC */
         lg("sync: ready (port %s, Wi-Fi %s)", tk[1] ? tk[1] : "?", tk[2] ? tk[2] : "?");
         if (SY.pair_ui && SY.wifi) { sy_send("PAIRING on"); SY.pair_t0 = now_ms(); }
         sy_send("PEERS");
     } else if (!strcmp(c, "CONN") && n >= 4) {
         sy_conn_del(sid);
         if (SY.nc < SY_MAXC) { struct sy_conn *k = &SY.c[SY.nc++]; k->sid = sid; k->wifi = !strcmp(tk[2], "wifi"); sy_unpct(tk[3], k->name, sizeof k->name); }
+        SY.last_act = now_ms();
         lg("sync: session %d open (%s)", sid, tk[2]);
     } else if (!strcmp(c, "GONE")) {
         sy_conn_del(sid);
         if (sid && sid == SY.sas_sid) sy_sas_over(1);
         if (sid && sid == SY.xsid) SY.xsid = 0;
+        SY.last_act = now_ms();
         lg("sync: session %d closed", sid);
     } else if (!strcmp(c, "SAS") && n >= 4) {
         if (strlen(tk[2]) != 6 || strspn(tk[2], "0123456789") != 6) return;
@@ -220,15 +258,22 @@ static void sy_line(char *l)
         if (tk[2] && strcmp(tk[2], "closed")) toast(tr("Emparejamiento cancelado"));
         lg("sync: pairing failed (%s)", tk[2] ? tk[2] : "?");
     } else if (!strcmp(c, "XFER") && n >= 6) {
-        SY.xsid = sid; SY.xput = tk[2][0] == 'p'; SY.xdone = strtoll(tk[3], 0, 10); SY.xtotal = strtoll(tk[4], 0, 10); SY.xt = now_ms();
+        SY.xsid = sid; SY.xput = tk[2][0] == 'p'; SY.xdone = strtoll(tk[3], 0, 10); SY.xtotal = strtoll(tk[4], 0, 10); SY.xt = SY.last_act = now_ms();
         char pth[400]; sy_unpct(tk[5], pth, sizeof pth);
         const char *b = strrchr(pth, '/'); snprintf(SY.xname, sizeof SY.xname, "%s", b ? b + 1 : pth);
     } else if (!strcmp(c, "UPDATE") && n >= 3) {
+        /* "again": the answer to RESYNC repeats a request the shell before the exec had not
+         * acted on; skipped when this shell already got the first one (still in the pipe) */
+        int again = tk[3] && !strcmp(tk[3], "again");
+        if (again && (SY.ad_up || SY.up_req || SY.up_phase != UP_NONE)) return;
+        if (SY.resync) SY.ad_up = 1;
         snprintf(SY.up_ver, sizeof SY.up_ver, "%s", tk[1]); SY.up_noconfirm = !strcmp(tk[2], "noconfirm");
         if (SY.up_phase != UP_NONE) { sy_send("UPDATE_STATE 5 0 8"); return; }   /* E_BUSY */
         SY.up_req = 1;
-        lg("sync: install of ByOS %s requested (%s)", SY.up_ver, tk[2]);
+        lg("sync: install of ByOS %s requested (%s)%s", SY.up_ver, tk[2], again ? " again after the restart" : "");
     } else if (!strcmp(c, "RESCAN")) {
+        if (tk[1] && !strcmp(tk[1], "again") && SY.ad_rescan) return;
+        if (SY.resync) SY.ad_rescan = 1;
         SY.rescan_req = 1;
     } else if (!strcmp(c, "DBSTAGED")) {
         SY.dbstaged = 1;
@@ -257,7 +302,8 @@ static void sy_io(void)
         char *nl;
         while ((nl = memchr(SY.rx, '\n', (size_t)SY.rxn))) {
             *nl = 0; if (nl > SY.rx && nl[-1] == '\r') nl[-1] = 0;
-            if (strlen(SY.rx) <= 512) sy_line(SY.rx);
+            if (SY.skip_line) SY.skip_line = 0;                      /* the rest of a line the old shell had half read */
+            else if (strlen(SY.rx) <= 512) sy_line(SY.rx);
             int used = (int)(nl + 1 - SY.rx); memmove(SY.rx, nl + 1, (size_t)(SY.rxn - used)); SY.rxn -= used;
         }
         if (SY.rxn >= (int)sizeof SY.rx - 1) SY.rxn = 0;                /* overlong line: drop */
@@ -501,23 +547,29 @@ static void sync_tick(void)
     if (SY.fd < 0 && SY.pid <= 0 && !SY.dying && !SY.up_phase && t < next_pol) return;
     SY.in_tick = 1;
     if (t >= next_io) { next_io = t + 100; sy_io(); }
-    if (t >= next_pol) { next_pol = t + 1000; sy_reap(); sy_policy(); sy_up_watch(); sy_busy_v = sync_xfer_busy(); }
+    if (t >= next_pol) { next_pol = t + 1000; sy_reap(); sy_policy(); sy_up_watch(); sy_busy_v = sy_needed(); }
     SY.in_tick = 0;
     if (!SY.modal && (SY.sas_pending || SY.rescan_req || SY.up_req || SY.up_phase == UP_ASK || SY.up_phase == UP_DONE) && sy_ui_ok()) {
         SY.modal = 1; sy_ui_events(); SY.modal = 0;
     }
 }
-/* low memory (mem_guard): stop it unless something is being transferred or installed */
+/* Low memory (mem_guard, below 7 MB): stop an idle USB-only daemon. Before, it was stopped
+ * even with a phone connected (only a transfer in its last 5 s or an install protected it),
+ * several times per session at the 4.6-5 MB this player usually has free. Never while it is
+ * needed (sy_needed), and never with Wi-Fi sync on: idle it holds ~300 KB, and without it the
+ * phone cannot find the player; the critical watcher below still cuts it when idle. */
 static void sync_lowmem(void)
 {
-    if (SY.pid <= 0 || sync_xfer_busy() || SY.up_phase != UP_NONE || SY.sas_sid) return;
+    if (SY.pid <= 0 || sy_needed() || sync_wifi_on) return;
     sy_stop("low memory"); SY.lowmem_t = now_ms();
 }
-/* critical memory (mem_watch thread): SIGTERM, the main thread reaps it; 1 = signalled */
+/* critical memory (mem_watch thread): SIGTERM an idle daemon, the main thread reaps it; 1 =
+ * signalled. sy_busy_v is sy_needed() from the last tick; -700 means the daemon has a session
+ * the shell may not have heard of yet. */
 static int sync_crit_kill(void)
 {
     pid_t p = sy_pid_v;
-    if (p <= 0 || sy_busy_v) return 0;
+    if (p <= 0 || sy_busy_v || oom_adj_pid((int)p) <= -500) return 0;
     sy_crit = 1;
     return kill(p, SIGTERM) == 0;
 }
@@ -533,6 +585,45 @@ static void sync_shutdown(void)
     }
 }
 static void sync_atexit(void) { sync_shutdown(); }
+/* Shell rejuvenation (exec, same process): the daemon is our child and stays so across exec, so
+ * instead of stopping it (which dropped the phone, and the hibyguard-requested restarts came
+ * every few minutes under memory pressure) its control socket survives the exec and the new
+ * shell takes it over (sync_adopt). Its sessions, transfers and Wi-Fi listener never notice. */
+#define SY_ADOPT_ENV "HIBYSYNC_ADOPT"
+static void sync_handover(void)
+{
+    if (SY.dying) { kill(SY.dying, SIGKILL); waitpid(SY.dying, 0, 0); SY.dying = 0; }
+    if (SY.pid <= 0) return;
+    if (SY.fd < 0 || !SY.was_ready) { sync_shutdown(); return; }
+    char v[64]; snprintf(v, sizeof v, "%d %d %d %d", (int)SY.pid, SY.fd, SY.wifi, SY.rxn > 0);
+    if (fcntl(SY.fd, F_SETFD, 0) || setenv(SY_ADOPT_ENV, v, 1)) { sync_shutdown(); return; }
+    lg("sync: hibysync %d handed over to the restarted shell", (int)SY.pid);
+}
+/* exec failed: keep running with the daemon as before */
+static void sync_handover_undo(void)
+{
+    unsetenv(SY_ADOPT_ENV);
+    if (SY.fd >= 0) fcntl(SY.fd, F_SETFD, FD_CLOEXEC);
+}
+/* at the start of main, before any other child is started */
+static void sync_adopt(void)
+{
+    const char *e = getenv(SY_ADOPT_ENV); if (!e) return;
+    int pid = 0, fd = -1, wifi = 0, skip = 0, st;
+    int n = sscanf(e, "%d %d %d %d", &pid, &fd, &wifi, &skip);
+    unsetenv(SY_ADOPT_ENV);
+    if (n < 3 || pid <= 0 || fd < 3 || fcntl(fd, F_GETFD) < 0) { lg("sync: nothing to take over (%s)", e); return; }
+    fcntl(fd, F_SETFD, FD_CLOEXEC);
+    if (waitpid(pid, &st, WNOHANG) != 0) { close(fd); lg("sync: hibysync %d is gone, not taken over", pid); return; }   /* exited (reaped) or not our child */
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    SY.pid = pid; sy_pid_v = pid; SY.fd = fd; SY.wifi = wifi != 0; SY.t_start = now_ms();
+    SY.ready = SY.was_ready = 1; SY.skip_line = skip != 0; SY.rxn = 0; SY.resync = 1;   /* no Wi-Fi decision before its answer */
+    SY.ad_rescan = SY.ad_up = 0;
+    SY.last_act = now_ms();                                          /* sessions may be open: CONN lines follow */
+    { static int reg; if (!reg) { reg = 1; atexit(sync_atexit); } }
+    sy_send("RESYNC");                                               /* READY and the open sessions again */
+    lg("sync: hibysync %d taken over after the restart", pid);
+}
 
 /* ------------------------------------------------------------------ Settings > ByOS Sync */
 static char sy_v[6][96];
@@ -610,7 +701,8 @@ static void (*const sy_forget_fn[SY_MAXP])(void) = { sy_forget0, sy_forget1, sy_
 static void apply_sync_wifi(void)
 {
     sync_wifi_on = sync_wifi_ui; SY.failed = 0; lconf_save();
-    if (SY.pid > 0 && SY.nc > 0 && SY.wifi != sync_wifi_on) toast(tr("Se aplicará cuando se desconecte"));
+    int wconn = 0; for (int i = 0; i < SY.nc; i++) if (SY.c[i].wifi) wconn = 1;
+    if (SY.pid > 0 && !sync_wifi_on && SY.wifi && (wconn || SY.sas_sid)) toast(tr("Se aplicará cuando se desconecte"));
     sy_policy();
 }
 static void page_sync_pair(struct spage *p);

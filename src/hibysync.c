@@ -5,7 +5,8 @@
  *     hibysync serve --idle-exit 300 --detach          (USB fallback started over adb, no shell)
  *
  * - TCP 127.0.0.1:7340 always (USB through `adb forward tcp:7340 tcp:7340`, cleartext allowed);
- *   TCP <wlan0>:7340 and UDP discovery only with --wifi (pairing or AUTH, then encrypted records).
+ *   TCP <wlan0>:7340 and UDP discovery only with --wifi or after the control line "WIFI on"
+ *   (pairing or AUTH, then encrypted records).
  * - One thread, one poll() loop, at most 2 sessions, static buffers (no heap growth per file).
  * - Files confined to the SD root with openat()/O_NOFOLLOW; PUT goes to a hidden .part with a
  *   streaming SHA-256, fdatasync every 4 MiB, fsync + rename + fsync(dir); GET uses sendfile()
@@ -55,6 +56,7 @@ static void lg(const char *fmt, ...)
 #define T_IDLE_S 120
 #define T_PUT_IDLE_S 30
 #define T_SECURE_S 15      /* a Wi-Fi session must finish AUTH or reach PAIR_REVEAL within this */
+#define T_ORPHAN_S 30      /* shell gone: sessions kept this long after their last running work */
 #define T_PAIR_S 120
 #define HASH_STEP (2u << 20)   /* bytes hashed per poll turn by the incremental hash jobs */
 #define HOLD_MAX 4             /* pipelined requests kept aside while a job runs */
@@ -68,7 +70,7 @@ struct sync_paths {
     char sd[256], data[256], hm[256], sync[300], dbdir[320], ota[300], mounts[256], hibytag[256], cli[256],
          batt[256], usb[256], lock[256], resconf[256], wifi_if[IFNAMSIZ];
     int port; uint32_t wifi_fixed;   /* test: fixed "Wi-Fi" address instead of the interface */
-    int t_idle, t_put_idle, t_secure;   /* timeouts (s); only test builds change them */
+    int t_idle, t_put_idle, t_secure, t_orphan;   /* timeouts (s); only test builds change them */
 };
 static struct sync_paths SP;
 static void paths_init(void)
@@ -85,7 +87,7 @@ static void paths_init(void)
     snprintf(SP.resconf, sizeof SP.resconf, "/usr/resource/config.json");
     snprintf(SP.wifi_if, sizeof SP.wifi_if, "wlan0");
     SP.port = BTP_PORT;
-    SP.t_idle = T_IDLE_S; SP.t_put_idle = T_PUT_IDLE_S; SP.t_secure = T_SECURE_S;
+    SP.t_idle = T_IDLE_S; SP.t_put_idle = T_PUT_IDLE_S; SP.t_secure = T_SECURE_S; SP.t_orphan = T_ORPHAN_S;
 #ifdef BTP_TEST
     const char *e;
 #define SENV(k, f) if ((e = getenv(k)) && *e) snprintf(SP.f, sizeof SP.f, "%s", e)
@@ -98,6 +100,7 @@ static void paths_init(void)
     if ((e = getenv("HIBYSYNC_IDLE_S")) && atoi(e) > 0) SP.t_idle = atoi(e);
     if ((e = getenv("HIBYSYNC_PUT_IDLE_S")) && atoi(e) > 0) SP.t_put_idle = atoi(e);
     if ((e = getenv("HIBYSYNC_SECURE_S")) && atoi(e) > 0) SP.t_secure = atoi(e);
+    if ((e = getenv("HIBYSYNC_ORPHAN_S")) && atoi(e) > 0) SP.t_orphan = atoi(e);
 #endif
     snprintf(SP.sync, sizeof SP.sync, "%s/sync", SP.hm);
     snprintf(SP.dbdir, sizeof SP.dbdir, "%s/db", SP.sync);
@@ -123,9 +126,12 @@ static struct {
     time_t idle_since; int next_sid;
     struct ratel rl[8];
     time_t probe_sec; int probe_n;
-    int oom_high;
+    int oom_val; time_t oom_t;   /* last oom_score_adj written (1 = none yet) */
+    int orphan;               /* the shell went away with sessions open: serve them, then exit */
+    time_t orphan_work;       /* orphan: last time a session had work running */
+    int udp_err;              /* errno of the last failed discovery socket (0 = none), logged once */
     char byos_version[32], firmware[32];
-} G = { .ctl = -1, .lst_lo = -1, .lst_wifi = -1, .udp = -1, .sd_shell = -1 };
+} G = { .ctl = -1, .lst_lo = -1, .lst_wifi = -1, .udp = -1, .sd_shell = -1, .oom_val = 1 };
 
 /* ================================================================== sessions */
 enum { SS_FREE, SS_HELLO, SS_SECURING, SS_OPEN };
@@ -547,16 +553,26 @@ static int rename_noreplace(int sdfd, const char *s, int ddfd, const char *d)
 }
 
 /* ================================================================== oom / progress */
-static void oom_adjust(void)
+/* oom_score_adj has a single owner: -700 (the shell's guards and hibyguard spare it) while
+ * anything needs the daemon: any open session, USB or Wi-Fi, authenticated or not (which covers
+ * pairing, transfers, hashing and the update checks), and the pairing window; 600 (the first to
+ * go) when it is idle. Before, two functions wrote it: one per session (-700/600) and one per
+ * transfer (-700/0), each remembering only its own last value. The end of the first PUT or GET
+ * therefore left 0 under a connected client, the shell's guard_tick moved it to 600, and
+ * hibyguard cut the daemon right after the transfer: the phone lost its session every time.
+ * While protected the value is written again every 10 s, in case another process changed it. */
+static void oom_update(void)
 {
-    int busy = 0;
-    for (int i = 0; i < MAX_SESS; i++) if (S[i].st && (S[i].put.active || S[i].job == JOB_GET)) busy = 1;
-    if (busy == G.oom_high) return;
-    G.oom_high = busy;
-#ifndef BTP_TEST
-    int f = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
-    if (f >= 0) { const char *v = busy ? "-700" : "0"; if (write(f, v, strlen(v)) < 0) {} close(f); }
+    int need = G.pairing_open;
+    for (int i = 0; i < MAX_SESS; i++) if (S[i].st) need = 1;
+    int v = need ? -700 : 600; time_t t = mono();
+    if (v == G.oom_val && !(need && t - G.oom_t >= 10)) return;
+#ifdef BTP_TEST
+    if (v != G.oom_val) lg("oom_score_adj %d", v);
 #endif
+    G.oom_val = v; G.oom_t = t;
+    int f = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
+    if (f >= 0) { char b[8]; int n = snprintf(b, sizeof b, "%d", v); if (write(f, b, (size_t)n) < 0) {} close(f); }
 }
 static void xfer(struct sess *s, const char *kind, uint64_t done, uint64_t total, const char *shown, int force)
 {
@@ -737,7 +753,7 @@ static void put_close(struct sess *s, int remove_part)
     if (remove_part) unlinkat(u->dfd, u->part, 0);
     if (u->dfd >= 0) close(u->dfd);
     u->fd = u->dfd = -1; u->active = 0;
-    oom_adjust();
+    oom_update();
 }
 static void stale_parts(int dfd, const char *keep)   /* .btp-*.part older than 7 days in this folder */
 {
@@ -776,7 +792,7 @@ static void put_activate(struct sess *s)
     struct put_state *u = &s->put;
     u->active = 1; u->last = mono();
     uint8_t o[8]; be64(o, u->next); tx_frame(s, T_PUT_READY, 0, u->stream, o, 8);
-    oom_adjust();
+    oom_update();
     xfer(s, "put", u->next, u->size, u->shown, 1);
 }
 static void do_put_begin(struct sess *s, uint32_t st_, struct brd *r)
@@ -915,7 +931,7 @@ static void do_put_end(struct sess *s, uint32_t st_, size_t n)
     if (u->ns == NS_DB) s->db_put_ok = 1;
     xfer(s, "put", u->size, u->size, u->shown, 1);
     uint64_t size = u->size;
-    close(u->dfd); u->dfd = -1; u->active = 0; oom_adjust();
+    close(u->dfd); u->dfd = -1; u->active = 0; oom_update();
     uint8_t o[9]; o[0] = 0; be64(o + 1, size); tx_end(s, T_PUT_DONE, st_, o, 9);
 }
 
@@ -933,7 +949,7 @@ static int get_open(struct sess *s, uint32_t st_, int fd, uint64_t offset, int w
     snprintf(g->unlink_path, sizeof g->unlink_path, "%s", unlink_after ? unlink_after : "");
     snprintf(g->shown, sizeof g->shown, "%s", shown);
     s->job = JOB_GET; s->job_stream = st_;
-    oom_adjust();
+    oom_update();
     return 0;
 }
 static void do_get(struct sess *s, uint32_t st_, struct brd *r)
@@ -1180,6 +1196,10 @@ static void do_rescan(struct sess *s, uint32_t st_, struct brd *r)
 }
 
 /* ================================================================== updates (14) */
+/* The payload tar verified last (UPDATE_STAGE): UPDATE_INSTALL right after it does not hash the
+ * same file again (a few seconds of SD reads each time, with the client waiting). Any change to
+ * the file (a new upload is a new inode) makes it hash again. */
+static struct { dev_t dev; ino_t ino; off_t size; long long mt_s, mt_ns; char sha[65]; } UPC;
 static int update_check(const char *json_path, int allow_down, struct ota_info *in, int *missing)
 {
     *missing = 0;
@@ -1197,9 +1217,13 @@ static int update_check(const char *json_path, int allow_down, struct ota_info *
     char tar[400]; snprintf(tar, sizeof tar, "%s/%s", SP.ota, in->name);
     struct stat st; if (stat(tar, &st) || !S_ISREG(st.st_mode)) { *missing = 1; return E_NOT_STAGED; }
     if ((long long)st.st_size != in->size) return E_UPDATE_INVALID;
+    if (UPC.sha[0] && UPC.dev == st.st_dev && UPC.ino == st.st_ino && UPC.size == st.st_size && UPC.mt_s == (long long)st.st_mtim.tv_sec
+        && UPC.mt_ns == (long long)st.st_mtim.tv_nsec && !strcmp(UPC.sha, in->sha256)) return 0;
     char hx[65]; long long sz;
     if (ota_file_sha256(tar, hx, &sz, 0, (volatile int *)&G.term)) return E_IO;   /* SIGTERM stops it */
     if (strcmp(hx, in->sha256)) return E_UPDATE_INVALID;
+    UPC.dev = st.st_dev; UPC.ino = st.st_ino; UPC.size = st.st_size; UPC.mt_s = (long long)st.st_mtim.tv_sec; UPC.mt_ns = (long long)st.st_mtim.tv_nsec;
+    snprintf(UPC.sha, sizeof UPC.sha, "%s", hx);
     return 0;
 }
 static void do_update_stage(struct sess *s, uint32_t st_, struct brd *r)
@@ -1284,7 +1308,7 @@ static void job_end(struct sess *s)
     }
     s->job = JOB_NONE;
     s->last_rx = mono();   /* a long job is not idleness: the idle clock starts again now */
-    oom_adjust();
+    oom_update();
 }
 /* count = 1: a real attempt (SAS shown, then mismatch, deny, timeout); 3 of them close the window.
  * A commit that is never revealed shows nothing to the user and only frees the pairing slot. */
@@ -1300,11 +1324,6 @@ static void pair_fail_n(struct sess *s, const char *why, int count)
     s->ps = PS_NONE;
 }
 static void pair_fail(struct sess *s, const char *why) { pair_fail_n(s, why, 1); }
-/* Con un cliente conectado, que el guardian de memoria no corte el demonio (respeta -700): sin
- * esto un demonio arrancado desde el PC (byos-cli --start, sin el shell que lo proteja) moria a
- * mitad de DB_SNAPSHOT con poca memoria. Sin clientes vuelve a 600 (el primero en irse). */
-static void oom_self(int v) { int f = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC); if (f >= 0) { char b[8]; int n = snprintf(b, sizeof b, "%d", v); if (write(f, b, (size_t)n) < 0) {} close(f); } }
-static void oom_by_sessions(void);
 static void sess_close(struct sess *s)
 {
     if (!s->st) return;
@@ -1317,20 +1336,13 @@ static void sess_close(struct sess *s)
     if (s->st == SS_OPEN || s->st == SS_SECURING) ctl_send("GONE %d", s->sid);
     btp_wipe(s->k_rx, 32); btp_wipe(s->k_tx, 32); btp_wipe(s->de, 32);
     s->st = SS_FREE; s->fd = -1; s->hq_n = 0; s->hq_bytes = 0;
-    oom_by_sessions();
     /* give the session's buffer pages back (they are zero-filled again on next use) */
     int idx = (int)(s - S);
     madvise(RXB[idx], RXSTRIDE, MADV_DONTNEED); madvise(TXB[idx], TXSTRIDE, MADV_DONTNEED);
     madvise(HOLDB[idx], sizeof HOLDB[idx], MADV_DONTNEED);
     int any = 0; for (int i = 0; i < MAX_SESS; i++) if (S[i].st) any = 1;
     if (!any) { G.idle_since = mono(); madvise(FBUF, sizeof FBUF, MADV_DONTNEED); }
-    oom_adjust();
-}
-static void oom_by_sessions(void)
-{
-    int n = 0; for (int k = 0; k < MAX_SESS; k++) if (S[k].st) n++;
-    static int last = 1; int v = n ? -700 : 600;
-    if (v != last) { oom_self(v); last = v; }
+    oom_update();
 }
 /* Time spent blocked inside one request (helper processes, hashing a payload tar, deleting a
  * tree...) is not the other side's idleness: push every session clock forward by it. */
@@ -1704,27 +1716,48 @@ static void announce(const uint8_t *nonce, const struct sockaddr_in *to)
     if (!to) { memset(&b, 0, sizeof b); b.sin_family = AF_INET; b.sin_port = htons(SP.port == BTP_PORT ? BTP_ANNOUNCE_PORT : SP.port + 1); b.sin_addr.s_addr = htonl(INADDR_BROADCAST); to = &b; }
     sendto(G.udp, pk, n, MSG_NOSIGNAL, (const struct sockaddr *)to, sizeof *to);
 }
+/* discovery socket: every address, so probes sent to the subnet broadcast, to 255.255.255.255
+ * and unicast probes all arrive; answers leave from wlan0 (the only route to the subnet) */
+static int udp_open(void)
+{
+    int u = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0), e = u < 0 ? errno : 0;
+    if (u >= 0) {
+        int one = 1; setsockopt(u, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one); setsockopt(u, SOL_SOCKET, SO_BROADCAST, &one, sizeof one);
+        struct sockaddr_in b = { 0 }; b.sin_family = AF_INET; b.sin_port = htons((uint16_t)SP.port); b.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (bind(u, (struct sockaddr *)&b, sizeof b)) { e = errno; close(u); u = -1; }
+    }
+    /* retried every 5 s while it fails: the log (tmpfs, so RAM) gets the first failure of a run
+     * and each change of error only, then one line when it works again */
+    if (u < 0 && e != G.udp_err) lg("discovery socket: %s", strerror(e));
+    else if (u >= 0 && G.udp_err) lg("discovery socket: ok again");
+    G.udp_err = u < 0 ? e : 0;
+    return u;
+}
+static void wifi_close(void)
+{
+    if (G.lst_wifi >= 0) { close(G.lst_wifi); G.lst_wifi = -1; }
+    if (G.udp >= 0) { close(G.udp); G.udp = -1; }
+    G.wifi_addr = 0; G.wifi_mask = 0;
+}
 static void wifi_refresh(void)
 {
     if (!G.wifi) return;
     time_t t = mono(); if (G.wifi_checked && t - G.wifi_checked < 5) return;
     G.wifi_checked = t;
     uint32_t a = 0, m = 0; int up = !wifi_addr(&a, &m);
-    if (up && G.lst_wifi >= 0 && a == G.wifi_addr) return;
-    if (G.lst_wifi >= 0) { close(G.lst_wifi); G.lst_wifi = -1; }
-    if (G.udp >= 0) { close(G.udp); G.udp = -1; }
+    if (up && G.lst_wifi >= 0 && a == G.wifi_addr) {
+        /* before, a discovery socket that failed once (bind during a Wi-Fi reconnect) was never
+         * opened again while the address stayed the same: TCP worked, discovery never did */
+        if (G.udp < 0 && (G.udp = udp_open()) >= 0) announce(0, 0);
+        return;
+    }
+    wifi_close();
     if (!up) return;
     G.wifi_addr = a; G.wifi_mask = m;
     G.lst_wifi = listen_on(a, SP.port);
-    int u = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-    if (u >= 0) {
-        int one = 1; setsockopt(u, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one); setsockopt(u, SOL_SOCKET, SO_BROADCAST, &one, sizeof one);
-        struct sockaddr_in b = { 0 }; b.sin_family = AF_INET; b.sin_port = htons((uint16_t)SP.port); b.sin_addr.s_addr = htonl(INADDR_ANY);
-        if (bind(u, (struct sockaddr *)&b, sizeof b)) { close(u); u = -1; }
-    }
-    G.udp = u;
+    G.udp = udp_open();
     char ip[INET_ADDRSTRLEN]; struct in_addr ia = { a }; inet_ntop(AF_INET, &ia, ip, sizeof ip);
-    lg("wifi listener on %s:%d %s", ip, SP.port, G.lst_wifi >= 0 ? "ok" : "FAILED");
+    lg("wifi listener on %s:%d %s, discovery %s", ip, SP.port, G.lst_wifi >= 0 ? "ok" : "FAILED", G.udp >= 0 ? "ok" : "FAILED");
     announce(0, 0);
 }
 static int addr_private(uint32_t a_n)
@@ -1761,6 +1794,27 @@ static void accept_on(int lfd, int local)
         for (int i = 0; i < MAX_SESS && !refuse; i++) if (S[i].st && !S[i].local && S[i].st != SS_OPEN) refuse = E_BUSY;
     }
     struct sess *s = 0; for (int i = 0; i < MAX_SESS && !refuse; i++) if (!S[i].st) { s = &S[i]; break; }
+    if (!s && !refuse) {
+        /* A dead session must not hold a slot until the 120 s idle timeout: a phone that lost
+         * Wi-Fi, slept or was killed leaves its TCP connection open on our side, and two of them
+         * made every reconnect fail with E_BUSY. Clients PING every 30 s, so an open session that
+         * sent nothing for 45 s (3/8 of the idle limit) and has no work running is gone.
+         * This runs before any authentication, so a Wi-Fi client may only take the slot of a
+         * silent Wi-Fi session from its own address (the same phone reconnecting): another LAN
+         * host cannot close a phone or a USB session just by connecting. A USB client (local)
+         * may take any silent session. */
+        struct sess *v = 0; time_t t = mono(), stale = SP.t_idle * 3 / 8;
+        for (int i = 0; i < MAX_SESS; i++) {
+            struct sess *o = &S[i];
+            if (o->st != SS_OPEN || o->job || o->put.active || o->hq_n || o->ps != PS_NONE || o->tx_len > o->tx_off || o->sf_left || t - o->last_rx <= stale) continue;
+            if (!local && (o->local || o->peer_addr != a.sin_addr.s_addr)) continue;
+            if (!v || o->last_rx < v->last_rx) v = o;
+        }
+        if (v) {
+            lg("session %d silent for %ld s: closed for a new %s client", v->sid, (long)(t - v->last_rx), local ? "USB" : "Wi-Fi");
+            tx_frame(v, T_BYE, 0, 0, 0, 0); tx_flush(v); sess_close(v); s = v;
+        }
+    }
     if (!s && !refuse && local) {
         struct sess *v = 0;
         for (int pass = 0; pass < 2 && !v; pass++)
@@ -1785,7 +1839,7 @@ static void accept_on(int lfd, int local)
     int idx = (int)(s - S);
     memset(s, 0, sizeof *s);
     s->fd = fd; s->st = SS_HELLO; s->local = local; s->peer_addr = a.sin_addr.s_addr; s->sid = ++G.next_sid;
-    oom_by_sessions();
+    oom_update();
     s->rx = RXB[idx]; s->tx = TXB[idx]; s->sf_fd = -1; s->peer_idx = -1; s->put.fd = s->put.dfd = -1; s->get.fd = -1;
     s->hello_deadline = mono() + T_HELLO_S; s->secure_deadline = mono() + SP.t_secure; s->last_rx = mono();
     s->hj.fd = -1;
@@ -1795,6 +1849,18 @@ static void accept_on(int lfd, int local)
 
 /* ================================================================== control input (18.3) */
 static struct sess *sess_by_sid(int sid) { for (int i = 0; i < MAX_SESS; i++) if (S[i].st && S[i].sid == sid) return &S[i]; return 0; }
+static void ctl_ready(void) { char hx[17]; hexs(G.device_id, 8, hx); ctl_send("READY %d %d %s", SP.port, G.wifi, hx); }
+/* end a session from our side: running work cancelled (parts kept), BYE, close after sending */
+static void sess_bye(struct sess *s)
+{
+    if (!s->st || s->close_after_tx) return;
+    if (s->sf_left) { sess_close(s); return; }   /* in the middle of a sendfile DATA frame: nothing more can be framed */
+    if (s->job) { uint32_t js = s->job_stream; job_end(s); tx_err(s, js, E_CANCELLED); }
+    if (s->put.active) { uint32_t ps = s->put.stream; put_close(s, 0); tx_err(s, ps, E_CANCELLED); }
+    if (s->ps == PS_WAIT_USER) pair_fail(s, "closed");
+    tx_frame(s, T_BYE, 0, 0, 0, 0);
+    s->close_after_tx = 1;
+}
 static char ctl_buf[1024]; static size_t ctl_len;
 static void ctl_line(char *l)
 {
@@ -1808,6 +1874,38 @@ static void ctl_line(char *l)
     } else if (!strcmp(cmd, "PAIRING")) {
         G.pairing_open = !strcmp(a1, "on") && G.wifi;
         if (G.pairing_open) { G.pairing_until = mono() + PAIR_WINDOW_S; G.pair_fails = 0; G.pair_fail_start = mono(); announce(0, 0); }
+        oom_update();
+    } else if (!strcmp(cmd, "WIFI")) {
+        /* WIFI on|off [idle-exit s]: the Wi-Fi option changes without a restart. Before, the
+         * shell restarted the daemon, which dropped the phone in the middle of its reconnects
+         * (and opening "Pair a new device" restarted it too). Turning it off ends the Wi-Fi
+         * sessions; USB sessions stay. */
+        int on = !strcmp(a1, "on");
+        if (a2[0]) G.idle_exit = atoi(a2);
+        if (on && !G.wifi) { G.wifi = 1; G.wifi_checked = 0; wifi_refresh(); lg("wifi on"); }
+        else if (!on && G.wifi) {
+            G.wifi = 0; G.pairing_open = 0; wifi_close();
+            for (int k = 0; k < MAX_SESS; k++) if (S[k].st && !S[k].local) sess_bye(&S[k]);
+            lg("wifi off");
+        }
+        G.idle_since = mono();
+        oom_update();
+        ctl_ready();
+    } else if (!strcmp(cmd, "RESYNC")) {
+        /* a shell that took this daemon over after restarting itself (exec): READY, then the
+         * open sessions as CONN lines */
+        ctl_ready();
+        for (int k = 0; k < MAX_SESS; k++) {
+            struct sess *s = &S[k]; if (s->st != SS_OPEN) continue;
+            const char *n = s->local ? s->cname : s->pname; char nm[200]; pct(n, strlen(n), nm, sizeof nm);
+            ctl_send("CONN %d %s %s", s->sid, s->local ? "usb" : "wifi", nm[0] ? nm : "-");
+        }
+        /* a request the old shell may have read (or half read) without acting on it: sent again,
+         * marked "again" so a shell that did get the first one does not run it twice. Without
+         * this, the client waited forever (RESCAN) or got E_BUSY on everything (UPDATE). */
+        struct sess *rs = sess_by_sid(G.rescan_sid);
+        if (rs && rs->job == JOB_RESCAN) ctl_send("RESCAN again");
+        if (G.up_state == 2 || G.up_state == 3) ctl_send("UPDATE %s %s again", G.up_version, G.up_state == 3 ? "noconfirm" : "confirm");
     } else if (!strcmp(cmd, "FORGET")) {
         uint8_t id[16]; if (strlen(a1) != 32 || ota_unhex(a1, id, 16)) return;
         int i = peer_find(id); if (i < 0) return;
@@ -1853,6 +1951,7 @@ static void timers(void)
 {
     time_t t = mono();
     if (G.pairing_open && t > G.pairing_until) G.pairing_open = 0;
+    oom_update();   /* the pairing window may have closed; re-asserted every 10 s while protected */
     for (int i = 0; i < MAX_SESS; i++) {
         struct sess *s = &S[i]; if (!s->st || s->close_after_tx) continue;
         if (s->st == SS_HELLO && t > s->hello_deadline) { if (!s->local) rl_fail(s->peer_addr); sess_close(s); continue; }
@@ -1898,18 +1997,39 @@ static void shutdown_all(int code_streams)
     }
     for (int i = 0; i < MAX_SESS; i++) if (S[i].st) sess_close(&S[i]);
 }
+/* The control pipe reached EOF: the shell exited or was killed (hibyguard's last resort under
+ * memory pressure). 1 = exit now (no session open). With sessions open the daemon keeps serving
+ * them (a phone in the middle of a transfer is not dropped) but takes no new connection: the
+ * listeners close, and it exits when the last session ends. A new shell's daemon meanwhile gets
+ * exit code 75 from the lock and is started again a little later. Nothing that needs the shell
+ * (pairing, RESCAN, UPDATE_INSTALL) is available in that mode. */
+static int ctl_gone(void)
+{
+    close(G.ctl); G.ctl = -1;
+    int n = 0; for (int i = 0; i < MAX_SESS; i++) if (S[i].st) n++;
+    if (!n) { lg("control pipe closed: exiting"); return 1; }
+    lg("control pipe closed: serving the %d open session(s), then exiting", n);
+    G.orphan = 1; G.orphan_work = mono(); G.pairing_open = 0; G.wifi = 0; wifi_close();
+    if (G.lst_lo >= 0) { close(G.lst_lo); G.lst_lo = -1; }
+    if (G.up_state == 2 || G.up_state == 3) { G.up_state = 5; G.up_error = E_CANCELLED; }
+    for (int i = 0; i < MAX_SESS; i++) {
+        struct sess *s = &S[i];
+        if (s->st && s->job == JOB_RESCAN) { uint32_t js = s->job_stream; job_end(s); tx_err(s, js, E_IO); }
+        if (s->st && s->st != SS_OPEN) sess_bye(s);   /* unauthenticated or pairing: cannot finish now */
+    }
+    return 0;
+}
 static int serve(void)
 {
     G.lst_lo = listen_on(htonl(INADDR_LOOPBACK), SP.port);
     if (G.lst_lo < 0) { lg("cannot listen on 127.0.0.1:%d: %s", SP.port, strerror(errno)); return 1; }
     G.idle_since = mono();
     if (G.wifi) wifi_refresh();
-    char hx[17]; hexs(G.device_id, 8, hx);
-    ctl_send("READY %d %d %s", SP.port, G.wifi, hx);
+    ctl_ready();
     lg("listening on 127.0.0.1:%d%s", SP.port, G.wifi ? " + wifi" : "");
     while (!G.quit && !G.term) {
         struct pollfd pf[8]; int map[8], np = 0;
-        pf[np].fd = G.lst_lo; pf[np].events = POLLIN; map[np++] = -1;
+        if (G.lst_lo >= 0) { pf[np].fd = G.lst_lo; pf[np].events = POLLIN; map[np++] = -1; }
         if (G.lst_wifi >= 0) { pf[np].fd = G.lst_wifi; pf[np].events = POLLIN; map[np++] = -2; }
         if (G.udp >= 0) { pf[np].fd = G.udp; pf[np].events = POLLIN; map[np++] = -3; }
         if (G.ctl >= 0) { pf[np].fd = G.ctl; pf[np].events = POLLIN; map[np++] = -4; }
@@ -1921,14 +2041,26 @@ static int serve(void)
             if (map[k] == -1) accept_on(G.lst_lo, 1);
             else if (map[k] == -2) accept_on(G.lst_wifi, 0);
             else if (map[k] == -3) udp_in();
-            else if (map[k] == -4) { if (ctl_in() < 0) { lg("control pipe closed: exiting"); shutdown_all(0); return 0; } }
+            else if (map[k] == -4) { if (ctl_in() < 0 && ctl_gone()) { shutdown_all(0); return 0; } }
             else if (S[map[k]].st && S[map[k]].fd == pf[k].fd) sess_service(&S[map[k]], pf[k].revents);
         }
         /* sessions whose state changed from outside (control lines, timers) */
         timers();
         for (int i = 0; i < MAX_SESS; i++) if (S[i].st && (S[i].tx_len > S[i].tx_off || S[i].close_after_tx)) sess_service(&S[i], 0);
         wifi_refresh();
-        int any = 0; for (int i = 0; i < MAX_SESS; i++) if (S[i].st) any = 1;
+        int any = 0, work = 0;
+        for (int i = 0; i < MAX_SESS; i++) {
+            struct sess *s = &S[i]; if (!s->st) continue;
+            any = 1;
+            if (s->job || s->put.active || s->hq_n || s->sf_left || s->tx_len > s->tx_off) work = 1;
+        }
+        if (!any && G.orphan) { lg("the last session closed: exiting"); break; }
+        /* orphan: a client that only PINGs (every 30 s) would keep this daemon, and so the lock,
+         * forever, while the new shell's daemon exits with 75 every 10 s and nobody else can
+         * connect or pair. Once nothing has run for T_ORPHAN_S the sessions get BYE
+         * (shutdown_all) and the clients reconnect to the new shell's daemon. */
+        if (G.orphan && work) G.orphan_work = mono();
+        if (G.orphan && mono() - G.orphan_work >= SP.t_orphan) { lg("no work for %d s without the shell: exiting", SP.t_orphan); break; }
         if (!any && G.idle_exit > 0 && mono() - G.idle_since >= G.idle_exit) { lg("idle for %d s: exiting", G.idle_exit); break; }
     }
     shutdown_all(1);
@@ -1979,7 +2111,10 @@ int main(int argc, char **argv)
         int nul = open("/dev/null", O_RDWR); if (nul >= 0) { dup2(nul, 0); dup2(nul, 1); dup2(nul, 2); if (nul > 2) close(nul); }
     }
     int lk = open(SP.lock, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-    if (lk < 0 || flock(lk, LOCK_EX | LOCK_NB)) { lg("another hibysync is running"); return 1; }
+    if (lk < 0) { lg("cannot open %s: %s", SP.lock, strerror(errno)); return 1; }
+    /* 75 (EX_TEMPFAIL): the shell retries later without counting a failed start. It happens when
+     * a daemon whose shell was killed still serves its open sessions (see ctl_gone). */
+    if (flock(lk, LOCK_EX | LOCK_NB)) { lg("another hibysync is running"); return 75; }
     char pb[16]; int pn = snprintf(pb, sizeof pb, "%d\n", (int)getpid()); if (ftruncate(lk, 0) || write(lk, pb, (size_t)pn) < 0) {}
     signal(SIGPIPE, SIG_IGN);
     struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_handler = on_term; sigaction(SIGTERM, &sa, 0); sigaction(SIGINT, &sa, 0);
