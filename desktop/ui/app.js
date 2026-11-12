@@ -1068,7 +1068,7 @@ function renderBanner() {
     }
   } else if (sd === 'usb_storage') text = t('bannerUsbStorage');
   else if (sd === 'no_card') text = t('bannerNoCard');
-  else if (s?.update && s.update.state && s.update.state !== 'none') text = t('bannerUpdate');
+  else if (['staged', 'waiting_user', 'restart_pending'].includes(s?.update?.state)) text = t('bannerUpdate');   // 'idle' = nothing waiting
   else if (s?.db?.staged) text = t('bannerDbStaged');
   banner.hidden = !text;
   $('banner-text').textContent = text ?? '';
