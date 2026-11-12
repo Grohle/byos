@@ -170,6 +170,90 @@
     <string name="sync_err_none_found">No player found</string>
     <string name="sync_hint_none_found">Check that Wi-Fi sync is on in Settings › ByOS Sync, or type the address shown there.</string>
     <string name="sync_err_generic">Something went wrong</string>
+
+    <!-- Signed ByOS update (install from the phone) -->
+    <string name="sync_install_title">Install Update</string>
+    <string name="sync_install_sub">A signed update downloaded on this phone</string>
+    <string name="sync_ota_files_h">Update files</string>
+    <string name="sync_ota_json">Description</string>
+    <string name="sync_ota_payload">Payload</string>
+    <string name="sync_ota_not_chosen">Not chosen</string>
+    <string name="sync_ota_choose">Choose update files</string>
+    <string name="sync_ota_choose_other">Choose the other file</string>
+    <string name="sync_ota_files_footer">Download **hibyos-update.json** and **hibyos-payload-&lt;version&gt;.tar** from the ByOS releases, then choose both (or one, then the other). The signature is checked on this phone and again on the player.</string>
+    <string name="sync_ota_signed">Signed by ByOS</string>
+    <string name="sync_ota_tar_wrong">Not the payload of this version</string>
+    <string name="sync_ota_version_h">ByOS %1$s</string>
+    <string name="sync_ota_installed">On the player now</string>
+    <string name="sync_ota_size">Size</string>
+    <string name="sync_ota_after">Afterwards</string>
+    <string name="sync_ota_restart_none">Nothing to restart</string>
+    <string name="sync_ota_restart_shell">The ByOS screen restarts</string>
+    <string name="sync_ota_restart_reboot">The player restarts</string>
+    <string name="sync_ota_needs_fw">Needs the newest ByOS firmware</string>
+    <string name="sync_ota_needs_fw_sub">Reinstall ByOS from this app first if the player refuses it.</string>
+    <string name="sync_ota_send_install">Send and install (%1$s)</string>
+    <string name="sync_ota_install_footer" formatted="false">The player asks you to confirm before it installs anything. Keep it charged (30 % or more, or on the charger).</string>
+    <string name="sync_ota_unsupported">This player\'s ByOS cannot install updates over ByOS Sync</string>
+    <string name="sync_ota_unsupported_sub">Copy the two files to the ByOS/ota folder of the card, or update ByOS from the player\'s Software Update page.</string>
+    <string name="sync_ota_sending">Sending ByOS %1$s</string>
+    <string name="sync_ota_sending_note">Keep the app open and the player on. If the connection breaks, try again: what is on the player already is not sent twice.</string>
+    <string name="sync_ota_checking">Checking on the player</string>
+    <string name="sync_ota_checking_sub">The player checks the signature and the payload. This takes a few seconds.</string>
+    <string name="sync_ota_confirm_title">Confirm on the player</string>
+    <string name="sync_ota_confirm_text">The player asks whether to install ByOS %1$s. Tap **Install** on the player.</string>
+    <string name="sync_ota_confirm_wait">Waiting for the player</string>
+    <string name="sync_ota_stop_waiting">Stop waiting</string>
+    <string name="sync_ota_installing">Installing ByOS %1$s</string>
+    <string name="sync_ota_installing_note">Do not turn the player off. If something fails, the player puts the previous ByOS back by itself.</string>
+    <string name="sync_ota_done_title">ByOS %1$s installed</string>
+    <string name="sync_ota_done_none">Everything is ready on the player.</string>
+    <string name="sync_ota_done_shell">The ByOS screen restarts on the player. To connect again, open **Settings › ByOS Sync** on the player.</string>
+    <string name="sync_ota_done_reboot">Tap **Restart Now** on the player to finish. Then open ByOS Sync on the player to connect again.</string>
+    <string name="sync_ota_refused_title">Not installed</string>
+    <string name="sync_ota_refused_text">The update was cancelled on the player. ByOS %1$s stays ready on the card: install it whenever you want.</string>
+    <string name="sync_ota_staged_title">Ready on the player</string>
+    <string name="sync_ota_staged_text">ByOS %1$s is checked and waiting on the card. To install it, open **Settings › Software Update** on the player.</string>
+    <string name="sync_ota_downgrade_anyway">Install ByOS %1$s anyway</string>
+    <string name="sync_ota_install_again">Install again</string>
+    <string name="sync_err_signature">This update is not signed by ByOS</string>
+    <string name="sync_hint_signature">Download hibyos-update.json again from the official ByOS releases. A changed or unofficial file is never installed.</string>
+    <string name="sync_err_update_invalid">The update files do not match</string>
+    <string name="sync_hint_update_invalid">Download both files of the same version again and choose them.</string>
+    <string name="sync_err_update_payload">The payload is not the one this update names</string>
+    <string name="sync_hint_update_payload">Choose the hibyos-payload tar of the same version as hibyos-update.json. If it is, download it again: it may be damaged.</string>
+    <string name="sync_err_update_kind">Not an update file</string>
+    <string name="sync_hint_update_kind">Choose hibyos-update.json and hibyos-payload-&lt;version&gt;.tar. To send other files, use Send Files.</string>
+    <string name="sync_err_downgrade">The player already has this version or a newer one</string>
+    <string name="sync_hint_downgrade">Nothing to do. To go back to an older ByOS on purpose, install it anyway.</string>
+    <string name="sync_err_battery">The player\'s battery is too low</string>
+    <string name="sync_hint_battery" formatted="false">Charge it to 30 % or more, or plug it in, then try again.</string>
+    <string name="sync_err_needs_firmware">This update needs a newer ByOS firmware</string>
+    <string name="sync_hint_needs_firmware">Reinstall ByOS with this app (Reinstall ByOS), then install this update.</string>
+    <string name="sync_err_not_staged">The update is not on the player</string>
+    <string name="sync_hint_not_staged">Send it again: the files may have been removed from the card.</string>
+    <string name="sync_err_update_slow">The install is taking too long</string>
+    <string name="sync_hint_update_slow">Look at the player\'s screen. Then connect again: Settings › About on the player shows the ByOS version.</string>
+    <string name="sync_byos_h">ByOS</string>
+
+    <!-- Library rescan -->
+    <string name="sync_rescan">Update the library</string>
+    <string name="sync_rescan_short">Update</string>
+    <string name="sync_rescan_footer">The player looks for new, changed and deleted songs on the card, then the library is read again. With a large library this takes a minute.</string>
+    <string name="sync_rescan_new">%1$s added to the card. They appear in Artists, Albums and Songs after a library update.</string>
+    <string name="sync_rescan_running">Updating the library…</string>
+    <string name="sync_rescan_running_footer">Keep the player on. The library is shown again when the player has finished.</string>
+    <string name="sync_rescan_done">Library updated</string>
+    <string name="sync_rescan_unsupported">This player cannot update its library on request</string>
+    <string name="sync_rescan_unsupported_text">Start a library update from the player\'s own music settings, then read the library again here. Songs that were only replaced are already up to date.</string>
+
+    <!-- Library management -->
+    <string name="sync_lib_show">Show in Files</string>
+    <string name="sync_lib_delete_album_text">%1$s are deleted from the card, with the album folder when it holds nothing else (cover, lyrics). This cannot be undone.</string>
+    <string name="sync_lib_delete_artist_text">All the songs of this artist (%1$s) are deleted from the card, with the album folders that hold nothing else. This cannot be undone.</string>
+    <string name="sync_lib_changed">Files were moved, renamed or deleted on the card. Update the library so that the player shows the change.</string>
+    <string name="sync_library_empty_title">No songs yet</string>
+    <string name="sync_library_empty_text">Send music with Send Files, then update the library. Songs already on the card appear once the player has scanned them.</string>
     <plurals name="sync_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>

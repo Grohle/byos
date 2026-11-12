@@ -316,6 +316,8 @@ private class CoreSession(private val s: BtpSession, cleartext: Boolean) : SyncS
             s.dbSnapshot(cancelled, Progress { d, t -> progress(d, t) }) { DataSink { b, off, len -> out.write(b, off, len) } }.sha256
         }
 
+    override fun libRescan(paths: List<String>?) = CoreSync.wrap { s.libRescan(paths) }
+
     override fun updateStage(allowDowngrade: Boolean): StagedUpdate = CoreSync.wrap {
         val r = s.updateStage(allowDowngrade)
         StagedUpdate(r.version, r.restart, r.needsFirmware != 0, r.size)

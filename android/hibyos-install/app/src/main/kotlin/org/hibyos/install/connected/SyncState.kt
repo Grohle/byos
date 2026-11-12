@@ -23,6 +23,8 @@ enum class Destination(val path: String) {
 
 data class Transfer(
     val jobs: List<SendJob> = emptyList(),
+    /** Songs this transfer added to the card: the player's library shows them after a rescan. */
+    val newMusic: Int = 0,
     val running: Boolean = false,
     /** Bytes hashed plus bytes sent, over twice the total (each file is read twice). */
     val done: Long = 0,
@@ -59,11 +61,44 @@ data class Browser(
     val working: Boolean = false,
 )
 
+/** LIB_RESCAN mode 0: the player looks for new, changed and removed songs, then the library is read again. */
+sealed interface Rescan {
+    data object Idle : Rescan
+    data object Running : Rescan
+    data object Done : Rescan
+
+    /** This player cannot rescan on request: its own Music settings can. */
+    data object Unsupported : Rescan
+    data class Failed(val error: ErrorInfo) : Rescan
+}
+
 sealed interface LibraryPhase {
     data object Idle : LibraryPhase
     data class Loading(val done: Long, val total: Long) : LibraryPhase
     data class Ready(val library: Library) : LibraryPhase
     data class Failed(val error: ErrorInfo) : LibraryPhase
+}
+
+/** A song, an album or an artist the user acts on in the library. */
+sealed interface LibTarget {
+    data class Song(val track: Track) : LibTarget
+    data class AlbumOf(val album: Album) : LibTarget
+    data class ArtistOf(val artist: Artist) : LibTarget
+
+    val tracks: List<Track>
+        get() = when (this) {
+            is Song -> listOf(track)
+            is AlbumOf -> album.tracks
+            is ArtistOf -> artist.albums.flatMap { it.tracks }
+        }
+
+    /** What Move and Show in Files act on: the song's file, or the album's own folder (null: none). */
+    val cardPath: String?
+        get() = when (this) {
+            is Song -> Library.cardPath(track.path)
+            is AlbumOf -> Library.folderOf(album.tracks)
+            is ArtistOf -> null
+        }
 }
 
 /** Which list of the library is open: tab 0 artists, 1 albums, 2 songs; then an artist, then an album. */
@@ -74,6 +109,56 @@ sealed interface UpdatePhase {
     data class Sending(val done: Long, val total: Long, val path: String) : UpdatePhase
     data class Sent(val files: Int, val skipped: Int) : UpdatePhase
     data class Failed(val error: ErrorInfo) : UpdatePhase
+}
+
+/**
+ * A signed ByOS update chosen on the phone (docs/OTA.md): `hibyos-update.json` and the payload
+ * tar it names. The signature is checked on the phone as soon as the JSON is picked, and again
+ * by the player.
+ */
+data class OtaPick(
+    /** Set when a valid, signed description was picked. */
+    val version: String? = null,
+    val payloadName: String? = null,
+    val payloadSize: Long = 0,
+    val needsFirmware: Boolean = false,
+    /** "none", "shell" or "reboot", as the description announces. */
+    val restart: String? = null,
+    /** The tar picked on the phone (its own name) and its size. */
+    val tarName: String? = null,
+    val tarSize: Long = 0,
+    val error: ErrorInfo? = null,
+) {
+    /** A tar was picked but it is not the payload the description names (size differs). */
+    val tarMismatch: Boolean get() = version != null && tarName != null && tarSize != payloadSize
+    val ready: Boolean get() = version != null && tarName != null && !tarMismatch
+}
+
+/** The install of a signed update over BTP/1 (sections 14.1 to 14.3). */
+sealed interface OtaPhase {
+    data object Idle : OtaPhase
+    data class Sending(val done: Long, val total: Long, val path: String) : OtaPhase
+
+    /** UPDATE_STAGE: the player checks the signature and hashes the payload. */
+    data object Checking : OtaPhase
+
+    /** The player shows its confirmation alert. */
+    data class WaitingUser(val version: String) : OtaPhase
+    data class Installing(val version: String, val permille: Int) : OtaPhase
+
+    /** restart: 0 none, 1 the ByOS interface restarts, 2 the player asks to restart. */
+    data class Done(val version: String, val restart: Int) : OtaPhase
+
+    /** The user tapped Cancel on the player. */
+    data class Refused(val version: String) : OtaPhase
+
+    /** Staged, but this ByOS Sync cannot start the install: Software Update on the player can. */
+    data class StagedOnly(val version: String) : OtaPhase
+
+    /** [downgrade]: the player refused an older or equal version; installing it anyway is offered. */
+    data class Failed(val error: ErrorInfo, val downgrade: Boolean = false) : OtaPhase
+
+    val running: Boolean get() = this is Sending || this is Checking || this is WaitingUser || this is Installing
 }
 
 data class SyncState(
@@ -92,6 +177,15 @@ data class SyncState(
     val library: LibraryPhase = LibraryPhase.Idle,
     val libraryNav: LibraryNav = LibraryNav(),
     val update: UpdatePhase = UpdatePhase.Idle,
+    val rescan: Rescan = Rescan.Idle,
+    /** Waiting for the user to confirm the deletion of a song, an album or an artist. */
+    val libDelete: LibTarget? = null,
+    val libWorking: Boolean = false,
+    val libError: ErrorInfo? = null,
+    /** Files were moved, renamed or deleted on the card: the library is out of date until a rescan. */
+    val libraryChanged: Boolean = false,
+    val otaPick: OtaPick = OtaPick(),
+    val ota: OtaPhase = OtaPhase.Idle,
 ) {
     val connected: Link.Connected? get() = link as? Link.Connected
     val target: String get() = destPath ?: dest.path
@@ -99,7 +193,8 @@ data class SyncState(
     /** Work is running: leaving the screen is held back. */
     val busy: Boolean
         get() = link is Link.Searching || link is Link.Connecting || (link is Link.Pairing && link.waiting) ||
-            transfer.running || library is LibraryPhase.Loading || update is UpdatePhase.Sending || browser.working
+            transfer.running || library is LibraryPhase.Loading || update is UpdatePhase.Sending || browser.working ||
+            ota.running || rescan == Rescan.Running || libWorking
 }
 
 /** Everything the connected screens can ask for. */
@@ -133,6 +228,26 @@ interface SyncActions {
     fun loadLibrary()
     fun libraryNav(nav: LibraryNav)
 
+    /** Asks the player to update its library, then reads it again. */
+    fun rescanLibrary()
+
+    /** Asks to confirm the deletion of [target] from the card (null closes the question). */
+    fun libraryDelete(target: LibTarget?)
+    fun confirmLibraryDelete()
+
+    /** Opens Files at the song or the album folder, ready to move it. */
+    fun libraryMove(target: LibTarget)
+
+    /** Opens Files at the folder of the song or the album. */
+    fun revealInFiles(target: LibTarget)
+
     fun sendByosUpdate()
+
+    /** Signed update: choose hibyos-update.json and its tar (one or both at a time). */
+    fun pickUpdateFiles()
+    fun clearUpdateFiles()
+
+    /** Sends the picked update, stages it and starts the install; [allowDowngrade] after E_DOWNGRADE. */
+    fun installUpdate(allowDowngrade: Boolean)
     fun cancelWork()
 }

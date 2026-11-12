@@ -9,7 +9,9 @@ import com.github.takahirom.roborazzi.RoborazziTaskType
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.hibyos.install.core.SendListener
 import org.hibyos.install.core.Stage
+import androidx.compose.runtime.CompositionLocalProvider
 import org.hibyos.install.ui.C
+import org.hibyos.install.ui.LocalStill
 import org.hibyos.install.ui.ScreenContent
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -93,13 +95,14 @@ class ScreensTest {
     private fun shot(name: String, screen: Screen, state: UiState, full: Boolean = false) {
         val s = state.copy(stack = if (screen == Screen.HOME) listOf(Screen.HOME) else listOf(Screen.HOME, screen))
         RuntimeEnvironment.setQualifiers(PHONE)
+        // spinners stand still: an endless animation keeps the capture from ever finishing
         captureRoboImage(File(dir, "$name.png").path, options) {
-            Box(Modifier.fillMaxSize().background(C.bg)) { ScreenContent(screen, s, nothing) }
+            CompositionLocalProvider(LocalStill provides true) { Box(Modifier.fillMaxSize().background(C.bg)) { ScreenContent(screen, s, nothing) } }
         }
         if (full) {
             RuntimeEnvironment.setQualifiers(TALL)
             captureRoboImage(File(File(dir, "full"), "$name.png").path, options) {
-                Box(Modifier.fillMaxSize().background(C.bg)) { ScreenContent(screen, s, nothing) }
+                CompositionLocalProvider(LocalStill provides true) { Box(Modifier.fillMaxSize().background(C.bg)) { ScreenContent(screen, s, nothing) } }
             }
             RuntimeEnvironment.setQualifiers(PHONE)
         }

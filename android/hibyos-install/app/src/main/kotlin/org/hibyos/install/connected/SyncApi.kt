@@ -76,7 +76,7 @@ data class SyncEntry(val name: String, val kind: Int, val size: Long, val mtime:
 }
 
 /** PUT_DONE.result: 0 written, 1 skipped (identical). */
-data class PutResult(val skipped: Boolean, val size: Long)
+data class PutResult(val skipped: Boolean, val size: Long, val replaced: Boolean = false)
 
 /** UPDATE_STAGE_R (section 14.2). restart: 0 none, 1 shell, 2 reboot. */
 data class StagedUpdate(val version: String, val restart: Int, val needsFirmware: Boolean, val size: Long)
@@ -161,6 +161,13 @@ interface SyncSession : Closeable {
 
     /** DB_SNAPSHOT (section 13.1) into [out]. Returns the revision (GET_END.sha256). */
     fun dbSnapshot(out: OutputStream, cancelled: () -> Boolean, progress: (done: Long, total: Long) -> Unit): ByteArray
+
+    /**
+     * LIB_RESCAN (section 13.3). [paths] null: a full rescan by the player (mode 0, needs the
+     * ByOS screen; E_UNSUPPORTED where the shell cannot start one). Otherwise 1 to 256 card
+     * paths whose rows are refreshed (tags, cover, lyrics); files not in the library are skipped.
+     */
+    fun libRescan(paths: List<String>?)
 
     fun updateStage(allowDowngrade: Boolean): StagedUpdate
     fun updateInstall(allowDowngrade: Boolean)

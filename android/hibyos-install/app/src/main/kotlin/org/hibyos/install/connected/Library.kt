@@ -19,7 +19,30 @@ data class Artist(val name: String, val albums: List<Album>) {
 
 /** The library grouped the way the player's own Music app shows it. */
 class Library(val artists: List<Artist>, val albums: List<Album>, val tracks: List<Track>) {
+    /** The library without the songs at these card paths (or inside these card folders). */
+    fun without(paths: Set<String>, folders: Set<String> = emptySet()): Library = build(tracks.filter { t ->
+        val p = cardPath(t.path)
+        p == null || (p !in paths && folders.none { f -> p.startsWith("$f/") })
+    })
+
     companion object {
+        /** Top folders of the card that are never deleted as an "album folder". */
+        private val protectedFolders = setOf("music", "books", "pictures", "apps", "playlists", "byos", "download", "downloads",
+            "recordings", "record", "podcasts", "audiobooks")
+
+        /**
+         * The card folder all [tracks] are in, when they share one, or null. A top folder such as
+         * Music is never an album's own folder.
+         */
+        fun folderOf(tracks: List<Track>): String? {
+            if (tracks.isEmpty()) return null
+            val paths = tracks.map { cardPath(it.path) ?: return null }
+            val dirs = paths.map { SyncPaths.parent(it) }.distinct()
+            val d = dirs.singleOrNull() ?: return null
+            if (d.isEmpty() || (!d.contains('/') && d.lowercase() in protectedFolders)) return null
+            return d
+        }
+
         /** The player stores text with a trailing NUL and paths as "a:\Folder\file.flac". */
         fun clean(s: String?): String = (s ?: "").trimEnd('\u0000').trim()
 

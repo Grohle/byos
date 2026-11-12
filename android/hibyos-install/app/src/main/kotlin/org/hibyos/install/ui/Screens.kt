@@ -91,6 +91,7 @@ fun ScreenContent(screen: Screen, s: UiState, a: Actions) {
         Screen.SYNC_FILES -> SyncFiles(s, a)
         Screen.SYNC_LIBRARY -> SyncLibrary(s, a)
         Screen.SYNC_UPDATE -> SyncUpdate(s, a)
+        Screen.SYNC_INSTALL -> SyncInstall(s, a)
     }
 }
 
@@ -106,7 +107,8 @@ private fun titleRes(screen: Screen): Int = when (screen) {
     Screen.ABOUT -> R.string.about_title
     Screen.LICENSES -> R.string.licenses_title
     Screen.LICENSE_TEXT -> R.string.licenses_title
-    Screen.SYNC, Screen.SYNC_SEND, Screen.SYNC_FILES, Screen.SYNC_LIBRARY, Screen.SYNC_UPDATE -> syncTitleRes(screen)
+    Screen.SYNC, Screen.SYNC_SEND, Screen.SYNC_FILES, Screen.SYNC_LIBRARY, Screen.SYNC_UPDATE,
+    Screen.SYNC_INSTALL -> syncTitleRes(screen)
 }
 
 private fun stepScreen(n: Int): Screen = when (n) {

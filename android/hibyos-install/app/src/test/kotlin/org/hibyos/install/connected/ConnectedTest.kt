@@ -147,6 +147,16 @@ class ConnectedTest {
         }
         override fun byosFiles(): List<SendItem>? = byos
 
+        var keys: List<String> = emptyList()
+        override val releaseKeys: List<String> get() = keys
+        var slept = 0L
+        var onSleep: (() -> Unit)? = null
+        override fun sleep(ms: Long) {
+            slept += ms
+            clock += ms
+            onSleep?.invoke()
+        }
+
         /** The keep-alive timer, fired by hand; and a clock the tests move. */
         var timer: (() -> Unit)? = null
         var clock = 1_000_000L
@@ -501,6 +511,285 @@ class ConnectedTest {
         m.sendByosUpdate()
         assertEquals(UpdatePhase.Sent(2, 1), m.state.update)
         assertEquals("firmware", String(card.files["r3ii_2025.upt"]!!))
+    }
+
+    // ---- library rescan (section 13.3) ------------------------------------------------------
+
+    @Test
+    fun sentMusicIsCountedAndTheLibraryUpdated() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.folders += "Music"
+        card.files["Music/old.flac"] = "old".toByteArray()
+        val m = paired(env)
+        m.setReplace(true)
+        m.addPicked { listOf(item("new.flac"), item("old.flac"), item("cover.jpg")) }
+        m.startSend()
+        // one new song; the replaced one gets its tags refreshed at once (mode 1)
+        assertEquals(1, m.state.transfer.newMusic)
+        assertEquals(listOf<List<String>?>(listOf("Music/old.flac")), card.rescans)
+        (env.c.sessions.last()).snapshot = "SQLite format 3\u0000".toByteArray()
+        card.onRescan = { env.library = listOf(Track("a:\\Music\\new.flac", "New", "A", "", "B")) }
+        m.rescanLibrary()
+        assertEquals(Rescan.Done, m.state.rescan)
+        assertEquals(0, m.state.transfer.newMusic)
+        assertEquals("New", (m.state.library as LibraryPhase.Ready).library.tracks.single().title)
+        assertNull(card.rescans.last())
+    }
+
+    @Test
+    fun rescanThatThePlayerCannotDo() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.fullRescan = false
+        card.pathRescan = false
+        card.folders += "Music"
+        card.files["Music/a.mp3"] = "x".toByteArray()
+        val m = paired(env)
+        m.setReplace(true)
+        m.addPicked { listOf(item("a.mp3"), item("b.mp3")) }
+        m.startSend()
+        // an older ByOS without mode 1 is not an error for the transfer
+        assertNull(m.state.transfer.error)
+        assertEquals(listOf(JobStatus.SENT, JobStatus.SENT), m.state.transfer.jobs.map { it.status })
+        m.rescanLibrary()
+        assertEquals(Rescan.Unsupported, m.state.rescan)
+        assertFalse(m.state.busy)
+        assertTrue(m.state.link is Link.Connected)
+    }
+
+    // ---- managing the library ---------------------------------------------------------------
+
+    private fun libraryOnCard(env: Env): ConnectedModel {
+        val card = env.c.card
+        card.folders += listOf("Music", "Music/ABBA", "Music/ABBA/Gold", "Music/Mix")
+        for (p in listOf("Music/ABBA/Gold/01 Dancing Queen.flac", "Music/ABBA/Gold/02 Knowing Me.flac", "Music/ABBA/Gold/cover.jpg",
+            "Music/Mix/a.mp3", "Music/Mix/b.mp3", "Music/loose.mp3")) card.files[p] = p.toByteArray()
+        env.library = listOf(
+            Track("a:\\Music\\ABBA\\Gold\\01 Dancing Queen.flac", "Dancing Queen", "ABBA", "", "Gold"),
+            Track("a:\\Music\\ABBA\\Gold\\02 Knowing Me.flac", "Knowing Me", "ABBA", "", "Gold"),
+            Track("a:\\Music\\Mix\\a.mp3", "A", "Various", "", "Hits"),
+            Track("a:\\Music\\Mix\\b.mp3", "B", "Other", "", "Other album"),
+            Track("a:\\Music\\loose.mp3", "Loose", "Solo", "", "Single"),
+        )
+        val m = paired(env)
+        env.c.sessions.last().snapshot = "SQLite format 3\u0000".toByteArray()
+        m.loadLibrary()
+        return m
+    }
+
+    private fun lib(m: ConnectedModel) = (m.state.library as LibraryPhase.Ready).library
+
+    @Test
+    fun albumWithItsOwnFolderIsDeletedWithIt() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.fullRescan = false
+        val m = libraryOnCard(env)
+        val gold = lib(m).albums.first { it.title == "Gold" }
+        assertEquals("Music/ABBA/Gold", Library.folderOf(gold.tracks))
+        m.libraryNav(LibraryNav(artist = "ABBA", album = "ABBA" to "Gold"))
+        m.libraryDelete(LibTarget.AlbumOf(gold))
+        m.confirmLibraryDelete()
+        assertNull(m.state.libDelete)
+        assertFalse(card.folders.contains("Music/ABBA/Gold"))
+        assertFalse(card.files.containsKey("Music/ABBA/Gold/cover.jpg"))
+        assertTrue(card.folders.contains("Music/ABBA"))
+        // the player cannot rescan: the songs are taken out of the list here, and the open album closes
+        assertEquals(Rescan.Unsupported, m.state.rescan)
+        assertTrue(lib(m).albums.none { it.title == "Gold" })
+        assertNull(m.state.libraryNav.album)
+    }
+
+    @Test
+    fun albumSharingAFolderLosesOnlyItsSongs() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = libraryOnCard(env)
+        val hits = lib(m).albums.first { it.title == "Hits" }
+        card.onRescan = { env.library = env.library.filter { !it.path.endsWith("a.mp3") } }
+        m.libraryDelete(LibTarget.AlbumOf(hits))
+        m.confirmLibraryDelete()
+        assertFalse(card.files.containsKey("Music/Mix/a.mp3"))
+        assertTrue(card.files.containsKey("Music/Mix/b.mp3"))
+        assertTrue(card.folders.contains("Music/Mix"))
+        // the player rescanned: the library comes from the new snapshot
+        assertEquals(Rescan.Done, m.state.rescan)
+        assertEquals(4, lib(m).tracks.size)
+        // a loose song in a top folder never takes that folder with it
+        val loose = lib(m).tracks.first { it.title == "Loose" }
+        assertNull(Library.folderOf(listOf(loose)))
+        m.libraryDelete(LibTarget.Song(loose))
+        m.confirmLibraryDelete()
+        assertFalse(card.files.containsKey("Music/loose.mp3"))
+        assertTrue(card.folders.contains("Music"))
+    }
+
+    @Test
+    fun movingFromTheLibraryOpensFiles() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.folders += "Music/Old"
+        val m = libraryOnCard(env)
+        val gold = lib(m).albums.first { it.title == "Gold" }
+        m.libraryMove(LibTarget.AlbumOf(gold))
+        assertEquals("Music/ABBA/Gold", m.state.browser.moving)
+        assertEquals("Music/ABBA", m.state.browser.path)
+        m.openFolder("Music/Old")
+        m.moveHere()
+        assertTrue(card.files.containsKey("Music/Old/Gold/cover.jpg"))
+        assertTrue(m.state.libraryChanged)
+        // a song's folder in Files
+        m.revealInFiles(LibTarget.Song(lib(m).tracks.first { it.title == "B" }))
+        assertEquals("Music/Mix", m.state.browser.path)
+        assertEquals(listOf("b.mp3"), m.state.browser.entries!!.map { it.name }.filter { it == "b.mp3" })
+        // an artist has no folder to move
+        assertNull(LibTarget.ArtistOf(lib(m).artists.first()).cardPath)
+    }
+
+    // ---- signed update (sections 14.1 to 14.3) ----------------------------------------------
+
+    private class Release(val json: ByteArray, val tar: ByteArray, val key: String, val version: String)
+
+    /** A release signed with a fresh key, as the release tooling makes it (docs/OTA.md). */
+    private fun release(version: String, restart: String = "shell", tarSize: Int = 150_000, needsFirmware: Boolean = false): Release {
+        val tar = ByteArray(tarSize) { (it * 13 + version.length).toByte() }
+        val kp = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val key = kp.public.encoded.takeLast(32).joinToString("") { "%02x".format(it) }
+        val zeros = "0".repeat(128)
+        val hex = sha256(tar).joinToString("") { "%02x".format(it) }
+        val text = "{\"format\": 1, \"product\": \"hibyos\", \"version\": \"$version\", \"restart\": \"$restart\", " +
+            "\"needs_firmware\": $needsFirmware, \"payload\": {\"name\": \"hibyos-payload-$version.tar\", " +
+            "\"url\": \"https://example.com/hibyos-payload-$version.tar\", \"size\": ${tar.size}, \"sha256\": \"$hex\", " +
+            "\"compression\": \"none\"}, \"signature\": \"ed25519:$zeros\"}"
+        val sig = java.security.Signature.getInstance("Ed25519").apply { initSign(kp.private); update(text.toByteArray()) }.sign()
+        return Release(text.replace(zeros, sig.joinToString("") { "%02x".format(it) }).toByteArray(), tar, key, version)
+    }
+
+    private fun updateEnv(r: Release): Env {
+        val env = Env(FakeConnector())
+        env.keys = listOf(r.key)
+        env.c.card.updateKeys = listOf(r.key)
+        return env
+    }
+
+    @Test
+    fun signedUpdateIsSentStagedAndInstalled() {
+        val r = release("0.9.1")
+        val env = updateEnv(r)
+        val card = env.c.card
+        val m = paired(env)
+        // the description alone first, then the tar: both are kept
+        m.addUpdateFiles { listOf(item("hibyos-update.json", data = r.json)) }
+        assertEquals("0.9.1", m.state.otaPick.version)
+        assertFalse(m.state.otaPick.ready)
+        m.addUpdateFiles { listOf(item("hibyos-payload-0.9.1 (1).tar", data = r.tar)) }
+        assertTrue(m.state.otaPick.ready)
+        assertEquals("shell", m.state.otaPick.restart)
+        card.statusScript += listOf(
+            UpdateProgress(UpdateProgress.WAITING_USER, 0, 0, "0.9.1"),
+            UpdateProgress(UpdateProgress.INSTALLING, 420, 0, "0.9.1"),
+            UpdateProgress(UpdateProgress.INSTALLING, 990, 0, "0.9.1"),
+            null, // the shell restarts with the new ByOS: the connection drops
+        )
+        m.installUpdate(false)
+        assertEquals(OtaPhase.Done("0.9.1", 1), m.state.ota)
+        // the tar is stored under the name the signed description gives, whatever its name on the phone
+        assertTrue(card.update.containsKey("hibyos-payload-0.9.1.tar"))
+        assertEquals("0.9.1", card.staged)
+        assertEquals(1, card.installs)
+        assertTrue(env.slept >= 3000)
+        // the session ended with the restart: the user connects again later
+        assertTrue(m.state.link is Link.Idle)
+        assertNull(m.state.error)
+        assertFalse(m.state.busy)
+    }
+
+    @Test
+    fun updateFilesAreCheckedOnThePhone() {
+        val r = release("0.9.1")
+        val env = updateEnv(r)
+        val m = paired(env)
+        // signed by another key: refused at once, nothing is sent
+        env.keys = listOf(release("0.9.2").key)
+        m.addUpdateFiles { listOf(item("hibyos-update.json", data = r.json)) }
+        assertEquals(R.string.sync_err_signature, m.state.otaPick.error?.title)
+        assertNull(m.state.otaPick.version)
+        // a file that is not part of an update
+        env.keys = listOf(r.key)
+        m.addUpdateFiles { listOf(item("song.flac")) }
+        assertEquals(R.string.sync_err_update_kind, m.state.otaPick.error?.title)
+        // a tar of another size is shown as not matching; one of the right size but other content fails before sending
+        m.addUpdateFiles { listOf(item("hibyos-update.json", data = r.json), item("other.tar", data = ByteArray(10))) }
+        assertNull(m.state.otaPick.error)
+        assertTrue(m.state.otaPick.tarMismatch)
+        assertFalse(m.state.otaPick.ready)
+        m.addUpdateFiles { listOf(item("other.tar", data = ByteArray(r.tar.size))) }
+        assertTrue(m.state.otaPick.ready)
+        m.installUpdate(false)
+        val f = m.state.ota as OtaPhase.Failed
+        assertEquals(R.string.sync_err_update_payload, f.error.title)
+        assertTrue(env.c.card.update.isEmpty())
+        m.clearUpdateFiles()
+        assertEquals(OtaPick(), m.state.otaPick)
+        assertEquals(OtaPhase.Idle, m.state.ota)
+    }
+
+    @Test
+    fun olderUpdateNeedsConsentAndIsNotSentTwice() {
+        val r = release("0.8.0", restart = "reboot")
+        val env = updateEnv(r)
+        val card = env.c.card
+        val m = paired(env)
+        m.addUpdateFiles { listOf(item("hibyos-update.json", data = r.json), item("hibyos-payload-0.8.0.tar", data = r.tar)) }
+        m.installUpdate(false)
+        val f = m.state.ota as OtaPhase.Failed
+        assertTrue(f.downgrade)
+        assertEquals(R.string.sync_err_downgrade, f.error.title)
+        val puts = card.puts
+        card.statusScript += listOf(UpdateProgress(UpdateProgress.WAITING_USER, 0, 0, "0.8.0"), UpdateProgress(UpdateProgress.REFUSED, 0, 0, "0.8.0"))
+        m.installUpdate(true)
+        assertEquals(puts, card.puts)
+        assertEquals(OtaPhase.Refused("0.8.0"), m.state.ota)
+        assertTrue(m.state.link is Link.Connected)
+        // installing again after a refusal sends the description again (the player moved it when it checked it)
+        card.statusScript.clear()
+        card.statusScript += UpdateProgress(UpdateProgress.DONE, 1000, 0, "0.8.0")
+        m.installUpdate(true)
+        assertTrue(card.puts > puts)
+        assertEquals(OtaPhase.Done("0.8.0", 2), m.state.ota)
+        assertTrue(m.state.link is Link.Idle)
+    }
+
+    @Test
+    fun updateErrorsFromThePlayer() {
+        val r = release("0.9.1", restart = "none")
+        val env = updateEnv(r)
+        val card = env.c.card
+        val m = paired(env)
+        m.addUpdateFiles { listOf(item("hibyos-update.json", data = r.json), item("p.tar", data = r.tar)) }
+        card.statusScript += listOf(UpdateProgress(UpdateProgress.INSTALLING, 100, 0, "0.9.1"),
+            UpdateProgress(UpdateProgress.FAILED, 0, SyncException.E_BATTERY, "0.9.1"))
+        m.installUpdate(false)
+        val f = m.state.ota as OtaPhase.Failed
+        assertEquals(R.string.sync_err_battery, f.error.title)
+        assertFalse(f.downgrade)
+        // ByOS Sync running without the ByOS screen: staged, to install from Software Update
+        card.installUnsupported = true
+        m.installUpdate(false)
+        assertEquals(OtaPhase.StagedOnly("0.9.1"), m.state.ota)
+        // "stop waiting" ends the watching only; the session stays
+        card.installUnsupported = false
+        card.statusScript.clear()
+        card.statusScript += UpdateProgress(UpdateProgress.WAITING_USER, 0, 0, "0.9.1")
+        env.onSleep = { m.cancelWork() }
+        m.installUpdate(false)
+        assertEquals(OtaPhase.Idle, m.state.ota)
+        assertTrue(m.state.link is Link.Connected)
+        // without UPDATE_STATUS answers for too long, the app stops watching and says so
+        env.onSleep = null
+        m.installUpdate(false)
+        assertEquals(R.string.sync_err_update_slow, (m.state.ota as OtaPhase.Failed).error.title)
     }
 
     @Test

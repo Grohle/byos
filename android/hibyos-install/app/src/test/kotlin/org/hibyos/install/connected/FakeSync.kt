@@ -28,6 +28,27 @@ class FakeCard {
         folders.any { it.equals(p, ignoreCase = true) }
 
     fun fileKey(p: String): String? = files.keys.firstOrNull { it.equals(p, ignoreCase = true) }
+
+    // ---- LIB_RESCAN (section 13.3) ----
+    /** Each request: null for a full rescan, else the paths. */
+    val rescans = ArrayList<List<String>?>()
+    var fullRescan = true
+    var pathRescan = true
+
+    /** What the library holds after a full rescan (the test's readLibrary gives it back). */
+    var onRescan: (() -> Unit)? = null
+
+    // ---- NS_UPDATE and the install (sections 14.1 to 14.3) ----
+    val update = LinkedHashMap<String, ByteArray>()
+    var byosVersion = "0.9.0"
+    var updateKeys: List<String> = emptyList()
+    var staged: String? = null
+    var stages = 0
+    var installs = 0
+    var installUnsupported = false
+
+    /** What UPDATE_STATUS answers after UPDATE_INSTALL, one per request (the last repeats); null drops the connection. */
+    val statusScript = ArrayList<UpdateProgress?>()
 }
 
 fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
@@ -141,6 +162,15 @@ class FakeSession(private val card: FakeCard, override val info: SyncDeviceInfo)
         live()
         checkPath(path)
         card.puts++
+        if (ns == Ns.UPDATE) {
+            if (path != "hibyos-update.json" && !(path.startsWith("hibyos-payload-") && path.endsWith(".tar"))) throw SyncException(SyncException.E_BAD_PATH)
+            if (mode != PutMode.REPLACE) throw SyncException(SyncException.E_NOT_ALLOWED)
+            val data = open(0).use { it.readBytes() }
+            if (data.size.toLong() != size || !sha256(data).contentEquals(sha256)) throw SyncException(SyncException.E_HASH_MISMATCH)
+            progress(size)
+            card.update[path] = data
+            return PutResult(false, size)
+        }
         if (card.fat && size > 0xFFFFFFFFL) throw SyncException(SyncException.E_FILE_TOO_BIG)
         parentOk(path)
         val existing = card.fileKey(path)
@@ -210,9 +240,54 @@ class FakeSession(private val card: FakeCard, override val info: SyncDeviceInfo)
         return sha256(snapshot)
     }
 
-    override fun updateStage(allowDowngrade: Boolean): StagedUpdate = throw SyncException(SyncException.E_NOT_STAGED)
-    override fun updateInstall(allowDowngrade: Boolean) = throw SyncException(SyncException.E_NOT_STAGED)
-    override fun updateStatus(): UpdateProgress = UpdateProgress(0, 0, 0, "")
+    override fun libRescan(paths: List<String>?) {
+        live()
+        if (paths != null && (paths.isEmpty() || paths.size > 256)) throw SyncException(SyncException.E_PROTO)
+        if (if (paths == null) !card.fullRescan else !card.pathRescan) throw SyncException(SyncException.E_UNSUPPORTED)
+        card.rescans += paths
+        if (paths == null) card.onRescan?.invoke()
+    }
+
+    override fun updateStage(allowDowngrade: Boolean): StagedUpdate {
+        live()
+        card.stages++
+        val json = card.update["hibyos-update.json"] ?: throw SyncException(SyncException.E_NOT_STAGED)
+        val pkg = try {
+            org.hibyos.install.core.btp.UpdatePackage.parse(json, card.updateKeys)
+        } catch (e: org.hibyos.install.core.btp.UpdateException) {
+            throw SyncException(if (e.kind == org.hibyos.install.core.btp.UpdateException.Kind.SIGNATURE) SyncException.E_SIGNATURE else SyncException.E_UPDATE_INVALID)
+        }
+        val tar = card.update[pkg.payloadName] ?: throw SyncException(SyncException.E_NOT_STAGED)
+        if (sha256(tar).joinToString("") { "%02x".format(it) } != pkg.payloadSha256) throw SyncException(SyncException.E_UPDATE_INVALID)
+        fun parts(v: String) = v.split('.').map { it.toIntOrNull() ?: 0 }
+        val cmp = parts(pkg.version).zip(parts(card.byosVersion)).map { it.first.compareTo(it.second) }.firstOrNull { it != 0 } ?: 0
+        if (cmp <= 0 && !allowDowngrade) throw SyncException(SyncException.E_DOWNGRADE)
+        card.update.remove("hibyos-update.json")
+        card.staged = pkg.version
+        val restart = when (pkg.restart) { "none" -> 0; "shell" -> 1; else -> 2 }
+        return StagedUpdate(pkg.version, restart, pkg.needsFirmware, tar.size.toLong())
+    }
+
+    override fun updateInstall(allowDowngrade: Boolean) {
+        live()
+        if (card.staged == null) throw SyncException(SyncException.E_NOT_STAGED)
+        if (card.installUnsupported) throw SyncException(SyncException.E_UNSUPPORTED)
+        card.installs++
+    }
+
+    override fun updateStatus(): UpdateProgress {
+        live()
+        val next: UpdateProgress? = when {
+            card.statusScript.size > 1 -> card.statusScript.removeAt(0)
+            card.statusScript.size == 1 -> card.statusScript[0]
+            else -> UpdateProgress(UpdateProgress.IDLE, 0, 0, "")
+        }
+        if (next == null) {
+            closed = true
+            throw SyncException(SyncException.CONNECTION_LOST, "the shell restarted")
+        }
+        return next
+    }
 
     override fun ping() {
         live()

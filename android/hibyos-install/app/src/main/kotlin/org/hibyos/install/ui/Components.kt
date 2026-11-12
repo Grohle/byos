@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -182,9 +183,10 @@ fun Page(
 
 /** The bar alone, for the screens that bring their own scrolling list. */
 @Composable
-fun PageFrame(title: AnnotatedString, back: String?, onBack: (() -> Unit)?, collapsed: Boolean, content: @Composable ColumnScope.() -> Unit) {
+fun PageFrame(title: AnnotatedString, back: String?, onBack: (() -> Unit)?, collapsed: Boolean, trailing: (@Composable () -> Unit)? = null,
+              content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().background(C.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        NavBar(title, back, onBack, null, collapsed)
+        NavBar(title, back, onBack, trailing, collapsed)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = contentWidth).fillMaxWidth()) { content() }
         }
@@ -360,8 +362,21 @@ fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, color: Color = C
     }
 }
 
+/** True while screenshots are drawn: endless animations stand still so that a capture can finish. */
+val LocalStill = staticCompositionLocalOf { false }
+
 @Composable
 fun Spinner(size: Dp = 22.dp, color: Color = C.secondary) {
+    if (LocalStill.current) {
+        Canvas(Modifier.size(size)) {
+            val w = this.size.minDimension * 0.13f
+            val inset = w / 2
+            drawArc(color.copy(alpha = 0.25f), 0f, 360f, false, Offset(inset, inset), Size(this.size.width - w, this.size.height - w), style = Stroke(w))
+            drawArc(color, -90f, 100f, false, Offset(inset, inset), Size(this.size.width - w, this.size.height - w),
+                style = Stroke(w, cap = StrokeCap.Round))
+        }
+        return
+    }
     val t = rememberInfiniteTransition(label = "spinner")
     val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "angle")
     Canvas(Modifier.size(size)) {

@@ -42,6 +42,10 @@ class MainActivity : ComponentActivity(), Host {
         if (uri != null) vm.syncFolderPicked(uri)
     }
 
+    private val openSyncUpdate = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.syncUpdatePicked(uris)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
@@ -96,6 +100,14 @@ class MainActivity : ComponentActivity(), Host {
     override fun pickSyncFolder() {
         try {
             openSyncFolder.launch(null)
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
+    override fun pickSyncUpdate() {
+        try {
+            openSyncUpdate.launch(arrayOf("*/*"))
         } catch (e: ActivityNotFoundException) {
             noApp()
         }

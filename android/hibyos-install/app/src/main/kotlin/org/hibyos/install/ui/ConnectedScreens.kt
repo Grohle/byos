@@ -63,7 +63,9 @@ import org.hibyos.install.connected.JobStatus
 import org.hibyos.install.connected.LibraryNav
 import org.hibyos.install.connected.LibraryPhase
 import org.hibyos.install.connected.Link
+import org.hibyos.install.connected.LibTarget
 import org.hibyos.install.connected.Prompt
+import org.hibyos.install.connected.Rescan
 import org.hibyos.install.connected.SendJob
 import org.hibyos.install.connected.SyncActions
 import org.hibyos.install.connected.SyncDevice
@@ -103,7 +105,15 @@ object NoSync : SyncActions {
     override fun cancelMove() {}
     override fun loadLibrary() {}
     override fun libraryNav(nav: LibraryNav) {}
+    override fun rescanLibrary() {}
+    override fun libraryDelete(target: org.hibyos.install.connected.LibTarget?) {}
+    override fun confirmLibraryDelete() {}
+    override fun libraryMove(target: org.hibyos.install.connected.LibTarget) {}
+    override fun revealInFiles(target: org.hibyos.install.connected.LibTarget) {}
     override fun sendByosUpdate() {}
+    override fun pickUpdateFiles() {}
+    override fun clearUpdateFiles() {}
+    override fun installUpdate(allowDowngrade: Boolean) {}
     override fun cancelWork() {}
 }
 
@@ -114,6 +124,7 @@ fun syncTitleRes(screen: Screen): Int = when (screen) {
     Screen.SYNC_FILES -> R.string.sync_files_title
     Screen.SYNC_LIBRARY -> R.string.sync_library_title
     Screen.SYNC_UPDATE -> R.string.sync_update_title
+    Screen.SYNC_INSTALL -> R.string.sync_install_title
     else -> R.string.sync_title
 }
 
@@ -129,7 +140,7 @@ fun size(bytes: Long): String = when {
 }
 
 @Composable
-private fun SyncPage(s: UiState, a: Actions, screen: Screen, busy: Boolean, trailing: (@Composable () -> Unit)? = null,
+internal fun SyncPage(s: UiState, a: Actions, screen: Screen, busy: Boolean, trailing: (@Composable () -> Unit)? = null,
                      bottom: (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit)? = null,
                      content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     val prev = remember { s.stack.getOrNull(s.stack.indexOf(screen) - 1) }
@@ -144,7 +155,7 @@ private fun SyncPage(s: UiState, a: Actions, screen: Screen, busy: Boolean, trai
 
 /** A sub-screen without a session: the way back to the connection screen. */
 @Composable
-private fun NotConnected(a: Actions) {
+internal fun NotConnected(a: Actions) {
     Section(footer = stringResource(R.string.sync_not_connected_footer)) {
         row {
             Item(title = stringResource(R.string.sync_not_connected), icon = { IconTile(Glyphs.Link, C.orange) }, chevron = true) { a.go(Screen.SYNC) }
@@ -217,9 +228,15 @@ fun SyncHome(s: UiState, a: Actions) {
                         Item(title = stringResource(R.string.sync_library_title), subtitle = stringResource(R.string.sync_library_sub),
                             icon = { IconTile(Glyphs.Music, C.pink) }, chevron = true) { a.go(Screen.SYNC_LIBRARY) }
                     }
+                }
+                Section(header = stringResource(R.string.sync_byos_h)) {
+                    row {
+                        Item(title = stringResource(R.string.sync_install_title), subtitle = stringResource(R.string.sync_install_sub),
+                            icon = { IconTile(Glyphs.Download, C.green) }, chevron = true) { a.go(Screen.SYNC_INSTALL) }
+                    }
                     row(iconInset) {
                         Item(title = stringResource(R.string.sync_update_title), subtitle = stringResource(R.string.sync_update_sub),
-                            icon = { IconTile(Glyphs.Download, C.green) }, chevron = true) { a.go(Screen.SYNC_UPDATE) }
+                            icon = { IconTile(Glyphs.Layers, C.grey) }, chevron = true) { a.go(Screen.SYNC_UPDATE) }
                     }
                 }
             }
@@ -432,6 +449,7 @@ fun SyncSend(s: UiState, a: Actions) {
             Hero(if (ok) Glyphs.Check else Glyphs.Alert, if (ok) C.green else C.orange,
                 stringResource(if (ok) R.string.sync_sent_title else R.string.sync_sent_some_title),
                 stringResource(R.string.sync_sent_text, t.sent, t.skipped, t.problems))
+            if (connected && (t.newMusic > 0 || st.rescan != Rescan.Idle)) RescanSection(st, x, t.newMusic)
         }
         t.error?.let { ErrorSection(it) }
         if (!t.running && !t.finished) {
@@ -559,7 +577,7 @@ fun SyncFiles(s: UiState, a: Actions) {
 }
 
 @Composable
-private fun MoreButton(onClick: () -> Unit) {
+internal fun MoreButton(onClick: () -> Unit) {
     Box(Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(18.dp)) {
             val r = 1.8.dp.toPx()
@@ -569,7 +587,7 @@ private fun MoreButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun Scrim(onDismiss: () -> Unit, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+internal fun Scrim(onDismiss: () -> Unit, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f))
         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }) {
         content()
@@ -578,7 +596,7 @@ private fun Scrim(onDismiss: () -> Unit, content: @Composable androidx.compose.f
 
 /** The list of actions on a file, from the bottom of the screen. */
 @Composable
-private fun ActionSheet(title: String, onDismiss: () -> Unit, actions: List<Pair<String, () -> Unit>>, destructive: Int = -1) {
+internal fun ActionSheet(title: String, onDismiss: () -> Unit, actions: List<Pair<String, () -> Unit>>, destructive: Int = -1) {
     Scrim(onDismiss) {
         Column(Modifier.align(Alignment.BottomCenter).widthIn(max = 560.dp).fillMaxWidth().padding(10.dp)) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(C.card)) {
@@ -602,7 +620,7 @@ private fun ActionSheet(title: String, onDismiss: () -> Unit, actions: List<Pair
 
 /** A centred alert, with a text field when [value] is not null. */
 @Composable
-private fun AlertBox(title: String, text: String?, value: String?, ok: String, destructive: Boolean = false, working: Boolean,
+internal fun AlertBox(title: String, text: String?, value: String?, ok: String, destructive: Boolean = false, working: Boolean,
                      onChange: (String) -> Unit, onOk: () -> Unit, onCancel: () -> Unit) {
     Scrim(if (working) ({}) else onCancel) {
         Column(Modifier.align(Alignment.Center).width(290.dp).clip(RoundedCornerShape(14.dp)).background(C.card)
@@ -665,6 +683,7 @@ fun SyncLibrary(s: UiState, a: Actions) {
             Section(footer = stringResource(R.string.sync_library_footer)) {
                 row { TextRow(stringResource(R.string.sync_library_text)) }
             }
+            RescanSection(st, x, st.transfer.newMusic)
         }
     }
 }
@@ -678,52 +697,105 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
     val album = nav.album?.let { (ar, al) -> L.albums.firstOrNull { it.artist == ar && it.title == al } }
     val unknown = stringResource(R.string.sync_unknown)
     val title = album?.title?.ifEmpty { unknown } ?: artist?.name?.ifEmpty { unknown } ?: stringResource(R.string.sync_library_title)
-    PageFrame(AnnotatedString(title), stringResource(if (nav.artist != null || nav.album != null) R.string.back else R.string.sync_back), a::back, collapsed) {
-        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 28.dp)) {
-            item { Txt(title, T.largeTitle, Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) }
-            when {
-                album != null -> {
-                    item {
-                        Txt(listOfNotNull(album.artist.ifEmpty { unknown }, album.year.takeIf { it > 0 }?.toString(),
-                            songs(album.tracks.size)).joinToString("  ·  "),
-                            T.sub, Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp))
-                    }
-                    cards(album.tracks.size) { i ->
-                        val t = album.tracks[i]
-                        LibRow(t.title, t.path.substringAfterLast('\\'), lead = "${i + 1}")
-                    }
-                }
-                artist != null -> {
-                    item { Txt(albumsSongs(artist.albums.size, artist.trackCount), T.sub,
-                        Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp)) }
-                    cards(artist.albums.size) { i -> AlbumRow(artist.albums[i], unknown) { x.libraryNav(nav.copy(album = it.artist to it.title)) } }
-                }
-                else -> {
-                    item {
-                        Segments(listOf(stringResource(R.string.sync_artists), stringResource(R.string.sync_albums), stringResource(R.string.sync_songs)),
-                            nav.tab) { x.libraryNav(LibraryNav(tab = it)) }
-                    }
-                    when (nav.tab) {
-                        0 -> cards(L.artists.size) { i ->
-                            val ar = L.artists[i]
-                            LibRow(ar.name.ifEmpty { unknown }, albumsSongs(ar.albums.size, ar.trackCount), chevron = true) {
-                                x.libraryNav(nav.copy(artist = ar.name))
-                            }
+    val st = LocalSync.current.state
+    val top = nav.artist == null && nav.album == null
+    var sheet by remember { mutableStateOf<LibTarget?>(null) }
+    val trailing: (@Composable () -> Unit)? = when {
+        !top -> null
+        st.rescan == Rescan.Running -> ({ Box(Modifier.padding(horizontal = 16.dp)) { Spinner(20.dp) } })
+        else -> ({ NavAction(stringResource(R.string.sync_rescan_short)) { x.rescanLibrary() } })
+    }
+    Box(Modifier.fillMaxSize()) {
+        PageFrame(AnnotatedString(title), stringResource(if (!top) R.string.back else R.string.sync_back), if (st.busy) null else a::back, collapsed, trailing) {
+            LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 28.dp)) {
+                item { Txt(title, T.largeTitle, Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                st.libError?.let { e -> item { ErrorSection(e) } }
+                if (top && (st.rescan != Rescan.Idle || st.transfer.newMusic > 0 || st.libraryChanged)) item { RescanSection(st, x, st.transfer.newMusic) }
+                when {
+                    album != null -> {
+                        item {
+                            Txt(listOfNotNull(album.artist.ifEmpty { unknown }, album.year.takeIf { it > 0 }?.toString(),
+                                songs(album.tracks.size)).joinToString("  ·  "),
+                                T.sub, Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp))
                         }
-                        1 -> cards(L.albums.size) { i -> AlbumRow(L.albums[i], unknown, showArtist = true) { x.libraryNav(nav.copy(album = it.artist to it.title)) } }
-                        else -> cards(L.tracks.size) { i ->
-                            val t: Track = L.tracks[i]
-                            LibRow(t.title, listOf(t.albumArtist.ifEmpty { t.artist }.ifEmpty { unknown }, t.album.ifEmpty { unknown }).joinToString("  ·  "))
+                        cards(album.tracks.size) { i ->
+                            val t = album.tracks[i]
+                            LibRow(t.title, t.path.substringAfterLast('\\'), lead = "${i + 1}", onMore = { sheet = LibTarget.Song(t) })
+                        }
+                    }
+                    artist != null -> {
+                        item { Txt(albumsSongs(artist.albums.size, artist.trackCount), T.sub,
+                            Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp)) }
+                        cards(artist.albums.size) { i ->
+                            AlbumRow(artist.albums[i], unknown, onMore = { sheet = LibTarget.AlbumOf(it) }) { x.libraryNav(nav.copy(album = it.artist to it.title)) }
+                        }
+                    }
+                    else -> {
+                        if (L.tracks.isNotEmpty()) item {
+                            Segments(listOf(stringResource(R.string.sync_artists), stringResource(R.string.sync_albums), stringResource(R.string.sync_songs)),
+                                nav.tab) { x.libraryNav(LibraryNav(tab = it)) }
+                        }
+                        if (L.tracks.isEmpty()) {
+                            item { LibraryEmpty() }
+                        } else when (nav.tab) {
+                            0 -> cards(L.artists.size) { i ->
+                                val ar = L.artists[i]
+                                LibRow(ar.name.ifEmpty { unknown }, albumsSongs(ar.albums.size, ar.trackCount), chevron = true,
+                                    onMore = { sheet = LibTarget.ArtistOf(ar) }) {
+                                    x.libraryNav(nav.copy(artist = ar.name))
+                                }
+                            }
+                            1 -> cards(L.albums.size) { i ->
+                                AlbumRow(L.albums[i], unknown, showArtist = true, onMore = { sheet = LibTarget.AlbumOf(it) }) {
+                                    x.libraryNav(nav.copy(album = it.artist to it.title))
+                                }
+                            }
+                            else -> cards(L.tracks.size) { i ->
+                                val t: Track = L.tracks[i]
+                                LibRow(t.title, listOf(t.albumArtist.ifEmpty { t.artist }.ifEmpty { unknown }, t.album.ifEmpty { unknown }).joinToString("  ·  "),
+                                    onMore = { sheet = LibTarget.Song(t) })
+                            }
                         }
                     }
                 }
             }
         }
+        val t = sheet
+        if (t != null) {
+            val acts = ArrayList<Pair<String, () -> Unit>>()
+            if (t !is LibTarget.ArtistOf) acts += stringResource(R.string.sync_lib_show) to { sheet = null; x.revealInFiles(t); a.go(Screen.SYNC_FILES) }
+            if (t.cardPath != null) acts += stringResource(R.string.sync_move) to { sheet = null; x.libraryMove(t); a.go(Screen.SYNC_FILES) }
+            acts += stringResource(R.string.sync_delete) to { sheet = null; x.libraryDelete(t) }
+            ActionSheet(libTargetName(t, unknown), onDismiss = { sheet = null }, actions = acts, destructive = acts.size - 1)
+        }
+        val d = st.libDelete
+        if (d != null) {
+            val n = d.tracks.size
+            AlertBox(stringResource(R.string.sync_delete_q, libTargetName(d, unknown)),
+                when (d) {
+                    is LibTarget.Song -> stringResource(R.string.sync_delete_text)
+                    is LibTarget.AlbumOf -> stringResource(R.string.sync_lib_delete_album_text, songs(n))
+                    is LibTarget.ArtistOf -> stringResource(R.string.sync_lib_delete_artist_text, songs(n))
+                }, null, stringResource(R.string.sync_delete), destructive = true, working = st.libWorking,
+                onChange = {}, onOk = { x.confirmLibraryDelete() }, onCancel = { x.libraryDelete(null) })
+        }
     }
 }
 
+private fun libTargetName(t: LibTarget, unknown: String): String = when (t) {
+    is LibTarget.Song -> t.track.title.ifEmpty { unknown }
+    is LibTarget.AlbumOf -> t.album.title.ifEmpty { unknown }
+    is LibTarget.ArtistOf -> t.artist.name.ifEmpty { unknown }
+}
+
+/** No song in the player's library (a new card, or the player has not scanned it yet). */
+@Composable
+private fun LibraryEmpty() {
+    Hero(Glyphs.Music, C.pink, stringResource(R.string.sync_library_empty_title), stringResource(R.string.sync_library_empty_text))
+}
+
 /** Rows of a grouped card inside a lazy list. */
-private fun LazyListScope.cards(n: Int, row: @Composable (Int) -> Unit) {
+internal fun LazyListScope.cards(n: Int, row: @Composable (Int) -> Unit) {
     if (n == 0) {
         item { Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.card)) { TextRow("—", T.sub) } }
         return
@@ -742,33 +814,65 @@ private fun LazyListScope.cards(n: Int, row: @Composable (Int) -> Unit) {
 }
 
 @Composable
-private fun LibRow(title: String, sub: String?, lead: String? = null, chevron: Boolean = false, onClick: (() -> Unit)? = null) {
-    Item(title = title, subtitle = sub, chevron = chevron, onClick = onClick,
+private fun LibRow(title: String, sub: String?, lead: String? = null, chevron: Boolean = false, onMore: (() -> Unit)? = null,
+                   onClick: (() -> Unit)? = null) {
+    Item(title = title, subtitle = sub, chevron = chevron, onClick = onClick ?: onMore,
+        trailing = onMore?.let { { MoreButton(it) } },
         icon = lead?.let { { Txt(it, T.sub.copy(textAlign = TextAlign.End, fontFeatureSettings = "tnum"), Modifier.width(26.dp)) } })
 }
 
 @Composable
-private fun AlbumRow(al: Album, unknown: String, showArtist: Boolean = false, onClick: (Album) -> Unit) {
+private fun AlbumRow(al: Album, unknown: String, showArtist: Boolean = false, onMore: ((Album) -> Unit)? = null, onClick: (Album) -> Unit) {
     val sub = listOfNotNull(if (showArtist) al.artist.ifEmpty { unknown } else null, al.year.takeIf { it > 0 }?.toString(),
         songs(al.tracks.size)).joinToString("  ·  ")
-    Item(title = al.title.ifEmpty { unknown }, subtitle = sub, icon = { IconTile(Glyphs.Music, C.pink) }, chevron = true) { onClick(al) }
+    Item(title = al.title.ifEmpty { unknown }, subtitle = sub, icon = { IconTile(Glyphs.Music, C.pink) }, chevron = true,
+        trailing = onMore?.let { { MoreButton { it(al) } } }) { onClick(al) }
 }
 
 @Composable
-private fun songs(n: Int): String = pluralStringResource(R.plurals.sync_songs, n, n)
+internal fun songs(n: Int): String = pluralStringResource(R.plurals.sync_songs, n, n)
 
 @Composable
-private fun albumsSongs(albums: Int, songs: Int): String =
+internal fun albumsSongs(albums: Int, songs: Int): String =
     pluralStringResource(R.plurals.sync_albums, albums, albums) + ", " + songs(songs)
 
 /** A segmented control. */
 @Composable
-private fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+internal fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(C.card).padding(2.dp)) {
         labels.forEachIndexed { i, l ->
             Box(Modifier.weight(1f).heightIn(min = 32.dp).clip(RoundedCornerShape(7.dp)).background(if (i == selected) C.fill else Color.Transparent)
                 .clickable { onSelect(i) }, contentAlignment = Alignment.Center) {
                 Txt(l, T.sub.copy(color = C.label, fontWeight = if (i == selected) androidx.compose.ui.text.font.FontWeight.SemiBold else null), maxLines = 1)
+            }
+        }
+    }
+}
+
+/** "Update the library" and how it went (LIB_RESCAN mode 0). */
+@Composable
+internal fun RescanSection(st: SyncState, x: SyncActions, newMusic: Int) {
+    when (val r = st.rescan) {
+        Rescan.Running -> Section(footer = stringResource(R.string.sync_rescan_running_footer)) {
+            row { Item(title = stringResource(R.string.sync_rescan_running), icon = { IconTile(Glyphs.Refresh, C.blue) }, trailing = { Spinner() }) }
+        }
+        Rescan.Done -> Section {
+            row { Item(title = stringResource(R.string.sync_rescan_done), icon = { IconTile(Glyphs.Check, C.green) }) }
+        }
+        Rescan.Unsupported -> Section(footer = stringResource(R.string.sync_rescan_unsupported_text)) {
+            row { Item(title = stringResource(R.string.sync_rescan_unsupported), icon = { IconTile(Glyphs.Info, C.orange) }) }
+        }
+        is Rescan.Failed, Rescan.Idle -> {
+            if (r is Rescan.Failed) ErrorSection(r.error)
+            Section(footer = when {
+                newMusic > 0 -> stringResource(R.string.sync_rescan_new, songs(newMusic))
+                st.libraryChanged -> stringResource(R.string.sync_lib_changed)
+                else -> stringResource(R.string.sync_rescan_footer)
+            }) {
+                row {
+                    Item(title = stringResource(R.string.sync_rescan), titleColor = C.blue, icon = { IconTile(Glyphs.Refresh, C.blue) },
+                        enabled = !st.busy) { x.rescanLibrary() }
+                }
             }
         }
     }

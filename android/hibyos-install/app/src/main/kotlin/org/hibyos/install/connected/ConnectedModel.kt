@@ -6,6 +6,8 @@ import androidx.compose.runtime.setValue
 import org.hibyos.install.ErrorInfo
 import org.hibyos.install.R
 import org.hibyos.install.core.SendItem
+import org.hibyos.install.core.btp.UpdateException
+import org.hibyos.install.core.btp.UpdatePackage
 import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
@@ -40,6 +42,15 @@ interface SyncEnv {
 
     /** Monotonic milliseconds (tests move it by hand). */
     fun now(): Long = System.nanoTime() / 1_000_000
+
+    /** Opens the system picker for a signed update (hibyos-update.json and its tar). */
+    fun pickUpdateFiles() {}
+
+    /** The keys a signed update must be signed with (docs/OTA.md). */
+    val releaseKeys: List<String> get() = UpdatePackage.RELEASE_KEYS
+
+    /** Waits on the worker, between two UPDATE_STATUS requests (tests do not wait). */
+    fun sleep(ms: Long) = Thread.sleep(ms)
 }
 
 /**
@@ -160,6 +171,12 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             SyncException.E_UNSUPPORTED, SyncException.E_VERSION, SyncException.E_NOT_ALLOWED ->
                 ErrorInfo(R.string.sync_err_unsupported, d, R.string.sync_hint_unsupported)
             SyncException.E_IO, SyncException.E_HASH_MISMATCH -> ErrorInfo(R.string.sync_err_io, d, R.string.sync_hint_io)
+            SyncException.E_SIGNATURE -> ErrorInfo(R.string.sync_err_signature, d, R.string.sync_hint_signature)
+            SyncException.E_UPDATE_INVALID -> ErrorInfo(R.string.sync_err_update_invalid, d, R.string.sync_hint_update_invalid)
+            SyncException.E_DOWNGRADE -> ErrorInfo(R.string.sync_err_downgrade, d, R.string.sync_hint_downgrade)
+            SyncException.E_BATTERY -> ErrorInfo(R.string.sync_err_battery, d, R.string.sync_hint_battery)
+            SyncException.E_NEEDS_FIRMWARE -> ErrorInfo(R.string.sync_err_needs_firmware, d, R.string.sync_hint_needs_firmware)
+            SyncException.E_NOT_STAGED -> ErrorInfo(R.string.sync_err_not_staged, d, R.string.sync_hint_not_staged)
             else -> ErrorInfo(R.string.sync_err_generic, d ?: "BTP error ${e.code}")
         }
     }
@@ -385,10 +402,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     /** [putSmart] on the open session; a read error of the phone's file replaces the session, then is rethrown. */
     private fun putLocal(ns: Int, path: String, size: Long, sha: ByteArray, mtime: Long, replace: Boolean,
-                         open: (Long) -> InputStream, progress: (Long) -> Unit): PutResult {
+                         open: (Long) -> InputStream, exact: PutMode? = null, progress: (Long) -> Unit): PutResult {
         val s = session ?: throw SyncException(SyncException.CONNECTION_LOST)
         try {
-            return putSmart(s, ns, path, size, sha, mtime, replace, open, progress)
+            return if (exact != null) s.put(ns, path, size, sha, mtime, exact, open, cancelled, progress)
+            else putSmart(s, ns, path, size, sha, mtime, replace, open, progress)
         } catch (e: IOException) {
             reopen()
             throw e
@@ -471,6 +489,8 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         env.execute {
             var done = 0L
             val pace = Pace()
+            var newMusic = 0
+            val changedMusic = ArrayList<String>()
             fun mark(id: Int, f: (SendJob) -> SendJob) = ui { st ->
                 st.copy(transfer = st.transfer.copy(jobs = st.transfer.jobs.map { if (it.id == id) f(it) else it }))
             }
@@ -502,6 +522,9 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                         }
                         done = base + job.size
                         mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
+                        if (!r.skipped && FileKinds.isAudio(job.remote)) {
+                            if (r.replaced) changedMusic += job.remote else newMusic++
+                        }
                     } catch (e: SyncException) {
                         when {
                             e.code == SyncException.E_CANCELLED -> throw e
@@ -526,7 +549,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                         mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
                     }
                 }
-                ui { it.copy(transfer = it.transfer.copy(running = false, done = it.transfer.total, current = "")) }
+                session?.let { refreshTags(it, changedMusic) }
+                val added = newMusic
+                ui { it.copy(transfer = it.transfer.copy(running = false, done = it.transfer.total, current = "", newMusic = it.transfer.newMusic + added),
+                    rescan = if (added > 0) Rescan.Idle else it.rescan) }
                 session?.let { refreshAfterWrite(it) }
             } catch (e: Exception) {
                 val cancel = e is SyncException && e.code == SyncException.E_CANCELLED
@@ -549,7 +575,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         s.put(ns, path, size, sha, mtime, PutMode.SKIP_IDENTICAL, open, cancelled, progress)
     } catch (e: SyncException) {
         if (e.code != SyncException.E_EXISTS || !replace) throw e
-        s.put(ns, path, size, sha, mtime, PutMode.REPLACE, open, cancelled, progress)
+        s.put(ns, path, size, sha, mtime, PutMode.REPLACE, open, cancelled, progress).copy(replaced = true)
     }
 
     private fun openAt(open: () -> InputStream, offset: Long): InputStream {
@@ -587,6 +613,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             }
         }
         return md.digest() to n
+    }
+
+    /**
+     * Songs replaced on the card keep their library rows: LIB_RESCAN mode 1 refreshes their tags,
+     * cover and lyrics at once (section 13.3). Best effort: an older ByOS without it is fine.
+     */
+    private fun refreshTags(s: SyncSession, paths: List<String>) {
+        for (chunk in paths.chunked(256)) {
+            try {
+                s.libRescan(chunk)
+            } catch (e: SyncException) {
+                if (e.fatal) throw e
+                return
+            }
+        }
     }
 
     private fun refreshAfterWrite(s: SyncSession) {
@@ -676,7 +717,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 op()
                 val path = state.browser.path
                 val list = sortEntries(s.list(path))
-                ui { it.copy(browser = it.browser.copy(working = false, prompt = null, moving = null, entries = list)) }
+                ui {
+                    it.copy(browser = it.browser.copy(working = false, prompt = null, moving = null, entries = list),
+                        libraryChanged = it.libraryChanged || it.library is LibraryPhase.Ready)
+                }
                 refreshAfterWrite(s)
             } catch (e: Exception) {
                 val err = errorOf(e)
@@ -718,28 +762,36 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     // ---- library --------------------------------------------------------------------------------
 
+    /** DB_SNAPSHOT into the app's cache, read with Android's SQLite. */
+    private fun readSnapshot(s: SyncSession, progress: ((Long, Long) -> Unit)?): Library {
+        val dir = File(env.cacheDir, "sync")
+        val tmp = File(dir, "library.tmp")
+        val db = File(dir, "library.db")
+        try {
+            dir.mkdirs()
+            val pace = Pace()
+            FileOutputStream(tmp).use { o ->
+                s.dbSnapshot(o, cancelled) { done, total ->
+                    if (progress != null && pace.due(done == total)) progress(done, total)
+                }
+            }
+            db.delete()
+            if (!tmp.renameTo(db)) throw IOException("the library copy could not be kept")
+            return Library.build(env.readLibrary(db))
+        } finally {
+            tmp.delete()
+        }
+    }
+
     override fun loadLibrary() {
         val s = session ?: return
         if (!begin()) return
         state = state.copy(library = LibraryPhase.Loading(0, 0), libraryNav = LibraryNav())
         env.execute {
-            val dir = File(env.cacheDir, "sync")
-            val tmp = File(dir, "library.tmp")
-            val db = File(dir, "library.db")
             try {
-                dir.mkdirs()
-                val pace = Pace()
-                FileOutputStream(tmp).use { o ->
-                    s.dbSnapshot(o, cancelled) { done, total ->
-                        if (pace.due(done == total)) ui { it.copy(library = LibraryPhase.Loading(done, total)) }
-                    }
-                }
-                db.delete()
-                if (!tmp.renameTo(db)) throw IOException("the library copy could not be kept")
-                val lib = Library.build(env.readLibrary(db))
+                val lib = readSnapshot(s) { done, total -> ui { it.copy(library = LibraryPhase.Loading(done, total)) } }
                 ui { it.copy(library = LibraryPhase.Ready(lib)) }
             } catch (e: Exception) {
-                tmp.delete()
                 if (e is SyncException && e.code == SyncException.E_CANCELLED) {
                     ui { it.copy(library = LibraryPhase.Idle) }
                 } else {
@@ -753,6 +805,134 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     override fun libraryNav(nav: LibraryNav) {
         state = state.copy(libraryNav = nav)
+    }
+
+    override fun libraryDelete(target: LibTarget?) {
+        if (state.libWorking) return
+        state = state.copy(libDelete = target, libError = null)
+    }
+
+    override fun libraryMove(target: LibTarget) {
+        val p = target.cardPath ?: return
+        if (state.busy) return
+        state = state.copy(browser = Browser(path = SyncPaths.parent(p), moving = p))
+        openFolder(SyncPaths.parent(p))
+    }
+
+    override fun revealInFiles(target: LibTarget) {
+        val p = target.cardPath ?: target.tracks.firstNotNullOfOrNull { Library.cardPath(it.path) } ?: return
+        if (state.busy) return
+        val dir = if (target is LibTarget.Song) SyncPaths.parent(p) else p
+        state = state.copy(browser = Browser(path = dir))
+        openFolder(dir)
+    }
+
+    /**
+     * Deletes the songs of the target from the card. An album that has a folder of its own (no
+     * other songs, no subfolders) goes with its folder, so its cover and lyrics go too; otherwise
+     * only its songs are deleted. Then the player updates its library; where it cannot, the
+     * songs are only taken out of the list shown here.
+     */
+    override fun confirmLibraryDelete() {
+        val s = session ?: return
+        val t = state.libDelete ?: return
+        val lib = (state.library as? LibraryPhase.Ready)?.library ?: return
+        if (!begin()) return
+        state = state.copy(libWorking = true, libError = null)
+        env.execute {
+            try {
+                val files = HashSet<String>()
+                val dirs = HashSet<String>()
+                val albums = when (t) {
+                    is LibTarget.Song -> emptyList()
+                    is LibTarget.AlbumOf -> listOf(t.album)
+                    is LibTarget.ArtistOf -> t.artist.albums
+                }
+                if (t is LibTarget.Song) {
+                    val p = Library.cardPath(t.track.path) ?: throw SyncException(SyncException.E_NOT_FOUND, t.track.path)
+                    deleteIfThere(s, p)
+                    files += p
+                }
+                for (al in albums) {
+                    if (stop) throw SyncException(SyncException.E_CANCELLED)
+                    val paths = al.tracks.mapNotNull { Library.cardPath(it.path) }
+                    val folder = Library.folderOf(al.tracks)
+                    if (folder != null && ownsFolder(s, folder, paths)) {
+                        s.delete(folder, true)
+                        dirs += folder
+                    } else {
+                        for (p in paths) deleteIfThere(s, p)
+                    }
+                    files += paths
+                }
+                val (next, rescan) = try {
+                    s.libRescan(null)
+                    readSnapshot(s, null) to Rescan.Done
+                } catch (e: SyncException) {
+                    if (e.code != SyncException.E_UNSUPPORTED) throw e
+                    lib.without(files, dirs) to Rescan.Unsupported
+                }
+                ui {
+                    val n = it.libraryNav
+                    val nav = when (t) {
+                        is LibTarget.ArtistOf -> n.copy(artist = null, album = null)
+                        is LibTarget.AlbumOf -> n.copy(album = null)
+                        else -> n
+                    }
+                    it.copy(libWorking = false, libDelete = null, library = LibraryPhase.Ready(next), rescan = rescan, libraryNav = nav,
+                        libraryChanged = false)
+                }
+                refreshAfterWrite(s)
+            } catch (e: Exception) {
+                val err = errorOf(e)
+                if (lost(e)) dropSession()
+                ui { it.copy(link = if (lost(e)) Link.Idle else it.link, libWorking = false, libDelete = null, libError = err) }
+            }
+        }
+    }
+
+    private fun deleteIfThere(s: SyncSession, path: String) {
+        try {
+            s.delete(path, false)
+        } catch (e: SyncException) {
+            if (e.code != SyncException.E_NOT_FOUND) throw e
+        }
+    }
+
+    /** True when [folder] holds no subfolder and no song other than [songs]: it is the album's own folder. */
+    private fun ownsFolder(s: SyncSession, folder: String, songs: List<String>): Boolean {
+        val mine = songs.map { SyncPaths.name(it).lowercase() }.toSet()
+        val list = try {
+            s.list(folder)
+        } catch (e: SyncException) {
+            if (e.fatal) throw e
+            return false
+        }
+        return list.none { it.isFolder || (FileKinds.isAudio(it.name) && it.name.lowercase() !in mine) }
+    }
+
+    override fun rescanLibrary() {
+        val s = session ?: return
+        if (!begin()) return
+        state = state.copy(rescan = Rescan.Running)
+        env.execute {
+            try {
+                s.libRescan(null)
+                // the player answers when its scan is over: the new library is read at once
+                val lib = readSnapshot(s, null)
+                ui { it.copy(rescan = Rescan.Done, library = LibraryPhase.Ready(lib), transfer = it.transfer.copy(newMusic = 0), libraryChanged = false) }
+            } catch (e: Exception) {
+                when {
+                    e is SyncException && e.code == SyncException.E_UNSUPPORTED -> ui { it.copy(rescan = Rescan.Unsupported) }
+                    e is SyncException && e.code == SyncException.E_CANCELLED -> ui { it.copy(rescan = Rescan.Idle) }
+                    else -> {
+                        val err = errorOf(e)
+                        if (lost(e)) dropSession()
+                        ui { it.copy(link = if (lost(e)) Link.Idle else it.link, rescan = Rescan.Failed(err)) }
+                    }
+                }
+            }
+        }
     }
 
     /** Back in the library: album -> artist -> list. False at the list. */
@@ -815,6 +995,233 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         }
     }
 
+    // ---- signed ByOS update (sections 14.1 to 14.3) --------------------------------------------
+
+    private var otaPkg: UpdatePackage? = null
+    private var otaTar: LocalItem? = null
+    private var otaTarSha: ByteArray? = null
+
+    /** The update files were sent to the player of the open session (a downgrade retry skips sending). */
+    private var otaSentTo: SyncSession? = null
+
+    override fun pickUpdateFiles() {
+        if (!state.ota.running) env.pickUpdateFiles()
+    }
+
+    override fun clearUpdateFiles() {
+        if (state.ota.running) return
+        otaPkg = null
+        otaTar = null
+        otaTarSha = null
+        otaSentTo = null
+        state = state.copy(otaPick = OtaPick(), ota = OtaPhase.Idle)
+    }
+
+    private fun updateError(e: UpdateException): ErrorInfo = when (e.kind) {
+        UpdateException.Kind.SIGNATURE -> ErrorInfo(R.string.sync_err_signature, e.message, R.string.sync_hint_signature)
+        UpdateException.Kind.PAYLOAD -> ErrorInfo(R.string.sync_err_update_payload, e.message, R.string.sync_hint_update_payload)
+        else -> ErrorInfo(R.string.sync_err_update_invalid, e.message, R.string.sync_hint_update_invalid)
+    }
+
+    /**
+     * Adds what the user picked for a signed update: a `.json` is read and its signature checked
+     * at once (nothing in it is used before that), a `.tar` is kept as the payload. Picking one
+     * file replaces the earlier file of the same kind.
+     */
+    fun addUpdateFiles(load: () -> List<LocalItem>) {
+        if (state.ota.running) return
+        env.execute {
+            try {
+                var pkg: UpdatePackage? = null
+                var tar: LocalItem? = null
+                var err: ErrorInfo? = null
+                for (it in load()) {
+                    val name = it.parts.last()
+                    val lower = name.lowercase()
+                    when {
+                        lower.endsWith(".json") -> try {
+                            pkg = UpdatePackage.parse(readSmall(it, UpdatePackage.JSON_MAX), env.releaseKeys)
+                        } catch (e: UpdateException) {
+                            err = updateError(e)
+                        }
+                        lower.endsWith(".tar") -> tar = it
+                        else -> err = ErrorInfo(R.string.sync_err_update_kind, name, R.string.sync_hint_update_kind)
+                    }
+                }
+                env.post {
+                    if (pkg != null) otaPkg = pkg
+                    if (tar != null) {
+                        otaTar = tar
+                        otaTarSha = null
+                    }
+                    if (pkg != null || tar != null) otaSentTo = null
+                    val p = otaPkg
+                    val t = otaTar
+                    state = state.copy(ota = if (state.ota.running) state.ota else OtaPhase.Idle, otaPick = OtaPick(
+                        version = p?.version, payloadName = p?.payloadName, payloadSize = p?.payloadSize ?: 0,
+                        needsFirmware = p?.needsFirmware ?: false, restart = p?.restart,
+                        tarName = t?.parts?.last(), tarSize = t?.size ?: 0, error = err))
+                }
+            } catch (e: Exception) {
+                ui { it.copy(otaPick = it.otaPick.copy(error = errorOf(e))) }
+            }
+        }
+    }
+
+    private fun readSmall(item: LocalItem, max: Int): ByteArray {
+        if (item.size > max) throw UpdateException(UpdateException.Kind.INVALID, "the update description is too large")
+        val out = java.io.ByteArrayOutputStream()
+        item.open().use { i ->
+            val b = ByteArray(8192)
+            while (true) {
+                val n = i.read(b)
+                if (n < 0) break
+                out.write(b, 0, n)
+                if (out.size() > max) throw UpdateException(UpdateException.Kind.INVALID, "the update description is too large")
+            }
+        }
+        return out.toByteArray()
+    }
+
+    override fun installUpdate(allowDowngrade: Boolean) {
+        val s = session ?: return
+        val pkg = otaPkg ?: return
+        val tar = otaTar ?: return
+        if (!state.otaPick.ready) return
+        if (!begin()) return
+        val skipSend = allowDowngrade && otaSentTo === s
+        val total = if (skipSend) 0L else pkg.json.size + tar.size * (if (otaTarSha == null) 2 else 1)
+        state = state.copy(ota = if (skipSend) OtaPhase.Checking else OtaPhase.Sending(0, total, UPDATE_JSON))
+        env.execute {
+            var staged: StagedUpdate? = null
+            try {
+                fun send() {
+                    val pace = Pace()
+                    var done = 0L
+                    // the payload is hashed first: a tar that is not the signed one is refused before anything is sent
+                    val sha = otaTarSha ?: run {
+                        val h = hash(tar.open) { n -> if (pace.due()) ui { it.copy(ota = OtaPhase.Sending(n, total, pkg.payloadName)) } }
+                        val hex = h.first.joinToString("") { "%02x".format(it) }
+                        if (h.second != pkg.payloadSize || hex != pkg.payloadSha256) {
+                            throw UpdateException(UpdateException.Kind.PAYLOAD, "${tar.parts.last()} is not the payload of ByOS ${pkg.version}")
+                        }
+                        otaTarSha = h.first
+                        h.first
+                    }
+                    done += if (total > pkg.json.size + tar.size) tar.size else 0
+                    val js = pkg.json
+                    putLocal(Ns.UPDATE, UPDATE_JSON, js.size.toLong(), MessageDigest.getInstance("SHA-256").digest(js), 0, true, { off -> openAt({ js.inputStream() }, off) },
+                        exact = PutMode.REPLACE) {}
+                    done += js.size
+                    val base = done
+                    putLocal(Ns.UPDATE, pkg.payloadName, tar.size, sha, tar.mtime, true, { off -> openAt(tar.open, off) },
+                        exact = PutMode.REPLACE) { n ->
+                        if (pace.due()) ui { it.copy(ota = OtaPhase.Sending(base + n, total, pkg.payloadName)) }
+                    }
+                    otaSentTo = session
+                    ui { it.copy(ota = OtaPhase.Checking) }
+                }
+                if (!skipSend) send()
+                val st = session ?: throw SyncException(SyncException.CONNECTION_LOST)
+                staged = try {
+                    st.updateStage(allowDowngrade)
+                } catch (e: SyncException) {
+                    // the description was already moved by an earlier check: send everything again
+                    if (!skipSend || e.code != SyncException.E_NOT_STAGED) throw e
+                    send()
+                    st.updateStage(allowDowngrade)
+                }
+                val version = staged.version.ifEmpty { pkg.version }
+                try {
+                    // over Wi-Fi the player always asks the user first (NO_CONFIRM is for USB only)
+                    st.updateInstall(allowDowngrade)
+                } catch (e: SyncException) {
+                    if (e.code != SyncException.E_UNSUPPORTED) throw e
+                    ui { it.copy(ota = OtaPhase.StagedOnly(version)) }
+                    return@execute
+                }
+                ui { it.copy(ota = OtaPhase.WaitingUser(version)) }
+                watchInstall(st, version, staged.restart)
+            } catch (e: Exception) {
+                when {
+                    e is SyncException && e.code == SyncException.E_CANCELLED -> ui { it.copy(ota = OtaPhase.Idle) }
+                    e is UpdateException -> ui { it.copy(ota = OtaPhase.Failed(updateError(e))) }
+                    else -> {
+                        val err = errorOf(e)
+                        if (lost(e)) dropSession()
+                        ui {
+                            it.copy(link = if (lost(e)) Link.Idle else it.link,
+                                ota = OtaPhase.Failed(err, downgrade = e is SyncException && e.code == SyncException.E_DOWNGRADE))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Polls UPDATE_STATUS about once a second until the install ends. When ByOS restarts its
+     * interface the connection drops after "installing": that is the expected end.
+     */
+    private fun watchInstall(s: SyncSession, version: String, restart: Int) {
+        var last = -1
+        val deadline = env.now() + INSTALL_WATCH_MS
+        while (true) {
+            if (stop) {
+                // the install goes on (or still waits) on the player: only the watching stops
+                ui { it.copy(ota = OtaPhase.Idle) }
+                return
+            }
+            val u = try {
+                s.updateStatus()
+            } catch (e: SyncException) {
+                if (lost(e) && last >= UpdateProgress.INSTALLING) {
+                    finishInstall(version, maxOf(restart, 1))
+                    return
+                }
+                throw e
+            }
+            val v = u.version.ifEmpty { version }
+            when (u.state) {
+                UpdateProgress.WAITING_USER -> ui { it.copy(ota = OtaPhase.WaitingUser(v)) }
+                UpdateProgress.INSTALLING -> ui { it.copy(ota = OtaPhase.Installing(v, u.permille.coerceIn(0, 1000))) }
+                UpdateProgress.DONE -> {
+                    finishInstall(v, restart)
+                    return
+                }
+                UpdateProgress.FAILED -> {
+                    ui { it.copy(ota = OtaPhase.Failed(errorOf(SyncException(u.error, "update status: failed")))) }
+                    return
+                }
+                UpdateProgress.REFUSED -> {
+                    ui { it.copy(ota = OtaPhase.Refused(v)) }
+                    return
+                }
+                else -> if (last >= UpdateProgress.INSTALLING) {
+                    finishInstall(v, restart)
+                    return
+                }
+            }
+            last = u.state
+            if (env.now() > deadline) {
+                ui { it.copy(ota = OtaPhase.Failed(ErrorInfo(R.string.sync_err_update_slow, null, R.string.sync_hint_update_slow))) }
+                return
+            }
+            env.sleep(1000)
+        }
+    }
+
+    /** The install is over: when ByOS restarts, the session is gone and the user connects again later. */
+    private fun finishInstall(version: String, restart: Int) {
+        if (restart != 0) {
+            dropSession()
+            ui { it.copy(ota = OtaPhase.Done(version, restart), link = Link.Idle, browser = Browser(), library = LibraryPhase.Idle) }
+        } else {
+            ui { it.copy(ota = OtaPhase.Done(version, restart)) }
+            session?.let { refreshAfterWrite(it) }
+        }
+    }
+
     override fun cancelWork() {
         stop = true
     }
@@ -851,6 +1258,12 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     companion object {
         /** Section 17: clients PING every 30 s while idle (the device drops a session quiet for 120 s). */
         const val PING_MS = 30_000L
+
+        /** The name of the update description in NS_UPDATE (section 14.1). */
+        const val UPDATE_JSON = "hibyos-update.json"
+
+        /** How long the app watches an install (the player's own limits end it much sooner). */
+        const val INSTALL_WATCH_MS = 30 * 60_000L
 
         fun sortEntries(list: List<SyncEntry>): List<SyncEntry> =
             list.sortedWith(compareBy<SyncEntry> { if (it.isFolder) 0 else 1 }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })

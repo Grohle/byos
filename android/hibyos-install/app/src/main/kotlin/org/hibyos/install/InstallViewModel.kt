@@ -48,6 +48,9 @@ interface Host {
     /** ByOS connected: files and a folder to send to the player. */
     fun pickSyncFiles()
     fun pickSyncFolder()
+
+    /** ByOS connected: hibyos-update.json and its payload tar. */
+    fun pickSyncUpdate()
     fun open(url: String): Boolean
     fun share(files: List<File>)
 }
@@ -112,6 +115,9 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         override fun pickFolder() {
             host?.pickSyncFolder()
         }
+        override fun pickUpdateFiles() {
+            host?.pickSyncUpdate()
+        }
         override fun byosFiles(): List<SendItem>? {
             val b = bundle ?: return null
             if (state.patch !is PatchState.Done) return null
@@ -122,6 +128,11 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     fun syncFilesPicked(uris: List<Uri>) {
         val app = getApplication<Application>()
         connected.addPicked { Picked.files(app, uris) }
+    }
+
+    fun syncUpdatePicked(uris: List<Uri>) {
+        val app = getApplication<Application>()
+        connected.addUpdateFiles { Picked.files(app, uris) }
     }
 
     fun syncFolderPicked(tree: Uri) {
