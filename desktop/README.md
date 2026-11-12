@@ -13,6 +13,20 @@ It is a test bench for the device pages and for the `byos-cli` contract
 ([docs/BYOS_CLI.md](../docs/BYOS_CLI.md)). The real app will be the Museeks-based Tauri app
 (DESKTOP_APP.md section 6), which reuses this UI logic.
 
+## Windows program (`ByOS-Desktop-<version>.exe`)
+
+The release ships the app as one Windows program. Double-click it: the first start unpacks it
+into `%LOCALAPPDATA%\ByOS Desktop\<version>` (a few seconds), then it starts the local runner
+without a console and opens the app in its own Microsoft Edge window. Closing the window stops
+the runner and everything it started. It carries its own Node.js, a reduced Java runtime and
+adb, so nothing has to be installed (THIRD_PARTY_NOTICES.md, 7.5).
+
+Build it: `gradlew :cli:fatJar` (android/hibyos-install), `bash tools/wsl/zbuild_desktop_exe.sh
+<version>` (the launcher, `windows/launcher.c`), then `python tools/package_desktop.py --version
+<version>` (its docstring lists the Node.js zip, the `jlink` command and the platform-tools it
+packs). The program is not code-signed yet: Windows SmartScreen may ask for **More info › Run
+anyway** the first time.
+
 ## Try it without a HiBy (demo mode)
 
 ```

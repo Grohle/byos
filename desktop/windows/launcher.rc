@@ -1,0 +1,28 @@
+// ByOS Desktop.exe resources: icon, version information and the application manifest.
+#include <windows.h>
+1 ICON "byos.ico"
+1 RT_MANIFEST "launcher.manifest"
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION BYOS_V1,BYOS_V2,BYOS_V3,0
+PRODUCTVERSION BYOS_V1,BYOS_V2,BYOS_V3,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "ByOS project"
+      VALUE "FileDescription", "ByOS Desktop"
+      VALUE "ProductName", "ByOS Desktop"
+      VALUE "ProductVersion", BYOS_VS
+      VALUE "FileVersion", BYOS_VS
+      VALUE "OriginalFilename", "ByOS Desktop.exe"
+      VALUE "LegalCopyright", "ByOS project contributors"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

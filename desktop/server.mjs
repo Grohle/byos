@@ -546,6 +546,7 @@ function parseArgs(argv) {
     else if (a === '--cli') o.cli = argv[++i];
     else if (a === '--config') o.config = argv[++i];
     else if (a === '--adb') o.adb = argv[++i];
+    else if (a === '--url-file') o.urlFile = argv[++i];
     else if (a === '--help' || a === '-h') o.help = true;
     else throw new Error(`unknown option ${a}`);
   }
@@ -575,7 +576,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(1);
   }
   if (o.help) {
-    console.log('node server.mjs [--mock] [--cli PATH] [--port N] [--open] [--config DIR] [--adb PATH]');
+    console.log('node server.mjs [--mock] [--cli PATH] [--port N] [--open] [--config DIR] [--adb PATH] [--url-file PATH]');
     process.exit(0);
   }
   const swept = sweepStaleTemp();
@@ -589,6 +590,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   console.log('Keep this address private: it gives full access to the connected HiBy.');
   console.log('Press Ctrl+C to stop.');
   if (o.open) openWindow(url);
+  // The Windows launcher (desktop/windows/launcher.c) reads the address from here; only this user can read it.
+  if (o.urlFile) writeFileSync(o.urlFile, `${url}\n`, { mode: 0o600 });
   let stopping = false;
   const stop = () => {
     if (stopping) return;

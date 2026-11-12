@@ -1,59 +1,38 @@
 #!/usr/bin/env python3
-"""Package ByOS Desktop for Windows as a portable zip.
+"""Package ByOS Desktop for Windows as one program: ByOS-Desktop-<version>.exe.
 
-    python tools/package_desktop.py --version 0.1.0
+    python tools/package_desktop.py --version 0.9.0
 
-Needs android/hibyos-install/cli/build/libs/byos-cli.jar (gradlew :cli:fatJar). Writes
-out/release/ByOS-Desktop-<version>-windows.zip with one folder, "ByOS Desktop":
+The exe is the launcher (desktop/windows/launcher.c, built by tools/wsl/zbuild_desktop_exe.sh into
+out/desktop_exe/launcher.exe) followed by a zip and a 16-byte trailer ("BYOSPAK1" + the zip's
+offset, little endian). At its first start the launcher unpacks the zip into
+%LOCALAPPDATA%\\ByOS Desktop\\<version> (see launcher.c). The zip holds:
 
-    ByOS Desktop.cmd    the launcher (checks Node.js 20+, Java 17+ and adb, then opens the app)
-    byos-cli.jar        the command-line engine the app drives
-    app/                the web UI and its local runner (desktop/: server.mjs, lib/, ui/, mock/)
-    README.txt          how to start it
-    LICENSE, licenses/  ByOS licence, THIRD_PARTY_NOTICES.md and the licences of byos-cli
+    app/              the web UI and its local runner (desktop/: server.mjs, lib/, ui/, mock/)
+    byos-cli.jar      the engine the app drives (gradlew :cli:fatJar)
+    runtime/node/     node.exe of the official Node.js Windows x64 zip (--node-zip)
+    runtime/java/     a Java runtime made with jlink from a JDK 21 (--jre), see below
+    platform-tools/   adb.exe and its two DLLs from Google's SDK Platform-Tools (--platform-tools)
+    licenses/         THIRD_PARTY_NOTICES.md, byos-cli's licences, Node.js' LICENSE and the
+                      platform-tools NOTICE (the Java runtime keeps its own in runtime/java/legal)
+    LICENSE           ByOS' licence
 
-Node.js, Java and adb are not included: the launcher tells the user where to get them.
+Inputs, as used for 0.9.0:
+  --node-zip  https://nodejs.org/dist/v24.22.1/node-v24.22.1-win-x64.zip (checked against SHASUMS256.txt)
+  --jre       jlink --add-modules java.base,java.desktop,jdk.crypto.ec,jdk.unsupported,jdk.zipfs,jdk.charsets
+                    --strip-debug --no-header-files --no-man-pages --compress zip-6 --output JRE
+              (Eclipse Temurin 21; byos-cli needs java.base and java.desktop, jdeps --print-module-deps)
+  --platform-tools  an unpacked SDK Platform-Tools for Windows (37.0.1)
 """
-import argparse, hashlib, os, sys, zipfile
+import argparse, hashlib, io, os, struct, sys, zipfile
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(REPO)
 sys.path.insert(0, os.path.join(REPO, "tools"))
 import notices  # noqa: E402
 
-ROOT = "ByOS Desktop"
 APP_PARTS = ["server.mjs", "package.json", "README.md", "lib", "ui", "mock"]
-
-README = """ByOS Desktop {version} for Windows
-================================
-
-Manage a HiBy R3 II (2025) running ByOS from your computer: files on the SD card,
-the music library, playlists, and building and installing ByOS from HiBy's official
-firmware.
-
-What you need
--------------
-1. Node.js 20 or newer (LTS):        https://nodejs.org
-2. Java 17 or newer (Temurin 21):    https://adoptium.net
-3. For USB connections, adb from Google's "SDK Platform-Tools for Windows":
-   https://developer.android.com/tools/releases/platform-tools
-   Unzip it so that the "platform-tools" folder sits next to "ByOS Desktop.cmd"
-   (or have adb on your PATH).
-
-Start
------
-1. Unzip this file anywhere (for example in Documents).
-2. On the HiBy, open Settings > ByOS Sync and connect the USB cable.
-3. Double-click "ByOS Desktop.cmd". The app opens in its own window.
-
-To try it without a HiBy, open a command prompt in this folder and run:
-    node app\\server.mjs --mock --open
-
-More: app\\README.md and https://github.com/Grohle/hibyos
-"""
-
-
-def crlf(text):
-    return text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
+ADB_FILES = ["adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll"]
 
 
 def add_tree(z, src, arc):
@@ -64,35 +43,55 @@ def add_tree(z, src, arc):
         dn.sort()
         for n in sorted(fn):
             p = os.path.join(dp, n)
-            rel = os.path.relpath(p, src).replace(os.sep, "/")
-            z.write(p, arc + "/" + rel)
+            z.write(p, arc + "/" + os.path.relpath(p, src).replace(os.sep, "/"))
 
 
 def main():
+    dl = os.path.join(REPO, "out", "desktop_dl")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--version", required=True)
+    ap.add_argument("--launcher", default=os.path.join(REPO, "out", "desktop_exe", "launcher.exe"))
     ap.add_argument("--jar", default=os.path.join(REPO, "android", "hibyos-install", "cli", "build", "libs", "byos-cli.jar"))
+    ap.add_argument("--node-zip", default=os.path.join(dl, "node-v24.22.1-win-x64.zip"))
+    ap.add_argument("--jre", default=os.path.join(dl, "jre"))
+    ap.add_argument("--platform-tools", default=os.path.join(os.environ.get("LOCALAPPDATA", ""), "platform-tools"))
     ap.add_argument("--out", default=os.path.join(REPO, "out", "release"))
     a = ap.parse_args()
-    if not os.path.isfile(a.jar):
-        sys.exit("byos-cli.jar not found: %s (run gradlew :cli:fatJar in android/hibyos-install)" % a.jar)
-    os.makedirs(a.out, exist_ok=True)
-    out = os.path.join(a.out, "ByOS-Desktop-%s-windows.zip" % a.version)
-    lic_tmp = os.path.join(REPO, "out", "desktop_licenses")
-    if os.path.isdir(lic_tmp):
-        for n in os.listdir(lic_tmp):
-            os.remove(os.path.join(lic_tmp, n))
-    lic = notices.collect("byos-cli", lic_tmp)
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-        with open(os.path.join(REPO, "desktop", "windows", "ByOS Desktop.cmd"), encoding="utf-8") as f:
-            z.writestr(ROOT + "/ByOS Desktop.cmd", crlf(f.read()))
-        z.writestr(ROOT + "/README.txt", crlf(README.format(version=a.version)))
-        z.write(a.jar, ROOT + "/byos-cli.jar")
+    for p, what in [(a.launcher, "launcher (tools/wsl/zbuild_desktop_exe.sh)"), (a.jar, "byos-cli.jar (gradlew :cli:fatJar)"),
+                    (a.node_zip, "Node.js zip"), (os.path.join(a.jre, "bin", "java.exe"), "Java runtime (jlink)")] + \
+                   [(os.path.join(a.platform_tools, f), "platform-tools") for f in ADB_FILES + ["NOTICE.txt"]]:
+        if not os.path.isfile(p):
+            sys.exit("missing %s: %s" % (what, p))
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for part in APP_PARTS:
-            add_tree(z, os.path.join(REPO, "desktop", part), ROOT + "/app/" + part)
-        z.write(os.path.join(REPO, "LICENSE"), ROOT + "/LICENSE")
-        for p in lic:
-            z.write(p, ROOT + "/licenses/" + os.path.basename(p))
+            add_tree(z, os.path.join(REPO, "desktop", part), "app/" + part)
+        z.write(a.jar, "byos-cli.jar")
+        with zipfile.ZipFile(a.node_zip) as nz:
+            top = nz.namelist()[0].split("/")[0]
+            z.writestr("runtime/node/node.exe", nz.read(top + "/node.exe"))
+            z.writestr("licenses/Node.js-LICENSE.txt", nz.read(top + "/LICENSE"))
+        add_tree(z, a.jre, "runtime/java")
+        for f in ADB_FILES:
+            z.write(os.path.join(a.platform_tools, f), "platform-tools/" + f)
+        z.write(os.path.join(a.platform_tools, "NOTICE.txt"), "licenses/Android-platform-tools-NOTICE.txt")
+        tmp = os.path.join(REPO, "out", "desktop_licenses")
+        if os.path.isdir(tmp):
+            for n in os.listdir(tmp):
+                os.remove(os.path.join(tmp, n))
+        for p in notices.collect("byos-cli", tmp):
+            z.write(p, "licenses/" + os.path.basename(p))
+        z.write(os.path.join(REPO, "LICENSE"), "LICENSE")
+    payload = buf.getvalue()
+
+    os.makedirs(a.out, exist_ok=True)
+    out = os.path.join(a.out, "ByOS-Desktop-%s.exe" % a.version)
+    launcher = open(a.launcher, "rb").read()
+    with open(out, "wb") as f:
+        f.write(launcher)
+        f.write(payload)
+        f.write(b"BYOSPAK1" + struct.pack("<Q", len(launcher)))
     h = hashlib.sha256(open(out, "rb").read()).hexdigest()
     print("ByOS Desktop %s -> %s (%d bytes, sha256 %s)" % (a.version, out, os.path.getsize(out), h))
 

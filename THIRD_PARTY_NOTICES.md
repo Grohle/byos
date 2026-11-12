@@ -541,6 +541,22 @@ carries a copy of this document and of the licence texts named below in
 - **Uncertain**: the copyright line is the one in the upstream source headers, as for 7.3.
 - Licence text: `LICENSES/Apache-2.0.txt`
 
+### 7.5 Runtimes inside `ByOS-Desktop-<version>.exe` (Windows)
+
+The Windows program carries, unmodified, the runtimes it needs, so nothing has to be installed
+first (`tools/package_desktop.py`; the launcher is ByOS' own code, `desktop/windows/launcher.c`).
+Each one's licence travels with it in the unpacked folder (`licenses/`, `runtime/java/legal/`).
+
+| Component | Version | Licence | Where |
+| --- | --- | --- | --- |
+| Node.js (`node.exe` of the official Windows x64 zip) | 24.22.1 | MIT, with the licences of its bundled parts in the same file | `runtime/node/node.exe`; text `licenses/Node.js-LICENSE.txt` |
+| Eclipse Temurin (OpenJDK) runtime, reduced with `jlink` to `java.base`, `java.desktop`, `jdk.crypto.ec`, `jdk.unsupported`, `jdk.zipfs`, `jdk.charsets` | 21.0.12.1+1 | GPL-2.0 with the Classpath Exception, plus the notices of each module | `runtime/java/`; texts in `runtime/java/legal/<module>/` |
+| Android SDK Platform-Tools: `adb.exe`, `AdbWinApi.dll`, `AdbWinUsbApi.dll` | 37.0.1 | Apache-2.0 (adb) and the licences listed in Google's NOTICE file | `platform-tools/`; text `licenses/Android-platform-tools-NOTICE.txt` |
+
+- Source code: Node.js at https://github.com/nodejs/node (tag `v24.22.1`); Temurin at
+  https://github.com/adoptium/jdk21u (tag `jdk-21.0.12.1+1`, source commit `1c417fbfc2f7` as recorded in `runtime/java/release`);
+  adb at https://android.googlesource.com/platform/packages/modules/adb.
+
 ## 8. Not included in any file set
 
 - HiBy's firmware and applications: never distributed by ByOS.
