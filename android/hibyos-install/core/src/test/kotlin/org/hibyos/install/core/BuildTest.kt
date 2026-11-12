@@ -65,6 +65,70 @@ class BuildTest {
     }
 
     @Test
+    fun anInterruptedBuildIsDiscardedAndTheFirmwareKept() {
+        bundle().use { b ->
+            val out = File(dir, "out")
+            val work = File(dir, "work")
+            val stamp = ByosBuild.stamp(b, "test 1.0")
+            val fwDir = File(dir, "fw")
+            val cached = FirmwareCache.import(fw, fwDir, b.firmware)!!
+            // what a run killed half way leaves: the stamp, a partial firmware, the work folder, a partial export
+            out.mkdirs()
+            File(out, ByosBuild.STAMP).writeText(stamp)
+            File(out, b.outName + ".part").writeBytes(ByteArray(1000))
+            File(work, "rootfs.new").apply { parentFile.mkdirs(); writeBytes(ByteArray(1000)) }
+            File(out, "ByOS/payload/VERSION.part").apply { parentFile.mkdirs(); writeText("9.9") }
+            File(out, "notes.txt").writeText("the user's own file")
+            assertNull(ByosBuild.restore(b, out, stamp))
+            assertFalse(ByosBuild.sweep(b, out, work, stamp))
+            assertEquals(listOf("notes.txt"), out.list()!!.toList())
+            assertFalse(work.exists())
+            // the next build runs, and the checked firmware is still there
+            val (r, _) = ByosBuild.patch(cached.file, b, out, work, PatchOptions(buildId = "0123456789abcdef0123456789abcdef"), stamp = stamp)
+            assertEquals(r.sha256, ByosBuild.restore(b, out, stamp)!!.sha256)
+            assertEquals(stamp, File(out, ByosBuild.STAMP).readText())
+            assertNotNull(FirmwareCache.ready(fwDir, b.firmware))
+            // a finished build of the same files is kept; only the leftovers around it go
+            File(out, "old-version.upt").writeBytes(ByteArray(10))
+            File(out, "x.part").writeBytes(ByteArray(10))
+            File(out, ".work").mkdirs()
+            assertTrue(ByosBuild.sweep(b, out, work, stamp))
+            assertTrue(File(out, b.outName).isFile)
+            assertFalse(File(out, "old-version.upt").exists())
+            assertFalse(File(out, "x.part").exists())
+            assertFalse(File(out, ".work").exists())
+            // another version of the app, or other ByOS files: the build is not reused but removed
+            assertNull(ByosBuild.restore(b, out, ByosBuild.stamp(b, "test 1.1")))
+            assertFalse(ByosBuild.sweep(b, out, work, ByosBuild.stamp(b, "test 1.1")))
+            assertFalse(File(out, b.outName).exists())
+            assertFalse(File(out, ByosBuild.RECORD).exists())
+            assertTrue(File(out, "notes.txt").isFile)
+            assertNotNull(FirmwareCache.ready(fwDir, b.firmware))
+            // the stamp names the ByOS files by their checksum
+            assertTrue(stamp.contains("bundle " + ByosBuild.fileSha256(b.file)))
+        }
+    }
+
+    @Test
+    fun startOverRemovesTheBuildStepsOnly() {
+        bundle().use { b ->
+            val out = File(dir, "out")
+            val stamp = ByosBuild.stamp(b, "test")
+            ByosBuild.patch(fw, b, out, File(dir, "work"), PatchOptions(buildId = "0123456789abcdef0123456789abcdef"), stamp = stamp)
+            ByosBuild.exportSd(b, out)
+            File(out, "build.json").writeText("{}")
+            val input = File(out, "given.upt").apply { writeBytes(fw.readBytes()) }
+            File(out, "mine.txt").writeText("kept")
+            ByosBuild.startOver(out, File(dir, "work"), keep = input)
+            assertEquals(setOf("given.upt", "mine.txt"), out.list()!!.toSet())
+            assertNull(ByosBuild.restore(b, out))
+            // patching from a firmware that sits in the build folder does not delete it
+            ByosBuild.patch(input, b, out, File(dir, "work"), PatchOptions(buildId = "0123456789abcdef0123456789abcdef"), stamp = stamp)
+            assertTrue(input.isFile)
+        }
+    }
+
+    @Test
     fun sdOrderPutsTheVersionLastAndFirmwareAtTheEnd() {
         bundle().use { b ->
             val order = ByosBuild.sdOrder(b).map { it.path }

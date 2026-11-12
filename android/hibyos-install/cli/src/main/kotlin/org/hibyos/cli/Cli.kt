@@ -143,6 +143,7 @@ class Cli(
             "bundle-update" to (setOf("--check") to emptySet()),
             "firmware-fetch" to (emptySet<String>() to setOf("--bundle", "--out", "--from")),
             "build" to (setOf("--force") to setOf("--bundle", "--firmware", "--out")),
+            "build-clean" to (emptySet<String>() to setOf("--dir")),
             "build-send" to (setOf("--install", "--yes", "--no-wait") to setOf("--dir", "--wait-max")),
             "patch" to (emptySet<String>() to setOf("--firmware", "--bundle", "--out", "--work")),
             "update-send" to (setOf("--latest", "--allow-downgrade", "--install", "--no-confirm", "--no-wait", "--wait") to emptySet()),
@@ -244,6 +245,7 @@ class Cli(
                 "bundle-update" -> cmdBundleUpdate()
                 "firmware-fetch" -> cmdFirmwareFetch()
                 "build" -> cmdBuild()
+                "build-clean" -> cmdBuildClean()
                 "build-send" -> cmdBuildSend()
                 "patch" -> cmdPatch()
                 "update-send" -> cmdUpdateSend()
@@ -1172,7 +1174,7 @@ class Cli(
         val b = openBundle()
         val fw = FirmwareCache.ready(firmwareDir(), b.firmware)
         val dir = buildDir("--dir")
-        val built = readBuild(dir)?.takeIf { it.hibyosVersion == b.hibyosVersion && ByosBuild.restore(b, dir) != null }
+        val built = readBuild(dir)?.takeIf { it.hibyosVersion == b.hibyosVersion && ByosBuild.restore(b, dir, buildStamp(b)) != null }
         return linkedMapOf("hibyos_version" to b.hibyosVersion, "generated_from" to b.generatedFrom, "bundle" to bundleSource,
             "bundle_path" to b.file.path, "firmware" to firmwareFields(b.firmware), "firmware_ready" to (fw != null),
             "firmware_path" to fw?.file?.path, "build" to built?.let {
@@ -1262,27 +1264,46 @@ class Cli(
         "hibyos_version" to m.hibyosVersion, "build_id" to m.buildId, "files" to m.files.size, "sd_size" to m.files.sumOf { it.second },
         "cached" to cached)
 
+    /** What a build is made from: these ByOS files and this byos-cli (ByosBuild.stamp). */
+    private fun buildStamp(b: Bundle): String = ByosBuild.stamp(b, "byos-cli $VERSION")
+
+    /**
+     * "Start over": removes the build steps (the build folder's record, patched firmware, ByOS
+     * folder and partial files). The official firmware in cache/firmware/ is kept.
+     */
+    private fun cmdBuildClean(): Map<String, Any?> {
+        val dir = buildDir("--dir")
+        val before = dir.listFiles()?.size ?: 0
+        ByosBuild.startOver(dir, File(dir, ".work"))
+        val after = dir.listFiles()?.size ?: 0
+        return linkedMapOf("dir" to dir.path, "removed" to (before - after), "firmware_kept" to true)
+    }
+
     private fun cmdBuild(): Map<String, Any?> {
         val b = openBundle()
         val dir = buildDir("--out")
         val fw = a.opt("--firmware")?.let { File(it) } ?: FirmwareCache.ready(firmwareDir(), b.firmware)?.file
             ?: throw CliError("usage", "there is no official firmware yet: run firmware-fetch first, or give --firmware FILE.upt")
         if (!fw.isFile) throw CliError("local_io", "${fw.path} does not exist", path = fw.path)
-        // a finished build of the same ByOS files is reused (the patch takes a minute)
-        if (!a.has("--force") && a.opt("--firmware") == null) {
+        val stamp = buildStamp(b)
+        val work = File(dir, ".work")
+        // a finished build of the same ByOS files by this byos-cli is reused (the patch takes a
+        // minute); whatever else an earlier run left (stopped half way, older ByOS files, another
+        // version of byos-cli) is cleared instead of getting in the way
+        val kept = ByosBuild.sweep(b, dir, work, stamp, keep = fw)
+        if (kept && !a.has("--force") && a.opt("--firmware") == null) {
             val m = readBuild(dir)
-            val rec = ByosBuild.restore(b, dir)
+            val rec = ByosBuild.restore(b, dir, stamp)
             if (m != null && rec != null && m.hibyosVersion == b.hibyosVersion && m.sha256 == rec.sha256 &&
                 m.files.all { (p, size, _) -> File(dir, p).length() == size }) return buildResult(dir, m, true)
         }
         File(dir, BUILD_MANIFEST).delete()
-        val work = File(dir, ".work")
         val upt = File(dir, b.outName)
         val (r, _) = try {
             ByosBuild.patch(fw, b, dir, work, PatchOptions(cancelled = { cancelled.get() }), PatchListener { stage, fraction ->
                 out.progress("patch", upt.path, (stage.overall(fraction) * 1000).toLong(), 1000, unit = "permille",
                     extra = mapOf("stage" to stage.name.lowercase()))
-            })
+            }, stamp)
         } catch (e: PatchException) { throw patchError(e) } finally { work.deleteRecursively() }
         val files = try {
             ByosBuild.exportSd(b, dir, { cancelled.get() }) { d, t -> out.progress("export", File(dir, "ByOS").path, d, t) }
