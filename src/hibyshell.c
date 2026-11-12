@@ -1047,22 +1047,33 @@ static int vs_visible(void)                 /* el dialogo de HiBy esta en el fot
 {
     return st->capture && vs_grey(fr1[(VS_Y + 3) * W + 60]) && vs_grey(fr1[(VS_Y + 3) * W + 260]) && vs_grey(fr1[(VS_Y + VS_H - 4) * W + 160]);
 }
-static void vs_overlay(uint16_t *d)
+/* src: la franja (VS_W x VS_H) de donde copiar; NULL = del fotograma de HiBy (fr1) */
+static void vs_overlay_src(uint16_t *d, const uint16_t *src)
 {
     if (!vs_a_ok) vs_mask();
     const unsigned br = 10, bg = 21, bb = 11;
     for (int y = 0; y < VS_H; y++) for (int x = 0; x < VS_W; x++) {
         unsigned a = vs_a[y * VS_W + x]; if (!a) continue;
         int i = (VS_Y + y) * W + VS_X + x;
-        if (a >= 250) { d[i] = fr1[i]; continue; }
+        if (a >= 250) { d[i] = src ? src[y * VS_W + x] : fr1[i]; continue; }
         unsigned p = d[i], na = 255 - a;   /* borde: el gris del dialogo sobre lo que hay debajo (no sobre el inicio de HiBy) */
         d[i] = (uint16_t)((((br * a + (p >> 11) * na) / 255) << 11) | (((bg * a + ((p >> 5) & 63) * na) / 255) << 5) | ((bb * a + (p & 31) * na) / 255));
     }
 }
+static void vs_overlay(uint16_t *d) { vs_overlay_src(d, 0); }
+/* Entre dos teclas HiBy rehace su dialogo y en un fotograma la franja no esta: el indicador
+ * parpadeaba (medido con el probador). Se guarda la ultima franja vista y se sigue pintando
+ * hasta 250 ms si acaba de pulsarse una tecla. */
+static double vol_key_t;
+static uint16_t vs_cache[VS_W * VS_H]; static double vs_cache_t;
 static void hud_overlay(uint16_t *d)
 {
-    if (vol_ui) blend_sprite(d, &spr_hud, HUD_X, HUD_Y);
-    else if (vs_visible()) vs_overlay(d);
+    if (vol_ui) { blend_sprite(d, &spr_hud, HUD_X, HUD_Y); return; }
+    double t = now_ms();
+    if (vs_visible()) {
+        for (int y = 0; y < VS_H; y++) memcpy(vs_cache + y * VS_W, fr1 + (VS_Y + y) * W + VS_X, VS_W * 2);
+        vs_cache_t = t; vs_overlay(d);
+    } else if (vs_cache_t && t - vs_cache_t < 250 && t - vol_key_t < 1500) vs_overlay_src(d, vs_cache);
 }
 /* volume.dlg visible (HiBy) u oculto (ByOS): solo cambian las lineas "visible":"hide" */
 static void vol_ui_apply(void)
@@ -1157,7 +1168,6 @@ static void hud_upload(void)
 }
 static void update_overlay(void);
 static int hiby_modal;                      /* un dialogo de HiBy en pantalla: todo es suyo */
-static double vol_key_t;                    /* ultima tecla de volumen (su franja tapa la firma del inicio) */
 static void hud_key(int code)
 {
     double t = now_ms(); vol_key_t = t;
