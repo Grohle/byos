@@ -1257,6 +1257,7 @@ static int app_back_gesture(int sx, int sy);
 #include "launcher_touch.inc.c"
 #include "settings.inc.c"
 #include "keyboard.inc.c"
+#include "hibykb.inc.c"                  /* el teclado de ByOS sobre el T9 de HiBy */
 #include "tageditor.inc.c"
 #include "nowplaying.inc.c"
 #include "playctl.inc.c"
@@ -1950,6 +1951,7 @@ int main(int argc, char **argv)
                 home_t = 0;
                 const uint16_t *vv = visible();
                 if (is_home(vv)) { launcher_enter(); last_cap = st->cap_frames; }
+                else if (is_hiby_kb(vv)) { hk_session(); home_frames = st->frames; last_cap = st->cap_frames; }   /* Qobuz, Tidal, contrasenas */
                 else if (stream_launched && is_stream_page(vv)) {
                     /* volviendo de Tidal/Qobuz: saltar la pagina intermedia hasta el inicio */
                     stream_launched = 0;

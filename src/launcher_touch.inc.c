@@ -60,15 +60,29 @@ static int open_app_nav(void)   /* en el hilo de navegacion; pantalla congelada 
     if (ap->act == ACT_TAP || ap->act == ACT_MUSIC) { inj_tap(ap->ax, ap->ay); return wait_left_home(2500); }
     if (ap->act == ACT_STREAM) {
         inj_tap(319, 479);                                   /* "Stream media" (oculto en el tema) */
-        if (!wait_left_home(2500)) return 0;
-        c = st->cap_frames;
-        inj_tap(ap->ax ? 236 : 84, 140);
-        /* Tidal/Qobuz tardan en salir: hasta que la pagina intermedia "Stream media" no se ha
-         * ido no se da por abierta (antes, a los 0,9 s se soltaba y se veia ese menu unos
-         * segundos); luego, que se asiente */
-        { double tw = now_ms(); while (is_stream_page(fr1) && now_ms() - tw < 8000) { msleep(20); st->shell_beat++; } }
-        c = st->cap_frames; settle(c, 600, 250);
-        return !is_stream_page(fr1);
+        if (!wait_left_home(6000)) return 0;                 /* la primera vez tras arrancar tarda >2,5 s ("No se pudo abrir") */
+        /* la pagina intermedia entra deslizando: tocar la casilla a mitad de la animacion se perdia
+         * o se comprobaba la pagina antes de que estuviera ("No se pudo abrir" la primera vez tras
+         * arrancar, aunque luego se abria). Esperar a que este quieta, tocar, y esperar a que se vaya
+         * (la primera vez Qobuz tarda > 1 s); si a los 3 s sigue ahi, otro toque. */
+        { double tw = now_ms(); while (!is_stream_page(fr1) && now_ms() - tw < 4000) { msleep(20); st->shell_beat++; } }
+        c = st->cap_frames; settle(c, 300, 120);
+        int tx = ap->ax ? 236 : 84;
+        inj_tap(tx, 140);
+        /* abierta = una pantalla que no es ni la intermedia ni el inicio y que sigue asi al asentarse
+         * (tras tocar, HiBy puede tapar un momento la intermedia con un aviso de carga y volver a
+         * ella antes de abrir el servicio: medido, fallaba a los 1,1 s y se abria a los 3 s) */
+        double tw = now_ms(); int again = 0;
+        while (now_ms() - tw < 12000) {
+            if (!is_stream_page(fr1) && !is_home(fr1)) {
+                uint32_t c2 = st->cap_frames; settle(c2, 600, 250);
+                if (!is_stream_page(fr1) && !is_home(fr1)) { lg("stream: abierto en %.0f ms", now_ms() - tw); return 1; }
+            }
+            msleep(20); st->shell_beat++;
+            if (!again && now_ms() - tw > 4000 && is_stream_page(fr1)) { again = 1; lg("stream: la casilla no respondio; otro toque"); inj_tap(tx, 140); }
+        }
+        lg("stream: sigue en %s tras 12 s", is_stream_page(fr1) ? "la pagina intermedia" : "el inicio");
+        return 0;
     }
     if (ap->act == ACT_PLANE) { inj_swipe(300, 240, 30, 240, 5, 60); settle(c, 700, 150); return is_plane(fr1); }
     return 0;
@@ -262,7 +276,7 @@ static void launch_app_body(int a, int ix, int iy)
         present();
         if (t >= 1) break;
     }
-    int ok = nav_wait(ap->act == ACT_STREAM ? 10000 : 3000);
+    int ok = nav_wait(ap->act == ACT_STREAM ? 16000 : 3000);
     if (ok == 1) {
         /* de la imagen guardada a la app en vivo con un fundido corto */
         { double tf = now_ms(); for (;;) { double t = (now_ms() - tf) / 140.0; if (t > 1) t = 1; unsigned k = (unsigned)(255 * t);
