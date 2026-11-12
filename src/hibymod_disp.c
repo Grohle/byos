@@ -992,9 +992,15 @@ int ioctl(int fd, unsigned long req, ...)
             for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) memcpy(sb_raw[y - TOPBAR_Y0], (const uint16_t *)(b + y * fline) + TOPBAR_PCT_X, TOPBAR_PCT_W * 2);
             sb_fix(b);
             sb_bolt(b);
-            memcpy(frames + fsize, b, fsize);   /* fotograma del reproductor (ya retocado) -> frames[1] */
+            /* fotograma del reproductor (ya retocado) -> frames[1], y el del shell otra vez en b. Fila a
+             * fila: si el reproductor dibujo en el bufer que se esta viendo (same_pans), su imagen (el
+             * espejo del inicio) se veia hasta acabar la primera copia entera; asi cada fila vuelve a
+             * ser la del shell justo despues de guardarla (soak 12-11: franja del dock al subir el volumen) */
             wait_even(&st->fr0_seq);
-            memcpy(b, frames, fsize);           /* el panel sigue con la imagen del shell */
+            for (uint32_t off = 0; off < fsize; off += fline) {
+                memcpy(frames + fsize + off, b + off, fline);
+                memcpy(b + off, frames + off, fline);
+            }
             corners_apply(b);
             st->cap_frames++;
             if (shown_y != 0xffffffffu && shown_y != last_var.yoffset && shown_y * fline + fsize <= 2 * fsize) restore = buf_at(shown_y);
