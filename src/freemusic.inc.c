@@ -2195,10 +2195,17 @@ static void fm_poll_list(struct fm_job *j)
         if (!l->pend) l->state = l->n ? 2 : 3;
         return;
     }
-    if (!l->fresh) { fm_list_clear(l); l->gen = j->gen; l->fresh = 1; }   /* the first answer replaces what the cache showed */
+    /* the first answer replaces what the cache showed, but the covers already decoded are kept
+     * for the same items: clearing them showed grey placeholders for a moment and the covers
+     * came back one by one (flicker on opening Vinyl, found by the tour) */
+    struct fm_item *old = 0; int nold = 0;
+    if (!l->fresh) {
+        old = l->it; nold = l->n; l->it = 0; l->n = 0;
+        fm_list_clear(l); l->gen = j->gen; l->fresh = 1;
+    }
     int room = FM_MAXIT - l->n, add = j->n < room ? j->n : room;
     struct fm_item *nit = realloc(l->it, (l->n + add + 1) * sizeof *nit);
-    if (!nit) return;
+    if (!nit) { for (int q = 0; q < nold; q++) free(old[q].thumb); free(old); return; }
     l->it = nit;
     for (int i = 0; i < add; i++) {
         struct fm_item *it = &j->items[i];
@@ -2206,8 +2213,12 @@ static void fm_poll_list(struct fm_job *j)
         if (dup) continue;
         it->srank = (uint8_t)k;
         fm_apply_probe_cache(it);
+        if (!it->thumb) for (int q = 0; q < nold; q++)
+            if (old[q].thumb && fm_same_item(&old[q], it->src, it->sid, it->id)) { it->thumb = old[q].thumb; old[q].thumb = 0; break; }
         l->it[l->n++] = *it;
     }
+    for (int q = 0; q < nold; q++) free(old[q].thumb);
+    free(old);
     l->sraw[k] += j->n; l->sfound[k] = j->found; l->sexact[k] = (uint8_t)j->exact; l->spage[k] = j->page;
     if (l->nss > 1) qsort(l->it, l->n, sizeof *l->it, fm_cmp_merge);
     l->found = 0; l->exact = 1; l->more = 0;
