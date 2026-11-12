@@ -241,3 +241,9 @@ test('a missing program gives a clear error', async () => {
   assert.equal(final.ok, false);
   assert.ok(['no_cli', 'internal'].includes(final.code));
 });
+
+test('a USB serial with a space is a valid device (HiBy R3 II 2025)', () => {
+  assert.deepEqual(buildArgs('status', { device: 'usb:HiBy R3II_2025' }), ['--device', 'usb:HiBy R3II_2025', 'status']);
+  assert.throws(() => buildArgs('status', { device: 'usb: lead' }));
+  assert.throws(() => buildArgs('status', { device: 'usb:a;b' }));
+});

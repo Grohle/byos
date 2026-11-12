@@ -42,7 +42,9 @@ export function resolveCli({ cli, mock = false, env = process.env } = {}) {
 
 export class UsageError extends Error {}
 
-const DEVICE_SPEC = /^(usb|wifi|usb:[A-Za-z0-9._:-]{1,64}|wifi:[0-9a-f]{4,16}|[A-Za-z0-9][A-Za-z0-9.-]{0,252}(:\d{1,5})?)$/;
+// A USB serial may contain spaces (the HiBy R3 II 2025 reports "HiBy R3II_2025"): safe, the
+// arguments go to the process as a list, never through a shell.
+const DEVICE_SPEC = /^(usb|wifi|usb:[A-Za-z0-9._:-](?:[A-Za-z0-9._: -]{0,62}[A-Za-z0-9._:-])?|wifi:[0-9a-f]{4,16}|[A-Za-z0-9][A-Za-z0-9.-]{0,252}(:\d{1,5})?)$/;
 
 function remote(p, what, { allowEmpty = false } = {}) {
   if (typeof p !== 'string') throw new UsageError(`${what}: a path is required`);
