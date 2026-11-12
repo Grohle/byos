@@ -51,6 +51,9 @@ interface SyncEnv {
 
     /** Waits on the worker, between two UPDATE_STATUS requests (tests do not wait). */
     fun sleep(ms: Long) = Thread.sleep(ms)
+
+    /** On the UI thread after each change: what runs now (null: nothing), for a foreground notification. */
+    fun work(note: WorkNote?) {}
 }
 
 /**
@@ -125,7 +128,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         emptyList()
     }
 
-    private fun ui(f: (SyncState) -> SyncState) = env.post { state = f(state) }
+    private fun ui(f: (SyncState) -> SyncState) = env.post {
+        state = f(state)
+        env.work(workOf(state))
+    }
 
     private fun begin(): Boolean {
         if (state.busy) return false
@@ -400,6 +406,55 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         return s
     }
 
+    /**
+     * A transfer lost its connection: waits a little longer each time (RECONNECT_DELAYS), then
+     * opens a new session with the same player, without a code (AUTH). When the player is no
+     * longer at its address (a new DHCP lease), it is looked for again by its device id. Returns
+     * the attempts used; throws [lostWith] when every attempt failed.
+     */
+    private fun reconnectDuringTransfer(from: Int, lostWith: SyncException): Int {
+        dropSession()
+        var attempt = from
+        try {
+            while (attempt < RECONNECT_DELAYS.size) {
+                val n = attempt + 1
+                ui { it.copy(transfer = it.transfer.copy(reconnecting = n)) }
+                env.sleep(RECONNECT_DELAYS[attempt])
+                attempt++
+                if (stop) throw SyncException(SyncException.E_CANCELLED)
+                try {
+                    reconnectCurrent()
+                    return attempt
+                } catch (e: SyncException) {
+                    // the player refused this phone: trying again changes nothing
+                    if (e.code == SyncException.NOT_PAIRED || e.code == SyncException.FORGOTTEN || e.code == SyncException.IDENTITY_CHANGED) throw e
+                }
+            }
+            throw lostWith
+        } finally {
+            ui { it.copy(transfer = it.transfer.copy(reconnecting = 0)) }
+        }
+    }
+
+    private fun reconnectCurrent() {
+        val d = current ?: throw SyncException(SyncException.CONNECTION_LOST)
+        val c = connector ?: throw SyncException(SyncException.NO_CLIENT)
+        val s = try {
+            c.connect(d.host, d.port, d.deviceId.ifEmpty { null })
+        } catch (e: SyncException) {
+            if (e.code != SyncException.UNREACHABLE || d.deviceId.isEmpty()) throw e
+            val found = c.discover(2000, cancelled) {}.firstOrNull { it.deviceId == d.deviceId } ?: throw e
+            val moved = d.copy(host = found.host, port = found.port)
+            current = moved
+            lastDevice = moved
+            c.connect(moved.host, moved.port, d.deviceId).also {
+                ui { st -> st.connected?.let { st.copy(link = it.copy(device = moved)) } ?: st }
+            }
+        }
+        session = s
+        lastPing = env.now()
+    }
+
     /** [putSmart] on the open session; a read error of the phone's file replaces the session, then is rethrown. */
     private fun putLocal(ns: Int, path: String, size: Long, sha: ByteArray, mtime: Long, replace: Boolean,
                          open: (Long) -> InputStream, exact: PutMode? = null, progress: (Long) -> Unit): PutResult {
@@ -511,59 +566,73 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             fun mark(id: Int, f: (SendJob) -> SendJob) = ui { st ->
                 st.copy(transfer = st.transfer.copy(jobs = st.transfer.jobs.map { if (it.id == id) f(it) else it }))
             }
+            val settled = HashSet<Int>()
+            var attempt = 0
             try {
-                if (target.isNotEmpty()) s.mkdir(target, true)
-                for (f in folders) s.mkdir(f, true)
-                for (job in todo) {
-                    if (stop) throw SyncException(SyncException.E_CANCELLED)
-                    val src = sources[job.id] ?: continue
+                while (true) {
                     try {
-                        val sha = hashes[job.id] ?: run {
-                            mark(job.id) { it.copy(status = JobStatus.HASHING) }
-                            val base = done
-                            val h = hash(src.open) { n ->
-                                if (pace.due()) ui { st -> st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = true)) }
+                        val cur = session ?: throw SyncException(SyncException.CONNECTION_LOST)
+                        if (target.isNotEmpty()) cur.mkdir(target, true)
+                        for (f in folders) cur.mkdir(f, true)
+                        for (job in todo) {
+                            if (job.id in settled) continue
+                            if (stop) throw SyncException(SyncException.E_CANCELLED)
+                            val src = sources[job.id] ?: continue
+                            try {
+                                val sha = hashes[job.id] ?: run {
+                                    mark(job.id) { it.copy(status = JobStatus.HASHING) }
+                                    val base = done
+                                    val h = hash(src.open) { n ->
+                                        if (pace.due()) ui { st -> st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = true)) }
+                                    }
+                                    if (h.second != job.size) throw IOException("${job.local}: the file changed while it was read")
+                                    hashes[job.id] = h.first
+                                    done += job.size
+                                    h.first
+                                }
+                                mark(job.id) { it.copy(status = JobStatus.SENDING) }
+                                val base = done
+                                val r = putLocal(Ns.SD, job.remote, job.size, sha, src.mtime, replace, { off -> openAt(src.open, off) }) { n ->
+                                    if (pace.due()) ui { st ->
+                                        st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = false,
+                                            jobs = st.transfer.jobs.map { if (it.id == job.id) it.copy(done = n) else it }))
+                                    }
+                                }
+                                done = base + job.size
+                                mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
+                                if (!r.skipped && FileKinds.isAudio(job.remote)) {
+                                    if (r.replaced) changedMusic += job.remote else newMusic++
+                                }
+                            } catch (e: SyncException) {
+                                when {
+                                    e.code == SyncException.E_CANCELLED -> throw e
+                                    e.fatal || e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE ||
+                                        e.code == SyncException.CONNECTION_LOST -> {
+                                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
+                                        throw e
+                                    }
+                                    e.code == SyncException.E_EXISTS -> mark(job.id) { it.copy(status = JobStatus.EXISTS, error = e.code) }
+                                    e.code == SyncException.E_FILE_TOO_BIG -> mark(job.id) { it.copy(status = JobStatus.TOO_BIG, error = e.code) }
+                                    e.code == SyncException.E_BAD_PATH -> mark(job.id) { it.copy(status = JobStatus.BAD_NAME, error = e.code) }
+                                    else -> {
+                                        // the file changed after it was hashed: the next try hashes it again
+                                        if (e.code == SyncException.E_HASH_MISMATCH) hashes.remove(job.id)
+                                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
+                                    }
+                                }
+                            } catch (e: IOException) {
+                                // this file could not be read on the phone (putLocal already opened a new
+                                // session if a PUT was under way): the others go on
+                                hashes.remove(job.id)
+                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
                             }
-                            if (h.second != job.size) throw IOException("${job.local}: the file changed while it was read")
-                            hashes[job.id] = h.first
-                            done += job.size
-                            h.first
+                            settled += job.id
                         }
-                        mark(job.id) { it.copy(status = JobStatus.SENDING) }
-                        val base = done
-                        val r = putLocal(Ns.SD, job.remote, job.size, sha, src.mtime, replace, { off -> openAt(src.open, off) }) { n ->
-                            if (pace.due()) ui { st ->
-                                st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = false,
-                                    jobs = st.transfer.jobs.map { if (it.id == job.id) it.copy(done = n) else it }))
-                            }
-                        }
-                        done = base + job.size
-                        mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
-                        if (!r.skipped && FileKinds.isAudio(job.remote)) {
-                            if (r.replaced) changedMusic += job.remote else newMusic++
-                        }
+                        break
                     } catch (e: SyncException) {
-                        when {
-                            e.code == SyncException.E_CANCELLED -> throw e
-                            e.fatal || e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE ||
-                                e.code == SyncException.CONNECTION_LOST -> {
-                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
-                                throw e
-                            }
-                            e.code == SyncException.E_EXISTS -> mark(job.id) { it.copy(status = JobStatus.EXISTS, error = e.code) }
-                            e.code == SyncException.E_FILE_TOO_BIG -> mark(job.id) { it.copy(status = JobStatus.TOO_BIG, error = e.code) }
-                            e.code == SyncException.E_BAD_PATH -> mark(job.id) { it.copy(status = JobStatus.BAD_NAME, error = e.code) }
-                            else -> {
-                                // the file changed after it was hashed: the next try hashes it again
-                                if (e.code == SyncException.E_HASH_MISMATCH) hashes.remove(job.id)
-                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
-                            }
-                        }
-                    } catch (e: IOException) {
-                        // this file could not be read on the phone (putLocal already opened a new
-                        // session if a PUT was under way): the others go on
-                        hashes.remove(job.id)
-                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
+                        // the connection dropped (Wi-Fi, the player asleep): connect again and go on where it stopped
+                        if (!lost(e) || stop || current == null || attempt >= RECONNECT_DELAYS.size) throw e
+                        attempt = reconnectDuringTransfer(attempt, e)
                     }
                 }
                 session?.let { refreshTags(it, changedMusic) }
@@ -1275,6 +1344,24 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     companion object {
         /** Section 17: clients PING every 30 s while idle (the device drops a session quiet for 120 s). */
         const val PING_MS = 30_000L
+
+        /** Waits before each new connection when a transfer lost its own (about a minute in all). */
+        val RECONNECT_DELAYS = longArrayOf(2_000, 4_000, 8_000, 15_000, 30_000)
+
+        /** What runs in the background, for the notification of the transfer service. */
+        fun workOf(s: SyncState): WorkNote? {
+            val t = s.transfer
+            val o = s.ota
+            val u = s.update
+            return when {
+                t.running -> WorkNote(WorkNote.Kind.SEND, t.done, t.total, t.current, t.reconnecting)
+                o is OtaPhase.Sending -> WorkNote(WorkNote.Kind.UPDATE, o.done, o.total, o.path)
+                o is OtaPhase.Installing -> WorkNote(WorkNote.Kind.INSTALL, o.permille.toLong(), 1000, o.version)
+                o.running -> WorkNote(WorkNote.Kind.INSTALL, 0, 0, "")
+                u is UpdatePhase.Sending -> WorkNote(WorkNote.Kind.UPDATE, u.done, u.total, u.path)
+                else -> null
+            }
+        }
 
         /** The name of the update description in NS_UPDATE (section 14.1). */
         const val UPDATE_JSON = "hibyos-update.json"

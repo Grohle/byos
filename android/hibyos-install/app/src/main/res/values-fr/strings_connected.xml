@@ -268,6 +268,18 @@
     <string name="sync_top_of_card">Haut de la carte</string>
     <string name="sync_space_short">Pas assez de place sur la carte</string>
     <string name="sync_space_short_sub">%1$s à envoyer, %2$s libres. Supprimez quelque chose dans Fichiers ou choisissez moins de fichiers.</string>
+
+    <!-- Share, background transfers, reconnection -->
+    <string name="sync_share_label">Envoyer au baladeur</string>
+    <string name="sync_share_nothing">Rien à envoyer : seuls des fichiers peuvent être partagés vers le baladeur.</string>
+    <string name="sync_note_channel">Envois vers le baladeur</string>
+    <string name="sync_note_channel_text">Progression des fichiers et des mises à jour ByOS envoyés au baladeur</string>
+    <string name="sync_note_sending">Envoi vers le baladeur</string>
+    <string name="sync_note_update">Envoi d\'une mise à jour ByOS</string>
+    <string name="sync_note_install">Installation de ByOS sur le baladeur</string>
+    <string name="sync_note_reconnecting">Connexion perdue, reconnexion…</string>
+    <string name="sync_reconnecting">Connexion perdue. Reconnexion (%1$d sur %2$d)…</string>
+    <string name="sync_sending_note_bg">Vous pouvez quitter l\'app : l\'envoi continue et sa progression est dans les notifications. Si la connexion coupe, elle se rétablit d\'elle-même et l\'envoi reprend là où il s\'est arrêté.</string>
     <plurals name="sync_files">
         <item quantity="one">%d fichier</item>
         <item quantity="other">%d fichiers</item>

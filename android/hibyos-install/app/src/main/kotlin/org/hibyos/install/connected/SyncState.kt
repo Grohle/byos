@@ -34,6 +34,8 @@ data class Transfer(
     val current: String = "",
     val hashing: Boolean = false,
     val error: ErrorInfo? = null,
+    /** The connection dropped: this is the attempt to connect again (0: connected). */
+    val reconnecting: Int = 0,
 ) {
     val sent: Int get() = jobs.count { it.status == JobStatus.SENT }
     val skipped: Int get() = jobs.count { it.status == JobStatus.SKIPPED }
@@ -44,6 +46,14 @@ data class Transfer(
     }
     val left: Int get() = jobs.count { it.retryable }
     val finished: Boolean get() = !running && jobs.isNotEmpty() && jobs.none { it.status == JobStatus.WAITING }
+}
+
+/** Work that keeps going while the app is in the background (the transfer service shows it). */
+data class WorkNote(val kind: Kind, val done: Long, val total: Long, val detail: String, val reconnecting: Int = 0) {
+    enum class Kind { SEND, UPDATE, INSTALL }
+
+    /** 0 to 1000, or -1 when unknown. */
+    val permille: Int get() = if (total > 0) (done * 1000 / total).toInt().coerceIn(0, 1000) else -1
 }
 
 /** What a file-browser action is waiting for. */

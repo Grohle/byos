@@ -221,6 +221,10 @@ class ConnectedTest {
         override val releaseKeys: List<String> get() = keys
         var slept = 0L
         var onSleep: (() -> Unit)? = null
+        val notes = ArrayList<WorkNote?>()
+        override fun work(note: WorkNote?) {
+            notes += note
+        }
         override fun sleep(ms: Long) {
             slept += ms
             clock += ms
@@ -305,7 +309,12 @@ class ConnectedTest {
         m.addPicked { listOf(item("Book", "part1.m4b", data = big), item("Book", "notes.txt"), item("Book", ".hidden")) }
         assertEquals(3, m.state.transfer.jobs.size)
         card.dropAfter = 200_000
+        // the player stays out of reach: the app tries again for about a minute, then says so
+        env.c.down = true
         m.startSend()
+        assertEquals(ConnectedModel.RECONNECT_DELAYS.sum(), env.slept)
+        assertEquals(0, m.state.transfer.reconnecting)
+        env.c.down = false
         val t = m.state.transfer
         assertFalse(t.running)
         assertEquals(R.string.sync_err_lost, t.error?.title)
@@ -321,6 +330,43 @@ class ConnectedTest {
         assertEquals("notes.txt", String(card.files["Books/Book/notes.txt"]!!))
         assertEquals(JobStatus.BAD_NAME, m.state.transfer.jobs[2].status)
         assertEquals(2, m.state.transfer.sent)
+    }
+
+    @Test
+    fun transferReconnectsByItselfAndResumes() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        val big = ByteArray(300_000) { (it * 3).toByte() }
+        m.setDestination(Destination.MUSIC)
+        m.addPicked { listOf(item("Live", "set.flac", data = big), item("Live", "b.mp3")) }
+        card.dropAfter = 200_000
+        // the player got a new address while the Wi-Fi was down: it is found again by its device id
+        env.onSleep = { env.c.device = env.c.device.copy(host = "192.168.1.21") }
+        m.startSend()
+        val t = m.state.transfer
+        assertTrue(t.finished)
+        assertNull(t.error)
+        assertEquals(2, t.sent)
+        assertEquals(listOf(262_144L), card.resumedAt)
+        assertTrue(card.files["Music/Live/set.flac"]!!.contentEquals(big))
+        assertEquals(2_000L, env.slept)
+        val l = m.state.link as Link.Connected
+        assertEquals("192.168.1.21", l.device.host)
+        // the notification saw the reconnection, and nothing runs any more
+        assertTrue(env.notes.any { it?.reconnecting == 1 })
+        assertNull(env.notes.last())
+    }
+
+    @Test
+    fun workNotesFollowTheTransfer() {
+        val s = SyncState(transfer = Transfer(jobs = listOf(SendJob(1, "a", "Music/a", 10)), running = true, done = 5, total = 20, current = "Music/a"))
+        val n = ConnectedModel.workOf(s)!!
+        assertEquals(WorkNote.Kind.SEND, n.kind)
+        assertEquals(250, n.permille)
+        assertNull(ConnectedModel.workOf(SyncState()))
+        assertEquals(WorkNote.Kind.INSTALL, ConnectedModel.workOf(SyncState(ota = OtaPhase.Installing("0.9.1", 500)))!!.kind)
+        assertEquals(-1, ConnectedModel.workOf(SyncState(ota = OtaPhase.WaitingUser("0.9.1")))!!.permille)
     }
 
     /** Review: a phone file that fails mid-PUT must not leave the next request behind the abandoned upload. */

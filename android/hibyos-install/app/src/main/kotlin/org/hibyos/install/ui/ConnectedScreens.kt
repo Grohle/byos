@@ -58,6 +58,7 @@ import org.hibyos.install.R
 import org.hibyos.install.Screen
 import org.hibyos.install.UiState
 import org.hibyos.install.connected.Album
+import org.hibyos.install.connected.ConnectedModel
 import org.hibyos.install.connected.Destination
 import org.hibyos.install.connected.JobStatus
 import org.hibyos.install.connected.LibraryNav
@@ -499,8 +500,9 @@ fun SyncSend(s: UiState, a: Actions) {
             if (t.running) {
                 ProgressCard(title = stringResource(R.string.sync_sending),
                     fraction = if (t.total > 0) t.done.toFloat() / t.total else 0f,
-                    detail = stringResource(if (t.hashing) R.string.sync_job_hashing else R.string.sync_job_sending),
-                    detail2 = t.current.ifEmpty { " " }, note = stringResource(R.string.sync_sending_note))
+                    detail = if (t.reconnecting > 0) stringResource(R.string.sync_reconnecting, t.reconnecting, ConnectedModel.RECONNECT_DELAYS.size)
+                    else stringResource(if (t.hashing) R.string.sync_job_hashing else R.string.sync_job_sending),
+                    detail2 = t.current.ifEmpty { " " }, note = stringResource(R.string.sync_sending_note_bg))
             } else if (t.finished) {
                 val ok = t.problems == 0
                 Hero(if (ok) Glyphs.Check else Glyphs.Alert, if (ok) C.green else C.orange,

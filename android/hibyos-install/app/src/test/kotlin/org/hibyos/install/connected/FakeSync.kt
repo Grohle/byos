@@ -305,12 +305,13 @@ class FakeConnector(val card: FakeCard = FakeCard(), val code: String = "815365"
     var pairingOpen = true
     var allow = true
     var pairings = 0
-    val device = SyncDevice("192.168.1.20", 7340, "0123456789abcdef", "R3II_2025", pairingOpen = true, sdMounted = true, paired = false)
+    var device = SyncDevice("192.168.1.20", 7340, "0123456789abcdef", "R3II_2025", pairingOpen = true, sdMounted = true, paired = false)
 
     private fun info() = SyncDeviceInfo(device.deviceId, device.name, "0.9.0", "ByOS 0.9.0", local = false, sdMounted = true,
         shellAttached = true, caps = 0x1ff)
 
     override fun discover(timeoutMs: Int, cancelled: () -> Boolean, onFound: (SyncDevice) -> Unit): List<SyncDevice> {
+        if (down) return emptyList()
         val d = device.copy(pairingOpen = pairingOpen, paired = pairedIds.containsKey(device.deviceId))
         onFound(d)
         return listOf(d)
@@ -329,8 +330,11 @@ class FakeConnector(val card: FakeCard = FakeCard(), val code: String = "815365"
     var forgotten = false
     var connects = 0
 
+    /** The player is out of reach (Wi-Fi off): connections and discovery find nothing. */
+    var down = false
+
     override fun connect(host: String, port: Int, expectedId: String?): SyncSession {
-        if (host != device.host) throw SyncException(SyncException.UNREACHABLE, "$host: no answer")
+        if (down || host != device.host) throw SyncException(SyncException.UNREACHABLE, "$host: no answer")
         connects++
         val id = answeringId ?: device.deviceId
         if (!expectedId.isNullOrEmpty() && expectedId != id) throw SyncException(SyncException.IDENTITY_CHANGED)

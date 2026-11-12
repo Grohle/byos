@@ -268,6 +268,18 @@
     <string name="sync_top_of_card">Raíz de la tarjeta</string>
     <string name="sync_space_short">No hay espacio suficiente en la tarjeta</string>
     <string name="sync_space_short_sub">%1$s por enviar, %2$s libres. Borra algo en Archivos o elige menos archivos.</string>
+
+    <!-- Share, background transfers, reconnection -->
+    <string name="sync_share_label">Enviar al reproductor</string>
+    <string name="sync_share_nothing">Nada que enviar: solo se pueden compartir archivos con el reproductor.</string>
+    <string name="sync_note_channel">Envíos al reproductor</string>
+    <string name="sync_note_channel_text">Progreso de los archivos y actualizaciones de ByOS enviados al reproductor</string>
+    <string name="sync_note_sending">Enviando al reproductor</string>
+    <string name="sync_note_update">Enviando una actualización de ByOS</string>
+    <string name="sync_note_install">Instalando ByOS en el reproductor</string>
+    <string name="sync_note_reconnecting">Conexión perdida, volviendo a conectar…</string>
+    <string name="sync_reconnecting">Conexión perdida. Volviendo a conectar (%1$d de %2$d)…</string>
+    <string name="sync_sending_note_bg">Puedes salir de la app: el envío continúa y su progreso aparece en las notificaciones. Si se corta la conexión, se vuelve a conectar sola y sigue donde se quedó.</string>
     <plurals name="sync_files">
         <item quantity="one">%d archivo</item>
         <item quantity="other">%d archivos</item>

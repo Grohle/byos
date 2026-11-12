@@ -137,6 +137,8 @@ class ConnectedScreensTest {
             SendJob(5, "r3ii_2025.upt", "r3ii_2025.upt", 46_759_936, route = Route.FIRMWARE),
             SendJob(6, "hibyos-update.json", "", 2_100, JobStatus.UPDATE_FILE, route = Route.BYOS_UPDATE),
         )
+        shot("send_9_reconnecting", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs, running = true, done = 60_000_000, total = 118_840_000,
+            current = "Music/Album/02 Song.flac", reconnecting = 2)))
         shot("send_7_auto_groups", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs = mixed), routes = mapOf(Route.PICTURES to "Music")), tall = true)
         shot("send_8_no_space", Screen.SYNC_SEND, on.copy(link = Link.Connected(dev.copy(paired = true), info, space.copy(sdFree = 30_000_000)),
             transfer = Transfer(jobs = mixed)))

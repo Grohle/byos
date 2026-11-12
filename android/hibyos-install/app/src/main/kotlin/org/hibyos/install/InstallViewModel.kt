@@ -51,6 +51,9 @@ interface Host {
 
     /** ByOS connected: hibyos-update.json and its payload tar. */
     fun pickSyncUpdate()
+
+    /** Android 13+: asks once whether the transfer notification may be shown. */
+    fun askNotifications()
     fun open(url: String): Boolean
     fun share(files: List<File>)
 }
@@ -118,6 +121,13 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         override fun pickUpdateFiles() {
             host?.pickSyncUpdate()
         }
+        override fun work(note: org.hibyos.install.connected.WorkNote?) {
+            if (note != null && !askedNotifications) {
+                askedNotifications = true
+                host?.askNotifications()
+            }
+            org.hibyos.install.connected.TransferService.update(app, note, android.os.SystemClock.elapsedRealtime())
+        }
         override fun byosFiles(): List<SendItem>? {
             val b = bundle ?: return null
             if (state.patch !is PatchState.Done) return null
@@ -128,6 +138,20 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     fun syncFilesPicked(uris: List<Uri>) {
         val app = getApplication<Application>()
         connected.addPicked { Picked.files(app, uris) }
+    }
+
+    private var askedNotifications = false
+
+    /**
+     * Files shared from another app: they are added to Send Files, which opens (over the
+     * connection screen when no player is connected yet). ByOS update files among them are
+     * handed to Install Update by the automatic destination.
+     */
+    fun syncShared(uris: List<Uri>) {
+        val app = getApplication<Application>()
+        connected.addPicked { Picked.files(app, uris) }
+        if (state.busy || connected.state.busy) return
+        state = state.copy(stack = listOf(Screen.HOME, Screen.SYNC, Screen.SYNC_SEND))
     }
 
     fun syncUpdatePicked(uris: List<Uri>) {

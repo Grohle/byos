@@ -274,6 +274,18 @@
     <string name="sync_top_of_card">Top of the card</string>
     <string name="sync_space_short">Not enough space on the card</string>
     <string name="sync_space_short_sub">%1$s to send, %2$s free. Delete something in Files or choose fewer files.</string>
+
+    <!-- Share, background transfers, reconnection -->
+    <string name="sync_share_label">Send to the player</string>
+    <string name="sync_share_nothing">Nothing to send: only files can be shared to the player.</string>
+    <string name="sync_note_channel">Transfers to the player</string>
+    <string name="sync_note_channel_text">Progress of files and ByOS updates sent to the player</string>
+    <string name="sync_note_sending">Sending to the player</string>
+    <string name="sync_note_update">Sending a ByOS update</string>
+    <string name="sync_note_install">Installing ByOS on the player</string>
+    <string name="sync_note_reconnecting">Connection lost, connecting again…</string>
+    <string name="sync_reconnecting">Connection lost. Connecting again (%1$d of %2$d)…</string>
+    <string name="sync_sending_note_bg">You can leave the app: the transfer goes on and its progress is in the notifications. If the connection drops, it connects again by itself and goes on where it stopped.</string>
     <plurals name="sync_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>
