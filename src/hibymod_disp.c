@@ -234,58 +234,61 @@ static void ov_apply(unsigned char *b)
 
 
 /* ---------------------------------------------------------------- "%" de la bateria a la derecha */
-/* La barra de HiBy (topbar.view) solo alinea las cifras a la izquierda: con "68%" quedaria un
- * hueco entre el "%" y la pila. Antes de mostrar un fotograma, el bloque "NN%" se empuja a la
- * derecha (TOPBAR_DW px por cifra que falte) y el hueco queda a su izquierda, con el color de
- * fondo de esa fila. El reproductor reutiliza sus buferes y puede no redibujar la barra: para
- * no empujarlo dos veces se recuerda la firma de las zonas ya movidas. */
+/* HiBy dibuja el porcentaje pegado a la IZQUIERDA de su caja (x = TOPBAR_PCT_X) y coloca el
+ * Wi-Fi a la izquierda de donde quedaria el texto alineado a la derecha (pila - 2 - ancho -
+ * Wi-Fi). Antes se empujaban esas columnas a la derecha y se arrastraba medio Wi-Fi (icono roto y
+ * mas ancho, "%" cortado). Ahora el tema le da a HiBy cifras TRANSPARENTES de los mismos anchos
+ * (topbar\batt\, su colocacion no cambia) y aqui se pinta "NN%" alineado a la derecha con los
+ * glifos reales (batt_glyphs.h, generados por theme/topbar.py). Solo se escribe dentro de la caja
+ * del texto actual y con el fondo de la fila 2 de cada columna: se puede repetir sin acumular. */
+#include "batt_glyphs.h"
 static uint32_t np_now(void);
-static int sb_ndig = 3; static uint32_t sb_t;
-static uint32_t sb_done[8]; static unsigned sb_ndone;
+static int sb_cap = -1; static uint32_t sb_t;
 static uint16_t sb_raw[TOPBAR_Y1 - TOPBAR_Y0][TOPBAR_PCT_W];   /* el bloque del "%" tal como lo pinto HiBy */
-static uint32_t sb_hash(const unsigned char *b)
+static uint16_t sb_mix(uint16_t bg, uint16_t fg, unsigned a)
 {
-    uint32_t h = 2166136261u;
-    for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) {
-        const uint16_t *r = (const uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
-        for (int x = 0; x < TOPBAR_PCT_W; x++) h = (h ^ r[x]) * 16777619u;
-    }
-    return h;
+    unsigned r = ((bg >> 11) * (255 - a) + (fg >> 11) * a) / 255, g = (((bg >> 5) & 63) * (255 - a) + ((fg >> 5) & 63) * a) / 255;
+    unsigned bl = ((bg & 31) * (255 - a) + (fg & 31) * a) / 255;
+    return (uint16_t)(r << 11 | g << 5 | bl);
 }
 static void sb_fix(unsigned char *b)
 {
-    if (!b || fline < (TOPBAR_PCT_X + TOPBAR_PCT_W) * 2u) return;
+    if (!b || fline < 320u * 2) return;
     uint32_t now = np_now();
     if (now - sb_t > 2000 || !sb_t) {            /* nivel de bateria: cada 2 s como mucho */
         sb_t = now ? now : 1;
         char v[8] = ""; int f = r_open("/sys/class/power_supply/battery/capacity", O_RDONLY);
         if (f >= 0) { ssize_t n = read(f, v, sizeof v - 1); if (n > 0) v[n] = 0; r_close(f); }
-        int c = atoi(v); sb_ndig = !v[0] || c < 0 ? 3 : c >= 100 ? 3 : c >= 10 ? 2 : 1;
+        sb_cap = v[0] ? atoi(v) : -1; if (sb_cap > 100) sb_cap = 100;
     }
-    int k = (3 - sb_ndig) * TOPBAR_DW;
-    if (k <= 0) return;
-    uint32_t h = sb_hash(b);
-    for (unsigned i = 0; i < 8 && i < sb_ndone; i++) if (sb_done[i] == h) return;   /* ya movida */
-    /* idempotente: solo si las primeras k columnas del bloque tienen tinta (cifras pegadas a la
-     * izquierda, como las deja HiBy). Si ya estan vacias, las cifras ya estan a la derecha (movidas
-     * antes o redibujadas solo en parte): moverlas otra vez metia el "%" bajo la pila y, con el
-     * Wi-Fi, deshacia la barra */
-    {
-        int ink = 0;
-        for (int y = TOPBAR_Y0; y < TOPBAR_Y1 && !ink; y++) {
-            const uint16_t *r = (const uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
-            uint16_t bg = r[-1];
-            for (int x = 0; x < k; x++) { uint16_t p = r[x]; int d = abs((p >> 11) - (bg >> 11)) + abs(((p >> 5) & 63) - ((bg >> 5) & 63)) / 2 + abs((p & 31) - (bg & 31)); if (d > 6) { ink = 1; break; } }
+    if (sb_cap < 0) return;
+    /* solo si hay barra de estado (la pila arriba a la derecha): no en Reproduciendo ni el arranque */
+    int bright = 0, red = 0;
+    for (int y = 8; y < 22; y++) {
+        const uint16_t *r = (const uint16_t *)(b + y * fline);
+        for (int x = 286; x < 318; x++) {
+            uint16_t p = r[x]; int R = p >> 11, G = (p >> 5) & 63, B = p & 31;
+            if (R * 3 + G + B > 120) bright++;
+            if (R >= 26 && G < 30 && B < 16) red++;   /* marco rojo de bateria baja */
         }
-        if (!ink) return;
     }
-    for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) {
-        uint16_t *r = (uint16_t *)(b + y * fline) + TOPBAR_PCT_X;
-        uint16_t bg = r[-1];                          /* el fondo justo a la izquierda (hueco tras el Wi-Fi) */
-        memmove(r + k, r, (size_t)(TOPBAR_PCT_W - k) * 2);
-        for (int x = 0; x < k; x++) r[x] = bg;
+    if (bright <= 12) return;
+    char t[4]; int n = snprintf(t, sizeof t, "%d", sb_cap);
+    int x1 = TOPBAR_PCT_X + TOPBAR_PCT_W, x0 = x1 - n * TOPBAR_DW - BG_W[10];
+    uint16_t col = red > 6 ? BG_RED : 0xFFFF;
+    const uint16_t *bgr = (const uint16_t *)(b + 2 * fline);
+    for (int y = 0; y < BG_H && TOPBAR_Y0 + y < TOPBAR_Y1; y++) {
+        uint16_t *r = (uint16_t *)(b + (TOPBAR_Y0 + y) * fline);
+        int x = x0;
+        for (int i = 0; i <= n; i++) {
+            int g = i < n ? t[i] - '0' : 10;
+            for (int gx = 0; gx < BG_W[g]; gx++) {
+                unsigned a = BG_A[g][y][gx]; uint16_t bg = bgr[x + gx];
+                r[x + gx] = a ? sb_mix(bg, col, a) : bg;
+            }
+            x += BG_W[g];
+        }
     }
-    sb_done[sb_ndone++ % 8] = sb_hash(b);
 }
 
 /* Rayo de carga legible: HiBy pinta el relleno blanco de la pila ENCIMA del marco de carga (que

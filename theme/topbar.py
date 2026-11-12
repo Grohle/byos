@@ -295,6 +295,15 @@ for (a, xa, wa), (b, xb, wb) in zip(SLOTS, SLOTS[1:]):
 assert SLOTS[-1][1] + SLOTS[-1][2] <= 320 - M + 1, "la pila se sale del margen"
 for name, x, w in SLOTS: print(f"  {name:13s} x={x:3d} w={w:2d} -> {x + w}")
 
+# Porcentaje de bateria: HiBy lo dibuja pegado a la IZQUIERDA de su caja y coloca el Wi-Fi a la
+# izquierda de donde estaria el texto alineado a la derecha (x = pila - 2 - ancho - wifi). La
+# libreria lo empujaba a la derecha moviendo columnas y arrastraba medio Wi-Fi (icono roto y mas
+# ancho, "%" cortado). Ahora HiBy lo dibuja con cifras TRANSPARENTES de los mismos anchos (su
+# colocacion no cambia) y la libreria pinta el texto a la derecha con los glifos de
+# src/batt_glyphs.h, sin mover nada.
+for k in [*"0123456789", *[c + "r" for c in "0123456789"], "percent", "dot", "dotr", "-"]:
+    files["batt/" + k] = Image.new("RGBA", files[k].size, (0, 0, 0, 0))
+
 out = []
 for th in ("theme2", "theme3"):
     for n, im in files.items():
@@ -304,7 +313,7 @@ for th in ("theme2", "theme3"):
     for _k, el in V.walk(root):
         n = V.get(el, "name")
         if n in POS: V.set_(el, "x", POS[n]); V.set_(el, "y", 5)
-        if n == "topbar_nv_battery": V.set_(el, "w", 3 * DW + wd("percent"))
+        if n == "topbar_nv_battery": V.set_(el, "w", 3 * DW + wd("percent")); V.set_(el, "img_path", "topbar\\batt\\")
         if n == "topbar_nv_speaker": V.set_(el, "w", 3 * DW)
         if n == "topbar_nv_clock": V.set_(el, "w", 4 * DW + wd("colon"))
     # HiBy's layout with our changes: never in overlay/ or git (tools/vendor_edits.json rebuilds
@@ -373,6 +382,18 @@ with open(os.path.join(HERE, "..", "src", "topbar_layout.h"), "w", newline="\n")
     f.write(f"#define TOPBAR_DW {DW}            /* ancho de celda de una cifra */\n")
     f.write("#define TOPBAR_Y0 5\n#define TOPBAR_Y1 25\n")
     f.write(f"#define TOPBAR_BATT_X {X_BATT}     /* icono de la pila (el rayo de carga se dibuja encima) */\n")
+# glifos del porcentaje de bateria para la libreria (alfa 0-255, celdas de 20 px de alto)
+with open(os.path.join(HERE, "..", "src", "batt_glyphs.h"), "w", newline="\n") as f:
+    f.write("/* batt_glyphs.h: cifras y % de la barra de estado (generado por theme/topbar.py) */\n")
+    names = [*"0123456789", "percent"]; mw = max(files[n].width for n in names)
+    red = ((RED[0] >> 3) << 11) | ((RED[1] >> 2) << 5) | (RED[2] >> 3)
+    f.write(f"#define BG_N 11\n#define BG_H 20\n#define BG_MW {mw}\n#define BG_RED 0x{red:04X}\n")
+    f.write("static const unsigned char BG_W[BG_N] = { " + ", ".join(str(files[n].width) for n in names) + " };\n")
+    f.write("static const unsigned char BG_A[BG_N][BG_H][BG_MW] = {\n")
+    for n in names:
+        a = files[n].getchannel("A")
+        f.write("  { " + ", ".join("{" + ",".join(str(a.getpixel((x, y)) if x < a.width else 0) for x in range(mw)) + "}" for y in range(20)) + " },\n")
+    f.write("};\n")
 print("cifras: alto", min(rows_h), "-", max(rows_h), "px;", len(out), "ficheros; POS", POS)
 
 if "--deploy" in sys.argv:
