@@ -12,6 +12,8 @@
 //                       reinstall_refused (the HiBy's own checks say no) |
 //                       snapshot_io (lib-index: the HiBy cannot share its database, scan instead) |
 //                       sync_partial (sync-apply: three files fail) | card_full (sync-plan: no room)
+//                       and the Sync tab's scenarios of sync-mock.mjs (sync_unavailable, sync_mass_delete,
+//                       sync_locked, sync_pause, sync_usb_pause, sync_db_pending, sync_battery, ask_policy)
 // The library commands (lib-index, lib-scan, lib-art, lib-rescan, playlist-*, music-scan,
 // sync-plan, sync-apply, cover-cache-reset, art-fix) use the made-up music of
 // library-fixture.mjs; a full lib-rescan answers E_UNSUPPORTED, as the real HiBy does today.
@@ -27,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { coverPng, hibyIndex, localCatalog, playlistItems } from './library-fixture.mjs';
+import { installSync } from './sync-mock.mjs';
 
 // The real CLI takes a card path ("Playlists/Road trip.m3u8"), a file name or a bare name; the
 // mock keeps its playlists by bare name (all of them are Playlists/<name>.m3u8).
@@ -49,7 +52,7 @@ const BTP = {
 };
 const EXIT = {
   usage: 1, no_device: 2, auth: 3, remote: 4, local_io: 5, verify: 6, cancelled: 7,
-  rejected: 8, timeout: 9, internal: 10,
+  rejected: 8, timeout: 9, internal: 10, locked: 11,
 };
 
 function emit(event, fields = {}) {
@@ -91,7 +94,7 @@ function nextAnswer() {
   return new Promise((resolve) => { answerWaiter = resolve; });
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms) => new Promise((r) => (ms > 0 ? setTimeout(r, ms) : setImmediate(r)));
 async function tick(ms) {
   await sleep(ms);
   if (cancelled) throw new Fail('cancelled', 'Cancelled');
@@ -787,7 +790,7 @@ Object.assign(commands, {
     };
   },
 
-  async 'sync-plan'() {
+  async 'sync-plan-catalog'() {
     if (!opts.catalog) throw new Fail('usage', 'sync-plan needs --catalog CATALOG.json');
     let cat;
     try { cat = JSON.parse(readFileSync(opts.catalog, 'utf8')); } catch { throw new Fail('local_io', `${opts.catalog} cannot be read`); }
@@ -837,7 +840,7 @@ Object.assign(commands, {
     return { plan: f, ...result };
   },
 
-  async 'sync-apply'(args) {
+  async 'sync-apply-catalog'(args) {
     const f = args[0];
     if (!f) throw new Fail('usage', 'sync-apply needs PLAN.json');
     let plan;
@@ -928,7 +931,10 @@ Object.assign(commands, {
 
 const VALUE_OPTS = new Set(['--device', '--adb', '--local-port', '--config', '--name', '--timeout', '--wait', '--code', '--max-depth',
   '--from', '--dir', '--out', '--bundle', '--firmware', '--wait-max', '--size', '--max', '--db', '--catalog', '--select', '--dest',
-  '--layout', '--covers', '--then', '--root']);
+  '--layout', '--covers', '--then', '--root', '--kind', '--card-root', '--player-only', '--label', '--local', '--decisions',
+  '--device-id', '--select', '--exclude']);
+// Options that may be given more than once.
+const MULTI_OPTS = { '--select': 'selectList', '--exclude': 'excludeList' };
 const opts = {};
 const positional = [];
 {
@@ -939,11 +945,32 @@ const positional = [];
     // "--" ends the options (BYOS_CLI section 2): everything after it is a path.
     if (onlyPaths) { positional.push(a); continue; }
     if (a === '--') { onlyPaths = true; continue; }
+    if (MULTI_OPTS[a]) { (opts[MULTI_OPTS[a]] ??= []).push(argv[++i]); continue; }
     if (VALUE_OPTS.has(a)) { opts[a.slice(2)] = argv[++i]; continue; }
     if (a === '-p' || a === '-r') { opts[a.slice(1)] = true; continue; }
     if (a.startsWith('--')) { opts[a.slice(2)] = true; continue; }
     positional.push(a);
   }
+}
+
+// The Sync tab's linked folders (sync-mock.mjs); "sync-plan --catalog" and a format 1 plan keep
+// the Music tab's single-folder sync above.
+{
+  const linked = {};
+  installSync(linked, {
+    opts, emit, Fail, tick, connect, requireSd, load, save, dfFields, nextAnswer, SCENARIO, DEVICE_ID, configDir, cachePath,
+    isCancelled: () => cancelled,
+  });
+  const catalogPlan = commands['sync-plan-catalog'];
+  const catalogApply = commands['sync-apply-catalog'];
+  Object.assign(commands, linked, {
+    'sync-plan'(args) { return opts.catalog ? catalogPlan(args) : linked['sync-plan'](args); },
+    'sync-apply'(args) {
+      let format = 2;
+      try { format = JSON.parse(readFileSync(args[0], 'utf8')).format ?? 1; } catch { /* reported by the command */ }
+      return format === 2 ? linked['sync-apply'](args) : catalogApply(args);
+    },
+  });
 }
 
 async function main() {

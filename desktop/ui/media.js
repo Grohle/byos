@@ -1,27 +1,27 @@
-// The Library and Music tabs (docs/DESKTOP_APP.md): the HiBy's library as iTunes 11 showed
-// one (albums grid that opens in place, artists, songs, audiobooks, playlists) and the Music
-// tab's sync of this computer's music. Every device operation is a byos-cli job; names from the
-// HiBy and from music files only ever go into the page with textContent.
+// The libraries (docs/DESKTOP_APP.md, SYNC_LIBRARY_DESIGN.md 10.1): the HiBy's library in the
+// device's Library tab, and the computer's library (the linked folders, read by music-scan) in
+// the sidebar, both as iTunes 11 showed one (albums grid that opens in place, artists, songs,
+// audiobooks, playlists). One set of views draws either; the panel moves between the two pages.
+// Every device operation is a byos-cli job; names from the HiBy and from music files only ever
+// go into the page with textContent. The Sync tab is ui/sync.js.
 
 import {
-  age, compareNames, fmtDuration, fmtLeft, groupIndex, libraryState, matches, planFreeAfter, planSummary, quality,
-  scanEstimate, secondsLeft, selectionJson, syncOutcome, textOn, virtualWindow,
+  age, compareNames, fmtDuration, groupIndex, libraryState, matches, quality, scanEstimate, textOn, virtualWindow,
 } from '/media-format.js';
 
 let C; // the app's helpers (initMedia)
 const ROW_H = 28;
 
-const lib = {
+const newLib = (local) => ({
   deviceId: null, index: null, state: 'idle', progress: null, error: null, view: 'albums', query: '', open: null,
   artist: 0, playlist: null, playlists: null, sort: { key: 'title', dir: 1 }, selected: new Set(), lastClicked: null,
   stale: false, stalePaths: [], busy: null, art: new Map(), artQueue: new Set(), artTimer: null, artRunning: false,
-  loading: false, demo: null,
-};
-
-const mus = {
-  sources: null, catalog: null, state: 'idle', sel: null, opts: null, plan: null, planning: false, planTimer: null,
-  progress: {}, final: null, job: null, failed: [], error: null, filter: '', dropping: null, demo: null, planToken: 0,
-};
+  loading: false, demo: null, local,
+});
+// The HiBy's library (device Library tab) and the computer's (sidebar). "lib" is the one on screen.
+const devLib = newLib(false);
+const pcLib = newLib(true);
+let lib = devLib;
 
 const $ = (id) => document.getElementById(id);
 const t = (...a) => C.t(...a);
@@ -45,7 +45,7 @@ function storage(key, value) {
   return null;
 }
 
-function toast(text, kind = '') {
+export function toast(text, kind = '') {
   const n = $('toast');
   n.textContent = text;
   n.className = `toast ${kind}`;
@@ -55,7 +55,7 @@ function toast(text, kind = '') {
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-function icon(d, cls = 'i') {
+export function icon(d, cls = 'i') {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
@@ -72,7 +72,7 @@ function icon(d, cls = 'i') {
   }
   return svg;
 }
-const ICONS = {
+export const ICONS = {
   note: ['M9 18V5l11-2v13', 'M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z', 'M20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z'],
   folder: ['M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5Z'],
   check: ['M5 12.5 10 17.5 19 7'],
@@ -82,7 +82,20 @@ const ICONS = {
   db: ['M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z', 'M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6', 'M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'],
   sd: ['M7 3h8l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z', 'M10 3v4M13 3v4M16 4v3'],
   sync: ['M20 12a8 8 0 0 1-13.7 5.7', 'M4 12a8 8 0 0 1 13.7-5.7', 'M18 3v4h-4', 'M6 21v-4h4'],
+  headphones: ['M4 15v-3a8 8 0 0 1 16 0v3', 'M4 15a2 2 0 0 1 2-2h1v7H6a2 2 0 0 1-2-2Z', 'M20 15a2 2 0 0 0-2-2h-1v7h1a2 2 0 0 0 2-2Z'],
+  book: ['M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5Z', 'M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5Z'],
+  film: ['M4 5h16v14H4Z', 'M8 5v14M16 5v14', 'M4 9h4M4 15h4M16 9h4M16 15h4'],
+  plus: ['M12 5v14M5 12h14'],
+  refresh: ['M19 12a7 7 0 1 1-2.05-4.95', 'M19 4v4h-4'],
+  move: ['M5 12h13', 'M14 7l5 5-5 5'],
+  block: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M5.6 5.6l12.8 12.8'],
+  pause: ['M9 5v14M15 5v14'],
+  lock: ['M6 11h12v9H6Z', 'M8.5 11V8a3.5 3.5 0 0 1 7 0v3'],
+  battery: ['M3 8h15v8H3Z', 'M21 11v2', 'M6 11h3'],
 };
+
+// "2 min ago" for a time in seconds.
+export function ageText(sec) { return age(sec, Date.now() / 1000, t); }
 
 // ---- album art: lazy, batched lib-art jobs ------------------------------------------------------
 
@@ -109,13 +122,23 @@ function artObserve(node) {
 function cover(path, cls = 'cover') {
   const box = el('div', { class: `${cls} art`, 'data-art': path });
   box.append(icon(ICONS.note, 'art-ph'));
+  // the computer's files have no cover service yet: a colour of the album's own
+  if (lib.local) { box.classList.add('local'); box.style.setProperty('--ph', phColor(path)); return box; }
   paintArt(box);
-  if (!lib.art.has(path) && device()?.reachable !== false) artObserve(box);
+  if (!devLib.art.has(path) && device()?.reachable !== false) artObserve(box);
   return box;
 }
 
+// A steady colour per album folder, for the computer's covers.
+function phColor(path) {
+  const dir = String(path ?? '').replace(/[\\/][^\\/]*$/, '');
+  let h = 0;
+  for (let i = 0; i < dir.length; i++) h = (h * 31 + dir.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360} 46% 52%)`;
+}
+
 function paintArt(box) {
-  const a = lib.art.get(box.dataset.art);
+  const a = devLib.art.get(box.dataset.art);
   if (!a || a.none) return;
   if (box.querySelector('img')) return;
   const img = el('img', { alt: '', draggable: 'false' });
@@ -133,28 +156,29 @@ function prefetchArt(paths) {
 }
 
 function requestArt(path) {
-  if (!path || lib.art.has(path)) return;
-  lib.artQueue.add(path);
-  clearTimeout(lib.artTimer);
-  lib.artTimer = setTimeout(flushArt, 40);
+  if (!path || lib.local || devLib.art.has(path)) return;
+  devLib.artQueue.add(path);
+  clearTimeout(devLib.artTimer);
+  devLib.artTimer = setTimeout(flushArt, 40);
 }
 
 async function flushArt() {
-  if (lib.artRunning || !lib.artQueue.size || !device()) return;
-  const paths = [...lib.artQueue].slice(0, 64);
-  for (const p of paths) lib.artQueue.delete(p);
-  lib.artRunning = true;
+  const A = devLib;
+  if (A.artRunning || !A.artQueue.size || !device()) return;
+  const paths = [...A.artQueue].slice(0, 64);
+  for (const p of paths) A.artQueue.delete(p);
+  A.artRunning = true;
   const final = await C.runCli('lib-art', { device: spec(), paths, size: ART_SIZE }, { quiet: true });
-  lib.artRunning = false;
+  A.artRunning = false;
   if (final.ok) {
-    for (const it of final.items ?? []) lib.art.set(it.path, it.none ? { none: true } : { key: it.key, color: it.color });
+    for (const it of final.items ?? []) A.art.set(it.path, it.none ? { none: true } : { key: it.key, color: it.color });
     for (const box of document.querySelectorAll('.art[data-art]')) paintArt(box);
     const open = document.querySelector('.album-detail');
     if (open) tintDetail(open);
   } else {
-    for (const p of paths) lib.art.set(p, { none: true });
+    for (const p of paths) A.art.set(p, { none: true });
   }
-  if (lib.artQueue.size) flushArt();
+  if (A.artQueue.size) flushArt();
 }
 
 // ---- library loading -----------------------------------------------------------------------------
@@ -164,6 +188,7 @@ async function fetchIndex(id) {
 }
 
 async function loadLibrary({ force = false, scan = false } = {}) {
+  if (lib.local) return loadComputer({ rescan: force });
   const d = device();
   if (!d) return;
   if (d.reachable === false) { lib.state = 'offline'; renderLibrary(); return; }
@@ -204,20 +229,52 @@ async function loadLibrary({ force = false, scan = false } = {}) {
   renderLibrary();
 }
 
-function setIndex(idx) {
+function setIndex(idx, L = lib) {
   // a background refresh that found the same library only updates the footer (no flicker)
-  const old = lib.index;
-  if (old && lib.state === 'ready' && idx.revision && old.revision === idx.revision && old.tracks.length === idx.tracks.length) {
-    lib.index = { ...old, time: idx.time };
-    renderFoot();
+  const old = L.index;
+  if (old && L.state === 'ready' && idx.revision && old.revision === idx.revision && old.tracks.length === idx.tracks.length) {
+    L.index = { ...old, time: idx.time };
+    if (L === lib) renderFoot();
     return;
   }
-  lib.index = idx;
-  lib.state = libraryState({ ok: true }, idx);
-  if (lib.artist >= idx.artists.length) lib.artist = 0;
-  if (lib.open !== null && lib.open >= idx.albums.length) lib.open = null;
-  renderLibrary();
+  L.index = idx;
+  L.state = libraryState({ ok: true }, idx);
+  if (L.artist >= idx.artists.length) L.artist = 0;
+  if (L.open !== null && L.open >= idx.albums.length) L.open = null;
+  if (L === lib) renderLibrary();
   demoAfter();
+}
+
+// The computer's library: the catalogue music-scan wrote for the linked folders; Rebuild reads
+// the folders again (only changed files are read).
+async function loadComputer({ rescan = false } = {}) {
+  const L = pcLib;
+  if (L.loading) return;
+  if (!rescan && !L.index) {
+    try {
+      const cat = await C.api('/api/catalog');
+      if (cat?.tracks) { setIndex(cat, L); return; }
+    } catch { /* not read yet */ }
+  }
+  if (L.index && !rescan) { if (L === lib) renderLibrary(); return; }
+  L.loading = true;
+  const first = !L.index;
+  if (first) { L.state = 'loading'; L.progress = null; }
+  if (L === lib) renderLibrary();
+  const final = await C.runCli('music-scan', {}, {
+    title: t('pcReading'),
+    onEvent: (ev) => { if (ev.event === 'progress' && L.state === 'loading') { L.progress = ev; if (L === lib) renderLoading(); } },
+  });
+  L.loading = false;
+  if (final.ok) {
+    try { setIndex(await C.api('/api/catalog'), L); } catch (e) { L.state = 'error'; L.error = { code: 'internal', message: e.message }; }
+  } else if (final.code === 'usage' && /folder/.test(final.message ?? '')) {
+    L.state = 'nolinks';
+  } else if (first) {
+    L.state = 'error';
+    L.error = final;
+  } else toast(C.errorMessage(final), 'fail');
+  if (L === lib) renderLibrary();
 }
 
 // ---- library rendering ---------------------------------------------------------------------------
@@ -232,13 +289,22 @@ function renderLibrary() {
   if (!C || !$('lib-body')) return;
   views();
   for (const b of document.querySelectorAll('.side-lib')) {
-    b.classList.toggle('selected', C.appState.tab === 'library' && b.dataset.libview === lib.view);
+    b.classList.toggle('selected', C.appState.view === 'computer' && lib.local && b.dataset.libview === lib.view);
   }
   const ready = lib.state === 'ready';
   $('lib-search').disabled = !ready;
   $('lib-search').placeholder = t('libSearch');
+  $('lib-covers').hidden = lib.local;
   $('lib-covers').disabled = !ready || device()?.reachable === false;
-  $('lib-refresh').disabled = lib.loading || device()?.reachable === false;
+  $('lib-refresh').disabled = lib.loading || (!lib.local && device()?.reachable === false);
+  $('lib-refresh').title = t(lib.local ? 'pcRebuild' : 'libRefresh');
+  const sync = $('lib-sync');
+  sync.hidden = !lib.local;
+  const kind = lib.view === 'books' ? 'audiobooks' : 'music';
+  sync.textContent = t(`sySync_${kind}`);
+  sync.disabled = !C.selectedDevice() || C.selectedDevice().reachable === false || lib.state === 'loading';
+  sync.title = sync.disabled ? t('pcSyncNeedsHiby') : '';
+  sync.onclick = () => C.syncFromComputer(kind);
   renderBanner();
   const body = $('lib-body');
   body.replaceChildren();
@@ -247,8 +313,9 @@ function renderLibrary() {
     case 'loading': body.append(loadingCard()); break;
     case 'offline': body.append(messageCard(ICONS.sd, t('libOffline'), '')); break;
     case 'source-unavailable': body.append(unavailableCard()); break;
-    case 'empty': body.append(messageCard(ICONS.note, t('libEmptyTitle'), t('libEmptyBody'),
-      el('button', { class: 'btn primary', text: t('libGoMusic'), onclick: () => C.setTab('music') }))); break;
+    case 'empty': body.append(lib.local ? pcEmpty('pcEmptyTitle', 'pcEmptyBody') : messageCard(ICONS.note, t('libEmptyTitle'), t('libEmptyBody'),
+      el('button', { class: 'btn primary', text: t('libGoSync'), onclick: () => C.setTab('sync') }))); break;
+    case 'nolinks': body.append(pcEmpty('pcNoLinksTitle', 'pcNoLinksBody')); break;
     case 'error': body.append(messageCard(ICONS.warn, C.errorMessage(lib.error), '',
       el('button', { class: 'btn', text: t('retry'), onclick: () => loadLibrary({ force: true }) }))); break;
     case 'ready': renderView(body); break;
@@ -257,7 +324,14 @@ function renderLibrary() {
   renderFoot();
 }
 
-function messageCard(ic, title, text, ...actions) {
+// The computer's library before there is any music to show: folders are linked in a HiBy's Sync tab.
+function pcEmpty(title, text) {
+  const d = C.selectedDevice();
+  return messageCard(ICONS.folder, t(title), t(text),
+    el('button', { class: 'btn primary', text: t('pcOpenSync'), disabled: !d, onclick: () => C.showDevice('sync') }));
+}
+
+export function messageCard(ic, title, text, ...actions) {
   return el('div', { class: 'card lib-message' }, el('div', { class: 'lib-message-icon' }, icon(ic)),
     el('h3', { text: title }), text ? el('p', { class: 'muted', text }) : null,
     actions.length ? el('div', { class: 'lib-message-actions' }, ...actions) : null);
@@ -281,7 +355,9 @@ function fillLoading(card) {
   if (p?.op === 'pull' && p.total > 0) { text = t('libLoadingBytes', { done: fmtBytes(p.done), total: fmtBytes(p.total) }); frac = p.done / p.total; }
   else if (p?.op === 'index' && p.total > 0) { text = t('libIndexing', { n: fmtCount(p.total) }); frac = p.done / p.total; }
   else if (p?.op === 'list') text = t('libScanningList', { n: fmtCount(p.done) });
-  else if (p?.op === 'tags' && p.total > 0) { text = t('libScanning', { done: fmtCount(p.done), total: fmtCount(p.total) }); frac = p.done / p.total; }
+  else if (p?.op === 'tags' && p.total > 0) { text = t(lib.local ? 'pcScanningTags' : 'libScanning', { done: fmtCount(p.done), total: fmtCount(p.total) }); frac = p.done / p.total; }
+  else if (p?.op === 'scan') text = t('pcScanningFolders', { n: fmtCount(p.done) });
+  else if (lib.local) text = t('pcReading');
   card.replaceChildren(
     el('div', { class: 'lib-loading-art' }, el('span'), el('span'), el('span')),
     el('p', { class: 'lib-loading-text', text }),
@@ -323,7 +399,7 @@ function renderFoot() {
   const idx = lib.index;
   if (!idx || lib.state !== 'ready') { f.textContent = ''; return; }
   const when = age(idx.time, Date.now() / 1000, t);
-  const src = idx.source === 'scan' ? t('libFromScan', { age: when }) : t('libFromDb', { age: when });
+  const src = lib.local ? t('pcFoot', { age: when }) : idx.source === 'scan' ? t('libFromScan', { age: when }) : t('libFromDb', { age: when });
   const music = idx.tracks.filter((x) => !x.book);
   f.textContent = `${t('libSummary', { songs: fmtCount(music.length), albums: fmtCount(idx.albums.length), time: totalTime(music.reduce((s, x) => s + (x.duration || 0), 0)) })} — ${src}`;
 }
@@ -413,7 +489,7 @@ function placeDetail(grid, quick, old = grid.querySelector('.album-detail')) {
 
 function tintDetail(detail) {
   const a = lib.index.albums[Number(detail.dataset.ai)];
-  const color = lib.art.get(a?.art)?.color;
+  const color = lib.local ? null : devLib.art.get(a?.art)?.color;
   if (!color) return;
   detail.style.setProperty('--tint', color);
   detail.classList.add('tinted', `on-${textOn(color)}`);
@@ -612,7 +688,7 @@ function renderBooks(body, q) {
 // ---- playlists --------------------------------------------------------------------------------------
 
 async function loadPlaylists() {
-  if (lib.playlists || !device()) return;
+  if (lib.local || lib.playlists || !device()) return;
   lib.playlists = new Map();
   const entries = [];
   const final = await C.runCli('playlist-ls', { device: spec() }, {
@@ -632,7 +708,7 @@ function playlistList() {
 function renderPlaylists(body, q) {
   loadPlaylists();
   const pls = playlistList();
-  if (!pls.length) { body.append(messageCard(ICONS.note, t('playlistsNone'), '')); return; }
+  if (!pls.length) { body.append(messageCard(ICONS.note, t(lib.local ? 'pcPlaylistsNone' : 'playlistsNone'), lib.local ? t('pcPlaylistsBody') : '')); return; }
   if (!pls.some((p) => p.path === lib.playlist)) lib.playlist = pls[0].path;
   const list = el('ul', { class: 'artist-list playlist-list', role: 'listbox' });
   for (const p of pls) {
@@ -695,6 +771,8 @@ function showMenu(x, y, items) {
 
 function trackMenu(e, tis, extra = []) {
   if (!tis.length) return;
+  // the computer's files: read-only here (tag editing is the Tidy up milestone)
+  if (lib.local) { showMenu(e.clientX, e.clientY, [{ label: t('getInfo'), action: () => getInfo(tis) }]); return; }
   const pls = playlistList();
   showMenu(e.clientX, e.clientY, [
     { label: t('getInfo'), action: () => getInfo(tis) },
@@ -831,7 +909,7 @@ function getInfo(tis) {
         add(t('infoDuration'), totalTime(tis.reduce((s, ti) => s + (idx.tracks[ti].duration || 0), 0)));
       }
       head.append(dl);
-      c.append(head, el('p', { class: 'muted small-text', text: t('infoReadOnly') }));
+      c.append(head, el('p', { class: 'muted small-text', text: t(lib.local ? 'pcInfoReadOnly' : 'infoReadOnly') }));
     },
   });
 }
@@ -860,7 +938,7 @@ async function fixCovers() {
   setBusy(null);
   if (final.ok) {
     toast(t('fixCoversDone', { n: final.fixed }), 'ok');
-    lib.art = new Map();
+    devLib.art = new Map();
     renderLibrary();
   } else toast(C.errorMessage(final), 'fail');
 }
@@ -873,459 +951,6 @@ async function resetCoverCache() {
   else toast(C.errorMessage(final), 'fail');
 }
 
-// ---- Music tab: this computer's music and the sync ---------------------------------------------
-
-function defaultSel() {
-  const s = storage('byos.music.sel');
-  return {
-    all: s?.all ?? true, artists: new Set(s?.artists ?? []), albums: new Set(s?.albums ?? []), genres: new Set(s?.genres ?? []),
-    books: s?.books ?? true,
-  };
-}
-function defaultOpts() {
-  const o = storage('byos.music.opts');
-  return { lyrics: o?.lyrics ?? true, covers: o?.covers ?? true, remove: o?.remove ?? false, dest: o?.dest ?? 'Music', layout: o?.layout ?? 'artist-album' };
-}
-function saveSel() {
-  storage('byos.music.sel', { all: mus.sel.all, artists: [...mus.sel.artists], albums: [...mus.sel.albums], genres: [...mus.sel.genres], books: mus.sel.books });
-  storage('byos.music.opts', mus.opts);
-}
-
-async function loadMusic({ rescan = false } = {}) {
-  mus.sel ??= defaultSel();
-  mus.opts ??= defaultOpts();
-  if (['applying', 'scanning'].includes(mus.state)) return;
-  try { mus.sources = (await C.api('/api/sources')).sources; } catch { mus.sources = []; }
-  if (!mus.sources.length) { mus.state = 'no-sources'; mus.catalog = null; renderMusic(); return; }
-  if (!rescan && !mus.catalog) {
-    try {
-      const cat = await C.api('/api/catalog');
-      const roots = new Set((cat.roots ?? []).map((r) => r.replace(/\\/g, '/').toLowerCase()));
-      const same = mus.sources.filter((s) => s.exists).every((s) => roots.has(s.path.replace(/\\/g, '/').toLowerCase()));
-      if (same && cat.tracks) mus.catalog = cat;
-    } catch { /* not scanned yet */ }
-  }
-  if (!mus.catalog || rescan) { await scanMusic(); return; }
-  if (!['plan-ready', 'planning', 'done', 'partial', 'library-pending', 'cancelled', 'error'].includes(mus.state)) {
-    mus.state = 'select';
-    schedulePlan(0);
-  }
-  renderMusic();
-}
-
-async function scanMusic() {
-  mus.state = 'scanning';
-  mus.progress = {};
-  renderMusic();
-  const final = await C.runCli('music-scan', {}, {
-    title: t('scanJob'),
-    onEvent: (ev) => { if (ev.event === 'progress') { mus.progress = ev; renderScanning(); } },
-  });
-  if (!final.ok) { mus.state = 'error'; mus.error = final; renderMusic(); return; }
-  try { mus.catalog = await C.api('/api/catalog'); } catch (e) { mus.state = 'error'; mus.error = { code: 'internal', message: e.message }; renderMusic(); return; }
-  mus.state = 'select';
-  renderMusic();
-  schedulePlan(0);
-}
-
-function schedulePlan(ms = 650) {
-  clearTimeout(mus.planTimer);
-  mus.planTimer = setTimeout(() => plan(), ms);
-}
-
-async function plan() {
-  const d = device();
-  if (!mus.catalog || !d || d.reachable === false || mus.state === 'applying') return;
-  const token = ++mus.planToken;
-  mus.planning = true;
-  if (mus.state === 'plan-ready') mus.state = 'planning';
-  else if (mus.state === 'select') mus.state = 'planning';
-  renderSyncBar();
-  const final = await C.runCli('sync-plan', {
-    device: spec(), dest: mus.opts.dest || 'Music', layout: mus.opts.layout, covers: mus.opts.covers ? 'optimize' : 'keep',
-    removeUnselected: mus.opts.remove, selection: selectionJson(mus.sel),
-  }, { title: t('planJob'), quiet: true });
-  if (token !== mus.planToken) return;
-  mus.planning = false;
-  if (final.ok) {
-    try { mus.plan = await C.api('/api/plan'); } catch { mus.plan = final; }
-    if (mus.state === 'planning') mus.state = 'plan-ready';
-  } else {
-    mus.plan = null;
-    if (mus.state === 'planning') mus.state = 'select';
-    mus.planError = final;
-  }
-  renderSyncBar();
-  demoAfter();
-}
-
-function renderMusic() {
-  if (!C || !$('music-body')) return;
-  const body = $('music-body');
-  body.replaceChildren();
-  const s = mus.state;
-  if (s === 'idle') { body.append(el('div', { class: 'card lib-loading' }, el('span', { class: 'spinner' }))); renderSyncBar(); return; }
-  if (s === 'no-sources') { body.append(noSources()); renderSyncBar(); return; }
-  if (s === 'applying') { body.append(applyingCard()); renderSyncBar(); return; }
-  if (['done', 'partial', 'library-pending', 'cancelled'].includes(s)) { body.append(resultCard()); renderSyncBar(); return; }
-  body.append(sourcesCard());
-  if (s === 'scanning') body.append(scanningCard());
-  else if (s === 'error') body.append(messageCard(ICONS.warn, C.errorMessage(mus.error), '', el('button', { class: 'btn', text: t('retry'), onclick: () => loadMusic({ rescan: true }) })));
-  else if (mus.catalog) body.append(selectCard(), optionsCard());
-  renderSyncBar();
-}
-
-function dropZone(node) {
-  node.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer?.types.includes('Files')) return;
-    e.preventDefault();
-    node.classList.add('dragging');
-  });
-  node.addEventListener('dragleave', (e) => { if (!node.contains(e.relatedTarget)) node.classList.remove('dragging'); });
-  node.addEventListener('drop', (e) => {
-    e.preventDefault();
-    node.classList.remove('dragging');
-    dropMusic(e.dataTransfer);
-  });
-}
-
-function noSources() {
-  const hero = el('div', { class: 'music-hero' },
-    el('div', { class: 'music-hero-icon' }, icon(ICONS.note)),
-    el('h2', { text: t('musicNoSourcesTitle') }),
-    el('p', { class: 'muted', text: t('musicNoSourcesBody') }),
-    el('button', { class: 'btn primary big', text: t('musicChooseFolder'), onclick: () => pickFolder() }),
-    el('div', { class: 'music-drop' }, el('span', { text: t('musicDrop') })),
-    el('div', { class: 'drop-hint', text: t('musicDropHere') }));
-  dropZone(hero);
-  return hero;
-}
-
-function sourcesCard() {
-  const chips = el('div', { class: 'chips' });
-  for (const s of mus.sources ?? []) {
-    // the folder's name (the whole path is in the tooltip)
-    const name = s.temp ? t('musicDropped') : s.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || s.path;
-    chips.append(el('span', { class: `chip${s.exists ? '' : ' missing'}`, title: s.path },
-      icon(ICONS.folder, 'i chip-i'), el('span', { class: 'chip-t', text: name }),
-      s.exists ? null : el('span', { class: 'chip-tag', text: t('musicFolderMissing') }),
-      el('button', { class: 'chip-x', 'aria-label': t('musicRemoveFolder'), title: t('musicRemoveFolder'), onclick: () => removeSource(s.path) }, icon(ICONS.close))));
-  }
-  const cat = mus.catalog;
-  const line = cat ? t('musicLibraryLine', {
-    songs: fmtCount(cat.counts?.tracks ?? 0), albums: fmtCount(cat.counts?.albums ?? 0),
-    size: fmtBytes(cat.tracks.reduce((x, tr) => x + (tr.size || 0), 0)),
-  }) : '';
-  const card = el('div', { class: 'card sources' },
-    el('div', { class: 'sources-head' },
-      el('div', { class: 'sources-icon' }, icon(ICONS.note)),
-      el('div', { class: 'grow' }, el('h3', { text: t('library') }), el('p', { class: 'muted small-text', text: line })),
-      el('button', { class: 'btn link', text: t('musicRescan'), disabled: mus.state === 'scanning', onclick: () => loadMusic({ rescan: true }) }),
-      el('button', { class: 'btn', text: t('musicAddFolder'), onclick: () => pickFolder() })),
-    chips,
-    el('div', { class: 'drop-hint', text: t('musicDropHere') }));
-  dropZone(card);
-  return card;
-}
-
-function scanningCard() {
-  const card = el('div', { class: 'card lib-loading', id: 'music-scanning' });
-  fillScanning(card);
-  return card;
-}
-function renderScanning() { const c = $('music-scanning'); if (c) fillScanning(c); }
-function fillScanning(card) {
-  const p = mus.progress ?? {};
-  let text = t('musicScanningList', { n: fmtCount(p.done ?? 0) });
-  let frac = null;
-  if (p.op === 'tags' && p.total > 0) { text = t('musicScanning', { done: fmtCount(p.done), total: fmtCount(p.total) }); frac = p.done / p.total; }
-  if (mus.dropping) text = t('musicCopyingDrop', { n: mus.dropping });
-  card.replaceChildren(el('div', { class: 'lib-loading-art' }, el('span'), el('span'), el('span')), el('p', { class: 'lib-loading-text', text }),
-    el('div', { class: `step-bar${frac === null ? ' wait' : ''}` }, el('span', { style: frac === null ? '' : `width:${(frac * 100).toFixed(1)}%` })));
-}
-
-// The iTunes "Sync Music" box: everything, or chosen artists, albums and genres.
-function selectCard() {
-  const cat = mus.catalog;
-  const sel = mus.sel;
-  const changed = () => { saveSel(); schedulePlan(); };
-  const radio = (all, label) => el('label', { class: 'radio' },
-    el('input', { type: 'radio', name: 'sync-mode', checked: sel.all === all, onchange: () => { sel.all = all; changed(); renderMusic(); } }),
-    el('span', { text: label }));
-  const card = el('div', { class: 'card sync-card' },
-    el('div', { class: 'sync-head' },
-      el('label', { class: 'check big' }, el('input', { type: 'checkbox', checked: true, disabled: true }), el('span', { text: t('syncTitle') })),
-      el('span', { class: 'muted small-text', text: t('musicLibraryLine', {
-        songs: fmtCount(cat.counts.tracks), albums: fmtCount(cat.counts.albums), size: fmtBytes(cat.tracks.reduce((x, tr) => x + (tr.size || 0), 0)),
-      }) })),
-    el('div', { class: 'radios' }, radio(true, t('syncEntire')), radio(false, t('syncSelected'))));
-  if (!sel.all) {
-    const filter = el('input', { type: 'search', class: 'filter', placeholder: t('syncFilter'), value: mus.filter });
-    filter.addEventListener('input', () => { mus.filter = filter.value; drawBoxes(); });
-    const boxes = el('div', { class: 'pick-boxes' });
-    const drawBoxes = () => {
-      boxes.replaceChildren(
-        pickBox(t('artists'), cat.artists.map((a) => ({ key: a.name.toLowerCase(), label: a.name, count: a.tracks })), sel.artists, changed),
-        pickBox(t('albums'), cat.albums.map((a) => ({ key: `${a.artist.toLowerCase()}\u0000${a.title.toLowerCase()}`, label: a.title, sub: a.artist, count: a.tracks.length, art: a.art })), sel.albums, changed),
-        pickBox(t('genres'), cat.genres.map((g) => ({ key: g.name.toLowerCase(), label: g.name, count: g.tracks })), sel.genres, changed));
-    };
-    drawBoxes();
-    card.append(el('div', { class: 'filter-row' }, filter), boxes);
-  }
-  return card;
-}
-
-function pickBox(title, items, set, changed) {
-  const shown = items.filter((i) => matches(mus.filter, i.label, i.sub ?? ''));
-  const n = items.filter((i) => set.has(i.key)).length;
-  const list = el('ul', { class: 'pick-list' });
-  for (const it of shown) {
-    const cb = el('input', { type: 'checkbox', checked: set.has(it.key) });
-    cb.addEventListener('change', () => {
-      if (cb.checked) set.add(it.key); else set.delete(it.key);
-      list.closest('.pick-box').querySelector('.pick-count').textContent = n === 0 && !set.size ? '' : t('selCount', { n: items.filter((i) => set.has(i.key)).length });
-      changed();
-    });
-    list.append(el('li', {}, el('label', { class: 'pick' }, cb,
-      el('span', { class: 'pick-t' }, el('span', { text: it.label }), it.sub ? el('span', { class: 'pick-sub', text: it.sub }) : null),
-      el('span', { class: 'pick-n', text: String(it.count) }))));
-  }
-  return el('div', { class: 'pick-box' },
-    el('div', { class: 'pick-head' }, el('span', { text: title }), el('span', { class: 'pick-count', text: n ? t('selCount', { n }) : '' })),
-    list);
-}
-
-function optionsCard() {
-  const o = mus.opts;
-  const changed = () => { saveSel(); schedulePlan(); };
-  const check = (key, label, hint, sel = false) => el('label', { class: 'opt' },
-    el('input', {
-      type: 'checkbox', checked: sel ? mus.sel.books : o[key],
-      onchange: (e) => { if (sel) mus.sel.books = e.target.checked; else o[key] = e.target.checked; changed(); },
-    }),
-    el('span', {}, el('span', { text: label }), hint ? el('span', { class: 'opt-hint', text: hint }) : null));
-  const dest = el('input', { type: 'text', value: o.dest, spellcheck: 'false', class: 'dest' });
-  dest.addEventListener('change', () => { o.dest = dest.value.trim().replace(/^\/+|\/+$/g, '') || 'Music'; dest.value = o.dest; changed(); });
-  const layout = el('select', { class: 'layout' },
-    el('option', { value: 'artist-album', text: t('layoutArtistAlbum'), selected: o.layout === 'artist-album' }),
-    el('option', { value: 'keep', text: t('layoutKeep'), selected: o.layout === 'keep' }));
-  layout.addEventListener('change', () => { o.layout = layout.value; changed(); });
-  return el('div', { class: 'card options-card' },
-    el('div', { class: 'opts' },
-      check('books', t('optBooks'), '', true),
-      check('lyrics', t('optLyrics')),
-      check('covers', t('optCovers'), t('optCoversHint')),
-      check('remove', t('optRemove'), t('optRemoveHint'))),
-    el('div', { class: 'opts-fields' },
-      el('label', { class: 'field' }, el('span', { text: t('optDest') }), dest),
-      el('label', { class: 'field' }, el('span', { text: t('optLayout') }), layout)));
-}
-
-// The bottom bar: iTunes' capacity bar, the plan in one line, and Apply.
-function renderSyncBar() {
-  const bar = $('sync-bar');
-  if (!bar) return;
-  const show = ['select', 'planning', 'plan-ready'].includes(mus.state) && C.appState.tab === 'music' && !!mus.catalog;
-  bar.hidden = !show;
-  if (!show) return;
-  bar.replaceChildren();
-  const sd = C.appState.status?.sd;
-  const p = mus.plan;
-  const total = sd?.sd_total || (p ? p.sd_free * 2 : 0);
-  const free = p ? p.sd_free : sd?.sd_free ?? 0;
-  const used = total ? total - free : 0;
-  const add = p ? Math.max(0, p.bytes_add - (p.bytes_remove ?? 0)) : 0;
-  const cap = el('div', { class: `capacity sync-cap${p && !p.fits ? ' over' : ''}` });
-  const parts = [['used', used], ['new', Math.min(add, free)], ['free', p ? planFreeAfter(p) : free]];
-  for (const [cls, v] of parts) {
-    const span = el('span', { class: cls });
-    cap.append(span);
-    requestAnimationFrame(() => { span.style.flexBasis = `${total ? (100 * v) / total : 0}%`; });
-  }
-  const legend = el('div', { class: 'legend' },
-    el('span', {}, el('i', { class: 'lg-used' }), t('used'), el('span', { class: 'v', text: fmtBytes(used) })),
-    el('span', {}, el('i', { class: 'lg-new' }), t('capNew'), el('span', { class: 'v', text: fmtBytes(add) })),
-    el('span', {}, el('i', { class: 'lg-free' }), t('capFree'), el('span', { class: 'v', text: fmtBytes(p ? planFreeAfter(p) : free) })));
-  let text;
-  let cls = 'sync-text';
-  if (mus.planning || mus.state === 'planning') text = el('span', {}, el('span', { class: 'spinner' }), ` ${t('planning')}`);
-  else if (p && !p.fits) { text = t('notEnoughSpace'); cls += ' fail'; }
-  else if (p && p.add + p.update + p.remove === 0) text = t('planNothing');
-  else if (p) text = planSummary(p, t, lang());
-  else text = mus.planError ? C.errorMessage(mus.planError) : '';
-  const apply = el('button', {
-    class: 'btn primary apply', text: t('apply'),
-    disabled: !p || !p.fits || mus.planning || p.add + p.update + p.remove === 0 || device()?.reachable === false,
-    onclick: () => applySync(),
-  });
-  bar.append(el('div', { class: 'sync-bar-cap' }, cap, legend),
-    el('div', { class: 'sync-bar-row' }, typeof text === 'string' ? el('span', { class: cls, text }) : el('span', { class: cls }, text), apply));
-}
-
-async function applySync(retry = false) {
-  const p = mus.plan;
-  if (!p) return;
-  if (p.remove > 0 && !retry) {
-    const r = await C.sheet({ title: t('syncConfirmRemoveTitle', { n: p.remove }), body: t('syncConfirmRemoveBody'), okText: t('deleteAction'), danger: true });
-    if (!r.ok) return;
-  }
-  mus.state = 'applying';
-  mus.progress = { files_total: p.add + p.update, files_done: 0, done: 0, total: p.bytes_add };
-  mus.failed = [];
-  mus.final = null;
-  renderMusic();
-  const final = await C.runCli('sync-apply', {
-    device: spec(), covers: mus.opts.covers ? 'optimize' : 'keep', lyrics: mus.opts.lyrics, then: 'rescan', yes: true,
-  }, {
-    title: t('syncJob'),
-    onStarted: (job) => { mus.job = job; },
-    onEvent: (ev) => {
-      if (ev.event === 'progress') {
-        if (ev.op === 'sync') Object.assign(mus.progress, { done: ev.done, total: ev.total, rate: ev.rate, files_done: ev.files_done, files_total: ev.files_total });
-        else if (ev.op === 'put') Object.assign(mus.progress, { file: ev.path, fileDone: ev.done, fileTotal: ev.total, phase: 'put' });
-        else if (ev.op === 'prepare') Object.assign(mus.progress, { file: ev.path, phase: 'prepare', fileDone: 0, fileTotal: 0 });
-        else if (ev.op === 'remove') mus.progress.phase = 'remove';
-        else if (ev.op === 'library') mus.progress.phase = 'library';
-        renderApplying();
-      } else if (ev.event === 'warn' && ev.code === 'failed') mus.failed.push(ev);
-    },
-  });
-  mus.job = null;
-  mus.final = final;
-  const outcome = syncOutcome(final);
-  mus.state = outcome === 'error' ? 'error' : outcome;
-  if (outcome === 'error') mus.error = final;
-  if (final.ok || outcome === 'cancelled') { lib.index = null; mus.plan = null; }
-  renderMusic();
-}
-
-function applyingCard() {
-  const card = el('div', { class: 'card applying', id: 'applying' });
-  fillApplying(card);
-  return card;
-}
-function renderApplying() { const c = $('applying'); if (c) fillApplying(c); }
-function fillApplying(card) {
-  const p = mus.progress;
-  const frac = p.total ? Math.min(1, p.done / p.total) : 0;
-  const fileFrac = p.fileTotal ? Math.min(1, p.fileDone / p.fileTotal) : null;
-  const name = (p.file ?? '').split('/').pop().replace(/\.[^.]+$/, '');
-  let sub = '';
-  if (p.phase === 'prepare') sub = t('syncPreparing', { name });
-  else if (p.phase === 'remove') sub = t('syncRemoving');
-  else if (p.phase === 'library') sub = t('syncLibrary');
-  else sub = name;
-  const left = fmtLeft(secondsLeft(p.done, p.total, p.rate), t);
-  const rate = p.rate ? t('rateText', { size: fmtBytes(p.rate) }) : '';
-  card.replaceChildren(
-    el('div', { class: 'applying-head' },
-      el('div', { class: 'applying-icon' }, icon(ICONS.sync)),
-      el('div', { class: 'grow' },
-        el('h2', { text: t('syncCopying', { done: fmtCount(Math.min((p.files_done ?? 0) + 1, p.files_total ?? 0)), total: fmtCount(p.files_total ?? 0) }) }),
-        el('p', { class: 'muted', text: [`${fmtBytes(p.done)} / ${fmtBytes(p.total)}`, rate, left].filter(Boolean).join(' · ') })),
-      el('button', { class: 'btn', text: t('cancel'), onclick: () => cancelSync() })),
-    el('div', { class: 'step-bar big' }, el('span', { style: `width:${(frac * 100).toFixed(1)}%` })),
-    el('div', { class: 'applying-file' },
-      el('span', { class: 'applying-name', text: sub }),
-      el('div', { class: `step-bar small${fileFrac === null ? ' wait' : ''}` }, el('span', { style: fileFrac === null ? '' : `width:${(fileFrac * 100).toFixed(1)}%` }))),
-    ...(mus.failed.length ? [el('p', { class: 'fail-text small-text', text: t('syncPartial', { n: mus.failed.length }) })] : []));
-}
-
-function cancelSync() {
-  if (mus.job?.id) C.api(`/api/jobs/${mus.job.id}/cancel`, { method: 'POST', body: {} }).catch(() => {});
-}
-
-function resultCard() {
-  const f = mus.final ?? {};
-  const s = mus.state;
-  const ok = s === 'done' || s === 'library-pending';
-  const card = el('div', { class: `card result ${ok ? 'ok' : s === 'partial' ? 'partial' : 'stopped'}` });
-  const title = s === 'partial' ? t('syncPartial', { n: f.failed }) : s === 'cancelled' ? t('syncCancelled') : t('syncDone');
-  card.append(el('div', { class: 'result-icon' }, icon(ok ? ICONS.check : s === 'partial' ? ICONS.warn : ICONS.info)),
-    el('h2', { text: title }));
-  if (s !== 'cancelled') {
-    card.append(el('p', { class: 'muted', text: t('syncDoneBody', { written: fmtCount(f.written ?? 0), size: fmtBytes(f.bytes ?? 0), skipped: fmtCount(f.skipped ?? 0), removed: fmtCount(f.removed ?? 0) }) }));
-  }
-  if (s === 'partial') {
-    const ul = el('ul', { class: 'fail-list' });
-    const failed = (f.items ?? []).filter((i) => i.result === 'failed');
-    for (const i of failed.slice(0, 12)) ul.append(el('li', {}, el('span', { text: i.dest.split('/').pop() }), el('span', { class: 'muted', text: i.error ?? '' })));
-    card.append(el('p', { class: 'muted', text: t('syncPartialBody') }), ul);
-  }
-  if (s === 'library-pending' || (s === 'partial' && f.library && !f.library.ok)) {
-    card.append(el('div', { class: 'pending' }, icon(ICONS.info, 'i pending-i'),
-      el('div', {}, el('p', { text: t('libraryPending') }),
-        el('div', { class: 'howto' }, el('span', { class: 'howto-step', text: t('howtoSettings') }), el('span', { text: '›' }), el('span', { class: 'howto-step', text: t('howtoUpdate') })))));
-  }
-  const actions = el('div', { class: 'result-actions' });
-  if (s === 'partial') actions.append(el('button', { class: 'btn primary', text: t('retryFailed'), onclick: () => retryFailed() }));
-  actions.append(el('button', { class: `btn${s === 'partial' ? '' : ' primary'}`, text: t('syncAgain'), onclick: () => { mus.state = 'select'; mus.final = null; renderMusic(); schedulePlan(0); } }));
-  card.append(actions);
-  return card;
-}
-
-async function retryFailed() {
-  mus.state = 'select';
-  renderMusic();
-  await plan();
-  if (mus.plan && mus.plan.fits && mus.plan.add + mus.plan.update > 0) applySync(true);
-}
-
-async function pickFolder() {
-  try {
-    const r = await C.api('/api/pick-folder', { method: 'POST', body: {} });
-    mus.sources = r.sources;
-    if (r.picked) { mus.catalog = null; await loadMusic({ rescan: true }); }
-  } catch (e) { toast(e.message, 'fail'); }
-}
-
-async function removeSource(p) {
-  try {
-    const r = await C.api('/api/sources', { method: 'DELETE', body: { path: p } });
-    mus.sources = r.sources;
-    mus.catalog = null;
-    mus.plan = null;
-    await loadMusic({ rescan: mus.sources.length > 0 });
-  } catch (e) { toast(e.message, 'fail'); }
-}
-
-// Files and folders dropped on the Music tab: copied into one "incoming" folder for this drop
-// (the browser gives no paths), which then becomes a music source.
-async function dropMusic(dt) {
-  const entries = [...(dt?.items ?? [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
-  const files = [];
-  const walk = (entry, prefix) => new Promise((resolve) => {
-    if (entry.isFile) { entry.file((f) => { files.push({ file: f, rel: prefix + f.name }); resolve(); }, () => resolve()); return; }
-    if (!entry.isDirectory) { resolve(); return; }
-    const reader = entry.createReader();
-    const all = [];
-    const more = () => reader.readEntries(async (batch) => {
-      if (!batch.length) { for (const e of all) await walk(e, `${prefix}${entry.name}/`); resolve(); return; }
-      all.push(...batch); more();
-    }, () => resolve());
-    more();
-  });
-  for (const e of entries) await walk(e, '');
-  const audio = files.filter((f) => /\.(flac|mp3|m4a|m4b|aac|wav|aiff?|dsf|dff|ape|ogg|oga|opus|wma|mp2|lrc|jpe?g|png)$/i.test(f.file.name) && !f.rel.split('/').some((c) => c.startsWith('.')));
-  if (!audio.length) return;
-  const session = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
-  mus.state = 'scanning';
-  mus.dropping = audio.length;
-  renderMusic();
-  try {
-    for (const f of audio) {
-      const q = new URLSearchParams({ session, rel: f.rel.normalize('NFC') });
-      if (f.file.lastModified > 0) q.set('mtime', String(f.file.lastModified));
-      await C.api(`/api/incoming?${q}`, { method: 'POST', raw: f.file });
-    }
-    const r = await C.api(`/api/incoming/done?session=${session}`, { method: 'POST', body: {} });
-    mus.sources = r.sources;
-  } catch (e) { toast(e.message, 'fail'); }
-  mus.dropping = null;
-  mus.catalog = null;
-  await loadMusic({ rescan: true });
-}
-
 // ---- wiring -------------------------------------------------------------------------------------
 
 export function initMedia(ctx) {
@@ -1334,7 +959,7 @@ export function initMedia(ctx) {
     b.addEventListener('click', () => setView(b.dataset.view));
   }
   for (const b of document.querySelectorAll('.side-lib')) {
-    b.addEventListener('click', () => { setView(b.dataset.libview); if (C.appState.tab !== 'library') C.setTab('library'); });
+    b.addEventListener('click', () => C.showComputer(b.dataset.libview));
   }
   const search = $('lib-search');
   let timer = null;
@@ -1350,18 +975,31 @@ export function initMedia(ctx) {
   document.addEventListener('click', (e) => { if (!e.target.closest('#ctx-menu')) closeMenu(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeMenu();
-    if (C.appState.tab !== 'library' || document.querySelector('dialog[open]') || e.target.closest?.('input, select')) return;
-    if (e.key === 'Delete' && lib.selected.size) deleteTracks([...lib.selected]);
+    if (!libraryOnScreen() || document.querySelector('dialog[open]') || e.target.closest?.('input, select')) return;
+    if (e.key === 'Delete' && lib.selected.size && !lib.local) deleteTracks([...lib.selected]);
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); $('lib-search').focus(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i' && lib.selected.size) { e.preventDefault(); getInfo([...lib.selected]); }
   });
   document.getElementById('content').addEventListener('scroll', closeMenu, { passive: true });
   window.addEventListener('resize', () => {
-    if (C.appState.tab === 'library' && lib.view === 'albums' && lib.open !== null) {
+    if (libraryOnScreen() && lib.view === 'albums' && lib.open !== null) {
       const grid = document.querySelector('.album-grid');
       if (grid) placeDetail(grid, true);
     }
   });
+}
+
+const libraryOnScreen = () => (lib.local ? C.appState.view === 'computer' : C.appState.view !== 'computer' && C.appState.tab === 'library');
+
+// Shows one library: the panel (toolbar, views, footer) moves into the page that shows it.
+function useLibrary(L) {
+  const root = $('lib-root');
+  const slot = L.local ? $('pc-slot') : document.querySelector('.tab-panel[data-panel="library"]');
+  if (root && slot && root.parentElement !== slot) slot.append(root);
+  if (lib === L) return;
+  lib = L;
+  $('lib-search').value = lib.query;
+  closeMenu();
 }
 
 function setView(v) {
@@ -1373,44 +1011,73 @@ function setView(v) {
 }
 
 export function mediaLocation() {
-  return C.appState.tab === 'library' && lib.view !== 'albums' ? `/${lib.view}` : '';
+  if (C.appState.view === 'computer') return `/${pcLib.view}`;
+  return C.appState.tab === 'library' && devLib.view !== 'albums' ? `/${devLib.view}` : '';
 }
 
-export function readMediaLocation(rest) {
-  if (['albums', 'artists', 'songs', 'books', 'playlists', 'recent'].includes(rest)) lib.view = rest;
+export function readMediaLocation(rest, computer = false) {
+  if (['albums', 'artists', 'songs', 'books', 'playlists', 'recent'].includes(rest)) (computer ? pcLib : devLib).view = rest;
 }
 
 // The selected HiBy changed (or was refreshed).
 export function mediaDeviceChanged() {
-  if (lib.demo && lib.loading) return; // a fixed demo picture
-  lib.deviceId = null;
-  lib.index = null;
-  lib.state = 'idle';
-  mus.plan = null;
+  if (devLib.demo && devLib.loading) return; // a fixed demo picture
+  devLib.deviceId = null;
+  devLib.index = null;
+  devLib.state = 'idle';
 }
 
 export function mediaTabOpened(tab) {
-  if (tab === 'library') { renderLibrary(); loadLibrary(); }
-  if (tab === 'music') { renderMusic(); loadMusic(); }
-  if (tab !== 'music') renderSyncBar();
+  if (tab === 'library') { useLibrary(devLib); renderLibrary(); loadLibrary(); }
 }
 
-// The app re-renders its page on every device refresh (every 5 s): the Library and Music tabs
-// are only rebuilt when something they show changed, so animations, scroll positions, an open
-// album and a half-typed filter stay as they are.
+// The sidebar's Library: the computer's music (design 10.1).
+export function computerOpened(view) {
+  useLibrary(pcLib);
+  if (view) pcLib.view = view;
+  renderComputerHead();
+  renderLibrary();
+  loadComputer();
+}
+
+// The page header of the computer's library: which folders it shows.
+function renderComputerHead() {
+  const sub = $('pc-sub');
+  if (!sub) return;
+  const idx = pcLib.index;
+  const roots = (idx?.roots ?? []).map((r) => String(r).replace(/[\\/]+$/, '').split(/[\\/]/).pop()).filter(Boolean);
+  sub.textContent = roots.length ? t('pcFolders', { names: roots.join(', ') }) : t('pcSub');
+}
+
+// After a sync or a link change, the computer's catalogue may be new.
+export function libraryChanged() {
+  devLib.index = null;
+  devLib.state = 'idle';
+}
+
+// The app re-renders its page on every device refresh (every 5 s): the libraries are only rebuilt
+// when something they show changed, so animations, scroll positions, an open album and a
+// half-typed filter stay as they are.
 let mediaKey = '';
 export function renderMedia() {
   const d = device();
-  const key = JSON.stringify([lang(), d?.id, d?.reachable, C.appState.tab, !!C.appState.status]);
+  const key = JSON.stringify([lang(), d?.id, d?.reachable, C.appState.tab, C.appState.view, !!C.appState.status]);
   if (key === mediaKey) return;
   mediaKey = key;
-  renderLibrary();
-  renderMusic();
+  if (C.appState.view === 'computer') { useLibrary(pcLib); renderComputerHead(); renderLibrary(); }
+  else if (C.appState.tab === 'library') { useLibrary(devLib); renderLibrary(); }
 }
 
-// Demo mode only (?demo=NAME&...): fixed pictures of the Library and Music states, for
-// screenshots and design review. The rest of the page is the real (mock) flow.
+// Demo mode only (?demo=NAME&...): fixed pictures of the Library states, for screenshots and
+// design review. The rest of the page is the real (mock) flow.
 export async function demoMedia(name, params) {
+  if (name.startsWith('pc-')) {
+    // the computer's library: a demo folder (the fake byos-cli invents its music)
+    try { await C.api('/api/pick-folder', { method: 'POST', body: {} }); } catch { /* demo */ }
+    const v = params.get('libview'); if (v) pcLib.view = v;
+    if (name === 'pc-open') pcLib.afterLoad = () => { pcLib.open = Number(params.get('open') ?? 2); renderLibrary(); };
+    return 'computer';
+  }
   if (name.startsWith('lib-')) {
     lib.demo = name;
     const v = params.get('libview'); if (v) lib.view = v;
@@ -1443,45 +1110,15 @@ export async function demoMedia(name, params) {
     lib.afterLoad = after;
     return 'library';
   }
-  if (name.startsWith('music-')) {
-    mus.demo = name;
-    if (name === 'music-empty') {
-      try { for (const s of (await C.api('/api/sources')).sources) await C.api('/api/sources', { method: 'DELETE', body: { path: s.path } }); } catch { /* demo */ }
-      return 'music';
-    }
-    try { await C.api('/api/pick-folder', { method: 'POST', body: {} }); } catch { /* demo */ }
-    if (params.get('selected') === '1') {
-      mus.sel = { all: false, artists: new Set(['aurora fields', 'luna varga']), albums: new Set(), genres: new Set(['jazz']), books: true };
-    }
-    return 'music';
-  }
   return null;
 }
 
 // Called by the demo once the real flow reached its state.
 export function demoAfter() {
-  if (lib.afterLoad && lib.state === 'ready') { const f = lib.afterLoad; lib.afterLoad = null; f(); }
-  const d = mus.demo;
-  if (!d || !mus.catalog) return false;
-  const tracks = mus.catalog.tracks;
-  const base = { files_total: 188, files_done: 41, done: 1838000000, total: 7898666830, rate: 11200000 };
-  if (d === 'music-scanning') { mus.state = 'scanning'; mus.progress = { op: 'tags', done: 1240, total: 3900 }; }
-  else if (d === 'music-applying') { mus.state = 'applying'; mus.progress = { ...base, file: tracks[7].path, fileDone: 21000000, fileTotal: 33000000, phase: 'put' }; mus.failed = []; }
-  else if (d === 'music-partial') {
-    mus.state = 'partial';
-    mus.final = { ok: true, written: 185, skipped: 117, failed: 3, removed: 0, bytes: 7712000000, library: { action: 'rescan', ok: false, code: 'E_UNSUPPORTED' },
-      items: [0, 1, 2].map((k) => ({ dest: `Music/${tracks[k * 9].artist}/${tracks[k * 9].album}/${tracks[k * 9].title}.flac`, result: 'failed', error: 'E_IO' })) };
-  } else if (d === 'music-pending') {
-    mus.state = 'library-pending';
-    mus.final = { ok: true, written: 188, skipped: 117, failed: 0, removed: 2, bytes: 7898666830, library: { action: 'rescan', ok: false, code: 'E_UNSUPPORTED' }, items: [] };
-  } else if (d === 'music-done') {
-    mus.state = 'done';
-    mus.final = { ok: true, written: 188, skipped: 117, failed: 0, removed: 0, bytes: 7898666830, library: { action: 'rescan', ok: true }, items: [] };
-  } else if (d === 'music-full' && mus.plan) { mus.plan = { ...mus.plan, fits: false, sd_free: 1200000000 }; }
-  else return false;
-  mus.demo = null;
-  renderMusic();
-  return true;
+  for (const L of [devLib, pcLib]) {
+    if (L.afterLoad && L.state === 'ready' && L === lib) { const f = L.afterLoad; L.afterLoad = null; f(); }
+  }
+  return false;
 }
 
-export function mediaState() { return { lib, mus }; }
+export function mediaState() { return { lib, devLib, pcLib }; }

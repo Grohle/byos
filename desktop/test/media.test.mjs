@@ -148,7 +148,7 @@ test('library: index, cached art, and refused names', async () => {
   assert.equal(r.btp.name, 'E_UNSUPPORTED');
 });
 
-test('music: folders from the settings, catalogue, plan and sync', async () => {
+test('music: folders from the settings and the catalogue (the Sync tab is in sync.test.mjs)', async () => {
   assert.equal((await call('POST', '/api/jobs', { command: 'music-scan', params: {} })).status, 400); // no folder yet
   const picked = await call('POST', '/api/pick-folder', {});
   assert.equal(picked.json.picked, music);
@@ -159,16 +159,6 @@ test('music: folders from the settings, catalogue, plan and sync', async () => {
   assert.deepEqual(scan.roots, [music]);
   const cat = await call('GET', '/api/catalog');
   assert.ok(cat.json.tracks.length > 100);
-  const plan = await job('sync-plan', { device: 'usb', selection: { all: false, artists: ['Aurora Fields'], books: false }, catalog: 'C:\\evil.json' });
-  assert.equal(plan.ok, true);
-  assert.equal(plan.plan, path.join(app.cache, 'sync', 'plan.json'));
-  assert.ok(plan.add > 0 && plan.add < 60, String(plan.add));
-  assert.deepEqual(JSON.parse(readFileSync(path.join(app.cache, 'sync', 'selection.json'), 'utf8')).artists, ['Aurora Fields']);
-  assert.equal((await call('POST', '/api/jobs', { command: 'sync-plan', params: { selection: [1] } })).status, 400);
-  const apply = await job('sync-apply', { device: 'usb', then: 'rescan', yes: true, plan: 'C:\\evil.json' });
-  assert.equal(apply.ok, true);
-  assert.equal(syncOutcome(apply), 'library-pending');
-  assert.equal(apply.written, plan.add + plan.update);
   // dropped files: one folder per drop, then a temporary source
   const drop = await fetch(new URL('/api/incoming?session=abcd1234&rel=Album%2F01%20Song.flac', base), { method: 'POST', headers: { 'X-ByOS-Token': 'testtoken' }, body: 'xx' });
   assert.equal(drop.status, 200);

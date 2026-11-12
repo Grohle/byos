@@ -95,7 +95,8 @@ export function cacheFile(cache, kind, name) {
     case 'library': return DEVICE_ID.test(name ?? '') ? path.join(cache, 'library', name, 'index.json') : null;
     case 'art': return ART_KEY.test(name ?? '') ? path.join(cache, 'art', `${name}.jpg`) : null;
     case 'catalog': return path.join(cache, 'music', 'catalog.json');
-    case 'plan': return path.join(cache, 'sync', 'plan.json');
+    // the Sync tab's linked-folder plan (sync-plan --out)
+    case 'plan': return path.join(cache, 'sync', 'plan-v2.json');
     default: return null;
   }
 }

@@ -96,6 +96,21 @@ function localFile(p, what) {
   return p;
 }
 
+const KINDS = ['music', 'audiobooks', 'ebooks', 'video'];
+
+// A link id as byos-cli makes them (two random hex ids).
+function linkId(id) {
+  if (typeof id !== 'string' || !/^[0-9a-f]{4,64}$/.test(id)) throw new UsageError('link: invalid link id');
+  return id;
+}
+
+// --device-id: the HiBy the links belong to, so link commands work without the HiBy.
+function deviceIdFlag(params) {
+  if (params.deviceId === undefined || params.deviceId === null) return [];
+  if (typeof params.deviceId !== 'string' || !/^[0-9a-f]{4,64}$/.test(params.deviceId)) throw new UsageError('deviceId: a hex device id');
+  return ['--device-id', params.deviceId];
+}
+
 function remoteList(list, what) {
   if (!Array.isArray(list) || list.length === 0 || list.length > 1000) {
     throw new UsageError(`${what}: 1 to 1000 paths are required`);
@@ -198,7 +213,74 @@ export function buildArgs(command, params = {}, globals = {}) {
       a.push(...withPaths(['music-scan'], params.full ? ['--full'] : [], params.sources.map((s) => localDir(s, 'music-scan'))));
       break;
     }
+    // ---- Sync tab: linked folders (BYOS_CLI.md "Folder sync"). The folder of a link-add or
+    // link-set --local, the plan and the decisions file are filled in by the runner.
+    case 'link-ls':
+      a.push('link-ls', ...deviceIdFlag(params));
+      break;
+    case 'link-add':
+    case 'link-set': {
+      const head = [command];
+      const flags = [...deviceIdFlag(params)];
+      if (command === 'link-add') flags.push('--kind', oneOf(params.kind, KINDS, 'kind'));
+      if (params.cardRoot !== undefined) flags.push('--card-root', remote(params.cardRoot, 'card root'));
+      if (params.layout !== undefined) flags.push('--layout', oneOf(params.layout, ['artist-album', 'keep'], 'layout'));
+      if (params.playerOnly !== undefined) flags.push('--player-only', oneOf(params.playerOnly, ['keep', 'delete', 'ask'], 'player-only'));
+      if (params.covers !== undefined) flags.push('--covers', oneOf(params.covers, ['optimize', 'keep'], 'covers'));
+      if (params.select !== undefined) {
+        if (!Array.isArray(params.select) || params.select.length > 5000) throw new UsageError('select: up to 5000 values');
+        for (const s of params.select) {
+          if (typeof s !== 'string' || !/^(artist|album|genre):./s.test(s) || s.length > 600 || /[\u0000-\u001f]/.test(s)) {
+            throw new UsageError('select: artist:NAME, album:ARTIST::TITLE or genre:NAME');
+          }
+          flags.push('--select', s);
+        }
+      }
+      if (params.selectAll) flags.push('--select-all');
+      if (params.removeUnselected === true) flags.push('--remove-unselected');
+      if (params.removeUnselected === false && command === 'link-set') flags.push('--keep-unselected');
+      if (params.enabled === false) flags.push('--disable');
+      if (params.enabled === true && command === 'link-set') flags.push('--enable');
+      if (params.label !== undefined) {
+        if (typeof params.label !== 'string' || !params.label.trim() || params.label.length > 120 || /[\u0000-\u001f]/.test(params.label)) throw new UsageError('label: a short name');
+        flags.push('--label', params.label.trim());
+      }
+      if (command === 'link-add') {
+        a.push(...withPaths(head, flags, [localDir(params.local, 'link-add')]));
+      } else {
+        if (params.local !== undefined) flags.push('--local', localDir(params.local, 'link-set'));
+        a.push(...withPaths(head, flags, [linkId(params.id)]));
+      }
+      break;
+    }
+    case 'link-rm':
+      a.push(...withPaths(['link-rm'], deviceIdFlag(params), [linkId(params.id)]));
+      break;
+    case 'sync-scan':
+      a.push('sync-scan', '--kind', oneOf(params.kind ?? 'all', [...KINDS, 'all'], 'kind'), ...deviceIdFlag(params));
+      if (params.full) a.push('--full');
+      break;
+    case 'sync-status':
+      a.push('sync-status', ...deviceIdFlag(params));
+      break;
+    case 'sync-unlock':
+      a.push('sync-unlock');
+      if (params.force) a.push('--force');
+      break;
+    case 'sync-resume':
+      a.push('sync-resume', '--then', oneOf(params.then ?? 'none', ['none', 'rescan', 'rebuild'], 'then'));
+      if (params.takeOver) a.push('--take-over');
+      break;
     case 'sync-plan': {
+      if (params.catalog === undefined) {
+        // linked folders
+        const flags = ['--kind', oneOf(params.kind ?? 'all', [...KINDS, 'all'], 'kind')];
+        if (params.deleteUntracked) flags.push('--delete-untracked');
+        if (params.noScan) flags.push('--no-scan');
+        if (params.out !== undefined) flags.push('--out', localFile(params.out, 'sync-plan'));
+        a.push('sync-plan', ...flags);
+        break;
+      }
       const flags = ['--catalog', localFile(params.catalog, 'sync-plan'), '--dest', remote(params.dest ?? 'Music', 'sync-plan destination')];
       if (params.select !== undefined) flags.push('--select', localFile(params.select, 'sync-plan'));
       flags.push('--layout', oneOf(params.layout ?? 'artist-album', ['artist-album', 'keep'], 'layout'));
@@ -208,6 +290,15 @@ export function buildArgs(command, params = {}, globals = {}) {
       break;
     }
     case 'sync-apply': {
+      if (params.linked) {
+        const flags = ['--then', oneOf(params.then ?? 'none', ['none', 'rescan', 'rebuild'], 'then')];
+        if (params.decisions !== undefined) flags.push('--decisions', localFile(params.decisions, 'sync-apply'));
+        if (params.yes) flags.push('--yes');
+        if (params.allowMassDelete) flags.push('--allow-mass-delete');
+        if (params.takeOver) flags.push('--take-over');
+        a.push(...withPaths(['sync-apply'], flags, [localFile(params.plan, 'sync-apply')]));
+        break;
+      }
       const flags = ['--covers', oneOf(params.covers ?? 'optimize', ['optimize', 'keep'], 'covers'),
         '--then', oneOf(params.then ?? 'none', ['none', 'rescan', 'rebuild'], 'then')];
       if (params.lyrics) flags.push('--lyrics');

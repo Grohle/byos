@@ -86,14 +86,62 @@ In demo mode the whole flow runs against the fake CLI. For a fixed picture of on
 `demo=NAME` to the address the runner prints (`...?t=TOKEN&demo=building#updates`), with
 `downloading`, `ready`, `building`, `sending`, `installing`, `done`, `failed` or `wifi`.
 
-The Library and Music tabs work against made-up music in demo mode (about 40 albums, 400
-songs and 6 audiobooks, covers drawn by `mock/library-fixture.mjs`). Fixed pictures of their
-states: `demo=lib-unavailable`, `lib-scanning`, `lib-empty`, `lib-stale`, `lib-open&open=3`
+The Library tab and the Sync tab work against made-up music in demo mode (about 40 albums, 400
+songs and 6 audiobooks, covers drawn by `mock/library-fixture.mjs`). Fixed pictures of the
+Library tab: `demo=lib-unavailable`, `lib-scanning`, `lib-empty`, `lib-stale`, `lib-open&open=3`
 (an open album; add `&menu=1`, `&info=1` or `&delete=1`), `lib-view` with `#library/songs`,
-`/artists`, `/books` or `/playlists` (and `&q=TEXT`), and `music-empty`, `music-plan`
-(`&selected=1`), `music-scanning`, `music-applying`, `music-partial`, `music-pending`,
-`music-done`, `music-full`. `BYOS_MOCK_SCENARIO=snapshot_io` makes the real flow fall back to
-a card scan, `sync_partial` makes three songs fail, `card_full` leaves no room.
+`/artists`, `/books` or `/playlists` (and `&q=TEXT`). `BYOS_MOCK_SCENARIO=snapshot_io` makes the
+real flow fall back to a card scan.
+
+### The Sync tab and the computer's library
+
+The device's **Sync** tab (it replaced the Music tab) links one folder on this computer per kind
+(music, audiobooks, books, video), with its options (entire library or chosen artists, albums and
+genres; Artist/Album or the folder's own layout; what to do with files that are only on the
+HiBy: keep, delete or ask; remove unselected; on/off). **Sync Music** (or Audiobooks, Books,
+Video) and **Sync All** run `sync-plan` and open the preview: files to copy, update and move,
+files only on the HiBy grouped by reason with Keep/Delete per group and per file (and Copy to
+Computer), conflicts (Computer, HiBy, Both, Skip), files that cannot be copied, the space left,
+and an Apply button that says what it deletes ("Sync and Delete 12 Files from the HiBy"). When
+DeleteGuard trips (the folder is missing, on another drive, unreadable, or many files would go),
+nothing is ticked and deleting needs the count typed. Then the progress (current album, rate,
+time left, Pause, Cancel), the HiBy's library update, and the result. A sync that stopped
+(cable, Wi-Fi, USB storage mode, battery, Pause) is resumed with **Resume**; nothing is copied
+twice. A HiBy that another computer is syncing shows **Take Over**. The page never names a file
+on this computer: a folder is chosen in Windows' own dialog and the page only gets a token for
+it (`/api/links/pick`); the plan and the choices stay in byos-cli's cache. The Music tab's
+folders and selection become music links the first time the Sync tab opens.
+
+The sidebar's **Library** (Recently Added, Artists, Albums, Songs, Audiobooks, Playlists) shows
+the music **on this computer**: the linked folders, read by `music-scan`, with Rebuild and Sync
+Music. The device's Library tab still shows the HiBy's own library.
+
+Every state can be reached in demo mode. Scenarios (`BYOS_MOCK_SCENARIO`, set before starting):
+
+| Scenario | What the Sync tab shows |
+|---|---|
+| `ok` | Plans with copies, updates, moves, files only on the HiBy (deleted here, from another computer, added on the HiBy, downloaded on the HiBy), a conflict, and a video that cannot be copied |
+| `sync_unavailable` | The music folder is missing: "Your music folder isn't available. Nothing will be deleted." |
+| `sync_mass_delete` | 240 files deleted here: nothing ticked; deleting them needs the count typed |
+| `sync_locked` | Another computer (ANA-LAPTOP) is syncing the HiBy: Take Over |
+| `sync_pause` | The HiBy stops answering after 40 % of the copies: paused, then Resume |
+| `sync_usb_pause` | The card becomes a USB drive during the copies |
+| `sync_battery` | The HiBy's battery is too low to start |
+| `sync_partial` | Three files fail: Retry Failed Songs |
+| `sync_db_pending` | The files are copied but the HiBy's library is not updated |
+| `card_full` | Not enough space on the card |
+| `ask_policy` | New links ask about each file that is only on the HiBy |
+
+`BYOS_MOCK_SYNC_STEP_MS` sets the pace of the fake scan and copies (default 6 ms). Fixed
+pictures: `demo=sync-empty`, `sync-migrate`, `sync-idle` (add `&options=music`, `&off=video`,
+`&chosen=artist:NAME|genre:NAME`), `sync-planning`, `sync-preview&kind=music` (or `all`; add
+`&only=add,move` for the open sections, `&choose=deleted_on_computer:delete` for choices,
+`&typed=24&submit=1` for the typed confirmation, `&wifi=1` for the "faster over USB" hint),
+`sync-syncing&freeze=1`, `sync-building&freeze=1`, `sync-paused&freeze=1&reason=user`, and the
+real flow to its end with `sync-run` and `sync-result` (add `&resume=1`). `&kinds=music,video`
+chooses which kinds get a demo folder. The computer's library: `demo=pc-albums#computer/albums`,
+`pc-open&open=3`, `#computer/songs`. For a frame-by-frame review of an animation, `&frame=MS`
+stops it MS after it starts (`&framesel=%23sync-preview` or `.sy-options` limits it to one element).
 
 ## How it works
 
@@ -145,8 +193,10 @@ Files:
 | `lib/jsonl.mjs` | JSON-lines splitting and checks |
 | `lib/btp-path.mjs` | BTP/1 path rules (also served to the page) |
 | `lib/build-flow.mjs` | The Updates page's build-and-install steps from the CLI lines (also served to the page) |
-| `mock/byos-cli-mock.mjs` | Fake `byos-cli` for demos and tests |
-| `ui/` | The page: `index.html`, `app.css`, `app.js`, `i18n.js` (English, French, Spanish) |
+| `lib/sync-flow.mjs` | The Sync tab's rules: migration, preview groups, choices and DEC.json, deletions, outcomes, progress (also served to the page) |
+| `lib/media-format.mjs`, `lib/media-store.mjs` | The libraries' formatting and the runner's own files (settings, cache names) |
+| `mock/byos-cli-mock.mjs` | Fake `byos-cli` for demos and tests (`mock/sync-mock.mjs`: the folder sync commands) |
+| `ui/` | The page: `index.html`, `app.css`, `app.js`, `media.js` (libraries), `sync.js` (Sync tab), `i18n.js` (English, French, Spanish) |
 | `test/` | Tests (`node --test`) |
 
 ## Tests
@@ -165,3 +215,8 @@ CLI, the watchdog, and the runner's API (token, Host and Origin checks, streamin
 `build-send` for the whole flow and every failure, how `lib/build-flow.mjs` maps them to the four
 steps, and the runner's firmware upload (temporary copy removed, local jobs not queued behind a
 device).
+`test/sync-flow.test.mjs` and `test/sync.test.mjs` check the Sync tab: the migration of the Music
+tab, the preview's groups and choices and the DEC.json they make, the typed mass-delete count,
+every way a run ends (done, problems, library not updated, paused for each reason, locked and
+taken over, resumed without copying twice), a 50,000-file preview, that the page never names a
+file on this computer, and the English, French and Spanish texts.
