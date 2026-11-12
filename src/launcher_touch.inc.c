@@ -297,7 +297,9 @@ static void launch_app_body(int a, int ix, int iy)
     /* apps propias: solo una abierta a la vez (la ultima queda como tarjeta de la multitarea) */
     if (ap->act == ACT_MUSIC && !strcmp(ap->id, "nowplaying")) {
         V.pressed_app = -1; render_launcher(img_base, now_ms());
-        np_app_run(img_base, ix, iy); launcher_present(); return;
+        /* hoja que sube, como al abrirlo desde el mini reproductor: se cierra bajandola, asi que
+         * abrirlo con el zoom de un icono mezclaba dos metaforas (revisor r2) */
+        (void)ix; (void)iy; np_app_run(img_base, -2, -1); launcher_present(); return;
     }
     if (ap->act == ACT_MUSIC) { V.pressed_app = -1; last_app = a; music_app(ix, iy); return; }
     if (ap->act == ACT_FILES) { V.pressed_app = -1; last_app = a; files_app(ix, iy); return; }

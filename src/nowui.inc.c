@@ -1488,7 +1488,7 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
     double t0 = now_ms();
     if (!nu_init()) { nu_free(); toast(tr("No se pudo abrir")); return NU_HOME; }
     memcpy(img_under, home, HM_FRAME_BYTES);
-    if (ix == -2) { nu_sheet_build(); nu_sheet_anim((float)H, 0, 0, 0.32f, 1, 0); }   /* sube desde abajo (como iOS) */
+    if (ix == -2) { nu_loose = 1; nu_sheet_build(); nu_sheet_anim((float)H, 0, 0, 0.32f, 1, 0); }   /* suelto ya: sin mini reproductor que fundir (salia el dock en la hoja) */   /* sube desde abajo (como iOS) */
     else if (ix >= 0) {
         uint16_t *pg = img_app; nu_render(pg, 1);
         /* el reloj de la animacion empieza aqui: con t0 de antes de preparar las capas (~370 ms)
