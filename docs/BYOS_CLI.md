@@ -89,6 +89,7 @@ stable and must not be parsed.
 | 8 | `rejected` | the user said no on the HiBy (pairing Deny, update not confirmed) |
 | 9 | `timeout` | the device stopped answering |
 | 10 | `internal` | bug |
+| 11 | `locked` | another computer or phone is syncing the HiBy (`locked_by`); see `sync-unlock` |
 
 ### 2.2 Input and cancellation
 
@@ -125,6 +126,9 @@ the same `put` again resumes.
 | `cache/bundle/` | the ByOS files: `builtin.zip` (unpacked from the jar), `updated.zip` (`bundle-update`) |
 | `cache/firmware/` | HiBy's official firmware and its `firmware.ok` check record (`firmware-fetch`) |
 | `cache/build/` | the last build: `r3ii_2025.upt`, `ByOS/`, `result.txt`, `build.json` (`build`, `build-send`) |
+| `sync/client.json` | this computer's sync client id (random, made once) |
+| `sync/<device_id>/` | folder sync per HiBy: `links.json`, `<link>/local.json` (last scan), `<link>/state.json` (last good sync), `runs/` (journals), `card-qfp.json` (card fingerprints) |
+| `cache/sync/` | `plan-v2.json` (last plan), `prepared/` (copies with optimised covers, kept until recorded) |
 
 ## 4. Connection
 
@@ -624,7 +628,11 @@ and `roots` (default `cache/music/catalog.json`). Progress `op "scan"`, `op "tag
 `catalog`, `roots`, `tracks`, `albums`, `artists`, `books`, `bytes`, `changed` (files read
 again).
 
-#### sync-plan
+#### sync-plan (one music folder, `--catalog`)
+
+This and the next section describe the branch's single-folder music sync, which the desktop
+app's Music tab still uses. Without `--catalog`, `sync-plan` and `sync-apply` are the linked-folder
+sync of the "Folder sync" section below; `sync-apply` tells them apart by the plan's `format`.
 
 ```
 byos-cli sync-plan --catalog CATALOG.json [--select SEL.json] [--dest Music]
@@ -660,7 +668,7 @@ Writes the plan (default `cache/sync/plan.json`): the result fields plus `items`
 `plan`, `add`, `update`, `skip`, `remove`, `bytes_add`, `bytes_remove`, `sd_free`, `fits`
 (64 MB to spare).
 
-#### sync-apply
+#### sync-apply (a `--catalog` plan)
 
 ```
 byos-cli sync-apply PLAN.json [--covers optimize|keep] [--lyrics] [--then none|rescan|rebuild] [--yes]
@@ -705,6 +713,192 @@ baseline JPEG cover (GET, rewrite on this computer, PUT REPLACE), then runs
 `cover-cache-reset`. One `entry` per album (`path`, `files`, `reasons`). Progress `op "scan"`,
 `op "get"`, `op "put"`. Result: `albums`, `files`, `fixed`, `skipped`, `cache_reset`;
 `--dry-run` only lists.
+
+### Folder sync
+
+Linked folders for music, audiobooks, ebooks and video (docs/SYNC_LIBRARY_DESIGN.md sections 2
+and 3, milestones M1 and M2). Each link pairs a folder on this computer with a folder on the
+HiBy's card (its *card root*). A file's identity is its link and its path inside the linked
+folder, so moving the whole folder to another drive (`link-set --local`) copies nothing again.
+
+The typical run is `sync-scan`, `sync-plan` (a preview: nothing changes), then `sync-apply` with
+the user's choices. "Sync all" is the same with `--kind all`: the kinds run one after the other
+(music, audiobooks, ebooks, video) under one lock.
+
+Files on the card (`ByOS/sync/`): `card.json` (a random id for this card, written once),
+`lock.json` (who is syncing), `manifest-v2/<kind>.json` (what each sync wrote: dest → link,
+path, origin client, sizes, times, SHA-256 of the bytes sent, cover option), `journal/` (card
+checkpoints of a run that has not finished) and `trash/` (old copies moved aside while a
+nearly full card is updated). The branch's `ByOS/sync/manifest.json` (from `sync-plan
+--catalog`) is folded into `manifest-v2/music.json` once its folder is linked, so files it
+copied are not copied again (`warn manifest_migrated`).
+
+#### link-ls, link-add, link-set, link-rm
+
+```
+byos-cli link-ls [--device-id ID]
+byos-cli link-add --kind music|audiobooks|ebooks|video LOCAL_FOLDER [--card-root R] [--layout artist-album|keep]
+          [--player-only keep|delete|ask] [--select S]... [--select-file SEL.json] [--remove-unselected]
+          [--exclude GLOB]... [--no-sidecars] [--covers optimize|keep] [--label L] [--disable] [--device-id ID]
+byos-cli link-set LINK_ID [the same options] [--local FOLDER] [--enable] [--keep-unselected] [--sidecars]
+          [--clear-exclude] [--select-all]
+byos-cli link-rm LINK_ID
+```
+
+Links belong to one HiBy: without `--device-id`, the command connects to read the HiBy's id.
+They are kept in `<config>/sync/<device_id>/links.json`. Defaults:
+
+| Kind | Card root | Layout | Files |
+|---|---|---|---|
+| music | `Music` | `artist-album` (`Music/Artist/Album/NN Title.ext`, `D-NN` with several discs) | audio files except `.m4b`; sidecars `.lrc`, `.cue`, `cover/folder/front.jpg/png`, album `.m3u/.m3u8` |
+| audiobooks | `Audiobooks` | `keep` (the folder's own tree) | audio files; sidecars `.lrc`, `.cue`, cover images |
+| ebooks | `Books` | `keep` | `epub pdf txt fb2 mobi azw azw3 cbz cbr djvu`; cover images |
+| video | `Video` | `keep` | `mp4 m4v mkv avi mov webm wmv flv 3gp ts mpg mpeg`; subtitles `srt ass ssa vtt sub` |
+
+- A second link of a kind whose root is taken goes to `<root>/<label>` (two links never share a
+  root; a nested root is left to its own link).
+- `--select` (music only, repeatable): `all`, `artist:NAME`, `album:ARTIST::TITLE`,
+  `genre:NAME`, `file:PATH` (inside the folder). Any of them except `all` makes the selection
+  "chosen". `--select-file` takes the `SEL.json` of `sync-plan --catalog`.
+- `--exclude` (repeatable): a glob relative to the linked folder; `**` crosses folders, `*`
+  stays within a name, a pattern without `/` matches a name at any depth (`*.tmp`, `Live/**`).
+- `--player-only`: what happens to files that are only on the HiBy (below). Default `keep`.
+- `--remove-unselected`: files the sync copied before that the selection or an exclude now
+  leaves out are ticked for deletion (still behind the deletion confirmation).
+- A CUE album keeps its folder layout even in an `artist-album` link. Sidecars go next to their
+  track (same base name) or into their album's folder.
+
+Results: `link` (the link as stored), `link-ls` also one `entry` per link and `links`.
+
+#### sync-scan
+
+```
+byos-cli sync-scan [--kind K|all] [--full] [--device-id ID]
+```
+
+Reads each enabled link's folder: sizes, modification times and (music, audiobooks) tags; tags
+and fingerprints of unchanged files come from the last scan (`--full` reads everything again).
+A folder that cannot be read is recorded as unreadable (`warn unreadable`), never as empty: the
+files under it are never "deleted on the computer". A missing, empty or unreadable linked folder
+gives `warn source_unavailable`. Progress `op "scan"` (folders), `op "tags"`. Result: `links`
+(`id`, `kind`, `status` ok/missing/not_dir/unreadable/empty, `files`, `unreadable`, `errors`,
+`bytes`).
+
+#### sync-plan (linked folders)
+
+```
+byos-cli sync-plan [--kind K|all] [--delete-untracked] [--no-scan] [--out PLAN.json]
+```
+
+Scans the links again (unless `--no-scan`), reads the card (DF, `card.json`, the manifests, the
+card checkpoints and this computer's unfinished journals, which are replayed first), lists each
+card root and compares. Nothing on the card changes. Writes the plan (default
+`cache/sync/plan-v2.json`, `format` 2) and prints `warn source_unavailable` or
+`mass_delete_blocked` when DeleteGuard trips.
+
+Actions of the plan's `items` (unchanged files are only counted as `skip`):
+
+| action | when |
+|---|---|
+| `add` | new on this computer (or gone from the card) |
+| `update` | changed on this computer; the card copy is as the last sync left it |
+| `move` | the place on the card changed (a tag fix in `artist-album`, a rename in `keep`); `then_update` when the content changed too. Sidecars move with their track |
+| `adopt` | an untracked card file at the same place with the same size and quick fingerprint (SHA-256 of size + first and last 16 KiB, two short reads): recorded, not copied |
+| `record` | only the record changes (renamed with the same content, `mtime_only` when the SHA-256 shows the bytes did not change, `gone_from_card`) |
+| `conflict` | `edited_on_player`, `changed_both`, or `different_content` (another file at that place). Choices `computer`, `player`, `both` (" (2)"), `skip` (default) |
+| `player_only` | a card file under the root with no current source here, by `reason` (below). Choices `delete`, `keep`, `pull` (copy to this computer). Sidecars have a `parent` and follow it |
+| `blocked` | `too_big_fat32` (4 GiB on a vfat card), `bad_path_*` (over 1024 bytes or 32 levels), `folder_full_fat` (a vfat folder over 60,000 long-name slots), `inside_other_link` |
+
+Player-only reasons and their pre-ticked choice:
+
+| reason | meaning | ticked for deletion when |
+|---|---|---|
+| `deleted_on_computer` | this computer synced it and its file was seen deleted | the link's policy is `delete` (the only one) |
+| `excluded_on_computer` | still here, but the selection or an exclude leaves it out | `--remove-unselected` on the link |
+| `from_other_device` | written by another computer or phone | `--delete-untracked` |
+| `added_on_player` | no sync wrote it | `--delete-untracked` |
+| `downloaded_on_player` | an audiobook downloaded on the HiBy (its folder has `book.json`) or a Gutenberg EPUB (`Books/Author - Title.epub`) | `--delete-untracked` |
+
+Never listed: anything outside the card roots, `Music/Free`, `ByOS`, `Playlists`, hidden
+files, untracked files matching an exclude, the sidecars of a track that stays, and files whose
+source folder could not be read. Policy `ask` ticks nothing and marks the items
+`needs_decision`.
+
+**DeleteGuard** turns every deletion of a link into an unticked item (`extra guard: true`,
+summary `guard.tripped`) when the linked folder is missing, empty or unreadable, its volume
+changed (Windows volume serial, Unix device), the scan had I/O errors, or more than 10 % of the
+link's tracked files (or more than 200) would be `deleted_on_computer`.
+
+Result: `plan`, `run_id`, `kinds`, `fits`, `sd_free`, `items` (count), `size` (bytes of the plan
+file), and `summary` per kind: `add`, `update`, `move`, `adopt`, `record`, `skip`, `conflict`,
+`player_only` (count per reason), `guard` (`tripped`, `reason`), `blocked`, `excluded`,
+`unreadable_kept`, `needs_decision`, `bytes_add`, `bytes_remove`, `bytes_fingerprint`, `sd_free`,
+`fits`, `eta_s`.
+
+#### sync-apply (linked folders)
+
+```
+byos-cli sync-apply PLAN.json [--decisions DEC.json] [--then none|rescan|rebuild] [--yes] [--allow-mass-delete] [--take-over]
+```
+
+`DEC.json` holds the user's choices: `{"i42": "delete", "i77": "computer", "i90": "both",
+"policy": {"music": {"player_only": "delete"}}}`. Items without a choice take their pre-ticked
+one; a policy `delete` never ticks an item DeleteGuard protects. Deletions ask first (`prompt
+confirm`, with `count`, `bytes` and `reasons`) unless `--yes`. Deletions DeleteGuard protects
+need `--yes --allow-mass-delete`, or the user typing the count at `prompt confirm_mass_delete`;
+otherwise they are kept (`warn mass_delete_blocked`).
+
+Order (section 3.5): the lock (`ByOS/sync/lock.json`, created atomically; another client's lock
+with a heartbeat younger than 10 minutes gives error `locked`, exit 11, with `locked_by`;
+`--take-over` replaces it; a stale lock is taken over with `warn lock_taken_over`), the battery
+(below 15 % and not charging: error `remote` `E_BATTERY`; below 30 %: `warn low_battery`), the
+replay of unfinished journals, then per kind: moves (swaps through a temporary name), approved
+deletes and empty folders, copies one album folder at a time (smallest first when space is
+tight; `add` uses SKIP_IDENTICAL, `update` REPLACE; on a nearly full card the old copy is moved
+to `ByOS/sync/trash/` first and deleted only once the new one is complete), records, pulls
+(`<file>.byos-part`, then renamed; Windows reserved names get a `_`), and the manifest fold.
+
+Every finished operation is first written to `<config>/sync/<device_id>/runs/<run_id>.jsonl`
+(synced line by line), and every 200 files or 60 s to a card checkpoint with a lock heartbeat.
+After a kill, a lost link or a pause, planning again or `sync-resume` copies nothing twice and
+makes no " (2)" duplicates. Covers are optimised into a content-addressed cache
+(`cache/sync/prepared/`), so a resumed upload continues its part file.
+
+| Status | Meaning |
+|---|---|
+| `done` | everything in the plan was applied |
+| `done_with_problems` | some files failed (`failures`, `warn failed`) or did not fit (`not_fitted`, `warn no_space`) |
+| `paused` | the link stayed down after 3 reconnects (2, 4, 8 s); `sync-resume` goes on |
+| `paused_usb_storage` | the card became unavailable (`E_SD_UNAVAILABLE`, USB storage mode) |
+
+A cancel gives error `cancelled` with `resumable: true`. Progress: `op "move"`, `"remove"`,
+`"hash"`, `"put"`, `"pull"`, `"checkpoint"` and `"sync"` overall (bytes, `files_done`,
+`files_total`). Warnings: `resumed`, `reconnecting`, `journal_replayed`, `blocked`, `conflict`,
+`changed_since_plan`, `failed`, `no_space`, `paused`, `paused_usb_storage`. Result: `status`,
+`run_id`, `resumable`, `kinds` (per kind: `written`, `skipped`, `moved`, `removed`, `pulled`,
+`recorded`, `failed`, `not_fitted`, `blocked`, `conflicts_left`, `kept`, `bytes`), `failures`,
+`library` (as for `--then` above).
+
+#### sync-resume, sync-status, sync-unlock
+
+```
+byos-cli sync-resume [--then none|rescan|rebuild] [--take-over]
+byos-cli sync-status [--device-id ID]
+byos-cli sync-unlock [--force]
+```
+
+`sync-resume` applies the last unfinished run again with the choices it was started with; the
+items its journal lists as done are skipped. Result as `sync-apply` plus `resumed` (false, with
+`status: "nothing_to_resume"`, when there is none).
+
+`sync-status` shows `links` (`tracked`, `last_sync`, `scanned`), unfinished `runs` (`status`
+paused/paused_usb_storage/interrupted, `done`, `resumable`) and, when the HiBy is reachable,
+`card_id`, `lock` (`held`, `ours`, `stale`, `client_id`, `name`, `heartbeat`) and
+`card_journals`. With `--device-id` it works without the HiBy.
+
+`sync-unlock` removes `lock.json` when it is this computer's or stale; another client's fresh
+lock needs `--force` (otherwise error `locked`). Result: `held`, `unlocked`, `ours`, `stale`,
+`locked_by`.
 
 ## 6. Examples
 
@@ -754,5 +948,18 @@ $ java -jar byos-cli.jar --device wifi connect --pair
   baseline, a second plan that skips everything, removal with and without confirmation, the
   library step) and `art-fix`; cover rewriting keeps the audio bytes (FLAC, MP3, M4A with moved
   chunk offsets).
+- Folder sync (`:core` `FolderSyncTest`, `:cli` `SyncCliTest`): the diff on made-up folders
+  (unchanged, relinked, same-size retag, album fix with its lyrics, local rename, adopt by
+  fingerprint, conflicts, collisions, every DeleteGuard trigger, an unreadable sub-folder, the
+  player-only reasons and policies, sidecars, CUE albums, the FAT32, path and folder-slot blocks,
+  globs, DEC.json, the manifest operations and the v1 migration, 50,000 tracks), and end to end
+  against the fake HiBy: links, a first sync and a second plan that copies nothing, a relinked
+  folder, a kill after half the files (with and without this computer's journal), a dropped
+  link, a HiBy that goes away (paused, then `sync-resume` continuing the prepared part file),
+  USB storage mode, a full card, a nearly full card (old copy moved aside), a second client's
+  lock and `sync-unlock`, a low battery, the branch's manifest migrated without copying,
+  decisions (delete, pull, conflict choices), excludes and unselected files, the mass-delete
+  guard, Sync all, and a 50,000-track plan against the fake device (under 60 s, plan file under
+  2 MB; about 1.5 s and 370 KB here).
 - No test talks to a real HiBy. Device tests follow the project's device rules and are run by
   hand.

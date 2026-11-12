@@ -34,9 +34,46 @@ object Json {
 
     fun optLong(m: Map<String, Any?>, key: String, def: Long): Long = if (m[key] == null) def else long(m, key)
 
+    /**
+     * Encodes maps, lists, strings, numbers, booleans and null as compact JSON (one line).
+     * Other values are written as their string form.
+     */
+    fun write(v: Any?): String = StringBuilder().also { write(it, v) }.toString()
+
+    fun write(sb: StringBuilder, v: Any?) {
+        when (v) {
+            null -> sb.append("null")
+            is String -> quoteTo(sb, v)
+            is Boolean -> sb.append(v)
+            is Int, is Long, is Short, is Byte -> sb.append(v)
+            is Double -> if (v.isFinite()) sb.append(if (v == Math.floor(v) && Math.abs(v) < 1e15) v.toLong().toString() else v.toString()) else sb.append("null")
+            is Float -> write(sb, v.toDouble())
+            is Map<*, *> -> {
+                sb.append('{')
+                var first = true
+                for ((k, x) in v) {
+                    if (!first) sb.append(',')
+                    first = false
+                    quoteTo(sb, k.toString()); sb.append(':'); write(sb, x)
+                }
+                sb.append('}')
+            }
+            is Iterable<*> -> {
+                sb.append('[')
+                var first = true
+                for (x in v) { if (!first) sb.append(','); first = false; write(sb, x) }
+                sb.append(']')
+            }
+            is Array<*> -> write(sb, v.asList())
+            else -> quoteTo(sb, v.toString())
+        }
+    }
+
     /** Encodes a string as a JSON string literal. */
-    fun quote(s: String): String {
-        val sb = StringBuilder(s.length + 2).append('"')
+    fun quote(s: String): String = StringBuilder(s.length + 2).also { quoteTo(it, s) }.toString()
+
+    private fun quoteTo(sb: StringBuilder, s: String) {
+        sb.append('"')
         for (c in s) {
             when {
                 c == '"' -> sb.append("\\\"")
@@ -44,11 +81,11 @@ object Json {
                 c == '\n' -> sb.append("\\n")
                 c == '\r' -> sb.append("\\r")
                 c == '\t' -> sb.append("\\t")
-                c.code < 0x20 -> sb.append(String.format("\\u%04x", c.code))
+                c.code < 0x20 || c == ' ' || c == ' ' -> sb.append(String.format("\\u%04x", c.code))
                 else -> sb.append(c)
             }
         }
-        return sb.append('"').toString()
+        sb.append('"')
     }
 
     private class Parser(val s: String) {
