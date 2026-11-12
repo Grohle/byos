@@ -600,7 +600,10 @@ function renderUpdates() {
   else go.textContent = installed && info && installed === info.hibyos_version ? t('updReinstall') : t('updGo');
   if (!usb && f.steps.build.status === 'done') go.disabled = true;
   $('btn-upd-cancel').hidden = !u.running;
-  $('btn-fw-file').hidden = u.running || f.steps.firmware.status === 'done';
+  // the user can always pick the official firmware by hand (as in the Android app), also to
+  // replace one already checked
+  $('btn-fw-file').hidden = !!u.running;
+  $('btn-fw-file').textContent = t(f.steps.firmware.status === 'done' ? 'updPickOther' : 'updPickFile');
 }
 
 // Demo mode only (?demo=NAME): a fixed picture of one state, for screenshots and design review.
