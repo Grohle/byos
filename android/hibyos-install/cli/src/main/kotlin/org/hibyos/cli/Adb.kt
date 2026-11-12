@@ -44,11 +44,7 @@ class Adb(private val path: String, private val runner: ProcessRunner) {
     fun devices(): List<AdbDevice> {
         val (code, out) = adb(null, "devices", "-l")
         if (code != 0) throw CliError("no_device", "adb devices failed: ${out.trim()}")
-        return out.lines().drop(1).map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("*") }.mapNotNull { line ->
-            val parts = line.split(Regex("\\s+"))
-            if (parts.size < 2) null
-            else AdbDevice(parts[0], parts[1], parts.firstOrNull { it.startsWith("model:") }?.removePrefix("model:"))
-        }
+        return parseDevices(out)
     }
 
     /** `adb forward tcp:<local> tcp:7340`; returns the local port (adb picks one for 0). */
@@ -66,6 +62,18 @@ class Adb(private val path: String, private val runner: ProcessRunner) {
     fun shell(serial: String?, command: String): Pair<Int, String> = adb(serial, "shell", command, timeoutMs = 15000)
 
     companion object {
+        /** States `adb devices -l` can print after the serial. */
+        private val STATE = Regex("^(.*?)\\s+(device|offline|unauthorized|recovery|sideload|bootloader|authorizing|connecting|host|rescue|no permissions)(\\s.*)?$")
+
+        /** Parses `adb devices -l`. Serials may contain spaces (the HiBy R3 II 2025 reports
+         *  "HiBy R3II_2025"), so the line is split at the state word, not at whitespace. */
+        fun parseDevices(out: String): List<AdbDevice> =
+            out.lines().drop(1).map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("*") }.mapNotNull { line ->
+                val m = STATE.find(line) ?: return@mapNotNull null
+                val model = m.groupValues[3].trim().split(Regex("\\s+")).firstOrNull { it.startsWith("model:") }?.removePrefix("model:")
+                AdbDevice(m.groupValues[1].trim(), m.groupValues[2], model)
+            }
+
         /** --adb, then ADB, then PATH; null when adb is not installed. */
         fun locate(option: String?, env: Map<String, String>): String? {
             option?.let { return it }

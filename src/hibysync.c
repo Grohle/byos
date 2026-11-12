@@ -1936,8 +1936,13 @@ int main(int argc, char **argv)
         fcntl(G.ctl, F_SETFD, FD_CLOEXEC); fcntl(G.ctl, F_SETFL, fcntl(G.ctl, F_GETFL) | O_NONBLOCK);
     }
     if (G.detach) {
+        /* adb closes the session as soon as the parent returns and HUPs its process group: a
+         * child that had not called setsid() yet died with it (measured: 'byos-cli --start'
+         * never got a daemon). Ignore SIGHUP first, then the classic double fork. */
+        signal(SIGHUP, SIG_IGN);
         pid_t p = fork(); if (p < 0) return 1; if (p > 0) return 0;
         setsid();
+        p = fork(); if (p < 0) return 1; if (p > 0) _exit(0);
         int nul = open("/dev/null", O_RDWR); if (nul >= 0) { dup2(nul, 0); dup2(nul, 1); dup2(nul, 2); if (nul > 2) close(nul); }
     }
     int lk = open(SP.lock, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
