@@ -16,6 +16,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildArgs, cliConfigDir, DESKTOP_DIR, Job, resolveCli, UsageError } from './lib/cli.mjs';
 import { checkPath } from './lib/btp-path.mjs';
+import { AppUpdater, UpdateError } from './lib/app-update.mjs';
+import { DEMO_API, DEMO_DOWNLOADS, demoRelease } from './mock/app-update-mock.mjs';
 import {
   cacheFile, DEVICE_ID, defaultIncomingDir, defaultSettingsDir, imageType, incomingTarget, isDir, SESSION, Settings,
 } from './lib/media-store.mjs';
@@ -49,7 +51,7 @@ const MAX_FIRMWARE = 512 * 1024 ** 2; // HiBy's official firmware is about 47 MB
 // "bundle-update --check" answer at once; the long ones (download, build) share one queue.
 const INSTANT = new Set(['devices', 'build-info']);
 const LOCAL_QUEUE = '#local';
-const LOCAL = new Set(['firmware-fetch', 'build', 'bundle-update', 'music-scan']);
+const LOCAL = new Set(['firmware-fetch', 'build', 'build-clean', 'bundle-update', 'music-scan']);
 // Link commands with --device-id need no HiBy: they wait behind each other only.
 const LINKS_QUEUE = '#links';
 const LINK_COMMANDS = new Set(['link-ls', 'link-add', 'link-set', 'link-rm']);
@@ -175,6 +177,12 @@ export function createApp(options = {}) {
     folders.set(k, p);
     return k;
   };
+  // The app's own update: only the Windows program knows its version and home (the launcher
+  // passes --app-version and --app-home); the demo uses a made-up release served from memory.
+  const updater = options.updater ?? (options.mock
+    ? demoUpdater()
+    : new AppUpdater({ version: options.appVersion ?? null, home: options.appHome ?? null, osRelease: process.platform === 'win32' ? os.release() : null }));
+  updater.cleanup();
   const jobs = new Map();
   // One queue per device spec: hibysync serves one session, so jobs for the same HiBy run one
   // at a time, while another HiBy is not held up. "devices" (discovery) needs no session and
@@ -299,7 +307,41 @@ export function createApp(options = {}) {
           error: resolved.error ?? null,
           mock: !!options.mock,
           platform: process.platform,
+          version: updater.version,
         });
+      }
+      // ---- the app's own update (lib/app-update.mjs). The page only says what to do: no path,
+      // link or file name is ever taken from it.
+      if (url.pathname.startsWith('/api/app-update')) {
+        if (req.method === 'GET' && url.pathname === '/api/app-update') return send(res, 200, updater.status());
+        if (req.method !== 'POST') return send(res, 404, { error: 'not found' });
+        const body = await readJson(req);
+        switch (url.pathname) {
+          case '/api/app-update/check':
+            // quiet: the daily check when the window opens; nothing happens if it is not due
+            if (body.quiet === true && !updater.due()) return send(res, 200, updater.status());
+            return send(res, 200, await updater.check({ quiet: body.quiet === true }));
+          case '/api/app-update/download':
+            updater.download().catch(() => {});
+            return send(res, 202, updater.status());
+          case '/api/app-update/cancel':
+            updater.cancel();
+            return send(res, 200, updater.status());
+          case '/api/app-update/auto':
+            if (typeof body.on !== 'boolean') throw new UsageError('on must be true or false');
+            updater.saveSettings({ auto: body.on });
+            return send(res, 200, updater.status());
+          case '/api/app-update/install': {
+            const r = await updater.apply();
+            // the demo has no launcher: the files are written, nothing restarts
+            const restarting = !options.mock && !!options.appHome;
+            send(res, 200, { ...updater.status(), restarting, version: r.version });
+            if (restarting) setTimeout(() => options.onRestart?.(), 300).unref?.();
+            return undefined;
+          }
+          default:
+            return send(res, 404, { error: 'not found' });
+        }
       }
       if (req.method === 'POST' && url.pathname === '/api/jobs') {
         const body = await readJson(req, MAX_JOB_BODY);
@@ -397,6 +439,7 @@ export function createApp(options = {}) {
       return send(res, 404, { error: 'not found' });
     } catch (e) {
       if (e instanceof UsageError) return send(res, e.code === 'plan_changed' ? 409 : 400, e.code ? { error: e.message, code: e.code } : { error: e.message });
+      if (e instanceof UpdateError) return send(res, 409, { error: e.message, code: e.code });
       return send(res, e.status ?? 500, { error: e.message });
     }
   }
@@ -602,6 +645,7 @@ export function createApp(options = {}) {
     server,
     token,
     resolved,
+    updater,
     jobs,
     cache,
     settings,
@@ -674,6 +718,16 @@ function demoFolder(kind = 'music') {
   return Promise.resolve(d);
 }
 
+// The demo's app update: version 0.9.0 finds a signed 0.9.1 served from memory (no network).
+// BYOS_MOCK_APP_UPDATE=none: the demo app is already the newest.
+function demoUpdater() {
+  const none = process.env.BYOS_MOCK_APP_UPDATE === 'none';
+  const d = demoRelease({ current: '0.9.0', latest: none ? '0.9.0' : '0.9.1' });
+  const home = path.join(os.tmpdir(), 'byos-desktop-mock-home');
+  rmSync(path.join(home, 'updates'), { recursive: true, force: true });
+  return new AppUpdater({ version: d.current, home, keys: [d.key.pub], api: DEMO_API, downloads: DEMO_DOWNLOADS, fetch: d.fetch });
+}
+
 function parseArgs(argv) {
   const o = { port: 0 }; // a random free port unless --port is given
   for (let i = 0; i < argv.length; i++) {
@@ -685,6 +739,9 @@ function parseArgs(argv) {
     else if (a === '--config') o.config = argv[++i];
     else if (a === '--adb') o.adb = argv[++i];
     else if (a === '--url-file') o.urlFile = argv[++i];
+    // given by the Windows launcher: this program's version and %LOCALAPPDATA%\ByOS Desktop
+    else if (a === '--app-version') o.appVersion = argv[++i];
+    else if (a === '--app-home') o.appHome = argv[++i];
     else if (a === '--help' || a === '-h') o.help = true;
     else throw new Error(`unknown option ${a}`);
   }
@@ -714,11 +771,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(1);
   }
   if (o.help) {
-    console.log('node server.mjs [--mock] [--cli PATH] [--port N] [--open] [--config DIR] [--adb PATH] [--url-file PATH]');
+    console.log('node server.mjs [--mock] [--cli PATH] [--port N] [--open] [--config DIR] [--adb PATH] [--url-file PATH] [--app-version V --app-home DIR]');
     process.exit(0);
   }
   const swept = sweepStaleTemp();
   if (swept) console.log(`Removed ${swept} temporary upload folder(s) left by an earlier run.`);
+  // "Restart to Update": this runner ends; the launcher sees updates\restart and starts the new program
+  o.onRestart = () => stop();
   const app = createApp(o);
   if (app.resolved.error) console.warn(`Warning: ${app.resolved.error}`);
   const base = await app.listen(o.port);

@@ -6,8 +6,10 @@ set -e
 . "$(dirname "$0")/fetch.sh"; zig_check   # pinned compiler: ziglang 0.17.1, see tools/wsl/fetch.sh
 V=${1:?version, e.g. 0.9.0}
 IFS=. read -r V1 V2 V3 <<<"$V"
-D=/mnt/c/Users/alber/Downloads/Hiby/hibymod/desktop/windows
-O=/mnt/c/Users/alber/Downloads/Hiby/hibymod/out/desktop_exe
+# this checkout (also a git worktree), wherever it is
+R=$(cd "$(dirname "$0")/../.." && pwd)
+D=$R/desktop/windows
+O=$R/out/desktop_exe
 mkdir -p $O
 # the resource compiler does not see -D: a copy of launcher.rc with the version written in, next
 # to copies of the icon and the manifest

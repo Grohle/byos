@@ -43,6 +43,8 @@ const state = {
   scanning: false,
   // Updates page: "build-info", the build-and-install steps, the job that runs now.
   upd: { info: null, flow: emptyFlow(), running: false, job: null, demo: null },
+  // Updates page: the check for a newer ByOS (bundle-update)
+  bc: { phase: 'idle' },
 };
 
 // ---- formatting -------------------------------------------------------------------------
@@ -668,6 +670,9 @@ function renderUpdates() {
   // replace one already checked
   $('btn-fw-file').hidden = !!u.running;
   $('btn-fw-file').textContent = t(f.steps.firmware.status === 'done' ? 'updPickOther' : 'updPickFile');
+  // Start Over: when there is a build, or a step failed (never while something runs)
+  $('btn-upd-clean').hidden = !!u.running || !info || !(f.steps.build.status === 'done' || f.phase === 'failed' || f.phase === 'done');
+  renderByosCheck();
 }
 
 // Demo mode only (?demo=NAME): a fixed picture of one state, for screenshots and design review.
@@ -694,10 +699,207 @@ function demoUpdates(name) {
     case 'ready': doneTo(1); break;
     default: break;
   }
-  if (['building', 'sending', 'installing', 'done', 'failed', 'wifi', 'ready'].includes(name)) info.firmware_ready = true;
+  if (['building', 'sending', 'installing', 'done', 'failed', 'wifi', 'ready', 'bc-available', 'bc-downloading'].includes(name)) info.firmware_ready = true;
+  // the ByOS check above the steps
+  if (name === 'bc-available') { doneTo(2); state.bc = { phase: 'available', current: '0.9.0', latest: '0.9.1', size: 5514631 }; }
+  if (name === 'bc-downloading') state.bc = { phase: 'downloading', current: '0.9.0', latest: '0.9.1', done: 2200000, total: 5514631 };
   state.upd = { info, flow: f, running: f.phase === 'running', job: null, demo: { name, usb } };
   state.tab = 'updates';
 }
+
+// ---- the Updates tab: a newer ByOS (bundle-update) and Start Over (build-clean) -------------------
+
+// state.bc: phase idle | checking | available | uptodate | downloading | done | failed
+async function checkByos() {
+  const u = state.upd;
+  if (u.running || u.demo || ['checking', 'downloading'].includes(state.bc.phase)) return;
+  state.bc = { phase: 'checking' };
+  renderByosCheck();
+  const final = await runCli('bundle-update', { check: true }, { quiet: true });
+  if (!final.ok) state.bc = { phase: 'failed', error: final };
+  else if (final.available) state.bc = { phase: 'available', current: final.current, latest: final.latest, size: final.size };
+  else state.bc = { phase: 'uptodate', current: final.current };
+  renderByosCheck();
+}
+
+// Downloads the newer ByOS files (signed and checked by byos-cli) and makes them the ones to build.
+async function getByos() {
+  const u = state.upd;
+  const bc = state.bc;
+  if (u.running || u.demo || bc.phase !== 'available') return;
+  u.running = true;
+  state.bc = { ...bc, phase: 'downloading', done: 0, total: bc.size ?? 0 };
+  renderByosCheck();
+  renderUpdates();
+  try {
+    const final = await runCli('bundle-update', {}, {
+      title: t('bcGet', { latest: bc.latest }),
+      onStarted: (job) => { u.job = job; },
+      onEvent: (ev) => {
+        if (ev.event === 'progress' && ev.total > 0) {
+          state.bc.done = ev.done;
+          state.bc.total = ev.total;
+          renderByosCheck();
+        }
+      },
+    });
+    if (final.ok) {
+      state.bc = { phase: 'done', current: final.current };
+      // the build of the older files no longer counts: the steps start again from build-info
+      state.upd.flow = emptyFlow();
+    } else state.bc = final.code === 'cancelled' ? { ...bc, phase: 'available' } : { phase: 'failed', error: final };
+  } finally {
+    u.running = false;
+    u.job = null;
+    renderByosCheck();
+    await loadBuildInfo();
+  }
+}
+
+// "Start Over": the build steps go (byos-cli build-clean); the checked official firmware stays.
+async function startOver() {
+  const u = state.upd;
+  if (u.running || u.demo) return;
+  const fw = u.info?.firmware?.version ?? '';
+  const ok = await sheet({ title: t('soTitle'), body: t('soBody', { fw }), okText: t('soStart'), danger: true });
+  if (!ok.ok) return;
+  const final = await runCli('build-clean', {}, { title: t('soStart') });
+  state.upd.flow = emptyFlow();
+  await loadBuildInfo();
+  if (final.ok) toast(t('soDone'));
+  else toast(errorMessage(final), 'error');
+}
+
+function renderByosCheck() {
+  const bc = state.bc;
+  const info = state.upd.info;
+  const p = $('bc-status');
+  const v = bc.current ?? info?.hibyos_version ?? '';
+  p.className = 'muted small-text';
+  const bar = $('bc-bar');
+  bar.hidden = bc.phase !== 'downloading';
+  switch (bc.phase) {
+    case 'checking': p.textContent = t('bcChecking'); break;
+    case 'available': p.textContent = t('bcAvailable', { latest: bc.latest, v }); break;
+    case 'uptodate': p.textContent = t('bcUpToDate', { v }); break;
+    case 'downloading': {
+      const pct = bc.total > 0 ? Math.floor((bc.done * 100) / bc.total) : 0;
+      p.textContent = t('bcDownloading', { latest: bc.latest, pct });
+      $('bc-fill').style.width = `${pct}%`;
+      break;
+    }
+    case 'done': p.textContent = t('bcDone', { v }); p.className = 'small-text ok'; break;
+    case 'failed': p.textContent = t('bcFailed', { msg: errorMessage(bc.error) }); p.className = 'small-text fail'; break;
+    default: p.textContent = info ? t('bcCurrent', { v }) : t('updLoading');
+  }
+  const check = $('btn-bc-check');
+  check.hidden = ['available', 'downloading'].includes(bc.phase);
+  check.disabled = bc.phase === 'checking' || state.upd.running || !!state.upd.demo;
+  const get = $('btn-bc-get');
+  get.hidden = bc.phase !== 'available';
+  get.disabled = state.upd.running;
+  if (bc.phase === 'available') get.textContent = t('bcGet', { latest: bc.latest });
+}
+
+// ---- About ByOS Desktop: its own update (server.mjs /api/app-update) ------------------------------
+
+const au = { s: null, poll: 0, restarting: false };
+
+async function auCall(p, body) {
+  try {
+    au.s = body === undefined ? await api(p) : await api(p, { method: 'POST', body });
+  } catch (e) {
+    au.s = { ...(au.s ?? {}), state: 'failed', error: { code: e.code ?? 'http', message: e.message } };
+  }
+  renderAbout();
+  clearTimeout(au.poll);
+  if (au.s?.state === 'downloading' || au.s?.state === 'checking') au.poll = setTimeout(() => auCall('/api/app-update'), 300);
+  return au.s;
+}
+
+async function auMain() {
+  const s = au.s;
+  if (!s) return;
+  if (s.state === 'available') return auCall('/api/app-update/download', {});
+  if (s.state === 'downloading') return auCall('/api/app-update/cancel', {});
+  if (s.state === 'ready') {
+    if (state.jobs.some((j) => j.state === 'running') || state.upd.running) {
+      $('au-status').textContent = t('auBusy');
+      return undefined;
+    }
+    try {
+      const r = await api('/api/app-update/install', { method: 'POST', body: {} });
+      au.restarting = r.restarting ? 'restart' : 'demo';
+      au.s = r;
+    } catch (e) {
+      au.s = { ...s, state: 'failed', error: { code: e.code ?? 'mismatch', message: e.message } };
+    }
+    renderAbout();
+  }
+  return undefined;
+}
+
+function renderAbout() {
+  const s = au.s;
+  $('about-dot').hidden = !(s && (s.state === 'available' || s.state === 'ready'));
+  if (!$('about').open && !s) return;
+  $('au-version').textContent = s?.current ? t('auVersion', { v: s.current }) : '';
+  const st = $('au-status');
+  st.className = '';
+  const main = $('au-main');
+  main.hidden = true;
+  main.disabled = false;
+  const check = $('au-check');
+  check.hidden = !s?.supported || ['available', 'downloading', 'ready'].includes(s.state);
+  check.disabled = s?.state === 'checking';
+  $('au-auto').checked = s?.auto !== false;
+  $('au-auto').disabled = !s?.supported;
+  $('au-bar').hidden = s?.state !== 'downloading';
+  const notes = s?.notes ? (s.notes[getLang()] ?? s.notes.en ?? '') : '';
+  $('au-notes').hidden = !notes || !['available', 'downloading', 'ready'].includes(s?.state);
+  $('au-notes-text').textContent = notes;
+  if (!s || !s.supported) {
+    st.textContent = t('auDev');
+    return;
+  }
+  if (au.restarting) {
+    st.textContent = au.restarting === 'restart' ? t('auRestarting') : t('auDemoRestart');
+    st.className = 'ok';
+    check.hidden = true;
+    return;
+  }
+  const when = s.lastCheck ? new Date(s.lastCheck).toLocaleString(getLang()) : null;
+  switch (s.state) {
+    case 'checking': st.textContent = t('auChecking'); break;
+    case 'uptodate': st.textContent = `${t('auUpToDate', { v: s.current })} ${when ? t('auLast', { when }) : ''}`.trim(); break;
+    case 'available':
+      st.textContent = t('auAvailable', { v: s.latest });
+      main.hidden = false;
+      main.textContent = t('auDownload', { size: fmtBytes(s.size) });
+      break;
+    case 'downloading':
+      st.textContent = t('auDownloading', { v: s.latest, done: fmtBytes(s.done), total: fmtBytes(s.total) });
+      $('au-fill').style.width = `${s.total ? Math.min(100, (s.done * 100) / s.total).toFixed(1) : 0}%`;
+      main.hidden = false;
+      main.textContent = t('cancel');
+      break;
+    case 'ready':
+      st.textContent = t('auReady', { v: s.latest });
+      main.hidden = false;
+      main.textContent = t('auRestart');
+      break;
+    case 'failed': {
+      const e = s.error ?? {};
+      const key = `auErr_${e.code}`;
+      st.textContent = t(Object.hasOwn(STRINGS_KEYS, key) ? key : 'auErr_internal', { min: e.minutes ?? 60 });
+      st.className = 'fail';
+      break;
+    }
+    default: st.textContent = when ? t('auLast', { when }) : '';
+  }
+}
+
+const STRINGS_KEYS = Object.fromEntries(['offline', 'http', 'rate_limited', 'untrusted', 'mismatch', 'storage', 'unsupported'].map((c) => [`auErr_${c}`, 1]));
 
 // ---- sheets -------------------------------------------------------------------------------------
 
@@ -1022,6 +1224,7 @@ function wire() {
     renderDeviceList();
     renderMain();
     renderLcd();
+    renderAbout();
   });
 
   $('btn-refresh-devices').addEventListener('click', () => refreshDevices());
@@ -1034,6 +1237,21 @@ function wire() {
   }
 
   $('btn-upd-go').addEventListener('click', () => buildAndInstall());
+  $('btn-bc-check').addEventListener('click', () => checkByos());
+  $('btn-bc-get').addEventListener('click', () => getByos());
+  $('btn-upd-clean').addEventListener('click', () => startOver());
+
+  // About ByOS Desktop
+  $('btn-about').addEventListener('click', () => {
+    renderAbout();
+    $('about').showModal();
+    if (!au.s) auCall('/api/app-update');
+  });
+  $('au-close').addEventListener('click', () => $('about').close());
+  $('about').addEventListener('click', (e) => { if (e.target === $('about')) $('about').close(); });
+  $('au-check').addEventListener('click', () => auCall('/api/app-update/check', {}));
+  $('au-main').addEventListener('click', () => auMain());
+  $('au-auto').addEventListener('change', (e) => auCall('/api/app-update/auto', { on: e.target.checked }));
   $('btn-upd-cancel').addEventListener('click', () => cancelUpdate());
   $('btn-fw-file').addEventListener('click', () => $('fw-input').click());
   $('fw-input').addEventListener('change', (e) => { useFirmwareFile(e.target.files?.[0]); e.target.value = ''; });
@@ -1118,6 +1336,14 @@ async function main() {
   renderMain();
   if (state.view === 'computer') computerOpened();
   refreshDevices();
+  // the app's own update: at most once a day, silent unless a newer version is found
+  const demo = state.info?.mock ? new URLSearchParams(location.search).get('demo') : null;
+  if (demo === 'about') {
+    // demo mode only: About with the made-up update found (README, screenshots)
+    await auCall('/api/app-update/check', {});
+    renderAbout();
+    $('about').showModal();
+  } else auCall('/api/app-update/check', { quiet: true });
 }
 
 main();

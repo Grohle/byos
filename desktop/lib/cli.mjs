@@ -363,6 +363,10 @@ export function buildArgs(command, params = {}, globals = {}) {
       a.push('build');
       if (params.force) a.push('--force');
       break;
+    // "Start Over": the build steps go, the checked official firmware stays
+    case 'build-clean':
+      a.push('build-clean');
+      break;
     case 'build-send':
       // Firmware files never travel over Wi-Fi (DESKTOP_APP.md 5.7): refused here too.
       if (typeof params.device === 'string' && !/^usb(:|$)/.test(params.device)) {
