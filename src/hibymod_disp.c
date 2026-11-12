@@ -170,11 +170,25 @@ static void home_substitute(unsigned char *b)
         homeimg = m;
     }
     if (!is_home_frame(b)) return;
-    /* solo debajo de la barra de estado. Antes tambien se componia la barra (transparente sobre
-     * el fondo) EN el bufer del reproductor; el reproductor luego solo repinta sus cifras, asi que
-     * su barra se quedaba con el fondo rosa del inicio y las apps de ByOS, que copian la barra del
-     * reproductor, la mostraban asi. La barra transparente del inicio la pone el shell. */
+    /* el resto, el launcher; la barra de estado del reproductor (negra con iconos) se vuelve
+     * transparente sobre el fondo, igual que la dibuja el shell (filas 0-29 de homeimg = fondo).
+     * dc3a888 (11-11) dejo de componerla aqui y la dejo al shell: desde entonces, cada vez que el
+     * reproductor repintaba su barra negra (reloj, bateria, volumen) asomaba sobre ByOS y la
+     * interfaz parpadeaba (biseccion con el dueno, 12-11: 9cfbe9d bien, dc3a888 mal). */
     memcpy(b + 30 * fline, homeimg + 30 * fline, fsize - 30 * fline);
+    for (int y = 0; y < 30; y++) {
+        uint16_t *d = (uint16_t *)(b + y * fline); const uint16_t *w = (const uint16_t *)(homeimg + y * fline);
+        int k = 22 + y * 10 / 30;
+        for (int x = 0; x < HM_W; x++) {
+            uint16_t p = d[x], q = w[x];
+            unsigned r = p >> 11, g = (p >> 5) & 63, bl = p & 31;
+            unsigned a = r * 2 > g ? r * 2 : g; if (bl * 2 > a) a = bl * 2;
+            unsigned br = (q >> 11) * k >> 5, bg = ((q >> 5) & 63) * k >> 5, bb = (q & 31) * k >> 5, na = 63 - a;
+            br = br * na / 63 + r; bg = bg * na / 63 + g; bb = bb * na / 63 + bl;
+            if (br > 31) br = 31; if (bg > 63) bg = 63; if (bb > 31) bb = 31;
+            d[x] = (uint16_t)(br << 11 | bg << 5 | bb);
+        }
+    }
     st->home_hits++;
 }
 
@@ -395,6 +409,85 @@ static void st_kick(void);     /* v7 ajustes, al final del fichero */
 static void qc_kick(void);     /* v8 posicion/cola/volumen, al final del fichero */
 static void lu_kick(void);     /* actualizar la biblioteca ('U'), al final del fichero */
 static void *lu_monitor(void *a);   /* publica st->lib_scan, al final del fichero */
+
+/* ---------------------------------------------------------------- registro de lo que se ve
+ * Diagnostico (solo con /usr/data/hibymod/scanlog_on): un hilo lee cada 2 ms cuatro franjas del
+ * bufer que esta en pantalla (barra de estado, arriba, centro, barra de inicio) y anota cada
+ * cambio en /dev/shm/hibymod_scan, junto con los sucesos de quien dibuja (pan del reproductor,
+ * 'P' del shell, captura, soltar). Asi se ven los fotogramas que el grabador (13 fps) no ve:
+ * tools/ondevice/scanlog.py los analiza. */
+#define SCAN_N 8192
+struct scan_rec { uint32_t t; uint16_t h[4]; uint8_t src, y; uint16_t pad; };   /* t en 0,1 ms */
+struct scan_ring { uint32_t magic, n, idx, pad; struct scan_rec r[SCAN_N]; };
+static struct scan_ring *scan;
+/* y una copia de la barra de estado (filas 0-31) en cada cambio de esa franja: para ver QUE asoma */
+#define SCAN_IMG_N 48
+#define SCAN_IMG_ROWS 32
+struct scan_img { uint32_t t, pad; uint16_t px[SCAN_IMG_ROWS * HM_W]; };
+struct scan_imgs { uint32_t magic, n, idx, pad; struct scan_img im[SCAN_IMG_N]; };
+static struct scan_imgs *scan_im;
+static int scan_band;
+static volatile uint32_t scan_shown_y;
+static uint32_t scan_now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint32_t)(ts.tv_sec * 10000u + ts.tv_nsec / 100000u); }
+static void scan_put(uint8_t src, const uint16_t *h)
+{
+    if (!scan) return;
+    uint32_t i = __sync_fetch_and_add(&scan->idx, 1) % SCAN_N;
+    struct scan_rec *r = &scan->r[i];
+    r->t = scan_now(); r->src = src; r->y = (uint8_t)(scan_shown_y ? 1 : 0);
+    if (h) memcpy(r->h, h, sizeof r->h); else memset(r->h, 0, sizeof r->h);
+}
+static void scan_mark(uint8_t src) { if (scan) scan_put(src, 0); }
+static void *scan_thread(void *a)
+{
+    (void)a;
+    static const int band[4][2] = { { 2, 28 }, { 60, 140 }, { 200, 280 }, { 440, 476 } };
+    uint16_t last[4] = { 0 };
+    for (;;) {
+        usleep(2000);
+        if (!map_fb()) continue;
+        const unsigned char *b = fbmem + (size_t)scan_shown_y * fline;
+        uint16_t h[4];
+        for (int k = 0; k < 4; k++) {
+            uint32_t acc = 0;
+            for (int y = band[k][0]; y < band[k][1]; y += 2) {
+                const uint16_t *row = (const uint16_t *)(b + (size_t)y * fline);
+                for (int x = 1; x < HM_W; x += 6) acc = acc * 31 + row[x];
+            }
+            h[k] = (uint16_t)(acc ^ (acc >> 16));
+        }
+        if (memcmp(h, last, sizeof h)) {
+            /* la franja que se guarda: 0 barra de estado (por defecto), 3 barra de inicio (scanlog_on con "3") */
+            if (scan_im && h[scan_band] != last[scan_band]) {
+                uint32_t i = scan_im->idx++ % SCAN_IMG_N;
+                int y0 = scan_band == 3 ? HM_H - SCAN_IMG_ROWS : 0;
+                scan_im->im[i].t = scan_now();
+                for (int y = 0; y < SCAN_IMG_ROWS; y++) memcpy(scan_im->im[i].px + y * HM_W, b + (size_t)(y0 + y) * fline, HM_W * 2);
+            }
+            memcpy(last, h, sizeof h); scan_put(0, h);
+        }
+    }
+    return 0;
+}
+static void scan_start(void)
+{
+    if (access("/usr/data/hibymod/scanlog_on", F_OK)) return;
+    { FILE *c = fopen("/usr/data/hibymod/scanlog_on", "r"); if (c) { int v = fgetc(c); if (v == '3') scan_band = 3; fclose(c); } }
+    int f = r_open("/dev/shm/hibymod_scan", O_RDWR | O_CREAT | O_TRUNC, 0644); if (f < 0) return;
+    if (ftruncate(f, sizeof *scan)) { close(f); return; }
+    void *m = mmap(0, sizeof *scan, PROT_READ | PROT_WRITE, MAP_SHARED, f, 0); close(f);
+    if (m == MAP_FAILED) return;
+    scan = m; scan->magic = 0x5343414e; scan->n = SCAN_N; scan->idx = 0;
+    f = r_open("/dev/shm/hibymod_scanimg", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (f >= 0) {
+        if (!ftruncate(f, sizeof *scan_im)) {
+            void *mi = mmap(0, sizeof *scan_im, PROT_READ | PROT_WRITE, MAP_SHARED, f, 0);
+            if (mi != MAP_FAILED) { scan_im = mi; scan_im->magic = 0x494d4753; scan_im->n = SCAN_IMG_N; scan_im->idx = 0; }
+        }
+        close(f);
+    }
+    pthread_t t; if (pthread_create(&t, 0, scan_thread, 0) == 0) pthread_detach(t);
+}
 static void *control(void *arg)
 {
     (void)arg;
@@ -409,6 +502,7 @@ static void *control(void *arg)
             if (c == 'U') { lu_kick(); continue; }   /* actualizar la biblioteca de HiBy */
             pthread_mutex_lock(&mu);
             if (c == 'C') {
+                scan_mark(5);
                 if (!st->held && !st->capture && map_frames()) {
                     unsigned char *d = buf_at(last_var.yoffset);
                     memcpy(frames, d, fsize);           /* la imagen congelada, sin capa: */
@@ -420,6 +514,7 @@ static void *control(void *arg)
                     st->capture = 1;
                 }
             } else if (c == 'P') {
+                scan_mark(3);
                 if (st->capture && frames) {
                     frame_edge();                       /* primero el fin de fotograma, luego copiar */
                     wait_even(&st->fr0_seq);            /* casi siempre par: no retrasa la copia */
@@ -432,6 +527,7 @@ static void *control(void *arg)
             } else if (c == 'H') {
                 st->capture = 0; st->held = 1;
             } else if (c == 'R') {
+                scan_mark(4);
                 int was_capture = st->capture;
                 st->capture = 0;
                 st->held = 0;
@@ -445,6 +541,7 @@ static void *control(void *arg)
                 }
                 st->presents++;
             } else if (c == 'O') {
+                scan_mark(6);
                 if (!st->capture && !st->held && map_fb()) {
                     unsigned char *d = buf_at(last_var.yoffset);
                     frame_edge();            /* al empezar el vblank: quitar y poner seguidos */
@@ -695,6 +792,7 @@ __attribute__((constructor)) static void init(void)
     if (pthread_create(&t, 0, control, 0)) return;
     pthread_detach(t);
     if (pthread_create(&t, 0, lu_monitor, 0) == 0) pthread_detach(t);   /* escaneos de la biblioteca */
+    scan_start();                                                       /* diagnostico (scanlog_on) */
     if (access("/usr/data/hibymod/no_input_bridge", F_OK) && find_real_touch() && create_uinput()) {
         if (pthread_create(&t, 0, input_thread, 0) == 0) {
             pthread_detach(t); st->input_mode = 1;
@@ -981,7 +1079,8 @@ int ioctl(int fd, unsigned long req, ...)
             st->yoffset = last_var.yoffset;
         }
         static uint32_t shown_y = 0xffffffffu;
-        if (last_var.yoffset == shown_y) st->same_pans++;
+        if (last_var.yoffset == shown_y) { st->same_pans++; scan_mark(7); }
+        scan_mark(st->capture ? 1 : 2);
         unsigned char *restore = 0;              /* bufer que deja de verse: vuelve el fotograma de HiBy */
         if (st->capture && frames) {
             unsigned char *b = buf_at(last_var.yoffset);
@@ -1015,7 +1114,7 @@ int ioctl(int fd, unsigned long req, ...)
         st->frames++;
         vol_publish();
         int r = r_ioctl(fd, req, arg);
-        shown_y = last_var.yoffset;
+        shown_y = last_var.yoffset; scan_shown_y = shown_y;
         /* Capturando, HiBy recibe de vuelta sus buferes con la imagen del shell dentro y luego solo
          * repinta lo que cambio ENCIMA de eso: la barra de estado salia mezclada (el Wi-Fi roto, el
          * "%" empujado dos veces bajo la pila). Tras el pan (ese bufer ya no se ve) se le devuelve
