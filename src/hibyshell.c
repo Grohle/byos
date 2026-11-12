@@ -1641,7 +1641,7 @@ static void guard_tick(void)
             snprintf(p, sizeof p, "/proc/%s/oom_score_adj", e->d_name);
             /* lo que esta sonando hereda la reserva: con la radio en marcha su ayudante de red
              * queda justo detras del reproductor (y sin nice), no entre lo prescindible */
-            int radio = !strcmp(comm, "hibynet") && ra_active();
+            int radio = (!strcmp(comm, "hibynet") && ra_active()) || (fg_helper_pid && atoi(e->d_name) == (int)fg_helper_pid);
             if (guard_write(p, radio ? -700 : guard_rules[i].oom) > 0) changed++;
             if (radio) break;
             if (guard_rules[i].nice > -99) {

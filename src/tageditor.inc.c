@@ -28,6 +28,16 @@ static const char *const TE_FIELDS[HT_NFIELDS] = { N_("Título"), N_("Artista"),
 static const char *const TE_SUGG[HT_NFIELDS] = { 0, "artist", "album", "albumartist", "genre", 0, 0, 0 };
 
 /* ejecuta TAGBIN con argv y devuelve su salida (stdout) en buf */
+/* Ayudante que el usuario esta esperando (buscar caratulas o letras, etiquetas...): con poca
+ * memoria el vigilante cortaba los "ayudantes" (hibynet) y la busqueda de caratulas salia vacia
+ * ("Killed", medido). Mientras se espera, se protege como el de la radio (oom -700; guard_tick). */
+static volatile pid_t fg_helper_pid;
+static void fg_helper_protect(pid_t pid)
+{
+    fg_helper_pid = pid;
+    char p[48]; snprintf(p, sizeof p, "/proc/%d/oom_score_adj", (int)pid);
+    int f = open(p, O_WRONLY | O_CLOEXEC); if (f >= 0) { if (write(f, "-700", 4) != 4) {} close(f); }
+}
 static int run_capture(char *const argv[], char *buf, int cap)
 {
     int fd[2]; if (pipe(fd)) return -1;
@@ -37,10 +47,11 @@ static int run_capture(char *const argv[], char *buf, int cap)
     pid_t pid; int r = posix_spawn(&pid, argv[0], &fa, 0, argv, environ);
     posix_spawn_file_actions_destroy(&fa);
     close(fd[1]);
+    if (!r) fg_helper_protect(pid);
     int n = 0;
     if (!r) { ssize_t k; while (n < cap - 1 && (k = read(fd[0], buf + n, cap - 1 - n)) > 0) n += (int)k; }
     buf[n] = 0; close(fd[0]);
-    if (!r) { int stt; waitpid(pid, &stt, 0); }
+    if (!r) { int stt; waitpid(pid, &stt, 0); fg_helper_pid = 0; }
     return r ? -1 : n;
 }
 /* como run_capture con stdout y stderr juntos; devuelve el codigo de salida (-1 si no arranco) */
@@ -54,6 +65,7 @@ static int run_status(char *const argv[], char *buf, int cap)
     pid_t pid; int r = posix_spawn(&pid, argv[0], &fa, 0, argv, environ);
     posix_spawn_file_actions_destroy(&fa);
     close(fd[1]);
+    if (!r) fg_helper_protect(pid);
     int n = 0, stt = 0;
     if (!r) {
         char tmp[256]; ssize_t k;
@@ -61,7 +73,7 @@ static int run_status(char *const argv[], char *buf, int cap)
     }
     buf[n] = 0; close(fd[0]);
     if (r) return -1;
-    waitpid(pid, &stt, 0);
+    waitpid(pid, &stt, 0); fg_helper_pid = 0;
     return WIFEXITED(stt) ? WEXITSTATUS(stt) : -1;
 }
 

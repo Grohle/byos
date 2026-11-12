@@ -852,14 +852,29 @@ typedef struct { char src[8], url[512], artist[160], album[200], year[8]; int sc
 static cov_t g_cov[16]; static int g_ncov;
 
 /* normaliza para comparar: minusculas ASCII, solo alfanumericos (bytes UTF-8 se conservan) */
+/* minusculas sin signos; acentos latinos (UTF-8 C3 xx) a su letra base, "&" = "and" y sin
+ * "the" inicial: "Beyoncé" = "Beyonce", "Simon & Garfunkel" = "Simon and Garfunkel" */
 static void norm(const char *s, char *o, size_t cap) {
+    static const char lat[65] = "aaaaaaaceeeeiiiidnooooo-ouuuuyts" "aaaaaaaceeeeiiiidnooooo-ouuuuyty";
     size_t k = 0;
     for (; *s && k + 1 < cap; s++) {
         unsigned char c = *s;
+        if (c == 0xC3 && (unsigned char)s[1] >= 0x80 && (unsigned char)s[1] <= 0xBF) {
+            char m = lat[(unsigned char)s[1] - 0x80]; s++;
+            if (m >= 'a' && m <= 'z') o[k++] = m;
+            continue;
+        }
+        if (c == '&') { if (k + 4 < cap) { o[k++] = 'a'; o[k++] = 'n'; o[k++] = 'd'; } continue; }
         if (c >= 'A' && c <= 'Z') o[k++] = c + 32;
         else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c >= 0x80) o[k++] = c;
     }
     o[k] = 0;
+    if (k > 3 && !strncmp(o, "the", 3)) memmove(o, o + 3, k - 2);
+}
+/* artista que no dice nada: no penaliza */
+static int art_unknown(const char *n) {
+    return !n[0] || !strcmp(n, "unknown") || !strcmp(n, "unknownartist") || !strcmp(n, "variousartists") ||
+           !strcmp(n, "variosartistas") || !strcmp(n, "artistadesconocido") || !strcmp(n, "va");
 }
 static int g_art_miss;   /* ultimo match_score: 1 si el artista no se parece */
 static int match_score(const char *want_art, const char *want_alb, const char *art, const char *alb) {
@@ -869,7 +884,8 @@ static int match_score(const char *want_art, const char *want_alb, const char *a
     int s = 0;
     if (b[0] && !strcmp(b, d)) s += 0; else if (b[0] && (strstr(d, b) || strstr(b, d))) s += 10; else s += 40;
     g_art_miss = 0;
-    if (a[0] && !strcmp(a, c)) s += 0; else if (a[0] && c[0] && (strstr(c, a) || strstr(a, c))) s += 10; else { s += 30; g_art_miss = 1; }
+    if (art_unknown(a)) s += 15;
+    else if (!strcmp(a, c)) s += 0; else if (c[0] && (strstr(c, a) || strstr(a, c))) s += 10; else { s += 30; g_art_miss = 1; }
     return s;
 }
 static void cov_add(const char *src, const char *url, const char *art, const char *alb, const char *year, int score) {
@@ -922,7 +938,8 @@ static int cmd_covers(int argc, char **argv) {
             char *p = strstr(u, "100x100");
             if (p) memcpy(p, "600x600", 7);
             int sc = match_score(art, alb, a, b);
-            if (g_art_miss) continue;                   /* artista distinto (tributos, etc.) */
+            /* artista distinto (tributos...): antes se descartaba y con acentos, "&" o "The" se
+             * perdian aciertos; ahora queda detras (puntuacion +30) */
             cov_add("itunes", u, a, b, y, sc);
             n++;
         }

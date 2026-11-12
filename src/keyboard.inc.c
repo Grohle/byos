@@ -1351,8 +1351,10 @@ static void le_page(uint16_t *dst)
 }
 static void le_redraw(uint16_t *dst, int pressed) { le_page(dst); kb_draw(dst, pressed); }
 /* devuelve 1 si se acepto; el texto queda en buf */
+static int le_accepted;                     /* 1: el ultimo line_edit termino con Aceptar (aunque vacio) */
 static int line_edit(const char *title, const char *hint, char *buf, int cap)
 {
+    le_accepted = 0;
     struct ebuf e = { buf, (int)strlen(buf), cap, (int)strlen(buf) };
     le_title = title; le_hint = hint; le_buf = &e; le_caret = 1;
     kb_layer = 0; kb_shift = 0; kb_layout(tr("Aceptar"));
@@ -1370,7 +1372,7 @@ static int line_edit(const char *title, const char *hint, char *buf, int cap)
         if (p.y >= KB_Y) {
             int r = kb_touch(&p, &e, fr0, le_redraw, 0);
             blink = now_ms();
-            if (r == K_ENTER) { kb_end(); return e.len > 0; }
+            if (r == K_ENTER) { kb_end(); le_accepted = 1; return e.len > 0; }
             continue;
         }
         int x = p.x, y = p.y;

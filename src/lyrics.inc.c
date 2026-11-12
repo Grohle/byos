@@ -113,11 +113,29 @@ static int cover_fetch(const char *artist, const char *album)
         char sub[48]; snprintf(sub, sizeof sub, tr("%d de %d"), i + 1, ncv);
         progress_card(tr("Descargando carátulas"), sub, 0.2 + 0.8 * i / ncv);
         char jp[128], th[140]; snprintf(jp, sizeof jp, NETDIR "/c%d.jpg", i); snprintf(th, sizeof th, NETDIR "/c%d.thumb.raw", i);
+        /* sin los de la busqueda anterior: si esta descarga falla no debe aparecer (ni guardarse)
+         * la caratula vieja del mismo hueco */
+        unlink(jp); unlink(th);
         char *a2[] = { NETBIN, "cover-get", cv[i].url, jp, "500", 0 }; char o[256];
         if (run_capture(a2, o, sizeof o) < 0) continue;
         int fd = open(th, O_RDONLY);
         if (fd >= 0) { cv[i].thumb = malloc(CV_T * CV_T * 2); if (read(fd, cv[i].thumb, CV_T * CV_T * 2) != CV_T * CV_T * 2) { free(cv[i].thumb); cv[i].thumb = 0; } close(fd); }
+        if (cv[i].thumb && access(jp, R_OK)) { free(cv[i].thumb); cv[i].thumb = 0; }
     }
+    /* fuera las que no se pudieron descargar (los ficheros c%d siguen el indice: renombrar) */
+    int k = 0;
+    for (int i = 0; i < ncv; i++) {
+        if (!cv[i].thumb) continue;
+        if (k != i) {
+            char a1[128], b1[128], a2[140], b2[140];
+            snprintf(a1, sizeof a1, NETDIR "/c%d.jpg", i); snprintf(b1, sizeof b1, NETDIR "/c%d.jpg", k); rename(a1, b1);
+            snprintf(a2, sizeof a2, NETDIR "/c%d.thumb.raw", i); snprintf(b2, sizeof b2, NETDIR "/c%d.thumb.raw", k); rename(a2, b2);
+            cv[k] = cv[i];
+        }
+        k++;
+    }
+    lg("caratulas: %d candidatas, %d descargadas", ncv, k);
+    ncv = k;
     return ncv;
 }
 static void cover_render(uint16_t *d, const char *q, int sel)
@@ -187,7 +205,14 @@ static void cover_search(char *const *paths, int n, const char *artist, const ch
         if (y >= 456 && cur_y < y - 20) return;
         if (y < 94 && x < 100) return;
         if (y < 94 && x > W - 90) {                       /* buscar a mano: otros terminos */
-            if (line_edit(tr("Artista"), tr("Artista"), a, sizeof a) && line_edit(tr("Álbum"), tr("Álbum"), b, sizeof b)) cover_fetch(a, b);
+            /* sobre copias: Cancelar no deja texto a medias; un campo vacio vale (buscar solo
+             * por album o por artista); aceptar siempre busca de nuevo */
+            char na[128], nb[128]; snprintf(na, sizeof na, "%s", a); snprintf(nb, sizeof nb, "%s", b);
+            line_edit(tr("Artista"), tr("Artista"), na, sizeof na); if (!le_accepted) continue;
+            line_edit(tr("Álbum"), tr("Álbum"), nb, sizeof nb); if (!le_accepted) continue;
+            if (!na[0] && !nb[0]) continue;
+            snprintf(a, sizeof a, "%s", na); snprintf(b, sizeof b, "%s", nb);
+            cover_fetch(a, b);
             continue;
         }
         if (y >= H - 56) { char img[300]; if (image_picker(img, sizeof img) && !cover_save(img, dir)) return; continue; }
