@@ -15,7 +15,9 @@ static int ra_clip0, ra_clip1;                      /* ventana de la lista (las 
 
 /* ------------------------------------------------------------------ medidas */
 static float ra_hdr_c(void) { float p = ra_pos[RG_ROOT]; if (p < 0) p = 0; if (p > 46) p = 46; return p * (1 - ra_edit_e); }   /* el titulo grande se recoge al bajar */
-static int ra_bar_y(void) { float y0 = 82 - ra_hdr_c(); return (int)(y0 + (36 - y0) * ra_edit_e); }
+/* el buscador sube solo de 82 a 66 al recogerse: arriba queda la barra con el titulo pequeno
+ * (iOS); antes subia hasta 36 y no dejaba sitio a ningun titulo */
+static int ra_bar_y(void) { float y0 = 82 - ra_hdr_c() * 16 / 46; return (int)(y0 + (36 - y0) * ra_edit_e); }
 static int ra_hdr_bot(void) { return ra_bar_y() + 44 + (int)(42 * (1 - ra_edit_e)); }
 static int ra_bottom(void) { return ra_np.have ? RA_MINI_TOP : H; }
 static int ra_top0(int pg) { return pg == RG_ROOT ? 80 + (int)(88 * (1 - ra_edit_e)) : 74; }
@@ -303,7 +305,12 @@ static void ra_render_root(uint16_t *d)
     /* cabecera, encima de la lista */
     for (int yy = 30; yy < hb && yy < H; yy++) memset(d + yy * W, 0, W * 2);
     float ta = (1 - e) * (1 - c / 30); if (ta < 0) ta = 0;
-    if (ta > 0.02f) draw_text(d, 16, 72 - (int)c - (int)(40 * e), tr("Radio"), 28, mix565(0xFFFF, 0, (unsigned)(255 * ta)), W - 32, 30, H);
+    int tby = 72 - (int)c - (int)(40 * e);                      /* linea base del titulo grande */
+    if (ta > 0.02f && tby - 22 >= 30) draw_text(d, 16, tby, tr("Radio"), 28, mix565(0xFFFF, 0, (unsigned)(255 * ta)), W - 32, 30, H);
+    /* al recogerse, el titulo pequeno centrado en la barra (como Musica e iOS): antes no quedaba
+     * ningun titulo y el grande se metia bajo la barra de estado (revisor, 12-11) */
+    float ia = (1 - e) * (c - 18) / 22.f; if (ia > 1) ia = 1;
+    if (ia > 0.02f) { const char *t = tr("Radio"); int tw = tw_n(t, 17, -1); draw_text(d, (W - tw) / 2, 54, t, 17, mix565(0xFFFF, 0, (unsigned)(255 * ia)), W - 32, 30, H); }
     fm_chrome_status(d);
     int bx1 = W - 16 - (int)(70 * e);
     fill_rrect(d, 16, by, bx1 - 16, 36, 10, FMC_FIELD, 255);

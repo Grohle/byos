@@ -767,7 +767,9 @@ static void render_launcher(uint16_t *dst, double t)
         }
     }
     /* dock */
-    int dkx = V.scroll < 0 ? (int)-V.scroll : 0;     /* el dock se va con la primera pagina */
+    /* el dock se va con la primera pagina hacia los widgets; sin pagina de widgets, el
+     * desplazamiento es solo el rebote del borde y el dock se queda quieto (iOS; revisor 12-11) */
+    int dkx = V.scroll < 0 && wg_page_enabled() ? (int)-V.scroll : 0;
     if (dkx < W) {
         int n = L.dn, slot = 0, total = n + (V.drag_app >= 0 && V.drag_dock >= 0 ? 1 : 0);
         for (int i = 0; i < n; i++) if (L.dock[i] == V.drag_app) total--;
