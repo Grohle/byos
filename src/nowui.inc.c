@@ -276,15 +276,17 @@ static int nu_bc_take(void)
 /* caratula 232: la nitida de la biblioteca si ya esta; si no, la de 128 ampliada (bilineal) */
 static void nu_make_art(void)
 {
+    int lib_none = 0;
     if (nu.alb >= 0) {
         double t; int none; const uint16_t *b = mu_cover(nu.alb, MC_B, &t, &none);
         if (b) { memcpy(nu.art, b, NU_S * NU_S * 2); nu.art_src = 2; return; }
+        lib_none = none;                              /* la biblioteca la descarto (miniatura, tira) o no hay */
     }
     if (nu.alb < 0 && nu.cov_ok) {                    /* sin biblioteca: la nitida en segundo plano */
         if (nu_bc_take()) { nu.art_src = 2; return; }
         nu_bc_request(nu.ni.path, nu.ni.track_id);
     }
-    if (nu.cov_ok) {
+    if (nu.cov_ok && !lib_none) {                     /* la de HiBy (128) de la misma imagen tampoco */
         for (int y = 0; y < NU_S; y++) {
             float sy = (y + .5f) * 128 / NU_S - .5f; if (sy < 0) sy = 0;
             int y0 = (int)sy, y1 = y0 + 1 < 128 ? y0 + 1 : y0; unsigned fy = (unsigned)((sy - y0) * 255);

@@ -1299,6 +1299,9 @@ static void fm_download_album(void)
         fm_cpy(d->album, sizeof d->album, a->it.title); fm_cpy(d->year, sizeof d->year, a->it.year); fm_cpy(d->akey, sizeof d->akey, k);
         if (!cover[0]) { fm_cpy(cover, sizeof cover, p); char *s = strrchr(cover, '/'); if (s) snprintf(s, cover + sizeof cover - s, "/cover.jpg"); }
     }
+    /* Internet Archive sin imagen propia: su miniatura automatica es una forma de onda de 180x45,
+     * no una caratula; sin cover.jpg la busqueda de caratulas de Musica pone una de verdad */
+    if (a->it.src == FM_SRC_IA && !a->cover[0]) cover[0] = 0;
     if (cover[0] && access(cover, R_OK)) {
         struct fm_dl *d = fm_q_add_locked();
         if (d) {
@@ -2259,7 +2262,7 @@ static int fm_poll(void)
                 fm_tstate_gen = -1; fm_tstate_update();
                 /* the cover (real one) and, if unknown, the lossless quality */
                 struct fm_job *c = fm_job_new(NJ_COVER);
-                if (c && (a->it.img[0] || a->cover[0])) {
+                if (c && (a->cover[0] || (a->it.img[0] && a->it.src != FM_SRC_IA))) {   /* IA sin imagen propia: su miniatura no es caratula */
                     if (a->it.src == FM_SRC_IA && a->cover[0]) { char e[400]; fm_pathenc(a->cover, e, sizeof e); snprintf(c->url, sizeof c->url, "https://archive.org/download/%s/%s", a->it.id, e); }
                     else fm_cpy(c->url, sizeof c->url, a->it.img);
                     fm_cpy(c->id, sizeof c->id, a->it.id); c->src = a->it.src; c->sid = a->it.sid; fm_cover_state = 1;

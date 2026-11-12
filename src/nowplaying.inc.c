@@ -497,6 +497,35 @@ static int np_get(struct np_info *o)
  * mismo album sale de la cache (32 KB, < 5 ms). Sin cache: 150-500 ms -> llamar desde un hilo
  * o justo al cambiar track_id, nunca en el bucle de animacion.
  * Devuelve 0 si out tiene la caratula, -1 si no hay. */
+/* tamano de una imagen por su cabecera (JPEG: el marcador SOFn; PNG: IHDR). 0 si no se sabe */
+static int np_img_dims(const char *path, int *w, int *h)
+{
+    int fd = open(path, O_RDONLY); if (fd < 0) return 0;
+    unsigned char b[32]; int ok = 0;
+    if (read(fd, b, 24) == 24) {
+        if (b[0] == 0x89 && !memcmp(b + 1, "PNG", 3)) { *w = b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]; *h = b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]; ok = 1; }
+        else if (b[0] == 0xFF && b[1] == 0xD8) {
+            off_t o = 2;
+            for (int n = 0; n < 200 && !ok; n++) {
+                if (pread(fd, b, 9, o) != 9 || b[0] != 0xFF) break;
+                int m = b[1], len = b[2] << 8 | b[3];
+                if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) { *h = b[5] << 8 | b[6]; *w = b[7] << 8 | b[8]; ok = 1; }
+                else if (m == 0xD8 || (m >= 0xD0 && m <= 0xD7) || m == 0x01) o += 2;
+                else o += 2 + len;
+            }
+        }
+    }
+    close(fd);
+    return ok && *w > 0 && *h > 0;
+}
+/* una caratula de verdad: ni miniatura ni tira (la imagen automatica de Internet Archive para el
+ * audio es una forma de onda de 180x45: recortada al centro y ampliada salia en bloques enormes) */
+static int np_img_usable(const char *path)
+{
+    int w, h; if (!np_img_dims(path, &w, &h)) return 1;        /* sin saberlo: que lo intente hibywall */
+    int mn = w < h ? w : h, mx = w < h ? h : w;
+    return mn >= 120 && mx * 10 <= mn * 16;
+}
 struct np_pic { uint64_t off, len; int png; };
 
 static int np_pic_flac(int fd, uint64_t base, struct np_pic *pic)
@@ -637,7 +666,7 @@ static int np_cover(const char *path, uint16_t *out)
         }
         if (w >= 0) close(w);
         close(fd);
-        int r = ok ? np_run_wall(img, raw) : -1;
+        int r = ok && np_img_usable(img) ? np_run_wall(img, raw) : -1;   /* miniatura o tira: no es caratula */
         unlink(img);
         if (!r && !np_read_raw(raw, out)) return 0;
         unlink(raw);
@@ -651,6 +680,7 @@ static int np_cover(const char *path, uint16_t *out)
             struct stat s;
             if (stat(p, &s)) continue;
             snprintf(raw, sizeof raw, NP_CACHE "/%08x.raw", np_hash(p, (uint32_t)s.st_mtime ^ (uint32_t)s.st_size));
+            if (!np_img_usable(p)) continue;                 /* miniatura o tira: no es caratula */
             if (!np_read_raw(raw, out)) return 0;
             if (!np_run_wall(p, raw) && !np_read_raw(raw, out)) return 0;
             unlink(raw);

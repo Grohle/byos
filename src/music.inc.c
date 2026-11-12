@@ -485,6 +485,11 @@ static int mu_cover_make_unlocked(const char *track, int cls, uint16_t *px, uint
     if (lim < 2048) return -2;                        /* poca memoria ahora: se reintentara (una sola decodificacion a la vez, nice 10) */
     mu_mkcache();
     int kind = mu_cover_src(track, dir, src, sizeof src);
+    if (kind && !np_img_usable(src)) {                /* miniatura o tira: como si no tuviera */
+        lg("musica: caratula descartada (pequena o no cuadrada): %s", src);
+        if (kind == 1) unlink(src);
+        kind = 0;
+    }
     if (!kind) { int o = open(none, O_WRONLY | O_CREAT, 0644); if (o >= 0) close(o); return -1; }
     int s = cls == MC_B ? MU_BS : MU_GS;
     char out[140]; snprintf(out, sizeof out, "%s_%c.tmp2", base, cls == MC_B ? 'b' : 'm');
@@ -493,7 +498,7 @@ static int mu_cover_make_unlocked(const char *track, int cls, uint16_t *px, uint
     if (kind == 1) unlink(src);
     if (r && kind == 1) {                             /* la incrustada no cabe: la de la carpeta */
         static const char *names[] = { "cover", "folder", "front", "Cover", "Folder", "Front", 0 };
-        for (int i = 0; r && names[i]; i++) { snprintf(src, sizeof src, "%s/%s.jpg", dir, names[i]); if (!access(src, R_OK)) r = mu_wall(src, out, s, lim); }
+        for (int i = 0; r && names[i]; i++) { snprintf(src, sizeof src, "%s/%s.jpg", dir, names[i]); if (!access(src, R_OK) && np_img_usable(src)) r = mu_wall(src, out, s, lim); }
     }
     if (r || mu_read_raw(out, dst, s)) {
         unlink(out);
