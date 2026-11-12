@@ -79,7 +79,7 @@ class SyncPlannerTest {
             ManifestEntry("Music/ABBA/Arrival/02 Money, Money, Money.flac", "C:/Music/abba/02.flac", 1000, 99, 1000, "optimize"),
             ManifestEntry("Music/Old/gone.flac", "C:/Music/old.flac", 777, 1, 777, "optimize"),
         )
-        val p = SyncPlanner.plan(one, SyncSelection(), "Music", "artist-album", "optimize", remote, manifest, true, 10_000_000_000)
+        val p = SyncPlanner.plan(one, SyncSelection(), "Music", "artist-album", "optimize", remote, manifest, true, 10_000_000_000, listOf("C:/Music"))
         val by = p.items.associateBy { it.dest }
         assertEquals("skip", by["Music/ABBA/Arrival/01 Dancing Queen.flac"]!!.action)
         assertEquals("update", by["Music/ABBA/Arrival/02 Money, Money, Money.flac"]!!.action) // the source changed (mtime)
@@ -93,6 +93,41 @@ class SyncPlannerTest {
     }
 
     @Test
+    fun songsOfFoldersNotScannedAreKept() {
+        // E: is unplugged: the catalogue only has C:/Music, so E:'s songs are not "unselected"
+        val remote = listOf(RemoteFile("Music/ABBA/Arrival/01 Dancing Queen.flac", 1000, 5), RemoteFile("Music/E/e.flac", 500, 5),
+            RemoteFile("Music/Gone/g.flac", 400, 5))
+        val manifest = listOf(
+            ManifestEntry("Music/ABBA/Arrival/01 Dancing Queen.flac", "C:/Music/abba/01.flac", 1000, 100, 1000, "keep"),
+            ManifestEntry("Music/E/e.flac", "E:\\Music\\e.flac", 500, 1, 500, "keep"),
+            ManifestEntry("Music/Gone/g.flac", "C:\\Music\\gone\\g.flac", 400, 1, 400, "keep"),
+        )
+        val p = SyncPlanner.plan(listOf(lib[0]), SyncSelection(), "Music", "artist-album", "keep", remote, manifest, true, 1L shl 40, listOf("C:/Music"))
+        assertEquals(listOf("Music/Gone/g.flac"), p.items.filter { it.action == "remove" }.map { it.dest })
+        // no scanned folders given: nothing is removed
+        assertEquals(0, SyncPlanner.plan(listOf(lib[0]), SyncSelection(), "Music", "artist-album", "keep", remote, manifest, true, 1L shl 40).remove)
+    }
+
+    @Test
+    fun movedSourcesKeepTheirCopy() {
+        // the library moved from D: to C:, with new modification times: the copies on the HiBy are reused
+        val remote = listOf(RemoteFile("Music/ABBA/Arrival/01 Dancing Queen.flac", 1000, 5))
+        val manifest = listOf(ManifestEntry("Music/ABBA/Arrival/01 Dancing Queen.flac", "D:\\Music\\abba\\01.flac", 1000, 7, 1000, "keep"))
+        val p = SyncPlanner.plan(listOf(lib[0]), SyncSelection(), "Music", "artist-album", "keep", remote, manifest, true, 1L shl 40, listOf("C:/Music", "D:/Music"))
+        assertEquals(1, p.items.size)
+        assertEquals("skip", p.items[0].action); assertEquals("moved", p.items[0].reason)
+        assertEquals("Music/ABBA/Arrival/01 Dancing Queen.flac", p.items[0].dest)
+        // the same album dropped twice: copied once
+        val drops = listOf(lib[0], t("C:/Incoming/s2/abba/01.flac", "Dancing Queen", "ABBA", "Arrival", 1))
+        val p2 = SyncPlanner.plan(drops, SyncSelection(), "Music", "artist-album", "keep", emptyList(), emptyList(), false, 1L shl 40)
+        assertEquals(listOf("Music/ABBA/Arrival/01 Dancing Queen.flac"), p2.items.map { it.dest })
+        // after a sync of the first drop, the second one finds the first one's copy
+        val m1 = listOf(ManifestEntry("Music/ABBA/Arrival/01 Dancing Queen.flac", "C:/Incoming/s1/abba/01.flac", 1000, 100, 1000, "keep"))
+        val p3 = SyncPlanner.plan(listOf(drops[1]), SyncSelection(), "Music", "artist-album", "keep", remote, m1, false, 1L shl 40)
+        assertEquals("skip", p3.items.single().action); assertEquals("Music/ABBA/Arrival/01 Dancing Queen.flac", p3.items.single().dest)
+    }
+
+    @Test
     fun userFilesAreNeverOverwritten() {
         val remote = listOf(RemoteFile("Music/ABBA/Arrival/01 Dancing Queen.flac", 4242, 5))
         val p = SyncPlanner.plan(listOf(lib[0]), SyncSelection(), "Music", "artist-album", "keep", remote, emptyList(), false, 1L shl 40)
@@ -101,7 +136,7 @@ class SyncPlannerTest {
         // the same size: taken as the same song, not copied twice
         val same = SyncPlanner.plan(listOf(lib[0]), SyncSelection(), "Music", "artist-album", "keep",
             listOf(RemoteFile("Music/ABBA/Arrival/01 Dancing Queen.flac", 1000, 5)), emptyList(), false, 1L shl 40)
-        assertEquals("skip", same.items[0].action)
+        assertEquals("skip", same.items[0].action); assertEquals("same_size", same.items[0].reason)
     }
 
     @Test

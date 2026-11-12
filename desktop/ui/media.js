@@ -86,6 +86,10 @@ const ICONS = {
 
 // ---- album art: lazy, batched lib-art jobs ------------------------------------------------------
 
+// The album page's cover is 210 CSS px and grid tiles grow past 148: at 125 % display scaling or
+// more a 256 px picture would be stretched (blurry), so those screens get the 500 px one.
+const ART_SIZE = (globalThis.devicePixelRatio || 1) > 1.1 ? 500 : 256;
+
 let artObserver = null;
 
 function artObserve(node) {
@@ -140,7 +144,7 @@ async function flushArt() {
   const paths = [...lib.artQueue].slice(0, 64);
   for (const p of paths) lib.artQueue.delete(p);
   lib.artRunning = true;
-  const final = await C.runCli('lib-art', { device: spec(), paths, size: 256 }, { quiet: true });
+  const final = await C.runCli('lib-art', { device: spec(), paths, size: ART_SIZE }, { quiet: true });
   lib.artRunning = false;
   if (final.ok) {
     for (const it of final.items ?? []) lib.art.set(it.path, it.none ? { none: true } : { key: it.key, color: it.color });
@@ -778,7 +782,9 @@ async function addToPlaylist(tis, p) {
     name = r.value.trim();
   }
   const paths = tis.map((ti) => lib.index.tracks[ti].path);
-  const final = await C.runCli('playlist-add', { device: spec(), name, paths, create: !p }, { title: t('addToPlaylist') });
+  // an existing playlist goes by its file, so .m3u files and an .m3u next to an .m3u8 work
+  const target = p ? { path: p.path } : { name };
+  const final = await C.runCli('playlist-add', { device: spec(), ...target, paths, create: !p }, { title: t('addToPlaylist') });
   if (!final.ok) { toast(C.errorMessage(final), 'fail'); return; }
   toast(t('addedToPlaylist', { n: final.added, name }), 'ok');
   lib.playlists = null;
@@ -786,7 +792,7 @@ async function addToPlaylist(tis, p) {
 }
 
 async function removeFromPlaylist(p, tis) {
-  const final = await C.runCli('playlist-rm', { device: spec(), name: p.name, paths: tis.map((ti) => lib.index.tracks[ti].path) }, { title: t('removeFromPlaylist') });
+  const final = await C.runCli('playlist-rm', { device: spec(), path: p.path, paths: tis.map((ti) => lib.index.tracks[ti].path) }, { title: t('removeFromPlaylist') });
   if (!final.ok) { toast(C.errorMessage(final), 'fail'); return; }
   lib.playlists = null;
   lib.selected.clear();
@@ -796,7 +802,7 @@ async function removeFromPlaylist(p, tis) {
 async function deletePlaylist(p) {
   const r = await C.sheet({ title: t('deletePlaylist').replace('…', ''), body: t('deletePlaylistBody', { name: p.name }), okText: t('deleteAction'), danger: true });
   if (!r.ok) return;
-  const final = await C.runCli('playlist-rm', { device: spec(), name: p.name }, { title: t('deletePlaylist') });
+  const final = await C.runCli('playlist-rm', { device: spec(), path: p.path }, { title: t('deletePlaylist') });
   if (!final.ok) { toast(C.errorMessage(final), 'fail'); return; }
   if (lib.index) lib.index.playlists = lib.index.playlists.filter((x) => x.path !== p.path);
   lib.playlists = null;

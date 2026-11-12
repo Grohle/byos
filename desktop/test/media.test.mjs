@@ -36,6 +36,11 @@ test('library commands: remote paths are checked, page files are refused', () =>
   assert.deepEqual(buildArgs('playlist-add', { name: 'Road trip', paths: ['Music/a.flac'], create: true }),
     ['playlist-add', '--create', '--', 'Road trip', 'Music/a.flac']);
   assert.deepEqual(buildArgs('playlist-rm', { name: 'Road trip' }), ['playlist-rm', '--', 'Road trip']);
+  // an existing playlist goes by its file: .m3u ones and an .m3u next to an .m3u8 of the same name
+  assert.deepEqual(buildArgs('playlist-rm', { path: 'Playlists/Road Trip.m3u' }), ['playlist-rm', '--', 'Playlists/Road Trip.m3u']);
+  assert.deepEqual(buildArgs('playlist-add', { path: 'Playlists/Mix.m3u8', paths: ['Music/a.flac'] }),
+    ['playlist-add', '--', 'Playlists/Mix.m3u8', 'Music/a.flac']);
+  for (const bad of ['Playlists/x.txt', '../x.m3u', 'Playlists/']) assert.throws(() => buildArgs('playlist-rm', { path: bad }), UsageError);
   for (const bad of ['', 'a/b', '..', 'x?', '.hidden', 42]) assert.throws(() => buildArgs('playlist-add', { name: bad, paths: ['a.flac'] }), UsageError);
   assert.deepEqual(buildArgs('art-fix', { dryRun: true }), ['art-fix', '--root', 'Music', '--dry-run']);
   assert.deepEqual(buildArgs('cover-cache-reset', {}), ['cover-cache-reset']);

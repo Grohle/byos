@@ -69,6 +69,13 @@ function playlistName(n) {
   return s;
 }
 
+// An existing playlist by its card path ("Playlists/Road Trip.m3u"): .m3u and .m3u8 files.
+function playlistFile(p) {
+  const n = remote(p, 'playlist');
+  if (!/\.m3u8?$/i.test(n)) throw new UsageError(`playlist: "${p}" is not an .m3u or .m3u8 file`);
+  return n;
+}
+
 function oneOf(v, allowed, what) {
   if (!allowed.includes(v)) throw new UsageError(`${what}: one of ${allowed.join(', ')}`);
   return v;
@@ -177,7 +184,7 @@ export function buildArgs(command, params = {}, globals = {}) {
       break;
     case 'playlist-add':
     case 'playlist-rm': {
-      const name = playlistName(params.name);
+      const name = params.path !== undefined ? playlistFile(params.path) : playlistName(params.name);
       const paths = command === 'playlist-rm' && (params.paths === undefined || params.paths.length === 0)
         ? [] : remoteList(params.paths, command);
       const flags = command === 'playlist-add' && params.create ? ['--create'] : [];

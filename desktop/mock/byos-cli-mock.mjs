@@ -28,6 +28,12 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { coverPng, hibyIndex, localCatalog, playlistItems } from './library-fixture.mjs';
 
+// The real CLI takes a card path ("Playlists/Road trip.m3u8"), a file name or a bare name; the
+// mock keeps its playlists by bare name (all of them are Playlists/<name>.m3u8).
+function mockPlaylistName(a) {
+  return a === undefined ? a : a.replace(/^.*\//, '').replace(/\.m3u8?$/i, '');
+}
+
 const T0 = Date.now();
 const SCENARIO = process.env.BYOS_MOCK_SCENARIO || 'ok';
 const STATE = process.env.BYOS_MOCK_STATE || path.join(os.tmpdir(), 'byos-cli-mock-state.json');
@@ -727,7 +733,8 @@ Object.assign(commands, {
 
   async 'playlist-add'(args) {
     connect();
-    const [name, ...paths] = args;
+    const [arg, ...paths] = args;
+    const name = mockPlaylistName(arg);
     if (!name || !paths.length) throw new Fail('usage', 'playlist-add needs NAME PATH...');
     const state = load();
     const lib = libState(state);
@@ -743,7 +750,8 @@ Object.assign(commands, {
 
   async 'playlist-rm'(args) {
     connect();
-    const [name, ...paths] = args;
+    const [arg, ...paths] = args;
+    const name = mockPlaylistName(arg);
     const state = load();
     const lib = libState(state);
     lib.playlists ??= playlistItems(hibyIndex());

@@ -602,7 +602,10 @@ byos-cli playlist-add NAME PATH... [--create]
 byos-cli playlist-rm NAME [PATH...]
 ```
 
-Playlists are `Playlists/<NAME>.m3u8` (NAME may also be a card path to a `.m3u`/`.m3u8`):
+Playlists are `Playlists/<NAME>.m3u8`. NAME may also be a card path to a `.m3u`/`.m3u8`
+(`Playlists/Road Trip.m3u`) or such a file name in `Playlists`; give the path for a playlist
+that `playlist-ls` listed, so an `.m3u` file, or one next to an `.m3u8` of the same name, is
+the one changed. Format:
 UTF-8, `#EXTM3U`, one path per line relative to the playlist's folder, `\r\n`. `playlist-ls`
 prints one `entry` per playlist (`name`, `path`, `size`, `mtime`, `tracks`, `items`).
 `playlist-add` adds the paths that are not in it yet (`--create` makes a new one); result
@@ -638,11 +641,19 @@ without case or accents). Lists `--dest` and `Audiobooks` on the card, reads
   Books go to `Audiobooks/<Book>/<file>`. Names follow SYNC_PROTOCOL 9.2 (NFC, no
   `\ : * ? " < > |`, no leading dot, no trailing dot or space); names that would collide get
   " (2)".
-- `skip` when the manifest says the file came from the same source (size, modification time)
-  with the same cover choice and the card still has it; without a manifest entry, when the card
-  has a file of the same size there. A different file of the user's at that name is never
+- `skip` (`reason "unchanged"`) when the manifest says the file came from the same source
+  (size, modification time) with the same cover choice and the card still has it. Without a
+  manifest entry, `skip` (`reason "same_size"`) when the card has a file of the same size
+  there: that file stays the user's (sync-apply does not add it to the manifest, so no later
+  sync replaces or removes it). A different file of the user's at that name is never
   overwritten (the new one gets " (2)").
-- `--remove-unselected` removes only files the manifest lists.
+- A source that moved (the music folder is now on another drive, or the same album was dropped
+  twice) finds its earlier copy: a manifest entry whose source is no longer in the catalogue,
+  with the same file name and size, keeps its place (`skip`, `reason "moved"`; sync-apply
+  records the new source). Two chosen files with the same name, size and place are copied once.
+- `--remove-unselected` removes only files the manifest lists whose source is under one of the
+  catalogue's `roots` (the folders scanned this time). Songs from a folder that was not scanned,
+  such as an unplugged drive, are kept.
 
 Writes the plan (default `cache/sync/plan.json`): the result fields plus `items` (`action`
 `add`/`update`/`skip`/`remove`, `src`, `dest`, `size`, `mtime`, `reason`, `title`). Result:

@@ -290,6 +290,20 @@ class LibraryCliTest {
         assertFalse(sd("Playlists/Road trip.m3u8").exists())
     }
 
+    @Test
+    fun playlistsAreAddressedByTheirFile() {
+        // an .m3u next to an .m3u8 of the same name: each one is reached by its own path
+        SynthAudio.write(dev.sd, "Playlists/Mix.m3u", "#EXTM3U\r\n../Music/a.flac\r\n".toByteArray())
+        SynthAudio.write(dev.sd, "Playlists/Mix.m3u8", "#EXTM3U\r\n../Music/b.flac\r\n".toByteArray())
+        assertEquals(setOf("Playlists/Mix.m3u", "Playlists/Mix.m3u8"), run("playlist-ls").events("entry").map { it["path"] }.toSet())
+        assertEquals(1L, run("playlist-add", "Playlists/Mix.m3u", "Music/c.flac").last["added"])
+        assertEquals("#EXTM3U\r\n../Music/a.flac\r\n../Music/c.flac\r\n", sd("Playlists/Mix.m3u").readText())
+        assertEquals(1L, run("playlist-rm", "Mix.m3u", "Music/a.flac").last["removed"])
+        assertEquals(true, run("playlist-rm", "Playlists/Mix.m3u").last["deleted"])
+        assertFalse(sd("Playlists/Mix.m3u").exists())
+        assertEquals("#EXTM3U\r\n../Music/b.flac\r\n", sd("Playlists/Mix.m3u8").readText())
+    }
+
     // ------------------------------------------------------------------ music-scan, sync-plan, sync-apply
 
     @Test
@@ -361,5 +375,24 @@ class LibraryCliTest {
         assertEquals(500, CoverArt.info(embedded(sd("Music/A/1.flac"))!!)!!.width)
         assertEquals("One", TagReader.read(sd("Music/A/1.flac")).title)
         assertFalse(sd("ByOS/cache/music/old.none").exists())
+    }
+
+    @Test
+    fun artFixNeverGivesOneAlbumAnothersCover() {
+        // album A1: a folder image and an MP3 whose ID3v2.2 tag cannot take a cover (skipped)
+        val green = BufferedImage(600, 600, BufferedImage.TYPE_INT_RGB).also { i ->
+            val g = i.createGraphics(); g.color = Color(20, 200, 20); g.fillRect(0, 0, 600, 600); g.dispose()
+        }
+        SynthAudio.write(dev.sd, "Music/A1/cover.jpg", jpeg(green))
+        SynthAudio.write(dev.sd, "Music/A1/1.mp3", SynthAudio.mp3(Tags("One", "A", "X"), version = 2))
+        // album B2: no folder image, a 1500 px embedded cover (red with a blue square)
+        SynthAudio.write(dev.sd, "Music/B2/1.flac", flacWithCover(Tags("One", "B", "Y"), jpeg(image(1500, 1500))))
+        val fix = run("art-fix")
+        assertEquals(fix.raw, 0, fix.code)
+        assertEquals(1L, fix.last["fixed"]); assertEquals(1L, fix.last["skipped"])
+        val b = ImageIO.read(ByteArrayInputStream(embedded(sd("Music/B2/1.flac"))!!))
+        assertEquals(500, b.width)
+        val corner = Color(b.getRGB(10, 10))
+        assertTrue("B2 got another album's cover: $corner", corner.red > 150 && corner.green < 100)
     }
 }

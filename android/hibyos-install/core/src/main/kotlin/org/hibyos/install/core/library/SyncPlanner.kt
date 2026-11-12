@@ -71,10 +71,16 @@ class SyncPlan(val dest: String, val layout: String, val covers: String, val ite
  *   same name (FAT compares without case) get " (2)", " (3)"...
  * - A file is skipped when the manifest says it came from the same source file (size and
  *   modification time) with the same cover choice and the HiBy still has it at that size;
- *   without a manifest entry, when the HiBy has a file of the same size there (the copy then
- *   checks the SHA-256 itself).
- * - "Remove unselected" only ever removes files the manifest lists (copied by a sync before),
- *   never other files.
+ *   without a manifest entry, when the HiBy has a file of the same size there ("same_size").
+ *   Such a file stays the user's: sync-apply does not add it to the manifest, so the sync
+ *   never replaces or removes it later.
+ * - A source that moved (another music folder, a second drop of the same album) finds its
+ *   earlier copy through a manifest entry whose source is gone and that has the same file name
+ *   and size, so it is neither copied again under " (2)" nor removed. Two chosen sources with
+ *   the same name, size and place on the HiBy are copied once.
+ * - "Remove unselected" only ever removes files the manifest lists (copied by a sync before)
+ *   whose source lies under one of [plan]'s scannedRoots: a song from a folder that was not
+ *   scanned this time (an unplugged drive, a finished drop) is kept, never other files.
  */
 object SyncPlanner {
     const val MARGIN = 64L shl 20
@@ -111,24 +117,46 @@ object SyncPlanner {
         return BtpPaths.join(dest, artist, album, "$title.$ext")
     }
 
+    private fun normPath(p: String) = p.replace('\\', '/').trimEnd('/').lowercase()
+    private fun baseName(p: String) = p.replace('\\', '/').substringAfterLast('/').lowercase()
+
+    /**
+     * [scannedRoots]: the music folders the catalogue [sources] came from. "Remove unselected"
+     * only touches songs whose source is under one of them.
+     */
     fun plan(
         sources: List<SourceTrack>, sel: SyncSelection, dest: String, layout: String, covers: String,
         remote: List<RemoteFile>, manifest: List<ManifestEntry>, removeUnselected: Boolean, sdFree: Long,
+        scannedRoots: List<String> = emptyList(),
     ): SyncPlan {
         require(layout == "artist-album" || layout == "keep") { "layout is artist-album or keep" }
-        val chosen = sources.filter { sel.wants(it) }
+        val wanted = sources.filter { sel.wants(it) }
         // albums with more than one disc number get the disc in front of the track number
         val discs = HashMap<String, MutableSet<Int>>()
-        for (t in chosen) discs.getOrPut(SyncSelection.albumKey(t.track.groupArtist, t.track.album)) { HashSet() } += t.track.disc
+        for (t in wanted) discs.getOrPut(SyncSelection.albumKey(t.track.groupArtist, t.track.album)) { HashSet() } += t.track.disc
+        fun natural(t: SourceTrack) = destFor(t, dest, layout, (discs[SyncSelection.albumKey(t.track.groupArtist, t.track.album)]?.size ?: 0) > 1)
         val remoteBy = remote.associateBy { it.path.lowercase() }
         val manBySrc = manifest.groupBy { it.src }
         val manByDest = manifest.associateBy { it.dest.lowercase() }
+        // the same file chosen twice (the same album dropped twice, a copy in two folders that
+        // lands on the same place): copied once, preferring the one synced before
+        val chosen = wanted.groupBy { Triple(natural(it).lowercase(), it.track.size, baseName(it.src)) }.values.map { g ->
+            g.firstOrNull { manBySrc.containsKey(it.src) } ?: g.minByOrNull { it.src }!!
+        }
+        val srcNow = sources.mapTo(HashSet()) { it.src }
+        // earlier copies whose source is no longer in the catalogue, by file name and size
+        val orphans = manifest.filter { it.src !in srcNow && it.srcSize >= 0 }.groupBy { baseName(it.src) to it.srcSize }
         val used = HashSet<String>()
         val items = ArrayList<PlanItem>()
         for (t in chosen.sortedBy { it.src }) {
-            // a file synced before keeps its place on the HiBy
-            val prev = manBySrc[t.src]?.firstOrNull { it.dest.lowercase() !in used }
-            var d = prev?.dest ?: destFor(t, dest, layout, (discs[SyncSelection.albumKey(t.track.groupArtist, t.track.album)]?.size ?: 0) > 1)
+            // a file synced before keeps its place on the HiBy, also when its source moved
+            var prev = manBySrc[t.src]?.firstOrNull { it.dest.lowercase() !in used }
+            var moved = false
+            if (prev == null) {
+                prev = orphans[baseName(t.src) to t.track.size]?.firstOrNull { it.dest.lowercase() !in used && remoteBy.containsKey(it.dest.lowercase()) }
+                moved = prev != null
+            }
+            var d = prev?.dest ?: natural(t)
             if (prev == null) {
                 var n = 2
                 val base = d.substringBeforeLast('.'); val ext = d.substringAfterLast('.', "")
@@ -151,6 +179,8 @@ object SyncPlanner {
             val title = t.track.title
             val item = when {
                 on == null -> PlanItem("add", t.src, d, t.track.size, t.track.mtime, if (prev != null) "missing" else "new", title)
+                moved && m != null && m.srcSize == t.track.size && m.covers == covers && on.size == m.size ->
+                    PlanItem("skip", t.src, d, on.size, t.track.mtime, "moved", title)
                 m != null && m.src == t.src && m.srcSize == t.track.size && m.srcMtime == t.track.mtime && m.covers == covers && on.size == m.size ->
                     PlanItem("skip", t.src, d, on.size, t.track.mtime, "unchanged", title)
                 m == null && on.size == t.track.size ->
@@ -160,8 +190,12 @@ object SyncPlanner {
             items += item
         }
         if (removeUnselected) {
+            val roots = scannedRoots.map { normPath(it) }.filter { it.isNotEmpty() }
             for (m in manifest) {
                 if (m.dest.lowercase() in used) continue
+                val src = normPath(m.src)
+                // its music folder was not scanned (unplugged drive, finished drop): kept
+                if (roots.none { src.startsWith("$it/") }) continue
                 val on = remoteBy[m.dest.lowercase()] ?: continue
                 items += PlanItem("remove", null, m.dest, on.size, on.mtime, "unselected", m.dest.substringAfterLast('/').substringBeforeLast('.'))
             }

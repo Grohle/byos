@@ -348,8 +348,15 @@ class LibraryCommands(private val cli: Cli) {
 
     // ------------------------------------------------------------------ playlists
 
-    private fun playlistPath(name: String): String =
-        if (name.contains('/') || isPlaylist(name)) cli.remotePath(name) else M3uWriter.pathFor(name)
+    /**
+     * A playlist on the HiBy: a card path ("Playlists/Road Trip.m3u"), a file name in Playlists
+     * ("Road Trip.m3u"), or a bare name for Playlists/<name>.m3u8.
+     */
+    private fun playlistPath(name: String): String = when {
+        name.contains('/') -> cli.remotePath(name)
+        isPlaylist(name) -> cli.remotePath(BtpPaths.join(M3uWriter.DIR, name))
+        else -> M3uWriter.pathFor(name)
+    }
 
     fun playlistLs(): Map<String, Any?> {
         if (a.pos.isNotEmpty()) throw CliError("usage", "playlist-ls takes no arguments")
@@ -499,7 +506,10 @@ class LibraryCommands(private val cli: Cli) {
         val covers = a.opt("--covers") ?: "optimize"
         if (covers !in setOf("keep", "optimize")) throw CliError("usage", "--covers is keep or optimize")
         if (!catF.isFile) throw CliError("local_io", "${catF.path} does not exist", path = catF.path)
-        val sources = sourcesFrom(readJsonFile(catF))
+        val catalog = readJsonFile(catF)
+        val sources = sourcesFrom(catalog)
+        // only the folders scanned this time: "remove unselected" leaves the others' songs alone
+        val roots = (catalog["roots"] as? List<*>)?.map { it.toString() } ?: emptyList()
         val sel = selF?.let { if (!it.isFile) throw CliError("local_io", "${it.path} does not exist", path = it.path); selectionFrom(readJsonFile(it)) } ?: SyncSelection()
         val plan = cli.withConn { c ->
             val remote = ArrayList<RemoteFile>()
@@ -509,7 +519,7 @@ class LibraryCommands(private val cli: Cli) {
             }
             val manifest = readManifest(c)
             val df = c.session.df()
-            SyncPlanner.plan(sources, sel, dest, layout, covers, remote, manifest, a.has("--remove-unselected"), df.sdFree)
+            SyncPlanner.plan(sources, sel, dest, layout, covers, remote, manifest, a.has("--remove-unselected"), df.sdFree, roots)
         }
         val outF = a.opt("--out")?.let { File(it) } ?: File(cacheDir("sync"), "plan.json")
         outF.absoluteFile.parentFile?.mkdirs()
@@ -570,10 +580,11 @@ class LibraryCommands(private val cli: Cli) {
         if (covers !in setOf("keep", "optimize")) throw CliError("usage", "--covers is keep or optimize")
         val then = a.opt("--then") ?: "none"
         if (then !in setOf("none", "rescan", "rebuild")) throw CliError("usage", "--then is none, rescan or rebuild")
-        class Item(val action: String, val src: File?, val dest: String, val size: Long)
+        class Item(val action: String, val src: File?, val dest: String, val size: Long, val reason: String)
         val items = Json.arr(plan["items"]).map { v ->
             val m = Json.obj(v)
-            Item(Json.str(m, "action"), Json.optStr(m, "src")?.let { File(it) }, cli.remotePath(Json.str(m, "dest")), Json.optLong(m, "size", 0))
+            Item(Json.str(m, "action"), Json.optStr(m, "src")?.let { File(it) }, cli.remotePath(Json.str(m, "dest")), Json.optLong(m, "size", 0),
+                Json.optStr(m, "reason") ?: "")
         }
         val copies = items.filter { it.action == "add" || it.action == "update" }
         val removals = items.filter { it.action == "remove" }
@@ -598,8 +609,9 @@ class LibraryCommands(private val cli: Cli) {
         try {
             conn = cli.connect()
             val manifest = readManifest(conn!!).associateBy { it.dest }.toMutableMap()
-            // skipped items keep (or get) their manifest entry
-            for (it in items.filter { it.action == "skip" && it.src != null }) {
+            // skipped sync copies keep their manifest entry (with the new source when it moved); a
+            // "same_size" file was not copied by a sync, so it stays the user's and is not recorded
+            for (it in items.filter { it.action == "skip" && it.src != null && it.reason != "same_size" }) {
                 val s = it.src!!
                 if (manifest[it.dest]?.src != s.path) done[it.dest] = ManifestEntry(it.dest, s.path, s.length(), s.lastModified() / 1000, it.size, covers)
             }
@@ -793,6 +805,9 @@ class LibraryCommands(private val cli: Cli) {
                     cli.checkCancel()
                     val f = pr.first
                     out.progress("get", f.path, i.toLong(), candidates.size.toLong(), unit = "files")
+                    // a clean folder for each file: an image left by another album must never
+                    // become this file's cover
+                    work.deleteRecursively()
                     work.mkdirs()
                     val local = File(work, "in-" + i + "." + f.path.substringAfterLast('.'))
                     // the folder's image travels with the track, so the local copy finds it
@@ -807,14 +822,13 @@ class LibraryCommands(private val cli: Cli) {
                         }
                     }
                     val fixedFile = prepareCover(local, work)
-                    if (fixedFile == local) { skipped++; local.delete(); continue }
+                    if (fixedFile == local) { skipped++; work.deleteRecursively(); continue }
                     out.progress("put", f.path, i.toLong(), candidates.size.toLong(), unit = "files")
                     val sha = cli.sha256File(fixedFile, "hash", f.path)
                     c.session.put(f.path, fixedFile.length(), sha, Btp.MODE_REPLACE, f.mtime, Btp.NS_SD, { cli.cancelled.get() }, null) { off ->
                         FileInputStream(fixedFile).also { s -> s.channel.position(off) } as InputStream
                     }
-                    fixedFile.delete(); local.delete()
-                    work.listFiles()?.forEach { it.delete() }
+                    work.deleteRecursively()
                     fixed++
                 }
             } finally { work.deleteRecursively() }
