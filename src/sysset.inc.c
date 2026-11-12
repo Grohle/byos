@@ -605,11 +605,13 @@ static void ss_open_hiby_editor(int row)
     }
     int ok = nav_wait(1000);
     if (ok != 1) { memcpy(fr0, img_under, HM_FRAME_BYTES); present(); toast(tr("No se pudo abrir")); lg("ajustes: editor de HiBy (fila %d): no se pudo abrir", row); return; }
+    /* fundido contra una copia fija del editor (fr1 cambia mientras se lee: fotograma partido) */
+    memcpy(img_base, fr1, HM_FRAME_BYTES);
     double t1 = now_ms();
     for (;;) {
         double t = (now_ms() - t1) / 200; if (t > 1) t = 1;
         unsigned al = (unsigned)(255 * ease_out(t));
-        for (int i = 0; i < W * H; i++) fr0[i] = mix565(fr1[i], img_under[i], al);
+        for (int i = 0; i < W * H; i++) fr0[i] = mix565(img_base[i], img_under[i], al);
         present();
         if (t >= 1) break;
     }

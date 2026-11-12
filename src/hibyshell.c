@@ -506,13 +506,18 @@ static void compose_sheet(uint16_t *dst, const uint16_t *under, const uint16_t *
     for (int y = top; y < H; y++) {
         int r = y - top;
         uint16_t *d = dst + y * W;
-        memcpy(d, sheet + r * W, W * 2);
+        /* la hoja en movimiento no lleva barra de estado propia (iOS): sus 30 primeras filas son
+         * su fondo (la fila 30), y la barra es la de debajo, fija arriba (mas abajo). Antes se
+         * veian dos barras, una encima de otra, al arrastrar Reproduciendo (revisor, 12-11) */
+        memcpy(d, sheet + (top > 0 && r < 30 ? 30 : r) * W, W * 2);
         if (r < R && top > 0) {
             int c = R - r, cut = R - (int)(sqrtf((float)(R * R - c * c)) + 0.5f);
             const uint16_t *o = under + y * W;
             for (int i = 0; i < cut; i++) { d[i] = dim565(o[i], k); d[W - 1 - i] = dim565(o[W - 1 - i], k); }
         }
     }
+    if (top > 0)                                        /* la barra de estado: la de debajo, siempre arriba */
+        for (int y = top; y < 30 && y < H; y++) { const uint16_t *o = under + y * W; uint16_t *d = dst + y * W; for (int i = 0; i < W; i++) d[i] = dim565(o[i], k); }
     /* sombra suave alrededor del borde redondeado de la hoja (no una franja recta) */
     if (top <= 0) return;
     for (int y = top - 6 > 0 ? top - 6 : 0; y < top + R && y < H; y++) {
@@ -641,16 +646,19 @@ static int fake_home_req, fk_step;
 static int pend_kind, pend_start; static char pend_id[24];   /* 1 app por id, 2 Ajustes en una pagina */
 static int fake_pkt(struct pkt *p)
 {
-    static const int ys[] = { 476, 466, 440, 400, 350, 300, 250, 200, 160 };
+    /* 16 puntos con aceleracion suave (476 -> 160 en ~250 ms): con 9 puntos en ~100 ms la tarjeta
+     * de cierre salia de golpe 100 px arriba en el primer fotograma (revisor, 12-11) */
+    static const int ys[] = { 476, 474, 470, 463, 453, 440, 424, 405, 383, 358, 330, 299, 266, 232, 197, 160 };
+    enum { NFK = (int)(sizeof ys / sizeof ys[0]) };
     int n = 0, k = fk_step++;
-    if (k < 9) {
+    if (k < NFK) {
         cur_down = 1; cur_x = 160; cur_y = ys[k];
         if (k == 0) n += mkev(&p->ev[n], EV_KEY, BTN_TOUCH, 1);
         n += mkev(&p->ev[n], EV_ABS, ABS_MT_POSITION_X, cur_x);
         n += mkev(&p->ev[n], EV_ABS, ABS_MT_POSITION_Y, cur_y);
         n += mkev(&p->ev[n], EV_SYN, SYN_MT_REPORT, 0);
         n += mkev(&p->ev[n], EV_SYN, SYN_REPORT, 0);
-        msleep(12);
+        msleep(16);
     } else {
         cur_down = 0; fake_home_req = 0; fk_step = 0;
         n += mkev(&p->ev[n], EV_KEY, BTN_TOUCH, 0);

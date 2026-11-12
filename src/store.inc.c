@@ -1905,6 +1905,7 @@ static void st_resp_mark(const struct pkt *p, const char *what)
 /* ------------------------------------------------------------------ bucle */
 enum { TS_IDLE, TS_PRESS, TS_DRAG, TS_TAB, TS_BOTTOM };
 static int st_gone;                 /* salio con el gesto de inicio: el inicio ya esta en pantalla */
+static int st_pend_tab = -1;        /* pestana tocada en la franja inferior: se elige al soltar */
 static int st_totop;                /* animando hacia arriba (pestana activa tocada) */
 static void st_select_tab(int t)
 {
@@ -1999,7 +2000,11 @@ static void store_app_ui(int ix, int iy)
                     /* barra de pestanas: la pestana cambia al bajar el dedo (iOS); en su franja
                      * inferior, subir el dedo es el gesto de inicio (se deshace el cambio) */
                     prev_tab = st_tab; prev_detail = st_detail;
-                    if (kind == HT_TAB) { st_select_tab(idx); st_resp_mark(&p, "pestana"); }
+                    /* en la franja inferior puede ser el gesto de inicio: la pestana cambia al
+                     * soltar (como iOS); cambiarla al bajar el dedo y deshacerla despues hacia que
+                     * la tarjeta de cierre mostrara otra pestana (revisor, 12-11) */
+                    st_pend_tab = sy >= 456 && kind == HT_TAB ? idx : -1;
+                    if (kind == HT_TAB && sy < 456) { st_select_tab(idx); st_resp_mark(&p, "pestana"); }
                     ts = sy >= 456 ? TS_BOTTOM : TS_TAB; dirty = 1;
                     break;
                 }
@@ -2051,6 +2056,8 @@ static void store_app_ui(int ix, int iy)
             }
             if (up_edge) {
                 int t0s = ts; ts = TS_IDLE;
+                if (t0s == TS_BOTTOM && st_pend_tab >= 0) { st_select_tab(st_pend_tab); st_resp_mark(&p, "pestana"); }
+                st_pend_tab = -1;
                 if (t0s == TS_DRAG) {
                     if (now_ms() - tmove > 80) vy = 0;
                     st_vel = vy; moving = 1; tlast = now_ms(); dirty = 1;

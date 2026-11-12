@@ -323,7 +323,9 @@ static void cc_animate(const uint16_t *under, const uint16_t *panel, double from
 {
     double t0 = now_ms();
     for (;;) { double t = (now_ms() - t0) / ms; if (t > 1) t = 1; double e = from + (to - from) * ease_out(t);
-        if (cc_ctl && cc_blur_buf) cc_frame(under, cc_blur_buf, panel, e); else cc_mix(under, panel, e); present(); if (t >= 1) break; }
+        if (cc_ctl && cc_blur_buf) cc_frame(under, cc_blur_buf, panel, e); else cc_mix(under, panel, e);
+        dirty_y0 = dirty_y1 = 0;            /* el fotograma entero: con filas sucias de antes salia partido (revisor, 12-11) */
+        present(); if (t >= 1) break; }
 }
 static void cc_set_caption(const char *s) { cc_caption = s; cc_caption_t = now_ms(); }
 static void launch_app(int a, int ix, int iy);

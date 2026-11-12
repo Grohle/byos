@@ -91,7 +91,15 @@ static int open_stock_play_nav(void)
          * repetir; un segundo toque a destiempo caia ya dentro del editor (en un control) */
         double tw = now_ms();
         while (is_hiby_list_page(fr1) && now_ms() - tw < 3500) { msleep(20); st->shell_beat++; }
-        if (!is_hiby_list_page(fr1)) { uint32_t c2 = st->cap_frames; settle(c2, 200, 250); return 1; }
+        if (!is_hiby_list_page(fr1)) {
+            /* el editor entra deslizandose y carga despues: esperar a que este entero (su cabecera
+             * lleva el engranaje arriba a la derecha, que Play no tiene) y quieto; si no, el
+             * fundido mostraba Play a medias y un fotograma partido (revisor, 12-11) */
+            double tw2 = now_ms();
+            while (fr1_bright(284, 36, 308, 60) < 20 && now_ms() - tw2 < 4000) { msleep(20); st->shell_beat++; }
+            uint32_t c2 = st->cap_frames; settle(c2, 300, 400);
+            return 1;
+        }
         lg("nav: la fila %d de Play no respondio (intento %d)", nav_stock_row, k + 1);
     }
     return 0;

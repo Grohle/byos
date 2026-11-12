@@ -70,9 +70,11 @@ static void lib_popup_draw(uint16_t *d, float progress)
     fill_circle(d, cx, cy, 11, rgb(58, 58, 62), 255);
     /* mientras sube desde abajo la tarjeta empieza fuera de la pantalla: solo las filas visibles
      * (sin esto escribia tras el bufer: SIGSEGV del shell al mostrarse, 12-11) */
+    /* trazo de 2 px (el "xmark" de iOS va en negrita; de 1 px ademas desaparecia en la grabacion a
+     * media resolucion segun la fila en que cayera mientras la tarjeta se movia) */
     for (int i = -4; i <= 4; i++) {
         int y = cy + i; if (y < 0 || y >= H) continue;
-        d[y * W + cx + i] = rgb(200, 200, 206); d[y * W + cx - i] = rgb(200, 200, 206);
+        for (int w = 0; w < 2; w++) { d[y * W + cx + i + w] = rgb(200, 200, 206); d[y * W + cx - i + w] = rgb(200, 200, 206); }
     }
 }
 /* 1 = cerrar, 2 = tarjeta, 0 = fuera */
