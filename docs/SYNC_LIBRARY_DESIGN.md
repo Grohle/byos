@@ -1302,3 +1302,17 @@ Explicitly rejected:
 14. **Sync all:** kinds run in sequence under one lock, with one playlist step and one DB build at the end. `skip` items are counted, not listed.
 15. **LIB_M3U** is optional (M6b): playlist rows come with the DB build.
 16. **Milestones, risks and questions updated:** DeleteGuard in M1, SD-DB/card check in M4, whole-card acceptance in M5, "zero bytes re-sent" in M7, the threshold question, the SD-at-constructor device check.
+
+---
+
+## Owner decisions (12 Nov 2026)
+
+1. **Library size: more than 30,000 tracks.** SD-DB mode (D1, caps SD_DB, staging on the SD) is
+   part of M4/M5, not later, and every milestone's performance tests use a synthetic library of
+   at least 50,000 tracks (scan, plan, DB build, plan file size, UI virtualisation).
+2. **Metadata fixes are written to the HiBy library *and* to the files on the computer/phone by
+   default** (with a preview and an undo journal; the card copies are refreshed by the next sync,
+   never silently re-uploaded on their own).
+3. **Online services approved:** MusicBrainz (genres, albums), Cover Art Archive, LRCLIB and the
+   bundled MusicBrainz genre list (CC0). Opt-in in the app, rate-limited, no personal data.
+4. **Default layout for new music links: Artist/Album** (`Music/Artist/Album/Track`).
