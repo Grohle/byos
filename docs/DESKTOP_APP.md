@@ -174,6 +174,50 @@ What to keep on the player. Modelled on the iTunes "Music" tab:
 - The bottom bar shows the plan: "Add 312 songs (2.1 GB), remove 0, update 4", and the
   **Apply** button.
 
+Built in the scaffold (`desktop/ui/media.js`, BYOS_CLI "Library and music"):
+
+- The music folders are chosen with Windows' own folder dialog (`POST /api/pick-folder`, kept
+  in `%APPDATA%\ByOS\desktop\settings.json`), or dropped on the tab (copied first into
+  `%LOCALAPPDATA%\ByOS\incoming\<drop>`, which becomes a folder of its own). The page never
+  names a file on the computer: the runner fills in the folders, the catalogue, the selection
+  and the plan.
+- States: no folders (empty state with **Choose Folder…** and a drop zone), reading the
+  music (`music-scan`), choosing (Entire library, or Artists / Albums / Genres boxes with a
+  filter), working out the plan (`sync-plan`, run again 0.65 s after each change), plan ready
+  (capacity bar: used, new music, free; "Not enough space on the card" disables Apply),
+  copying (`sync-apply`: songs done, bytes, rate, time left, the current file, **Cancel**),
+  done, some songs failed (**Retry Failed Songs**), stopped, and "Music copied. To see it in
+  the player, open Settings › Update library on the HiBy" while the HiBy cannot update its
+  library from the computer.
+- **Optimize covers for the HiBy** is on by default: copies get a 500 px baseline JPEG cover
+  when theirs is larger than 1000 px, progressive, PNG, or only in the folder. The HiBy then
+  decodes it at 1/2 scale to 250 px, sharp at its 232 px Now Playing size. Files on the
+  computer are never changed.
+
+### 3.4.1 Device: Library (built in the scaffold)
+
+The HiBy's own library, as iTunes 11 showed one: `lib-index` (the HiBy's database snapshot),
+or `lib-scan` (tags read from the card with partial downloads) when the HiBy cannot share its
+database yet ("The HiBy can't share its library database yet." with **Scan the Card
+Instead**).
+
+- Views: **Albums** (cover grid; an album opens below its row, tinted with its cover's colour,
+  tracks in two columns), **Artists**, **Songs** (sortable table, drawn as a virtual list),
+  **Audiobooks**, **Playlists**. The sidebar's Library entries open the same views; Recently
+  Added is the song list newest first. Search ignores case and accents.
+- Covers load as they come into view, 64 per `lib-art` job, as 256 px thumbnails cached by
+  byos-cli (`GET /api/art/<key>`).
+- Context menu: Get Info, Add to Playlist (`playlist-add`, also a new playlist), Remove from
+  Playlist, Rescan on HiBy (`lib-rescan --full`; when the HiBy answers `E_UNSUPPORTED`, the
+  sheet says how to update the library on the HiBy), Delete from HiBy (`rm --yes
+  --prune-empty`, after a sheet listing the songs). After a delete: "The HiBy's library
+  doesn't show these changes yet." with **Update Library**.
+- **Covers ▾**: **Fix Covers…** (`art-fix --dry-run`, then `art-fix`) replaces oversized,
+  progressive or PNG embedded covers on the card; **Reset Cover Cache** (`cover-cache-reset`)
+  makes the HiBy draw its cover thumbnails again.
+- The footer says where the list came from and how old it is ("From the HiBy's database, 2
+  min ago").
+
 ### 3.5 Device: Files
 
 A Finder-style browser of the SD (`ls`, `mkdir`, `mv`, `rm`, `put`, `get`):

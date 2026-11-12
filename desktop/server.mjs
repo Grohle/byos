@@ -6,7 +6,7 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
-  createWriteStream, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync,
+  createWriteStream, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -14,8 +14,11 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildArgs, DESKTOP_DIR, Job, resolveCli, UsageError } from './lib/cli.mjs';
+import { buildArgs, cliConfigDir, DESKTOP_DIR, Job, resolveCli, UsageError } from './lib/cli.mjs';
 import { checkPath } from './lib/btp-path.mjs';
+import {
+  cacheFile, defaultIncomingDir, defaultSettingsDir, imageType, incomingTarget, isDir, SESSION, Settings,
+} from './lib/media-store.mjs';
 
 const UI_DIR = path.join(DESKTOP_DIR, 'ui');
 const STATIC = {
@@ -28,14 +31,18 @@ const STATIC = {
   '/btp-path.js': ['../lib/btp-path.mjs', 'text/javascript; charset=utf-8'],
   // The Updates page's build-and-install steps, shared with the tests.
   '/build-flow.js': ['../lib/build-flow.mjs', 'text/javascript; charset=utf-8'],
+  // The Library and Music tabs, and their formatting rules (shared with the tests).
+  '/media.js': ['media.js', 'text/javascript; charset=utf-8'],
+  '/media-format.js': ['../lib/media-format.mjs', 'text/javascript; charset=utf-8'],
 };
+const MAX_INCOMING = 4 * 1024 ** 3 - 1;
 const MAX_UPLOAD = 4 * 1024 ** 3 - 1; // FAT32 file limit
 const MAX_FIRMWARE = 512 * 1024 ** 2; // HiBy's official firmware is about 47 MB
 // Commands that need no HiBy: they never wait behind a device's queue. "build-info" and
 // "bundle-update --check" answer at once; the long ones (download, build) share one queue.
 const INSTANT = new Set(['devices', 'build-info']);
 const LOCAL_QUEUE = '#local';
-const LOCAL = new Set(['firmware-fetch', 'build', 'bundle-update']);
+const LOCAL = new Set(['firmware-fetch', 'build', 'bundle-update', 'music-scan']);
 const JOB_KEEP_MS = 10 * 60 * 1000;
 const MAX_BODY = 64 * 1024;
 
@@ -113,7 +120,13 @@ async function readJson(req) {
 export function createApp(options = {}) {
   const token = options.token ?? randomBytes(24).toString('hex');
   const resolved = resolveCli({ cli: options.cli, mock: options.mock, env: options.env });
-  const globals = { config: options.config, adb: options.adb };
+  // The demo keeps its own byos-cli folder, so it never mixes with a real HiBy's cache.
+  const config = options.config ?? (options.mock ? path.join(os.tmpdir(), 'byos-desktop-mock-config') : undefined);
+  const globals = { config, adb: options.adb };
+  const cache = path.join(config ?? cliConfigDir(options.env ?? process.env), 'cache');
+  const settings = new Settings(options.settingsDir ?? (options.mock ? path.join(os.tmpdir(), 'byos-desktop-mock-settings') : defaultSettingsDir(options.env ?? process.env)));
+  const incoming = options.incomingDir ?? defaultIncomingDir(options.env ?? process.env);
+  const pickFolder = options.pickFolder ?? (options.mock ? demoFolder : windowsFolderPicker);
   const jobs = new Map();
   // One queue per device spec: hibysync serves one session, so jobs for the same HiBy run one
   // at a time, while another HiBy is not held up. "devices" (discovery) needs no session and
@@ -242,8 +255,45 @@ export function createApp(options = {}) {
         const body = await readJson(req);
         if (body.command === 'put') throw new UsageError('use /api/upload');
         if (body.command === 'firmware-fetch' && body.params?.from !== undefined) throw new UsageError('use /api/firmware');
-        const job = startJob(String(body.command ?? ''), body.params ?? {});
+        const command = String(body.command ?? '');
+        const job = startJob(command, mediaParams(command, body.params ?? {}));
         return send(res, 202, { id: job.id });
+      }
+      // ---- Library and Music tabs: the files byos-cli made in its cache, the music folders
+      const cm = url.pathname.match(/^\/api\/(library|art)\/([^/]+)$/);
+      if (req.method === 'GET' && (cm || url.pathname === '/api/catalog' || url.pathname === '/api/plan')) {
+        const kind = cm ? cm[1] : url.pathname.slice(5);
+        const file = cacheFile(cache, kind, cm ? decodeURIComponent(cm[2]) : undefined);
+        if (!file) return send(res, 400, { error: 'bad name' });
+        let buf;
+        try { buf = readFileSync(file); } catch { return send(res, 404, { error: 'none yet' }); }
+        if (kind !== 'art') return send(res, 200, buf);
+        const type = imageType(buf);
+        if (!type) return send(res, 404, { error: 'not an image' });
+        res.writeHead(200, { 'Content-Type': type, ...SECURITY_HEADERS, 'Cache-Control': 'private, max-age=604800' });
+        return res.end(buf);
+      }
+      if (req.method === 'GET' && url.pathname === '/api/sources') return send(res, 200, { sources: settings.sources() });
+      if (req.method === 'POST' && url.pathname === '/api/pick-folder') {
+        const picked = await pickFolder();
+        if (!picked) return send(res, 200, { picked: null, sources: settings.sources() });
+        return send(res, 200, { picked, sources: settings.addSource(picked) });
+      }
+      if (req.method === 'DELETE' && url.pathname === '/api/sources') {
+        const body = await readJson(req);
+        const gone = settings.sources().find((s) => s.path === body.path);
+        const list = settings.removeSource(body.path);
+        // a folder of dropped files belongs to the runner: removed with its entry
+        if (gone?.temp && gone.path.startsWith(incoming + path.sep)) rmSync(gone.path, { recursive: true, force: true });
+        return send(res, 200, { sources: list });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/incoming') return await incomingFile(req, res, url);
+      if (req.method === 'POST' && url.pathname === '/api/incoming/done') {
+        const session = url.searchParams.get('session') ?? '';
+        if (!SESSION.test(session)) throw new UsageError('bad session');
+        const dir = path.join(incoming, session);
+        if (!isDir(dir)) throw new UsageError('nothing was dropped');
+        return send(res, 200, { sources: settings.addSource(dir, true) });
       }
       if (req.method === 'POST' && url.pathname === '/api/upload') {
         return await upload(req, res, url);
@@ -337,6 +387,58 @@ export function createApp(options = {}) {
     return send(res, 202, { id: job.id });
   }
 
+  // The page never names files on this computer for the Library and Music commands: the music
+  // folders come from settings.json, the catalogue, selection and plan live in byos-cli's cache.
+  function mediaParams(command, p) {
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) throw new UsageError('params must be an object');
+    const { catalog, select, plan, sources, ...rest } = p;
+    switch (command) {
+      case 'music-scan': {
+        const dirs = settings.sources().filter((s) => s.exists).map((s) => s.path);
+        if (!dirs.length) throw new UsageError('choose a music folder first');
+        return { ...rest, sources: dirs };
+      }
+      case 'sync-plan': {
+        const out = { ...rest, catalog: cacheFile(cache, 'catalog') };
+        if (rest.selection !== undefined) {
+          const s = rest.selection;
+          if (s === null || typeof s !== 'object' || Array.isArray(s)) throw new UsageError('selection must be an object');
+          const f = path.join(cache, 'sync', 'selection.json');
+          mkdirSync(path.dirname(f), { recursive: true });
+          writeFileSync(f, JSON.stringify(s));
+          out.select = f;
+        }
+        delete out.selection;
+        return out;
+      }
+      case 'sync-apply':
+        return { ...rest, plan: cacheFile(cache, 'plan') };
+      default:
+        return rest;
+    }
+  }
+
+  // One file dropped on the Music tab, streamed into the drop's own folder under "incoming"
+  // (the browser has no paths: the folder then becomes a temporary music source).
+  async function incomingFile(req, res, url) {
+    const target = incomingTarget(incoming, url.searchParams.get('session'), url.searchParams.get('rel'));
+    if (!target) throw new UsageError('bad session or name');
+    const length = Number(req.headers['content-length']);
+    if (!Number.isFinite(length) || length < 0 || length > MAX_INCOMING) throw new UsageError('bad Content-Length');
+    mkdirSync(path.dirname(target.full), { recursive: true });
+    try {
+      await pipeline(req, createWriteStream(target.full, { flags: 'w' }));
+      if (url.searchParams.has('mtime')) {
+        const ms = Number(url.searchParams.get('mtime'));
+        if (Number.isSafeInteger(ms) && ms > 0 && ms < 4102444800000) utimesSync(target.full, new Date(), new Date(ms));
+      }
+    } catch (e) {
+      rmSync(target.full, { force: true });
+      throw e;
+    }
+    return send(res, 200, { ok: true });
+  }
+
   // Receives an official firmware file the user picked into a private temporary folder, then
   // runs "byos-cli firmware-fetch --from" on it: byos-cli checks it (size, MD5, SHA-256) and
   // keeps its own copy. The temporary copy is deleted when the job ends.
@@ -370,6 +472,8 @@ export function createApp(options = {}) {
     token,
     resolved,
     jobs,
+    cache,
+    settings,
     listen(p = 0, host = '127.0.0.1') {
       return new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -398,6 +502,38 @@ export function createApp(options = {}) {
       });
     },
   };
+}
+
+// Windows' own folder dialog, through PowerShell (no extra package). Resolves the chosen
+// folder, or null when the user closed the dialog.
+function windowsFolderPicker() {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
+    '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }',
+    '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+    '$d.Description = "Choose a music folder for ByOS"',
+    '$d.ShowNewFolderButton = $false',
+    'if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }',
+  ].join('; ');
+  return new Promise((resolve) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-STA', '-NonInteractive', '-Command', script], { windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (c) => { out += c.toString('utf8'); });
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      const p = out.trim().split(/\r?\n/).pop()?.trim();
+      resolve(p && path.isAbsolute(p) && isDir(p) ? p : null);
+    });
+  });
+}
+
+// The demo's "folder picker": a folder in the temporary folder (the fake byos-cli invents its music).
+function demoFolder() {
+  const d = path.join(os.tmpdir(), 'byos-demo-music', 'Music');
+  mkdirSync(d, { recursive: true });
+  return Promise.resolve(d);
 }
 
 function parseArgs(argv) {
