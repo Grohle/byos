@@ -174,7 +174,7 @@ static int hs_ini_get(const char *name, int *val)
 static int hs_list(struct hs_kv *kv, int max)
 {
     struct hs_res r;
-    char ex[1024];
+    char ex[2048];
     pthread_mutex_lock(&hs_mu);
     int rc = hs_wait_ex(hs_write("list", 0, 0, 0), &r, ex, sizeof ex, 2000);
     pthread_mutex_unlock(&hs_mu);

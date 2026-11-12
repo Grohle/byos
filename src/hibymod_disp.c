@@ -393,6 +393,7 @@ static void pl_kick(void);     /* v6, al final del fichero */
 static void st_kick(void);     /* v7 ajustes, al final del fichero */
 static void qc_kick(void);     /* v8 posicion/cola/volumen, al final del fichero */
 static void lu_kick(void);     /* actualizar la biblioteca ('U'), al final del fichero */
+static void *lu_monitor(void *a);   /* publica st->lib_scan, al final del fichero */
 static void *control(void *arg)
 {
     (void)arg;
@@ -665,6 +666,7 @@ __attribute__((constructor)) static void init(void)
     pthread_t t;
     if (pthread_create(&t, 0, control, 0)) return;
     pthread_detach(t);
+    if (pthread_create(&t, 0, lu_monitor, 0) == 0) pthread_detach(t);   /* escaneos de la biblioteca */
     if (access("/usr/data/hibymod/no_input_bridge", F_OK) && find_real_touch() && create_uinput()) {
         if (pthread_create(&t, 0, input_thread, 0) == 0) {
             pthread_detach(t); st->input_mode = 1;
@@ -1475,6 +1477,7 @@ enum {
     SF_RO     = 32,    /* solo lectura */
     SF_POST   = 64,    /* tras setting_set, mensaje msg_on/msg_off a la cola de la interfaz (como el CC) */
     SF_OPT    = 128,   /* v8: se comprueba por separado; si su caso no casa, solo esa opcion falta */
+    SF_INV    = 256,   /* v9: setting_set guarda !v (lockvol): se le pasa !v para que quede v */
 };
 static const struct st_opt {
     const char *name; int id, lo, hi, flags, msg_on, msg_off;
@@ -1507,6 +1510,22 @@ static const struct st_opt {
     { "idle",      0x0b,   0,   1, SF_OPT,      0,     0,     0x42a984, 0x42c6c8 },
     { "idlemin",   0x0c,   1,  10, SF_OPT,      0,     0,     0x42a97c, 0x42c6a8 },
     { "update",    0x07,   0,   1, SF_OPT,      0,     0,     0x42a9a4, 0x42c540 },
+    /* v9 (docs/STOCK_SETTINGS_INVENTORY.md §6): opciones de fabrica que faltaban en la interfaz.
+     * Todas SF_OPT (si su caso de la tabla no casa, solo esa falta). lo/hi se comprueban aqui:
+     * replaygain/albumskip no tienen control de rango dentro del reproductor. */
+    { "eq",        0x39,   0,   1, SF_OPT,      0,     0,     0x42a824, 0x42c474 },
+    { "eqpreset",  0x18,   0,   9, SF_OPT,      0,     0,     0x42a91c, 0x42c034 },
+    { "resume",    0x1e,   0,   2, SF_OPT,      0,     0,     0x42a8fc, 0x42c294 },
+    { "replaygain",0x30,   0,   2, SF_OPT,      0,     0,     0x42a86c, 0x42c400 },
+    { "folderskip",0x22,   0,   1, SF_OPT,      0,     0,     0x42a8dc, 0x42c280 },
+    { "albumskip", 0x3b,   0,   1, SF_OPT,      0,     0,     0x42a814, 0x42be34 },
+    { "bootvolmode",0x13,  0,   1, SF_OPT,      0,     0,     0x42a944, 0x42c08c },
+    { "bootvol",   0x12,   0, 100, SF_OPT,      0,     0,     0x42a94c, 0x42c0a0 },
+    { "lockkeys",  0x06,   0,   1, SF_OPT,      0,     0,     0x42a9ac, 0x42c554 },
+    { "lockvol",   0x5b,   0,   1, SF_OPT | SF_INV, 0, 0,     0x42a768, 0x42bc88 },   /* valor guardado: 1 = la rueda funciona con la pantalla apagada */
+    { "inline",    0x27,   0,   1, SF_OPT,      0,     0,     0x42a8b4, 0x42c1bc },
+    { "led",       0x44,   0,   1, SF_OPT,      0,     0,     0x42a758, 0x42bda4 },
+    { "mqadetect", 0x6e,   0,   1, SF_OPT,      0,     0,     0x42a650, 0x42bfd4 },
 };
 #define ST_NOPT ((int)(sizeof st_opt / sizeof st_opt[0]))
 #define ST_ID_LINEOUT 0x2d
@@ -1570,7 +1589,7 @@ static int st_set(const struct st_opt *o, int v, int force, int *now, const char
         STF(2, st_i1_t)(v & 0xff);
         STF(1, st_set_t)(o->id, v);
     } else {
-        STF(1, st_set_t)(o->id, v);                   /* guarda + aplica + escribe el fichero */
+        STF(1, st_set_t)(o->id, (o->flags & SF_INV) ? !v : v);   /* guarda + aplica + escribe el fichero */
         if (o->flags & SF_POST) STF(3, st_v1_t)(v ? o->msg_on : o->msg_off);   /* como el CC */
     }
     *now = st_get(o->id);
@@ -1595,7 +1614,7 @@ static void st_serve(void)
     uint32_t t0 = np_now();
     int id = -1, rc = 0, val = 0, force = 0, now = 0;
     char buf[1024], op[16] = "", key[24] = "";
-    static char extra[1024];
+    static char extra[2048];
     const char *msg = "";
     extra[0] = 0;
     int f = r_open(ST_REQ, O_RDONLY);
@@ -2177,4 +2196,25 @@ static void lu_kick(void)
     pthread_t t; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&t, &at, lu_watch, 0)) lu_write("done");
     pthread_attr_destroy(&at);
+}
+
+/* Vigila el escaneo de la biblioteca (lo lance ByOS, el menu de HiBy o la tarjeta al insertarse)
+ * y lo publica en st->lib_scan para el aviso del shell. Lee una palabra cada 0,7 s: nada mas.
+ * Sin las firmas del escaneo no hace nada. */
+static void *lu_monitor(void *a)
+{
+    (void)a;
+    static const uint32_t sig_idle[4] = { 0x3c020094, 0x03e00008, 0x8c42bed8, 0x00000000 };
+    for (int i = 0; i < 120; i++) {                 /* el reproductor tarda en estar listo */
+        if (pl_mapped(0x507620, 16, 1) && !memcmp((const void *)(uintptr_t)0x507620, sig_idle, 16) && pl_mapped(LU_IDLE, 4, 0)) break;
+        sleep(1);
+        if (i == 119) return 0;
+    }
+    volatile const int32_t *idle = (volatile const int32_t *)(uintptr_t)LU_IDLE;
+    for (;;) {
+        uint32_t scanning = *idle == 0;
+        if (scanning != st->lib_scan) { st->lib_scan = scanning; st->lib_scan_seq++; }
+        usleep(700000);
+    }
+    return 0;
 }

@@ -82,13 +82,16 @@ static uint16_t *fb_shown(void)
 }
 
 static int dirty_y0, dirty_y1;
+static void lib_popup_force(void);   /* libpop.inc.c */
 static int sp_on;                  /* aviso del sistema en pantalla (syspop.inc.c) */   /* presentacion parcial: solo estas filas cambiaron */
 static void present(void);
 static void syspop_tick(void);
+static void sync_tick(void);         /* ByOS Sync: control pipe of hibysync (sync.inc.c) */
 static void syspop_after_present(void);
 /* pildora de volumen (mas abajo): se mueve desde read_pkt y se pinta encima en present() */
 static int hud_active, hud_in;
 static void hud_after_present(void);
+static int syspop_owns_frame(void), hud_owns_frame(void);   /* present(): el aviso o la pildora componen el fotograma entero */
 static void hud_key(int code);
 static int hud_step(void);
 static int hud_update(int present_it);
@@ -178,6 +181,16 @@ static void present(void)
     uint32_t p = st->presents; double t = now_ms();
     int prow = dirty_y1 > dirty_y0 ? dirty_y1 - dirty_y0 : H;
     st->shell_beat++;
+    /* con un aviso o la pildora encima, el fotograma lo compone entero su gancho: publicar antes
+     * la imagen cruda de la app (o solo sus filas sucias sobre el compuesto) dejaba salir un
+     * fotograma sin la tarjeta o mezclado (soak 12-11, aviso de la biblioteca) */
+    if (syspop_owns_frame() || hud_owns_frame()) {
+        dirty_y0 = dirty_y1 = 0;
+        cmd('P');
+        while (st->presents == p && now_ms() - t < 80) msleep(1);
+        if (perf_on) perf_frame(t, now_ms(), prow);
+        return;
+    }
     st->fr0_seq++;                                   /* impar: copiando */
     __sync_synchronize();
     if (dirty_y1 > dirty_y0) memcpy(fr0_shm + dirty_y0 * W, fr0 + dirty_y0 * W, (dirty_y1 - dirty_y0) * W * 2);
@@ -666,7 +679,7 @@ static int read_pkt(struct pkt *p, int timeout_ms)
             left -= slice;
             if (r == 0 && timeout_ms > 0 && hud_active && !hud_in) hud_step();
             else if (r == 0 && timeout_ms != 0 && homebar_moving()) present_rows(BAR_Y - 2, H);   /* la barra de inicio sube/baja aunque la app este quieta */
-            if (r == 0 && timeout_ms > 0) syspop_tick();
+            if (r == 0 && timeout_ms > 0) { syspop_tick(); sync_tick(); }
         } while (r == 0 && left > 0);
         if (r <= 0) return 0;
         struct input_event e;
@@ -1108,7 +1121,42 @@ static void vol_ui_apply(void)
     int len = (int)strlen(o); int ok = write(f, o, len) == len; fsync(f); close(f);
     if (ok && !rename(tmp, VS_DLG)) lg("volumen: indicador de %s", vol_ui ? "ByOS" : "HiBy"); else unlink(tmp);
 }
-static void hud_compose_present(const uint16_t *src)
+/* dialogos de HiBy que ByOS sustituye por los suyos (tarjeta de iOS): el de "actualizando la
+ * biblioteca" (libpop.inc.c) no debe verse nunca. Se vuelve invisible en el tema: textos ocultos y
+ * fondo y botones transparentes (ARGB, como su focus_color 0x33000000). Idempotente. */
+static void hiby_dlg_quiet(const char *path)
+{
+    static char b[8192], o[12000];
+    int f = open(path, O_RDONLY | O_CLOEXEC); if (f < 0) return;
+    int n = (int)read(f, b, sizeof b - 1); close(f); if (n <= 0) return; b[n] = 0;
+    if (strstr(b, "\"byos_quiet\"")) return;
+    char *w = o;
+    for (char *l = b; *l; ) {
+        char *e = strchr(l, '\n'); int len = e ? (int)(e - l + 1) : (int)strlen(l);
+        char *t = l; while (t < l + len && (*t == ' ' || *t == '\t')) t++;
+        if (w - o + len + 64 >= (int)sizeof o) return;
+        if (!strncmp(t, "\"textview\":true", 15)) { memcpy(w, l, t - l); w += t - l; w += sprintf(w, "\"visible\":\"hide\",\n"); }
+        if (!strncmp(t, "\"color\":\"0x", 11) || !strncmp(t, "\"focus_color\":\"0x", 17)) {
+            const char *q = strchr(t, ':'); memcpy(w, l, q + 1 - l); w += q + 1 - l;
+            w += sprintf(w, "\"0x00000000\",\n"); l += len; continue;
+        }
+        if (!strncmp(t, "\"add_layout\":true", 17)) { memcpy(w, l, t - l); w += t - l; w += sprintf(w, "\"byos_quiet\":true,\n"); }
+        memcpy(w, l, len); w += len; l += len;
+    }
+    *w = 0;
+    char tmp[256]; snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    f = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0664); if (f < 0) return;
+    int len = (int)strlen(o); int ok = write(f, o, len) == len; fsync(f); close(f);
+    if (ok && !rename(tmp, path)) lg("tema: dialogo de HiBy invisible: %s", path); else unlink(tmp);
+}
+static void hiby_dlgs_quiet(void)
+{
+    hiby_dlg_quiet("/usr/data/hibymod/theme/layout/theme3/dialog/music_update.dlg");
+    hiby_dlg_quiet("/usr/data/hibymod/theme/litegui/theme3/dialog/music_update.dlg");
+}
+static void hud_compose_present_ex(const uint16_t *src, int pill);
+static void hud_compose_present(const uint16_t *src) { hud_compose_present_ex(src, 1); }
+static void hud_compose_present_ex(const uint16_t *src, int pill)
 {
     if (!hud_tmp && !(hud_tmp = lazy_alloc((void **)&hud_tmp, HM_FRAME_BYTES, 0))) return;   /* se devuelve en reposo */
     memcpy(hud_tmp, src, HM_FRAME_BYTES);
@@ -1118,7 +1166,7 @@ static void hud_compose_present(const uint16_t *src)
         statusbar_tint(hud_tmp);
         int a = 0, b = 0; homebar_layer(hud_tmp, src, &a, &b);
     } else if (ov_cur == &spr_bar && spr_bar.w) blend_sprite(hud_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de las pantallas de HiBy */
-    hud_overlay(hud_tmp);
+    if (pill) hud_overlay(hud_tmp);
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, hud_tmp, HM_FRAME_BYTES);
     st->dirty_y0 = 0; st->dirty_y1 = H;
@@ -1144,13 +1192,20 @@ static void hud_frame(void)
 static void hud_end(void)
 {
     if (hud_cap) { hud_cap = 0; cmd('R'); double t = now_ms(); while (st->held && now_ms() - t < 200) msleep(2); return; }
-    if (st->capture && !(launcher_on && hud_main)) {       /* app de ByOS: su imagen tal cual */
+    if (st->capture && !(launcher_on && hud_main)) {       /* app de ByOS: su imagen, con las mismas capas */
         uint32_t p = st->presents; double t = now_ms();
-        st->fr0_seq++; __sync_synchronize();
-        memcpy(fr0_shm, fr0, HM_FRAME_BYTES); st->dirty_y0 = 0; st->dirty_y1 = H;
-        __sync_synchronize(); st->fr0_seq++;
+        /* con la barra de estado y la de inicio como cualquier fotograma de la app: la imagen
+         * cruda (fr0) salia un fotograma sin ellas al irse la pildora (parpadeo, soak 12-11) */
+        hud_compose_present_ex(fr0, 0);
         cmd('P'); while (st->presents == p && now_ms() - t < 60) msleep(1);
     }
+}
+/* present() con la pildora activa sobre una app: la compone entera (0 si ya no esta) */
+static int hud_owns_frame(void)
+{
+    if (!hud_active || hud_cap || hud_in) return 0;
+    hud_in = 1; int on = hud_update(0); if (on) hud_compose_present(fr0); hud_in = 0;
+    return on;
 }
 /* gancho de present(): una app de ByOS presento; la pildora encima */
 static void hud_after_present(void)
@@ -1258,6 +1313,10 @@ static int np_app_run(const uint16_t *home, int ix, int iy);
 static int own_home_gesture(int sx, int sy, int self);
 static uint16_t *own_card; static int own_card_app;   /* captura de la ultima app propia (nowui.inc.c) */
 static int app_back_gesture(int sx, int sy);
+/* ByOS Sync (sync.inc.c): option saved in launcher.conf, row of the Settings root */
+static int sync_wifi_on;
+static void nav_sync(void);
+static const char *v_sync_root(void);
 #include "i18n.inc.c"
 #include "text.inc.c"
 #include "launcher.inc.c"
@@ -1293,7 +1352,9 @@ static void mem_trim(const char *why);
 #include "buds.inc.c"                  /* app Auriculares (headphones; daemon hibybudsd) */
 #include "ccbt.inc.c"                  /* modulo de Bluetooth del centro de control */
 #include "ccair.inc.c"                 /* modo avion y control de ruido del centro de control */
+#include "libpop.inc.c"                /* aviso "Actualizando la biblioteca" (lo presenta syspop) */
 #include "syspop.inc.c"                /* avisos del sistema sobre cualquier pantalla */
+#include "sync.inc.c"                  /* ByOS Sync: demonio hibysync, pagina de Ajustes y avisos de emparejamiento */
 
 /* ------------------------------------------------------------------ volumen de la barra */
 /* Lee la cifra del volumen de la barra de estado del reproductor (fondo negro): cada
@@ -1608,6 +1669,7 @@ static const struct guard_rule guard_rules[] = {
     { "dbus-daemon", -500, -99 }, { "bluetoothd", -400, -99 }, { "bluealsa", -400, -99 },
     { "hibybudsd", -200, -99 },
     { "hibywall", 600, 10 }, { "hibynet", 600, 10 }, { "hibytag", 600, 10 }, { "hibymix", 600, 10 },
+    { "hibysync", 600, 19 },          /* ByOS Sync: -700 solo mientras transfiere o instala */
 };
 static int guard_write(const char *path, int v)
 {
@@ -1660,7 +1722,8 @@ static void guard_tick(void)
             snprintf(p, sizeof p, "/proc/%s/oom_score_adj", e->d_name);
             /* lo que esta sonando hereda la reserva: con la radio en marcha su ayudante de red
              * queda justo detras del reproductor (y sin nice), no entre lo prescindible */
-            int radio = (!strcmp(comm, "hibynet") && ra_active()) || (fg_helper_pid && atoi(e->d_name) == (int)fg_helper_pid);
+            int radio = (!strcmp(comm, "hibynet") && ra_active()) || (fg_helper_pid && atoi(e->d_name) == (int)fg_helper_pid)
+                     || (!strcmp(comm, "hibysync") && sync_xfer_busy());
             if (guard_write(p, radio ? -700 : guard_rules[i].oom) > 0) changed++;
             if (radio) break;
             if (guard_rules[i].nice > -99) {
@@ -1708,6 +1771,7 @@ static void *mem_watch(void *arg)
         /* "2": solo objetos del nucleo (dentries, inodos). Nunca "1": la cache de paginas es el
          * CODIGO de todos los procesos; vaciarla obliga a releerlo de la flash y agrava el atasco */
         { int f = open("/proc/sys/vm/drop_caches", O_WRONLY | O_CLOEXEC); if (f >= 0) { if (write(f, "2", 1) != 1) {} close(f); } }
+        killed += sync_crit_kill();                     /* ByOS Sync, salvo si transfiere o instala */
         memw_kills += killed;
         lg("memoria CRITICA: %d KB libres -> %d ayudantes cortados, caches vaciadas (ahora %d KB)", kb, killed, mem_avail_kb());
         sleep(3);                                         /* dar tiempo a que se note */
@@ -1754,12 +1818,14 @@ static void maybe_rejuvenate(int avail_kb)
 {
     double t = now_ms();
     if (t - shell_t0 < 120000 || !launcher_on || V.edit || V.drag_app >= 0 || hud_active || cur_down) return;
+    if (sync_xfer_busy() || SY.sas_sid || SY.up_phase != UP_NONE) return;   /* ByOS Sync trabajando: despues */
     int req = !access("/tmp/hibymod/rejuv_req", F_OK);
     int rss = self_rss_kb();
     if (rss < 0 || (rss < REJUV_RSS_KB && !req)) return;
     if (!req && avail_kb >= 6500) return;
     unlink("/tmp/hibymod/rejuv_req");
     lg("rejuvenecer: shell %d KB, %d KB libres%s -> exec", rss, avail_kb, req ? " (pedido por hibyguard)" : "");
+    sync_shutdown();                              /* QUIT a hibysync (el shell nuevo lo vuelve a arrancar) */
     if (logfp) fflush(logfp);
     { FILE *f = fopen("/tmp/hibymod/rejuv_count", "a"); if (f) { fprintf(f, "%.0f %d %d\n", t, rss, avail_kb); fclose(f); } }
     char *av[] = { (char *)"/usr/data/hibymod/shell/hibyshell", 0 };
@@ -1776,6 +1842,7 @@ static void mem_guard(void)
     if (kb < 0 || kb >= MEM_LOW_KB || t - last_trim < 20000) return;
     last_trim = t;
     mem_trim("auto");
+    sync_lowmem();                                /* ByOS Sync: fuera, salvo si transfiere o instala */
 }
 
 /* Antes el aviso de volumen alto parpadeaba sin parar y OK no respondia: en el inicio de ByOS el
@@ -1941,7 +2008,7 @@ int main(int argc, char **argv)
                 /* su dialogo de volumen tapa la firma; al aparecer y desaparecer (fundido) no es ni
                  * inicio ni dialogo: salir ahi mostraba un fotograma del inicio de HiBy (barra negra) */
                 int vol_band = now_ms() - vol_key_t < 2500 && is_home_below(fr1, VS_Y + VS_H);
-                if (!is_home(fr1) && !vs_visible() && !vol_band) { lg("el reproductor cambio de pantalla"); launcher_leave(); }
+                if (!is_home(fr1) && !vs_visible() && !vol_band && !st->lib_scan) { lg("el reproductor cambio de pantalla"); launcher_leave(); }
                 else launcher_statusbar();
             } else if (now_ms() < toast_until + 40 || V.edit) launcher_present();   /* aviso o temblor */
             else if (widgets_on && (wg_fresh || npx_changed || now_ms() - WD.t > 10000 || (int)(time(0) / 60) != wg_cache_min)) launcher_present();
@@ -1981,7 +2048,7 @@ int main(int argc, char **argv)
             if (k == 1) cc_open_app(pend_id); else cc_open_settings(pend_start);
             continue;
         }
-        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); first_setup_tick(); guard_tick(); } } continue; }
+        if (pr <= 0 || !(pf[0].revents & POLLIN)) { if (!cur_down) { lazy_release(); if (!hud_active) { mem_guard(); wifi_tcpack_off(); first_setup_tick(); guard_tick(); sync_tick(); } } continue; }
         struct pkt p;
         if (!read_pkt(&p, 300)) continue;
         player_poke();

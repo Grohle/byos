@@ -92,6 +92,17 @@ def diff(a, b, step=1):
     return sum(1 for i in range(0, len(a), step) if a[i] != b[i]) * step
 
 
+def strong(a, b, step=1, thr=12):
+    """pixels that changed visibly (any channel by >= thr on a 6-bit scale): a press tint or a
+    dither shift is not a flash"""
+    n = 0
+    for i in range(0, len(a), step):
+        x, y = a[i], b[i]
+        if x != y and max(abs((x >> 11) - (y >> 11)) * 2, abs(((x >> 5) & 63) - ((y >> 5) & 63)), abs((x & 31) - (y & 31)) * 2) >= thr:
+            n += 1
+    return n * step
+
+
 def lum(px, y0=0, y1=None, w=160):
     y1 = y1 or len(px) // w
     t = n = 0
@@ -106,7 +117,7 @@ def analyze(frames):
     for i in range(1, len(frames) - 1):
         a, b, c = frames[i - 1]["px"], frames[i]["px"], frames[i + 1]["px"]
         ab = diff(a, b, 3)
-        if ab > 1500:
+        if ab > 1500 and strong(a, b, 3) > 90:
             ac = diff(a, c, 3)
             if ac < ab * 0.12 and frames[i + 1]["t"] - frames[i]["t"] < 120:
                 issues.append({"kind": "flash", "t": round(frames[i]["t"]), "px": ab, "dur_ms": round(frames[i + 1]["t"] - frames[i]["t"], 1), "frame": i})
@@ -120,7 +131,9 @@ def analyze(frames):
         g = frames[i]["t"] - frames[i - 1]["t"]
         # a stall inside a burst of changes (both sides animated within 60 ms)
         # ... and the picture jumped across the gap (an animation froze), not a pause between inputs
-        if 400 < g < 3000 and i + 1 < len(frames) and i >= 2 and frames[i - 1]["t"] - frames[i - 2]["t"] < 60 and frames[i + 1]["t"] - frames[i]["t"] < 60                 and diff(frames[i - 1]["px"], frames[i]["px"], 3) > 6000:
+        if 400 < g < 3000 and i + 1 < len(frames) and i >= 2 and frames[i - 1]["t"] - frames[i - 2]["t"] < 60 and frames[i + 1]["t"] - frames[i]["t"] < 60                 and diff(frames[i - 1]["px"], frames[i]["px"], 3) > 6000                 and strong(frames[i - 2]["px"], frames[i - 1]["px"], 3) > 2500:
+            # (an animation that had already settled, then the next gesture, is a pause between
+            # inputs: checked by hand on 30 such gaps in the 12-11 soak, all of them were that)
             issues.append({"kind": "stall", "t": round(frames[i - 1]["t"]), "gap_ms": round(g), "frame": i})
     return issues
 

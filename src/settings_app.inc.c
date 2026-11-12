@@ -160,7 +160,7 @@ static int sl_value(const struct srow *rw, int v0, int dx)      /* arrastre rela
 
 /* ------------------------------------------------------------------ iconos de las filas (iOS) */
 enum { IC_NONE, IC_WIFI, IC_BT, IC_STREAM, IC_USB, IC_GENERAL, IC_DISPLAY, IC_SOUND, IC_BATTERY, IC_LIBRARY,
-       IC_HOME, IC_GESTURE, IC_CC, IC_KB, IC_DEV, IC_N };
+       IC_HOME, IC_GESTURE, IC_CC, IC_KB, IC_DEV, IC_SYNC, IC_N };
 static struct sprite ic_spr[IC_N]; static int ic_loaded;
 static void ic_load(void)
 {
@@ -191,11 +191,20 @@ static void sp_line(uint16_t *d, float x0, float y0, float x1, float y1, float r
     float dx = x1 - x0, dy = y1 - y0; int n = (int)(sqrtf(dx * dx + dy * dy) / 0.9f) + 1;
     for (int i = 0; i <= n; i++) fill_circle(d, x0 + dx * i / n, y0 + dy * i / n, r, c, 255);
 }
+/* ByOS Sync: dos flechas opuestas (arrow.left.arrow.right); s = escala (1 en los iconos de 29 px) */
+static void sync_glyph(uint16_t *d, float cx, float cy, float s, uint16_t c)
+{
+    float r = 0.95f * s;
+    sp_line(d, cx - 7 * s, cy - 3.5f * s, cx + 7 * s, cy - 3.5f * s, r, c);
+    sp_line(d, cx + 7 * s, cy - 3.5f * s, cx + 3.5f * s, cy - 7 * s, r, c); sp_line(d, cx + 7 * s, cy - 3.5f * s, cx + 3.5f * s, cy, r, c);
+    sp_line(d, cx + 7 * s, cy + 3.5f * s, cx - 7 * s, cy + 3.5f * s, r, c);
+    sp_line(d, cx - 7 * s, cy + 3.5f * s, cx - 3.5f * s, cy, r, c); sp_line(d, cx - 7 * s, cy + 3.5f * s, cx - 3.5f * s, cy + 7 * s, r, c);
+}
 static void sp_icon(uint16_t *d, int x, int y, int ic)
 {
     static const uint8_t col[IC_N][3] = { { 0, 0, 0 }, { 10, 132, 255 }, { 10, 132, 255 }, { 52, 199, 89 }, { 88, 86, 214 }, { 142, 142, 147 },
         { 10, 132, 255 }, { 255, 45, 85 }, { 52, 199, 89 }, { 252, 61, 57 }, { 88, 86, 214 }, { 255, 149, 0 }, { 142, 142, 147 },
-        { 120, 120, 126 }, { 99, 99, 102 } };
+        { 120, 120, 126 }, { 99, 99, 102 }, { 48, 176, 199 } };
     if (ic <= 0 || ic >= IC_N) return;
     if (!ic_loaded) ic_load();
     uint16_t bg = rgb(col[ic][0], col[ic][1], col[ic][2]), w = 0xFFFF;
@@ -231,6 +240,7 @@ static void sp_icon(uint16_t *d, int x, int y, int ic)
         fill_rrect(d, (int)cx - 10, (int)cy - 6, 20, 13, 2.5f, w, 255); fill_rrect(d, (int)cx - 9, (int)cy - 5, 18, 11, 2, bg, 255);
         for (int r = 0; r < 2; r++) for (int k = 0; k < 5; k++) fill_rrect(d, (int)cx - 8 + k * 3 + r, (int)cy - 3 + r * 3, 2, 2, 0, w, 255);
         fill_rrect(d, (int)cx - 5, (int)cy + 3, 10, 2, 0, w, 255); break;
+    case IC_SYNC: sync_glyph(d, cx, cy, 1.f, w); break;          /* ByOS Sync */
     case IC_DEV:                                               /* </> */
         sp_line(d, cx - 4, cy - 5, cx - 8.5f, cy, 0.95f, w); sp_line(d, cx - 8.5f, cy, cx - 4, cy + 5, 0.95f, w);
         sp_line(d, cx + 4, cy - 5, cx + 8.5f, cy, 0.95f, w); sp_line(d, cx + 8.5f, cy, cx + 4, cy + 5, 0.95f, w);

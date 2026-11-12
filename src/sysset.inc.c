@@ -25,7 +25,9 @@
 enum { PS_BT, PS_WIFI, PS_DLNA, PS_AIRPLAY, PS_HLINK, PS_GAIN, PS_MSEB, PS_LINEOUT, PS_USB, PS_BAL, PS_GAPLESS, PS_FADE,
        PS_FILTER, PS_SLEEP, PS_SLEEPMIN, PS_PLAYMODE, PS_VOL, PS_VOLMAX, PS_SPEED,
        PS_EXT,                                   /* desde aqui: claves propuestas (libreria v8) */
-       PS_BRIGHT = PS_EXT, PS_BKLON, PS_BKLTIME, PS_IDLE, PS_IDLEMIN, PS_UPDATE, PS_N };
+       PS_BRIGHT = PS_EXT, PS_BKLON, PS_BKLTIME, PS_IDLE, PS_IDLEMIN, PS_UPDATE,
+       PS_EQ, PS_EQPRESET, PS_RESUME, PS_RGAIN, PS_FOLDERSKIP, PS_ALBUMSKIP, PS_BOOTVOLMODE, PS_BOOTVOL,
+       PS_LOCKKEYS, PS_LOCKVOL, PS_INLINE, PS_LED, PS_MQADET, PS_N };   /* v9 */
 /* clave de la API, desplazamiento en user.ini (= en la estructura de ajustes) y rango valido */
 static const struct { const char *key; short off, lo, hi; } ps_def[PS_N] = {
     { "bt", 0x394, 0, 1 }, { "wifi", 0x3c8, 0, 1 }, { "dlna", 0x3d0, 0, 1 }, { "airplay", 0x3cc, 0, 1 }, { "hibylink", 0x3b4, 0, 1 },
@@ -34,6 +36,10 @@ static const struct { const char *key; short off, lo, hi; } ps_def[PS_N] = {
     { "playmode", 0x250, 0, 3 }, { "volume", 0x23c, 0, 255 }, { "volmax", 0x238, 0, 255 }, { "speed", 0x710, 50, 200 },
     { "bright", 0x18, 1, 100 }, { "bklon", 0x3d4, 0, 1 }, { "bkltime", 0x10, 10, 120 }, { "idle", 0x26c, 0, 1 }, { "idlemin", 0x14, 1, 10 },
     { "update", 0x20, 0, 1 },
+    { "eq", 0x3e4, 0, 1 }, { "eqpreset", 0x268, 0, 9 }, { "resume", 0x24, 0, 2 }, { "replaygain", 0x3b8, 0, 2 },
+    { "folderskip", 0x390, 0, 1 }, { "albumskip", 0x410, 0, 1 }, { "bootvolmode", 0x244, 0, 1 }, { "bootvol", 0x240, 0, 100 },
+    { "lockkeys", 0x264, 0, 1 }, { "lockvol", 0x6e8, 0, 1 }, { "inline", 0x388, 0, 1 }, { "led", 0x458, 0, 1 },
+    { "mqadetect", 0x734, 0, 1 },
 };
 static int ps_v[PS_N];          /* lo que se ve (incluye cambios aun sin confirmar) */
 static int ps_sh[PS_N];         /* ultimo valor confirmado por el reproductor (o leido) */
@@ -69,7 +75,7 @@ static void *ps_thread(void *arg)
         ps_inflight = j.idx;
         pthread_mutex_unlock(&ps_mu);
         if (j.idx < 0) {                                       /* leer todo de una vez */
-            struct hs_kv kv[40]; int n = hs_list(kv, 40);
+            struct hs_kv kv[64]; int n = hs_list(kv, 64);
             pthread_mutex_lock(&ps_mu);
             if (n > 0) {
                 int seen[PS_N] = { 0 };
@@ -482,6 +488,7 @@ static void page_usb_root(struct spage *p)
 static void nav_usb(void) { set_nocharge = pw_nocharge; open_page(page_usb, "Ajustes"); }
 
 /* ------------------------------------------------------------------ Pantalla y brillo */
+static void ssa_led(void); static int ps_dis(int k);
 static void ssa_corners(void) { corners_push(); lconf_save(); }
 static void page_display(struct spage *p)
 {
@@ -491,7 +498,8 @@ static void page_display(struct spage *p)
     p->secs[1] = (struct ssec){ 0, ps_unsup[PS_BKLON] ? "PS_NEEDLIB_HELP" : "AUTOLOCK_HELP",
                                 { ROWC("Bloqueo automático", &ui_bkl_i, O_BKL, 6, ssa_bkl, ps_unsup[PS_BKLON] || ps_unsup[PS_BKLTIME]) }, 1 };
     p->secs[2] = (struct ssec){ 0, "CORNERS_HELP", { ROWT("Esquinas redondeadas", &ui_corners, ssa_corners, 0) }, 1 };
-    p->nsec = 3;
+    p->secs[3] = (struct ssec){ 0, "LED_HELP", { ROWT("Luz de estado", &ps_v[PS_LED], ssa_led, ps_dis(PS_LED)) }, 1 };
+    p->nsec = 4;
 }
 static void nav_display(void)
 {
@@ -505,6 +513,58 @@ static const char *const O_GAIN[] = { "Baja", "Alta" };
 static const char *const O_VOLUI[] = { "HiBy", "ByOS" };
 static void ssa_volui(void) { vol_ui_apply(); lconf_save(); }
 static const char *const O_PLAYMODE[] = { "En orden", "Repetir canción", "Aleatorio", "Repetir lista" };
+/* estilos del ecualizador de HiBy (setting 0x18, orden de la tabla 0x81c8f0) */
+static const char *const O_EQPRESET[] = { "Personalizado", "Plano", "Rock", "Clásica", "Jazz", "Pop", "Dance", "Voz", "Blues", "Metal" };
+static const char *const O_RESUME[] = { "No", "Desde la canción", "Desde la posición" };
+static const char *const O_RGAIN[] = { "No", "Por canción", "Por álbum" };
+static const char *const O_BOOTVOL[] = { "Recordar el último", "Fijo" };
+PSA(eq, PS_EQ) PSA(eqpreset, PS_EQPRESET) PSA(resume, PS_RESUME) PSA(rgain, PS_RGAIN) PSA(folderskip, PS_FOLDERSKIP)
+PSA(albumskip, PS_ALBUMSKIP) PSA(bootvolmode, PS_BOOTVOLMODE) PSA(inline, PS_INLINE) PSA(led, PS_LED) PSA(mqadet, PS_MQADET)
+PSA(lockkeys, PS_LOCKKEYS)
+/* lockvol (0x5b): el reproductor guarda !v en su set; la libreria lo compensa (SF_INV), asi que
+ * el valor es el guardado: 1 = la rueda funciona con la pantalla apagada (por defecto, como lockkeys) */
+PSA(volkeys, PS_LOCKVOL)
+static void ssa_bootvol(void)
+{
+    int mx = ps_ok[PS_VOLMAX] && ps_v[PS_VOLMAX] > 0 && ps_v[PS_VOLMAX] < 100 ? ps_v[PS_VOLMAX] : 100;
+    if (ps_v[PS_BOOTVOL] > mx) ps_v[PS_BOOTVOL] = mx;
+    ps_apply_f(PS_BOOTVOL, 0);
+}
+static int ps_dis(int k) { return ps_unsup[k] || ps_api < 0; }
+static void page_playback(struct spage *p)
+{
+    *p = (struct spage){ "Reproducción" };
+    p->secs[0] = (struct ssec){ 0, "RESUME_HELP", { ROWC("Continuar al encender", &ps_v[PS_RESUME], O_RESUME, 3, ssa_resume, ps_dis(PS_RESUME)) }, 1 };
+    p->secs[1] = (struct ssec){ "REPLAYGAIN", "RGAIN_HELP", { ROWC("ReplayGain", &ps_v[PS_RGAIN], O_RGAIN, 3, ssa_rgain, ps_dis(PS_RGAIN)) }, 1 };
+    p->secs[2] = (struct ssec){ 0, "SKIP_HELP", { ROWT("Seguir en la carpeta siguiente", &ps_v[PS_FOLDERSKIP], ssa_folderskip, ps_dis(PS_FOLDERSKIP)),
+                                                 ROWT("Seguir en el álbum siguiente", &ps_v[PS_ALBUMSKIP], ssa_albumskip, ps_dis(PS_ALBUMSKIP)) }, 2 };
+    p->secs[3] = (struct ssec){ "AURICULARES", "INLINE_HELP", { ROWT("Mando del cable", &ps_v[PS_INLINE], ssa_inline, ps_dis(PS_INLINE)) }, 1 };
+    p->nsec = 4;
+}
+static void nav_playback(void) { ps_refresh(); open_page(page_playback, "Sonido"); }
+static void page_bootvol(struct spage *p)
+{
+    *p = (struct spage){ "Volumen al encender" };
+    p->secs[0] = (struct ssec){ 0, "BOOTVOL_HELP", { ROWC("Al encender", &ps_v[PS_BOOTVOLMODE], O_BOOTVOL, 2, ssa_bootvolmode, ps_dis(PS_BOOTVOLMODE)) }, 1 };
+    p->nsec = 1;
+    if (ps_v[PS_BOOTVOLMODE] == 1) {
+        p->secs[1] = (struct ssec){ "VOLUMEN FIJO", 0, { ROWS("Volumen", &ps_v[PS_BOOTVOL], 0, 100, SL_PLAIN, ssa_bootvol, ps_dis(PS_BOOTVOL)) }, 1 };
+        p->nsec = 2;
+    }
+}
+static void nav_bootvol(void) { ps_refresh(); open_page(page_bootvol, "Sonido"); }
+static const char *v_eq(void) { return ps_v[PS_EQ] ? tr(O_EQPRESET[ps_v[PS_EQPRESET] < 0 || ps_v[PS_EQPRESET] > 9 ? 0 : ps_v[PS_EQPRESET]]) : tr("No"); }
+static void page_eq(struct spage *p)
+{
+    *p = (struct spage){ "Ecualizador" };
+    p->secs[0] = (struct ssec){ 0, "EQ_HELP", { ROWT("Ecualizador", &ps_v[PS_EQ], ssa_eq, ps_dis(PS_EQ)) }, 1 };
+    p->nsec = 1;
+    if (ps_v[PS_EQ]) {
+        p->secs[1] = (struct ssec){ "ESTILO", 0, { ROW("Estilo", R_CHOICE, &ps_v[PS_EQPRESET], O_EQPRESET, 10, ssa_eqpreset, 0, 0) }, 1 };
+        p->nsec = 2;
+    }
+}
+static void nav_eq(void) { ps_refresh(); open_page(page_eq, "Sonido"); }
 static void page_sound(struct spage *p)
 {
     *p = (struct spage){ "Sonido" };
@@ -512,18 +572,21 @@ static void page_sound(struct spage *p)
     int mseb_off = ps_ok[PS_SPEED] && ps_v[PS_SPEED] != 100 && !ps_v[PS_MSEB];
     p->secs[0] = (struct ssec){ "SALIDA", ps_api < 0 ? "PS_NOAPI_HELP" : "LINEOUT_HELP", {
         ROWC("Ganancia", &ps_v[PS_GAIN], O_GAIN, 2, ssa_gain, ps_v[PS_LINEOUT]),
-        ROWT("Salida de línea", &ps_v[PS_LINEOUT], ssa_lineout, 0) }, 2 };
-    p->secs[1] = (struct ssec){ "BALANCE", 0, { ROWS("Balance", &ps_v[PS_BAL], -10, 10, SL_BALANCE, ssa_bal, 0) }, 1 };
-    p->secs[2] = (struct ssec){ "REPRODUCCIÓN", "GAPLESS_HELP", {
+        ROWT("Salida de línea", &ps_v[PS_LINEOUT], ssa_lineout, 0),
+        ROWS("Balance", &ps_v[PS_BAL], -10, 10, SL_BALANCE, ssa_bal, 0) }, 3 };
+    p->secs[1] = (struct ssec){ "REPRODUCCIÓN", "GAPLESS_HELP", {
         ROWC("Modo de reproducción", &ps_v[PS_PLAYMODE], O_PLAYMODE, 4, ssa_playmode, 0),
-        ROWT("Sin pausas", &ps_v[PS_GAPLESS], ssa_gapless, 0), ROWT("Fundido", &ps_v[PS_FADE], ssa_fade, 0) }, 3 };
+        ROWT("Sin pausas", &ps_v[PS_GAPLESS], ssa_gapless, 0), ROWT("Fundido", &ps_v[PS_FADE], ssa_fade, 0),
+        ROWI("Más opciones", nav_playback, 0, 0) }, 4 };
+    p->secs[2] = (struct ssec){ "ECUALIZACIÓN", "MSEB_HELP", { ROW("Ecualizador", R_NAV, 0, 0, 0, nav_eq, v_eq, 0),
+                                                           ROWT("MSEB", &ps_v[PS_MSEB], ssa_mseb, mseb_off) }, 2 };
     p->secs[3] = (struct ssec){ "DAC ES9219", au_filt_max >= 7 ? "FILT_HELP" : "FILT_HELP_OLD", {
         ROW("Filtro digital", R_CHOICE, &au_filt_i, n == 7 ? O_FILT8 : O_FILT2, n, apply_filter, 0, 0) }, 1 };
-    p->secs[4] = (struct ssec){ "MSEB", "MSEB_HELP", { ROWT("MSEB", &ps_v[PS_MSEB], ssa_mseb, mseb_off) }, 1 };
-    p->secs[5] = (struct ssec){ "VOLUMEN", "VOLUI_HELP", { ROWC("Indicador de volumen", &vol_ui, O_VOLUI, 2, ssa_volui, 0),
-                                                         ROWT("Aviso de volumen alto (UE)", &au_volwarn, ssa_volwarn, 0) }, 2 };
-    if (au_reboot) { p->secs[5].rows[2] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[5].n = 3; }
-    p->nsec = 6;
+    p->secs[4] = (struct ssec){ "VOLUMEN", "VOLUI_HELP", { ROWC("Indicador de volumen", &vol_ui, O_VOLUI, 2, ssa_volui, 0),
+                                                         ROWT("Aviso de volumen alto (UE)", &au_volwarn, ssa_volwarn, 0),
+                                                         ROWI("Volumen al encender", nav_bootvol, 0, 0) }, 3 };
+    if (au_reboot) { p->secs[4].rows[3] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[4].n = 4; }
+    p->nsec = 5;
 }
 static void nav_sound(void) { audio_sync(); open_page(page_sound, "Ajustes"); }
 
@@ -556,17 +619,7 @@ static void act_rescan(void)
         if (action_sheet(tr("La música se detendrá mientras se actualiza la biblioteca."), o, 1, -1) != 0) return;
     }
     if (!lib_post()) return;
-    progress_card(0, 0, -1);
-    char b[32] = ""; double t = now_ms();
-    for (;;) {
-        double s = (now_ms() - t) / 1000.0; char sub[48]; snprintf(sub, sizeof sub, "%.0f s", s);
-        progress_card(tr("Actualizando la biblioteca"), sub, fmod(s / 4.0, 1.0));   /* sin total: barra que avanza en ciclo */
-        if (lib_read(b, sizeof b) && strcmp(b, "posted")) break;
-        msleep(250); st->shell_beat++;
-        if (s > 1800) break;
-    }
-    lg("biblioteca: %s en %.0f s", b, (now_ms() - t) / 1000);
-    toast(!strcmp(b, "done") ? tr("Biblioteca actualizada") : tr("No se pudo actualizar"));
+    lib_popup_force();          /* el progreso va en el aviso del sistema (libpop.inc.c), sin bloquear Ajustes */
 }
 /* llamado cada 10 s (guard_tick) */
 static void lib_auto_tick(void)
@@ -575,7 +628,7 @@ static void lib_auto_tick(void)
     struct np_info ni; static uint16_t cv[128 * 128]; int ok = 0; npx_snapshot(&ni, cv, &ok);
     if (ni.playing) return;
     lg("biblioteca: descargas nuevas -> actualizar (automatico)");
-    lib_post();
+    if (lib_post()) lib_popup_force();
 }
 static void page_library(struct spage *p)
 {
@@ -584,7 +637,8 @@ static void page_library(struct spage *p)
     p->secs[0] = (struct ssec){ 0, 0, { ROWV("Canciones", v_songs), ROWV("Álbumes", v_albums), ROWV("Artistas", v_artists) }, 3 };
     p->secs[1] = (struct ssec){ "ACTUALIZACIÓN", ps_unsup[PS_UPDATE] ? "PS_NEEDLIB_HELP" : "UPDATE_HELP", {
         ROWT("Buscar música nueva automáticamente", &ps_v[PS_UPDATE], ssa_update, ps_unsup[PS_UPDATE]),
-        ROW("Actualizar biblioteca ahora", R_ACTION, 0, 0, 0, act_rescan, 0, 0) }, 2 };
+        ROW("Actualizar biblioteca ahora", R_ACTION, 0, 0, 0, act_rescan, 0, 0),
+        ROWT("Detectar MQA", &ps_v[PS_MQADET], ssa_mqadet, ps_dis(PS_MQADET)) }, 3 };
     p->secs[2] = (struct ssec){ "TARJETA SD", "TF_HELP", { ROWT("Biblioteca en la tarjeta SD", &au_tfdb, apply_tfdb, 0),
                                                          ROWT("Carátulas en caché en la SD", &au_tfimg, apply_tfimg, 0) }, 2 };
     if (au_reboot) { p->secs[2].rows[2] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[2].n = 3; }
@@ -867,8 +921,11 @@ static void page_general(struct spage *p)
     p->secs[2] = (struct ssec){ "APAGADO AUTOMÁTICO", ss_sleep_footer(), {
         ROWC("Temporizador", &ui_sleep_i, O_SLEEP, 7, ssa_sleep, 0),
         ROWC("Por inactividad", &ui_idle_i, O_IDLE, 6, ssa_idle, ps_unsup[PS_IDLE] || ps_unsup[PS_IDLEMIN]) }, 2 };
-    p->secs[3] = (struct ssec){ 0, 0, { ROWI("Restablecer", nav_reset, 0, 0) }, 1 };
-    p->nsec = 4;
+    p->secs[3] = (struct ssec){ "CON LA PANTALLA APAGADA", "SCREENOFF_KEYS_HELP", {
+        ROWT("Botones de reproducción", &ps_v[PS_LOCKKEYS], ssa_lockkeys, ps_dis(PS_LOCKKEYS)),
+        ROWT("Rueda de volumen", &ps_v[PS_LOCKVOL], ssa_volkeys, ps_dis(PS_LOCKVOL)) }, 2 };
+    p->secs[4] = (struct ssec){ 0, 0, { ROWI("Restablecer", nav_reset, 0, 0) }, 1 };
+    p->nsec = 5;
 }
 
 /* ------------------------------------------------------------------ raiz */
@@ -882,7 +939,7 @@ static void page_root(struct spage *p)
                                         ROWI("Pantalla y brillo", nav_display, 0, IC_DISPLAY), ROWI("Batería y energía", nav_power, 0, IC_BATTERY) }, 4 };
     p->secs[2] = (struct ssec){ "PERSONALIZACIÓN", 0, { ROWI("Inicio", nav_home, 0, IC_HOME), ROWI("Centro de control", nav_cc, 0, IC_CC),
                                         ROWI("Gestos", nav_gestures, 0, IC_GESTURE), ROWI("Teclado", nav_kb, 0, IC_KB) }, 4 };
-    p->secs[3] = (struct ssec){ 0, 0, { ROWI("Biblioteca de música", nav_library, 0, IC_LIBRARY) }, 1 };
+    p->secs[3] = (struct ssec){ 0, 0, { ROWI("Biblioteca de música", nav_library, 0, IC_LIBRARY), ROWI("ByOS Sync", nav_sync, v_sync_root, IC_SYNC) }, 2 };
     p->secs[4] = (struct ssec){ 0, 0, { ROWI("Desarrollador", nav_dev, 0, IC_DEV) }, 1 };
     p->nsec = 5;
 }

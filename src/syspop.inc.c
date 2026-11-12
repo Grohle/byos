@@ -12,7 +12,7 @@
 #define SP_IN_MS 420.0
 #define SP_OUT_MS 260.0
 #define SP_HOLD_MS 6000.0
-static int sp_cap, sp_closing, sp_open_req, sp_in_tick;
+static int sp_cap, sp_closing, sp_open_req, sp_in_tick, sp_kind;   /* sp_kind: 0 auriculares, 1 biblioteca */
 static double sp_t0, sp_tc, sp_last_check; static float sp_close_from = 1;
 static uint16_t *sp_tmp, *sp_base;
 
@@ -27,14 +27,15 @@ static void sp_close(void)
 {
     if (!sp_on || sp_closing) return;
     sp_close_from = sp_progress(); sp_closing = 1; sp_tc = now_ms();
-    buds_popup_dismiss();
+    if (sp_kind == 1) lib_popup_dismiss(); else buds_popup_dismiss();
 }
 /* compone la tarjeta sobre src (fotograma completo) en el bufer compartido y lo presenta */
 static void sp_present_over(const uint16_t *src)
 {
     if (!sp_tmp) return;
     memcpy(sp_tmp, src, HM_FRAME_BYTES);
-    buds_popup_draw(sp_tmp, sp_progress());
+    if (!sp_cap) { statusbar_tint(sp_tmp); int a = 0, b = 0; homebar_layer(sp_tmp, src, &a, &b); }   /* como los de la app */
+    if (sp_kind == 1) lib_popup_draw(sp_tmp, sp_progress()); else buds_popup_draw(sp_tmp, sp_progress());
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, sp_tmp, HM_FRAME_BYTES);
     st->dirty_y0 = 0; st->dirty_y1 = H;
@@ -49,19 +50,18 @@ static void sp_finish(void)
         update_overlay();
     } else if (st->capture) {         /* pantalla del shell: volver a la imagen de la app tal cual */
         uint32_t p = st->presents;
-        st->fr0_seq++; __sync_synchronize();
-        memcpy(fr0_shm, fr0, HM_FRAME_BYTES); st->dirty_y0 = 0; st->dirty_y1 = H;
-        __sync_synchronize(); st->fr0_seq++;
+        hud_compose_present_ex(fr0, 0);              /* con barra de estado y de inicio, sin parpadeo */
         cmd('P'); double t = now_ms(); while (st->presents == p && now_ms() - t < 80) msleep(1);
     }
-    lg("aviso: auriculares cerrado");
+    lg("aviso: %s cerrado", sp_kind == 1 ? "biblioteca" : "auriculares");
 }
-static void sp_start(void)
+static void sp_start(int kind)
 {
+    sp_kind = kind;
     if (!sp_tmp) sp_tmp = lazy_alloc((void **)&sp_tmp, HM_FRAME_BYTES, 0);    /* se devuelven en reposo */
     if (!sp_base) sp_base = lazy_alloc((void **)&sp_base, HM_FRAME_BYTES, 0);
-    if (!sp_tmp || !sp_base) { buds_popup_dismiss(); return; }
-    buds_popup_ack();
+    if (!sp_tmp || !sp_base) { if (kind == 1) { lib_popup_ack(); lib_popup_dismiss(); } else buds_popup_dismiss(); return; }
+    if (kind == 1) lib_popup_ack(); else buds_popup_ack();
     sp_cap = 0;
     if (!st->capture && !st->held && !launcher_on) {      /* pantalla de HiBy: congelarla */
         st->ov_on = 0; ov_cur = 0;
@@ -73,7 +73,7 @@ static void sp_start(void)
     }
     sp_on = 1; sp_closing = 0; sp_t0 = now_ms();
     lcd_boost();
-    lg("aviso: auriculares conectados (%s)", sp_cap ? "sobre HiBy" : "sobre el shell");
+    lg("aviso: %s (%s)", kind == 1 ? "biblioteca actualizandose" : "auriculares conectados", sp_cap ? "sobre HiBy" : "sobre el shell");
 }
 /* un paso: lo llama read_pkt mientras espera */
 static void syspop_tick(void)
@@ -83,10 +83,11 @@ static void syspop_tick(void)
     double t = now_ms();
     if (!sp_on && t - sp_last_check > 300) {
         sp_last_check = t;
-        if (buds_popup_needed()) sp_start();
+        if (buds_popup_needed()) sp_start(0);
+        else if (lib_popup_needed()) sp_start(1);
     }
     if (sp_on) {
-        if (!sp_closing && t - sp_t0 > SP_HOLD_MS) sp_close();
+        if (!sp_closing && (sp_kind == 1 ? lib_popup_expired() : t - sp_t0 > SP_HOLD_MS)) sp_close();
         if (sp_closing && t - sp_tc >= SP_OUT_MS) sp_finish();
         else {
             uint32_t p = st->presents;
@@ -95,6 +96,13 @@ static void syspop_tick(void)
         }
     }
     sp_in_tick = 0;
+}
+/* present() con el aviso sobre una app: lo compone entero sobre fr0 (0 si no hay aviso) */
+static int syspop_owns_frame(void)
+{
+    if (!sp_on || sp_cap || sp_in_tick) return 0;
+    sp_in_tick = 1; sp_present_over(fr0); sp_in_tick = 0;
+    return 1;
 }
 /* gancho de present(): la app acaba de presentar su fotograma; se pone la tarjeta encima */
 static void syspop_after_present(void)
@@ -106,7 +114,7 @@ static void syspop_after_present(void)
 static int syspop_touch(const struct pkt *p)
 {
     if (!sp_on || sp_closing || !p->down) return 0;
-    int hit = buds_popup_hit(p->x, p->y, sp_progress());
+    int hit = sp_kind == 1 ? lib_popup_hit(p->x, p->y, sp_progress()) : buds_popup_hit(p->x, p->y, sp_progress());
     if (!hit) {
         if (sp_cap) sp_close();       /* en HiBy: el toque fuera la cierra y sigue hacia HiBy */
         return 0;
@@ -122,6 +130,7 @@ static int syspop_touch(const struct pkt *p)
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_X) cur_x = e.value;
     }
     if (moved || hit == 1) sp_close();
+    else if (sp_kind == 1) { if (sp_cap) sp_close(); }   /* biblioteca: tocar la tarjeta no hace nada */
     else { sp_close(); sp_open_req = 1; }      /* tocar la tarjeta: abrir Auriculares */
     return 1;
 }

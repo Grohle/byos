@@ -209,6 +209,7 @@ static void lconf_save(void)
     cc_conf_save(f);
     wg_conf_save(f);
     fprintf(f, "lang %s\nkb %d %d %d\ncorners %d\nvolui %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, ui_corners, vol_ui);
+    fprintf(f, "sync %d\n", sync_wifi_on);        /* ByOS Sync: conexiones por Wi-Fi (sync.inc.c) */
     /* a prueba de cortes (UBIFS casi lleno, reinicio justo despues): solo se sustituye el
      * fichero si se escribio entero y llego al disco; el anterior queda como .bak */
     int bad = ferror(f) || fflush(f) || fsync(fileno(f));
@@ -247,6 +248,7 @@ static void lconf_load0(void)
         else if (!strcmp(t, "cols")) { char *v = strtok(0, " \t\r\n"); if (v) { int c = atoi(v); L.cols = c < 3 ? 3 : c > 5 ? 5 : c; } }
         else if (!strcmp(t, "corners")) { char *v = strtok(0, " \t\r\n"); ui_corners = v ? atoi(v) != 0 : 1; }
         else if (!strcmp(t, "volui")) { char *v = strtok(0, " \t\r\n"); vol_ui = v ? atoi(v) != 0 : 0; }
+        else if (!strcmp(t, "sync")) { char *v = strtok(0, " \t\r\n"); sync_wifi_on = v ? atoi(v) != 0 : 0; }
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
             if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; got_kb = 1; } }
@@ -316,7 +318,7 @@ static void lconf_load(void)
 {
     /* sin launcher.conf (apartado por la auto-reparacion o un guardado cortado): la copia buena anterior */
     if (access(LCONF, F_OK) && !access(LCONF ".bak", F_OK) && !link(LCONF ".bak", LCONF)) lg("launcher.conf recuperado de la copia anterior");
-    lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); }
+    lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); hiby_dlgs_quiet(); }
 
 /* ------------------------------------------------------------------ geometria */
 static int per_page(void)

@@ -192,6 +192,8 @@ static const char *const TR[][3] = {
     { "Guardando etiquetas", "Saving tags", "Enregistrement des tags" },
     { "Leyendo etiquetas", "Reading tags", "Lecture des tags" },
     { "Actualizando la biblioteca", "Updating the library", "Mise à jour de la bibliothèque" },
+    { "Buscando música nueva", "Looking for new music", "Recherche de nouvelle musique" },
+    { "Ya puedes verla en Música", "It is ready in Music", "Elle est prête dans Musique" },
     { "Algunas no se pudieron guardar", "Some couldn't be saved", "Certains n'ont pas pu être enregistrés" },
     { "%d seleccionados", "%d selected", "%d sélectionnés" },
     { "Mover %d elementos", "Move %d items", "Déplacer %d éléments" },
@@ -512,7 +514,43 @@ static const char *const TR[][3] = {
     { "Modo de energía, frecuencia de la pantalla y carga.", "Power mode, display refresh rate and charging.", "Mode d'énergie, fréquence de l'écran et charge." },
     { "Canciones, álbumes, artistas y favoritas.", "Songs, albums, artists and favorites.", "Morceaux, albums, artistes et favoris." },
     { "El último álbum que has añadido a la biblioteca.", "The last album you added to the library.", "Le dernier album ajouté à la bibliothèque." },
-    { "Lo último que has escuchado y tu artista favorito.", "What you played last and your favorite artist.", "Votre dernière écoute et votre artiste préféré." },
+    { "Lo último que has escuchado y tu artista favorito.", "What you played last and your favorite artist.", "Votre dernière écoute et votre artiste préféré." },    /* ByOS Sync (sync.inc.c) */
+    { "ByOS Sync", "ByOS Sync", "ByOS Sync" },
+    { "Esperando a un ordenador o un teléfono", "Waiting for a computer or phone", "En attente d'un ordinateur ou d'un téléphone" },
+    { "Conectado: %s", "Connected: %s", "Connecté : %s" },
+    { "Iniciando…", "Starting…", "Démarrage…" },
+    { "No se pudo iniciar", "Couldn't Start", "Impossible de démarrer" },
+    { "No instalado", "Not Installed", "Non installé" },
+    { "CONECTADOS", "CONNECTED", "CONNECTÉS" },
+    { "Recibiendo", "Receiving", "Réception" },
+    { "Enviando", "Sending", "Envoi" },
+    { "Biblioteca lista: reinicia para aplicarla", "Library ready: restart to apply", "Bibliothèque prête : redémarrez pour l'appliquer" },
+    { "WI-FI", "WI-FI", "WI-FI" },
+    { "Permitir conexiones por Wi-Fi", "Allow Wi-Fi Connections", "Autoriser les connexions Wi-Fi" },
+    { "Emparejar un dispositivo nuevo", "Pair a New Device", "Associer un nouvel appareil" },
+    { "DISPOSITIVOS EMPAREJADOS", "PAIRED DEVICES", "APPAREILS ASSOCIÉS" },
+    { "Ninguno", "None", "Aucun" },
+    { "Nuevo dispositivo", "New Device", "Nouvel appareil" },
+    { "Esperando un dispositivo…", "Waiting for a device…", "En attente d'un appareil…" },
+    { "Tiempo agotado", "Timed Out", "Délai expiré" },
+    { "Volver a abrir", "Open Again", "Rouvrir" },
+    { "Conexiones por Wi-Fi activadas", "Wi-Fi connections turned on", "Connexions Wi-Fi activées" },
+    { "Se aplicará cuando se desconecte", "Applies when the device disconnects", "S'appliquera à la déconnexion" },
+    { "¿Emparejar con %s?", "Pair with %s?", "Associer avec %s ?" },
+    { "Comprueba que el mismo código aparece en el otro dispositivo.", "Check that the same code is shown on the other device.", "Vérifiez que le même code s'affiche sur l'autre appareil." },
+    { "Permitir", "Allow", "Autoriser" },
+    { "Denegar", "Deny", "Refuser" },
+    { "Emparejado con %s", "Paired with %s", "Associé à %s" },
+    { "Emparejamiento cancelado", "Pairing cancelled", "Association annulée" },
+    { "¿Olvidar %s? Tendrá que volver a emparejarse para conectarse por Wi-Fi.", "Forget %s? It will have to pair again to connect over Wi-Fi.", "Oublier %s ? Il faudra l'associer à nouveau pour se connecter en Wi-Fi." },
+    { "¿Actualizar la biblioteca?", "Update the Library?", "Mettre à jour la bibliothèque ?" },
+    { "Enviado desde %s.", "Sent from %s.", "Envoyé depuis %s." },
+    { "Más tarde", "Later", "Plus tard" },
+    { "No se pudo instalar la actualización", "Couldn't install the update", "Impossible d'installer la mise à jour" },
+    { "SYNC_WIFI_HELP", "With Wi-Fi connections on, the ByOS app on your phone can connect to this HiBy on the same Wi-Fi network. Pair the phone once; after that it connects by itself, always encrypted.", "Avec les connexions Wi-Fi activées, l'app ByOS de votre téléphone peut se connecter à ce HiBy sur le même réseau Wi-Fi. Associez le téléphone une fois ; ensuite il se connecte tout seul, toujours chiffré." },
+    { "SYNC_PEERS_HELP", "Phones that can connect over Wi-Fi. Tap one to forget it.", "Téléphones pouvant se connecter en Wi-Fi. Touchez-en un pour l'oublier." },
+    { "SYNC_USB_HELP", "Connect the HiBy to the computer with the USB cable and open the ByOS desktop app: it connects by itself while this page is open (and for 10 minutes after you leave it). No pairing is needed over USB.", "Branchez le HiBy à l'ordinateur avec le câble USB et ouvrez l'app ByOS pour ordinateur : elle se connecte toute seule tant que cette page est ouverte (et 10 minutes après l'avoir quittée). Aucune association n'est nécessaire en USB." },
+    { "SYNC_PAIR_HELP", "On the phone (same Wi-Fi network), open the ByOS app and choose this HiBy. A 6-digit code will appear on both screens: if they match, tap Allow. Keep this page open; it stays ready for 5 minutes.", "Sur le téléphone (même réseau Wi-Fi), ouvrez l'app ByOS et choisissez ce HiBy. Un code à 6 chiffres s'affichera sur les deux écrans : s'ils sont identiques, touchez Autoriser. Gardez cette page ouverte ; elle reste prête 5 minutes." },
 };
 /* textos largos en espanol (la clave no es el texto) */
 static const char *tr_es_long(const char *k)
@@ -536,6 +574,10 @@ static const char *tr_es_long(const char *k)
     if (!strcmp(k, "OTA_OFFICIAL_WARN")) return "Volver al firmware oficial no está probado. Se quitará ByOS; tus datos de /usr/data se conservan. El HiBy se reiniciará para instalarlo.";
     if (!strcmp(k, "OTA_HELP")) return "Firmwares encontrados en la SD (SD/ByOS/firmware para ByOS, SD/hibymod/oficial para el oficial, o r3ii_2025.upt en la raíz). Elige uno para instalarlo con el recovery oficial.";
     if (!strcmp(k, "OTA_NONE")) return "No hay firmware en la SD. Copia el de ByOS en SD/ByOS/firmware, el oficial en SD/hibymod/oficial, o un r3ii_2025.upt en la raíz de la SD.";
+    if (!strcmp(k, "SYNC_WIFI_HELP")) return "Con las conexiones por Wi-Fi activadas, la app ByOS del teléfono puede conectarse a este HiBy en la misma red Wi-Fi. Empareja el teléfono una vez; después se conecta solo, siempre cifrado.";
+    if (!strcmp(k, "SYNC_PEERS_HELP")) return "Teléfonos que pueden conectarse por Wi-Fi. Toca uno para olvidarlo.";
+    if (!strcmp(k, "SYNC_USB_HELP")) return "Conecta el HiBy al ordenador con el cable USB y abre la app ByOS del ordenador: se conecta sola mientras esta página está abierta (y 10 minutos después de salir). Por USB no hace falta emparejar.";
+    if (!strcmp(k, "SYNC_PAIR_HELP")) return "En el teléfono (misma red Wi-Fi), abre la app ByOS y elige este HiBy. Aparecerá un código de 6 cifras en las dos pantallas: si coinciden, toca Permitir. Deja esta página abierta; queda lista durante 5 minutos.";
     if (!strcmp(k, "WIDGETS_HELP")) return "Elige qué widgets aparecen en la página a la izquierda del inicio.";
     return 0;
 }

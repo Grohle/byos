@@ -90,6 +90,10 @@ struct hm_state {
     /* diagnostico: veces que el reproductor presento el MISMO bufer que ya se veia (dibujo directo
      * en pantalla: lo que pinte se ve antes de que la libreria lo tape) */
     volatile uint32_t same_pans;
+    /* escaneo de la biblioteca de HiBy (lo vigila la libreria: palabra de estado del reproductor,
+     * docs/research_library_rescan.md): 1 mientras escanea; lib_scan_seq sube en cada cambio. El
+     * shell muestra su aviso (syspop) en vez del dialogo de HiBy. */
+    volatile uint32_t lib_scan, lib_scan_seq;
 };
 #define HM_NP_MAGIC 0x3550504eu   /* "NPP5" */
 #define HM_NP_SLOTS 8
