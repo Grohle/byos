@@ -185,14 +185,19 @@ static int is_in(const char *c, const char *const *list) { for (; *list; list++)
 
 static const char *const HELPERS[] = { "hibywall", "hibytag", "hibymix", 0 };
 static const char *const HELPERS2[] = { "hibybudsd", "dbus-monitor", 0 };
+struct cut { int lvl, severe; };
 static int kill_helpers(int pid, const char *comm, void *ctx)
 {
-    int lvl = *(int *)ctx;
+    const struct cut *c = ctx; int lvl = c->lvl;
     /* hibytag con -700: esta copiando o cambiando la base de datos de la biblioteca (dbsnapshot,
      * apply-staged): cortarlo a medias dejaba una copia rota y la sincronizacion caia */
     int victim = (is_in(comm, HELPERS) && !(!strcmp(comm, "hibytag") && oom_adj_of(pid) <= -500)) || (lvl >= 2 && is_in(comm, HELPERS2))
               || (!strcmp(comm, "hibynet") && oom_adj_of(pid) > -500)    /* radio: the shell gives it -700 */
-              || (!strcmp(comm, "hibysync") && oom_adj_of(pid) > -500);  /* ByOS Sync: -700 while it transfers */
+              /* ByOS Sync: -700 while a client is connected or pairing (never cut then). Idle it
+               * holds ~300 KB: cutting it freed nothing that mattered and, with Wi-Fi sync on,
+               * made the player vanish from the network every 20 s at the 4.6-5 MB this device
+               * usually has free. Only when it holds more than 1 MB, or memory is severe. */
+              || (!strcmp(comm, "hibysync") && oom_adj_of(pid) > -500 && (c->severe || rss_kb_of(pid) * (sysconf(_SC_PAGESIZE) / 4096) > 1024));
     return victim && kill(pid, SIGKILL) == 0;
 }
 static int find_shell(int pid, const char *comm, void *ctx) { if (!strcmp(comm, "hibyshell")) { *(int *)ctx = pid; return 1; } return 0; }
@@ -291,14 +296,14 @@ static int run(void)
         { struct timespec up; clock_gettime(CLOCK_MONOTONIC, &up); if (up.tv_sec < 90) { press_s = sev_s = 0; continue; } }
 
         if (press_s >= L1_AFTER && t - last_l1 > 20) {
-            last_l1 = t; int lvl = 1;
-            int k = for_procs(kill_helpers, &lvl);
+            last_l1 = t; struct cut c = { 1, sev };
+            int k = for_procs(kill_helpers, &c);
             write_str("/proc/sys/vm/drop_caches", "2");
             logl(0, "pressure: %ld KB free, %ld refaults/s -> step 1: %d helpers cut, kernel objects freed", s.avail, rr, k);
         }
         if (press_s >= L2_AFTER && t - last_l2 > 60) {
-            last_l2 = t; int lvl = 2;
-            int k = for_procs(kill_helpers, &lvl);
+            last_l2 = t; struct cut c = { 2, sev };
+            int k = for_procs(kill_helpers, &c);
             int f = open(REJUV_REQ, O_WRONLY | O_CREAT | O_CLOEXEC, 0644); if (f >= 0) close(f);
             logl(1, "pressure for %d s: %ld KB free, %ld refaults/s -> step 2: shell asked to restart itself, %d helpers cut", press_s, s.avail, rr, k);
         }

@@ -1706,7 +1706,7 @@ static const struct guard_rule guard_rules[] = {
     { "dbus-daemon", -500, -99 }, { "bluetoothd", -400, -99 }, { "bluealsa", -400, -99 },
     { "hibybudsd", -200, -99 },
     { "hibywall", 600, 10 }, { "hibynet", 600, 10 }, { "hibytag", 600, 10 }, { "hibymix", 600, 10 },
-    { "hibysync", 600, 19 },          /* ByOS Sync: -700 solo mientras transfiere o instala */
+    { "hibysync", 600, 19 },          /* ByOS Sync: only its nice; it owns its oom_score_adj (-700 with a session, 600 idle) */
 };
 static int guard_write(const char *path, int v)
 {
@@ -1760,9 +1760,12 @@ static void guard_tick(void)
             snprintf(p, sizeof p, "/proc/%s/oom_score_adj", e->d_name);
             /* lo que esta sonando hereda la reserva: con la radio en marcha su ayudante de red
              * queda justo detras del reproductor (y sin nice), no entre lo prescindible */
-            int radio = (!strcmp(comm, "hibynet") && ra_active()) || (fg_helper_pid && atoi(e->d_name) == (int)fg_helper_pid)
-                     || (!strcmp(comm, "hibysync") && (sync_xfer_busy() || oom_adj_pid(atoi(e->d_name)) <= -500));   /* -700 propio: tiene un cliente */
-            if (guard_write(p, radio ? -700 : guard_rules[i].oom) > 0) changed++;
+            int radio = (!strcmp(comm, "hibynet") && ra_active()) || (fg_helper_pid && atoi(e->d_name) == (int)fg_helper_pid);
+            /* hibysync sets its own value (one owner): before, this rule wrote 600 over the 0
+             * the daemon left after a transfer with the phone still connected, and hibyguard
+             * then cut it */
+            int own = !strcmp(comm, "hibysync");
+            if (!own && guard_write(p, radio ? -700 : guard_rules[i].oom) > 0) changed++;
             if (radio) break;
             if (guard_rules[i].nice > -99) {
                 int pid = atoi(e->d_name);
@@ -1864,18 +1867,19 @@ static void maybe_rejuvenate(int avail_kb)
 {
     double t = now_ms();
     if (t - shell_t0 < 120000 || !launcher_on || V.edit || V.drag_app >= 0 || hud_active || cur_down) return;
-    if (sync_xfer_busy() || SY.sas_sid || SY.up_phase != UP_NONE) return;   /* ByOS Sync trabajando: despues */
+    if (SY.sas_sid || SY.pair_ui || SY.up_phase != UP_NONE) return;   /* ByOS Sync pairing or installing: later (a transfer goes on: sync_handover) */
     int req = !access("/tmp/hibymod/rejuv_req", F_OK);
     int rss = self_rss_kb();
     if (rss < 0 || (rss < REJUV_RSS_KB && !req)) return;
     if (!req && avail_kb >= 6500) return;
     unlink("/tmp/hibymod/rejuv_req");
     lg("rejuvenecer: shell %d KB, %d KB libres%s -> exec", rss, avail_kb, req ? " (pedido por hibyguard)" : "");
-    sync_shutdown();                              /* QUIT a hibysync (el shell nuevo lo vuelve a arrancar) */
+    sync_handover();                              /* hibysync keeps running: the new shell takes it over */
     if (logfp) fflush(logfp);
     { FILE *f = fopen("/tmp/hibymod/rejuv_count", "a"); if (f) { fprintf(f, "%.0f %d %d\n", t, rss, avail_kb); fclose(f); } }
     char *av[] = { (char *)"/usr/data/hibymod/shell/hibyshell", 0 };
     execv(av[0], av);
+    sync_handover_undo();
     lg("rejuvenecer: exec fallo (%s)", strerror(errno));
 }
 static void mem_guard(void)
@@ -1888,7 +1892,7 @@ static void mem_guard(void)
     if (kb < 0 || kb >= MEM_LOW_KB || t - last_trim < 20000) return;
     last_trim = t;
     mem_trim("auto");
-    sync_lowmem();                                /* ByOS Sync: fuera, salvo si transfiere o instala */
+    sync_lowmem();                                /* ByOS Sync: an idle USB-only daemon only (sync.inc.c) */
 }
 
 /* Antes el aviso de volumen alto parpadeaba sin parar y OK no respondia: en el inicio de ByOS el
@@ -1931,6 +1935,7 @@ int main(int argc, char **argv)
     { int f = open("/proc/sys/vm/overcommit_memory", O_WRONLY); if (f >= 0) { if (write(f, "1", 1) != 1) lg("overcommit: no se pudo"); close(f); } }
     perf_on = !access("/tmp/hibymod/perf", F_OK);
     shell_t0 = now_ms();
+    sync_adopt();                                 /* rejuvenated: the running hibysync is ours again (sync.inc.c) */
     self_heal();
     /* guardian de estabilidad (hibyguard.c): proceso aparte, bloqueado en RAM y en tiempo real,
      * que vigila la memoria y el vigilante de hardware. Una sola instancia (el se separa solo y

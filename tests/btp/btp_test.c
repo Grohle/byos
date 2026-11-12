@@ -21,7 +21,11 @@
  *       request and CANCEL of a queued one, .part takeover between two sessions, skip-identical
  *       as a hash job, one unauthenticated Wi-Fi session at a time, USB eviction, the securing
  *       deadline (PINGs do not extend it), unrevealed PAIR_COMMIT, and a 5 s blocking helper
- *       that must not time out the other sessions (separate run with 3 s timeouts). */
+ *       that must not time out the other sessions (separate run with 3 s timeouts). Daemon
+ *       survival: oom_score_adj stays -700 with a session after transfers, RESYNC, WIFI off/on
+ *       at run time with a USB session open, exit code 75 for a second instance, control-pipe
+ *       EOF with a session open (served until it closes), AUTH with the stored keys after a
+ *       restart, and a silent session giving its slot to a new client. */
 #define BTP_TEST 1
 #define BTP_NO_MAIN 1
 #include "../../src/hibysync.c"
@@ -490,6 +494,13 @@ static int cli_connect(const char *ip, int port, struct cli *c)
     }
     return -1;
 }
+/* one attempt, no retries: 0 = connected (fd closed again) */
+static int try_connect(const char *ip, int port)
+{
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    struct sockaddr_in a = { 0 }; a.sin_family = AF_INET; a.sin_port = htons((uint16_t)port); a.sin_addr.s_addr = inet_addr(ip);
+    int r = connect(fd, (struct sockaddr *)&a, sizeof a); close(fd); return r ? -1 : 0;
+}
 static int wall(int fd, const void *p, size_t n) { const uint8_t *b = p; while (n) { ssize_t k = send(fd, b, n, MSG_NOSIGNAL); if (k <= 0) return -1; b += k; n -= (size_t)k; } return 0; }
 static int rall(int fd, void *p, size_t n) { uint8_t *b = p; while (n) { ssize_t k = recv(fd, b, n, 0); if (k <= 0) return -1; b += k; n -= (size_t)k; } return 0; }
 static int cli_send(struct cli *c, int type, int flags, uint32_t stream, const void *p, size_t n)
@@ -563,6 +574,20 @@ static int hello_full(struct cli *c, uint8_t hc[32], uint8_t hd[32], int *dflags
     btp_sha256(q, l, hd); if (dflags) *dflags = q[3];
     return 0;
 }
+/* AUTH (8.3) of a paired client on a fresh connection after hello_full(); 0 = AUTH_OK */
+static int auth_run(struct cli *w, const uint8_t cs[32], const uint8_t Cs[32], const uint8_t Ds[32], const uint8_t hc[32], const uint8_t hd[32])
+{
+    uint8_t kid[16], ai[48], ce[32], Ce[32], De[32], ikm[96], th[32], prk[32]; int tt, f; uint32_t s, l; uint8_t *pp;
+    btp_key_id(Cs, kid); btp_random(ce, 32); btp_x25519_base(Ce, ce);
+    memcpy(ai, kid, 16); memcpy(ai + 16, Ce, 32); if (cli_send(w, T_AUTH_INIT, 0, 0, ai, 48)) return -1;
+    if (cli_recv(w, &tt, &f, &s, &pp, &l) || tt != T_AUTH_REPLY || l != 32) return -1;
+    memcpy(De, pp, 32);
+    btp_x25519_dh(ikm, ce, De); btp_x25519_dh(ikm + 32, cs, De); btp_x25519_dh(ikm + 64, ce, Ds);
+    btp_auth_th(hc, hd, kid, Ce, De, Cs, Ds, th); btp_hkdf_extract(th, 32, ikm, 96, prk); btp_keys(prk, w->ktx, w->krx); w->enc = 1;
+    if (cli_send(w, T_AUTH_FINISH, 0, 0, 0, 0)) return -1;
+    return !cli_recv(w, &tt, &f, &s, &pp, &l) && tt == T_AUTH_OK ? 0 : -1;
+}
+static uint8_t sv_cs[32], sv_Cs[32], sv_Ds[32]; static char *sv_peers; static size_t sv_peers_n;   /* the paired client, for the restart test */
 static size_t p_put(uint8_t *o, int ns, int mode, uint64_t size, int64_t mtime, const uint8_t sha[32], const char *path)
 {
     struct bwr w; bwr_init(&w, o, 2000); bwr_u8(&w, (uint32_t)ns); bwr_u8(&w, (uint32_t)mode); bwr_u64(&w, size); bwr_u64(&w, (uint64_t)mtime);
@@ -628,6 +653,7 @@ static int ctl_wait(const char *prefix, char *line, int cap)   /* skip other lin
 static void ctl_write(const char *l) { if (write(ctl_fd, l, strlen(l)) < 0) {} }
 
 static int short_idle;   /* next start_daemon(): idle and PUT-idle timeouts of 3 s */
+static int no_ready;     /* next start_daemon(): do not wait for READY (a second instance) */
 static pid_t start_daemon(const char *bin, const char *W, int wifi)
 {
     int sv[2]; socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
@@ -655,6 +681,7 @@ static pid_t start_daemon(const char *bin, const char *W, int wifi)
         _exit(127);
     }
     close(sv[1]); ctl_fd = sv[0];
+    if (no_ready) return pid;
     char line[256]; if (ctl_wait("READY", line, sizeof line)) { CHECK(0, "daemon READY"); return pid; }
     CHECK(!strncmp(line, "READY 17340 ", 12), "READY line: %s", line);
     return pid;
@@ -995,7 +1022,8 @@ static void daemon_tests(const char *bin, const char *W)
       CHECK(rpc(&w, T_DF, 1, 0, 0, &err, buf, &on) == T_DF_R, "encrypted DF after pairing");
       close(w.fd); usleep(200000);
       snprintf(p, sizeof p, "%s/data/hibymod/sync/peers", W); fc = rfile(p, &fl); char hx[65]; hexs(Cs, 32, hx);
-      CHECK(fc && strstr((char *)fc, hx) && strstr((char *)fc, "Laptop"), "peer stored"); free(fc);
+      CHECK(fc && strstr((char *)fc, hx) && strstr((char *)fc, "Laptop"), "peer stored");
+      memcpy(sv_cs, cs, 32); memcpy(sv_Cs, Cs, 32); memcpy(sv_Ds, Ds, 32); sv_peers = (char *)fc; sv_peers_n = fc ? fl : 0;
 
       /* AUTH reconnect, encrypted PUT and GET */
       CHECK(!cli_connect("127.0.0.2", 17340, &w) && !hello_full(&w, hc, hd, 0), "wifi reconnect");
@@ -1084,6 +1112,48 @@ static void daemon_tests(const char *bin, const char *W)
     { char kh[40] = ""; sscanf(line, "PEER %39s", kh); char fl2[80]; snprintf(fl2, sizeof fl2, "FORGET %s\n", kh); ctl_write(fl2); usleep(100000); }
     snprintf(p, sizeof p, "%s/data/hibymod/sync/peers", W); fc = rfile(p, &fl); CHECK(!fc || !strstr((char *)fc, "Laptop"), "FORGET removes the peer"); free(fc);
 
+    /* the daemon owns its oom_score_adj (test builds log each change): -700 from the first
+     * session on, never 0 after a PUT or a GET while a client is still connected */
+    {
+        snprintf(p, sizeof p, "%s/daemon.log", W); fc = rfile(p, &fl);
+        const char *last = 0; for (char *q = (char *)fc; fc && (q = strstr(q, "oom_score_adj ")); q++) last = q;
+        CHECK(fc && strstr((char *)fc, "oom_score_adj -700") && !strstr((char *)fc, "oom_score_adj 0\n"), "oom_score_adj: -700 with sessions, never 0");
+        CHECK(last && !strncmp(last, "oom_score_adj -700", 18), "oom_score_adj still -700 while the USB session is open after PUTs and GETs");
+        free(fc);
+    }
+    /* RESYNC (a rejuvenated shell took the daemon over): READY and the open sessions again */
+    while (!ctl_read_line(line, sizeof line, 300)) {}
+    ctl_write("RESYNC\n");
+    CHECK(!ctl_wait("READY ", line, sizeof line) && !strncmp(line, "READY 17340 1 ", 14), "RESYNC -> READY: %s", line);
+    CHECK(!ctl_wait("CONN ", line, sizeof line) && strstr(line, " usb Test%20PC"), "RESYNC -> CONN of the open USB session: %s", line);
+    /* WIFI off/on at run time: the USB session stays, the Wi-Fi listener and discovery follow */
+    while (!ctl_read_line(line, sizeof line, 300)) {}
+    ctl_write("WIFI off 0\n");
+    CHECK(!ctl_wait("READY ", line, sizeof line) && !strncmp(line, "READY 17340 0 ", 14), "WIFI off -> READY with Wi-Fi 0: %s", line);
+    CHECK(try_connect("127.0.0.2", 17340) != 0, "WIFI off: the Wi-Fi listener is closed");
+    CHECK(rpc(&c, T_DF, 201, 0, 0, &err, 0, 0) == T_DF_R, "WIFI off: the USB session goes on");
+    ctl_write("WIFI on 0\n");
+    CHECK(!ctl_wait("READY ", line, sizeof line) && !strncmp(line, "READY 17340 1 ", 14), "WIFI on -> READY with Wi-Fi 1: %s", line);
+    CHECK(try_connect("127.0.0.2", 17340) == 0, "WIFI on: the Wi-Fi listener is back");
+    {
+        int u = socket(AF_INET, SOCK_DGRAM, 0); struct timeval tv = { 2, 0 }; setsockopt(u, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        struct sockaddr_in to = { 0 }; to.sin_family = AF_INET; to.sin_port = htons(17340); to.sin_addr.s_addr = inet_addr("127.0.0.2");
+        uint8_t pr[16] = { 'B', 'T', 'P', 'D', 1, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8 }, an[128];
+        usleep(100000); sendto(u, pr, 16, 0, (struct sockaddr *)&to, sizeof to);
+        ssize_t n = recv(u, an, sizeof an, 0);
+        CHECK(n >= 27 && !memcmp(an + 8, pr + 8, 8), "WIFI on: discovery answers again");
+        close(u);
+    }
+    CHECK(rpc(&c, T_DF, 203, 0, 0, &err, 0, 0) == T_DF_R, "WIFI on: the USB session goes on");
+    /* a second daemon while this one runs: exit code 75 (the shell retries later, no failure) */
+    {
+        int keep = ctl_fd; no_ready = 1; pid_t p2 = start_daemon(bin, W, 0); no_ready = 0;
+        int st2 = 0, got = 0; for (int i = 0; i < 150 && !got; i++) { if (waitpid(p2, &st2, WNOHANG) == p2) got = 1; else usleep(20000); }
+        CHECK(got && WIFEXITED(st2) && WEXITSTATUS(st2) == 75, "a second instance exits with 75 (%d)", got && WIFEXITED(st2) ? WEXITSTATUS(st2) : -1);
+        if (!got) { kill(p2, SIGKILL); waitpid(p2, 0, 0); }
+        close(ctl_fd); ctl_fd = keep;
+    }
+
     /* QUIT */
     close(c.fd);
     ctl_write("QUIT\n");
@@ -1092,12 +1162,34 @@ static void daemon_tests(const char *bin, const char *W)
     close(ctl_fd);
     snprintf(p, sizeof p, "%s/data/hibymod/sync/device.key", W); CHECK(!stat(p, &st) && (st.st_mode & 0777) == 0600 && st.st_size == 32, "device.key 0600");
 
-    /* control EOF: the shell went away */
+    /* a paired client after the daemon restarted (or the player rebooted): AUTH with the stored
+     * keys (device.key and the peers file) works without pairing again */
+    if (sv_peers) {
+        snprintf(p, sizeof p, "%s/data/hibymod/sync/peers", W); wfile(p, sv_peers, sv_peers_n); free(sv_peers); sv_peers = 0;
+        pid = start_daemon(bin, W, 1);
+        struct cli w; uint8_t hc[32], hd[32]; int dfl = 0;
+        CHECK(!cli_connect("127.0.0.2", 17340, &w) && !hello_full(&w, hc, hd, &dfl), "restart: wifi connect");
+        CHECK(!auth_run(&w, sv_cs, sv_Cs, sv_Ds, hc, hd), "restart: AUTH with the stored keys, no new pairing");
+        CHECK(rpc(&w, T_DF, 1, 0, 0, &err, 0, 0) == T_DF_R, "restart: encrypted request served");
+        CHECK(!ctl_wait("CONN ", line, sizeof line) && strstr(line, " wifi Laptop"), "restart: CONN with the stored name: %s", line);
+        close(w.fd);
+        ctl_write("QUIT\n"); CHECK(!wait_exit(pid, 3000), "restart run: exits"); close(ctl_fd);
+    } else CHECK(0, "pairing did not store a peer");
+
+    /* control EOF: the shell went away (or was killed) with a session open: that session is still
+     * served, nothing new is accepted, and the daemon exits when it closes */
     pid = start_daemon(bin, W, 0);
     struct cli z; CHECK(!cli_connect("127.0.0.1", 17340, &z) && !hello(&z, 0), "second run: same key, connect");
-    close(ctl_fd);
-    CHECK(!wait_exit(pid, 3000), "daemon exits when the control pipe closes");
+    usleep(100000); close(ctl_fd);
+    usleep(300000);
+    { int st2; CHECK(waitpid(pid, &st2, WNOHANG) == 0, "control pipe closed with a session open: still running"); }
+    CHECK(rpc(&z, T_DF, 1, 0, 0, &err, 0, 0) == T_DF_R, "control pipe closed: the open session is still served");
+    CHECK(try_connect("127.0.0.1", 17340) != 0, "control pipe closed: no new connection");
     close(z.fd);
+    CHECK(!wait_exit(pid, 3000), "daemon exits when its last session closes");
+    pid = start_daemon(bin, W, 0);
+    close(ctl_fd);
+    CHECK(!wait_exit(pid, 3000), "daemon exits when the control pipe closes (no session)");
     /* SIGTERM with an open PUT: part kept */
     pid = start_daemon(bin, W, 0);
     CHECK(!cli_connect("127.0.0.1", 17340, &z) && !hello(&z, 0), "third run");
@@ -1140,6 +1232,22 @@ static void daemon_tests(const char *bin, const char *W)
         close(a.fd); close(b.fd);
     }
     ctl_write("QUIT\n"); CHECK(!wait_exit(pid, 3000), "stall run: exits");
+    close(ctl_fd);
+
+    /* both slots held by silent sessions (a phone that slept or lost Wi-Fi): a new client gets
+     * the slot of the one silent the longest instead of E_BUSY (idle limit 3 s here: silent = 2 s) */
+    short_idle = 1; pid = start_daemon(bin, W, 0); short_idle = 0;
+    {
+        struct cli a, b, n3; int dfl = 0;
+        CHECK(!cli_connect("127.0.0.1", 17340, &a) && !hello(&a, 0) && !cli_connect("127.0.0.1", 17340, &b) && !hello(&b, 0), "silent run: two sessions");
+        usleep(2300000);
+        CHECK(!cli_connect("127.0.0.1", 17340, &n3) && !hello(&n3, &dfl), "silent run: a third client gets a slot");
+        CHECK(rpc(&n3, T_DF, 1, 0, 0, &err, 0, 0) == T_DF_R, "silent run: and is served");
+        int t, f; uint32_t s, l; uint8_t *q;
+        CHECK(!cli_recv(&a, &t, &f, &s, &q, &l) && t == T_BYE, "silent run: the oldest silent session got BYE");
+        close(a.fd); close(b.fd); close(n3.fd);
+    }
+    ctl_write("QUIT\n"); CHECK(!wait_exit(pid, 3000), "silent run: exits");
     close(ctl_fd);
 }
 

@@ -826,9 +826,8 @@ sessions it is ignored. Bit 1 = ALLOW_DOWNGRADE.
 | `error` | an error code from section 6 when state is 5 (for example `E_BATTERY`, `E_IO`) |
 | `version` | the staged or installed version |
 
-When the install needs a **shell restart**, the shell exits and its supervisor starts the new
-one. `hibysync` is a child of the shell and exits when its control pipe closes, so the client
-sees the connection drop after state 4. It then waits for the user (or polls) and reconnects
+When the install needs a **shell restart**, the shell stops `hibysync` (QUIT) and exits, and its
+supervisor starts the new one, so the client sees the connection drop after state 4. It then waits for the user (or polls) and reconnects
 once the user reopens *ByOS Sync*. For a **reboot**, the shell shows its usual *Restart Now*,
 and BTP/1 never reboots the device by itself.
 
@@ -878,6 +877,10 @@ Rules for the device:
 - Answer at most 10 probes per second. Ignore packets that are not exactly 16 bytes, have the
   wrong magic or version, or have a type other than 1.
 - Send one unsolicited ANNOUNCE when Wi-Fi sync is turned on, and one each time pairing opens.
+- The socket is bound to every address on port 7340, so a probe sent to the subnet broadcast, to
+  255.255.255.255 or **unicast** to the device's address is answered the same way. A client whose
+  broadcasts do not arrive (some access points and Wi-Fi power-save modes drop them) can probe
+  the addresses of its subnet one by one.
 
 The announce is not authenticated. Clients use it to find the address, and the identity comes
 from AUTH (8.3). A client that receives several announces with the same device_id keeps the
@@ -891,7 +894,7 @@ Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packe
 |---|---|
 | `max_payload` | 65544 (BTP/1, both sides) |
 | DATA data length | 1 to 65536 |
-| Concurrent sessions | 2 (`E_BUSY`) |
+| Concurrent sessions | 2 (`E_BUSY`). When both are taken, a new client (USB or Wi-Fi) gets the slot of an open session that has received nothing for 45 s (3/8 of the idle limit) and runs nothing; that session gets `BYE` |
 | HELLO deadline after connect | 5 s |
 | Pairing: from PAIR_REVEAL to Allow/Deny | 120 s |
 | Idle session (no frame received) | 120 s; clients send PING every 30 s while idle. The clock restarts when a job (GET, LIST, ...) ends |
@@ -921,7 +924,8 @@ Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packe
   on demand:
   - *Settings › ByOS Sync* (or *Connect to computer*) opens the page and starts
     `hibysync serve` (loopback only);
-  - the *Wi-Fi sync* toggle adds `--wifi` (the shell restarts the daemon with the new option);
+  - with the *Wi-Fi sync* toggle on, it starts with `--wifi`; changing the toggle while it runs
+    sends `WIFI on|off` (18.3) instead of restarting it;
   - *Pair new device* sends `PAIRING on` (with `--wifi` running).
 - Command line used by the shell:
 
@@ -936,8 +940,13 @@ Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packe
   stdout and stderr go to `/dev/null` and a log file. As with the shell's other children, the
   daemon inherits no other descriptors (the shim's input socket must not stay open).
 - The shell starts it with `nice 19` and the idle I/O class (`ioprio_set` IOPRIO_CLASS_IDLE).
-  It is in hibyguard's helper list. While a transfer or install lock is held, the daemon writes
-  `-700` to its own `oom_score_adj` (as the radio does) and sets it back to 0 when idle.
+  It is in hibyguard's helper list. The daemon alone writes its `oom_score_adj` (the shell's
+  resource guard only sets its nice): `-700` while any session is open (USB or Wi-Fi,
+  authenticated or not, which covers pairing, transfers and update checks) or the pairing window
+  is open, `600` when idle. While `-700` it rewrites the value every 10 s. hibyguard and the
+  shell's memory watchers never cut it at `-700`; idle, hibyguard cuts it only when it holds
+  more than 1 MB or memory is severe (below 3 MB), and the shell's critical watcher (below
+  4.5 MB) stops it, then starts it again after a minute when Wi-Fi sync is on.
 - `--idle-exit`: exit after that many seconds with no session (the shell uses 600 when it starts
   the daemon only for USB and the user leaves the page).
 - **Fallback without the shell** (USB only): the client MAY start it with
@@ -949,8 +958,15 @@ Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packe
 ### 18.2 Stop
 
 - The shell writes `QUIT`, waits up to 3 s, then sends SIGTERM, then SIGKILL after another 2 s.
-- The daemon exits by itself when the control pipe reaches EOF (the shell died or restarted).
-  It finishes nothing in that case: open PUTs keep their part files.
+- Control pipe EOF (the shell exited or was killed): with no session open the daemon exits at
+  once. With sessions open it keeps serving them, without the shell (no pairing, RESCAN or
+  UPDATE_INSTALL; an install waiting for the shell reports state 5 `E_CANCELLED`), closes its
+  listeners so it takes no new connection, and exits when the last session closes.
+- A second instance (the lock is held) exits with code 75; the shell starts it again 10 s later
+  without counting a failed start.
+- Shell rejuvenation (the shell replaces itself with `exec`, same process): the daemon is not
+  stopped. The control socket is kept across the exec (environment `HIBYSYNC_ADOPT`), the new
+  shell takes it over and sends `RESYNC`. Sessions and transfers do not notice.
 - On SIGTERM: close the listeners, send `ERROR E_CANCELLED` on running streams and `BYE`, fsync
   open parts, and exit within 1 s.
 
@@ -983,6 +999,8 @@ Shell to daemon:
 |---|---|
 | `ALLOW <sid>` / `DENY <sid>` | Answer to SAS |
 | `PAIRING on\|off` | Open or close the pairing window (closes by itself after 5 minutes or 3 failures) |
+| `WIFI on\|off [<idle-exit s>]` | Turn the Wi-Fi listener and discovery on or off without a restart (off closes Wi-Fi sessions with BYE and the pairing window; USB sessions stay). The optional number replaces `--idle-exit` (0 = never). Answered with `READY`. The shell turns Wi-Fi off only when no Wi-Fi client is connected or pairing. |
+| `RESYNC` | Answered with `READY`, then one `CONN` line per open session (used by a shell that took the daemon over after an `exec`) |
 | `FORGET <key_id hex>` | Remove a peer (open sessions of that peer are closed) |
 | `PEERS` | The daemon answers with lines `PEER <key_id hex> <paired time> <name>` and then `PEERS END` |
 | `UPDATE_STATE <state> <permille> <error>` | Install progress for UPDATE_STATUS (state numbers as in 14.3) |
@@ -1008,8 +1026,12 @@ draws, never reboots, and never installs by itself.
 4. Send `SD 2` when the shell switches to USB storage and `SD 0` when it switches back.
 5. To stop: write `QUIT`, wait for `BYE`/the child's exit (3 s), then SIGTERM, then SIGKILL after
    2 s. Closing `sv[0]` also stops it (the daemon exits on EOF).
-6. Wi-Fi sync toggle: stop and start again with or without `--wifi`. *Pair new device*:
-   `PAIRING on` (accepted only with `--wifi`), and `PAIRING off` when the screen closes.
+6. Wi-Fi sync toggle: `WIFI on` / `WIFI off 600` to the running daemon (no restart). *Pair new
+   device*: `PAIRING on` (accepted only while Wi-Fi is on), and `PAIRING off` when the screen
+   closes.
+7. Never stop the daemon while it is needed: a session open, a pairing, a transfer or an install,
+   or a session opened or closed in the last 2 minutes. Only a start that never reaches `READY`
+   counts as a failed start (three of them stop the automatic restarts until the page opens).
 
 ### 18.5 Test builds
 
@@ -1040,6 +1062,8 @@ none of these hooks.
   kept part on resume, and the prefix of a GET resumed with a hash.
 - Two sessions sending the same PUT (same `.part`): the newer `PUT_BEGIN` takes the part over
   and the older put gets `E_CANCELLED` (its data is kept and synced first).
+- UPDATE_INSTALL right after UPDATE_STAGE does not hash the payload tar again when it is the same
+  file (same inode, size and mtime as the one UPDATE_STAGE verified).
 - Session buffers are given back with `MADV_DONTNEED` on close (PC check: anonymous RSS of a
   static x86 build goes from 164 kB with a session after a 1 MiB PUT to 92 kB after close).
 - No device measurements yet: RSS, throughput, XSalsa20-Poly1305 cost on the X1600, renameat2
