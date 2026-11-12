@@ -44,7 +44,7 @@ static int in_tr(const char *k) { for (unsigned i = 0; i < sizeof TR / sizeof TR
 
 int main(void)
 {
-    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout;
+    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)kb_cfg_layouts;
     if (!text_init()) { printf("no se pudo cargar default.otf (TEXT_FONT_DIRS)\n"); return 2; }
     unsigned ntr = sizeof TR / sizeof TR[0];
     int nkeys = 0, nwarn = 0, nmiss_gl = 0;

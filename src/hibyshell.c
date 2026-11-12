@@ -1212,6 +1212,7 @@ static int app_back_gesture(int sx, int sy);
 #include "launcher.inc.c"
 #include "launcher_touch.inc.c"
 #include "settings.inc.c"
+#include "kb_ime.inc.c"                 /* teclado: distribuciones de los 13 idiomas, hangul, kana, pinyin */
 #include "keyboard.inc.c"
 #include "tageditor.inc.c"
 #include "nowplaying.inc.c"

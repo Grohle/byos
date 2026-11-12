@@ -30,7 +30,7 @@ static void fmt_seq(const char *s, char *o, int n)
 }
 int main(int argc, char **argv)
 {
-    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout;
+    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)kb_cfg_layouts;
     if (!text_init()) { printf("no se pudo cargar default.otf (TEXT_FONT_DIRS)\n"); return 2; }
     unsigned n = sizeof RATR / sizeof RATR[0];
     for (unsigned i = 0; i < n; i++) {

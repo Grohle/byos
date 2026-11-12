@@ -151,7 +151,7 @@ static void eu_list(void)
 
 int main(void)
 {
-    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout;
+    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)kb_cfg_layouts;
     if (!text_init()) { printf("no font (TEXT_FONT_DIRS)\n"); return 2; }
     ra_lb = calloc(1, sizeof *ra_lb);
     { char e[] = ""; ra_srcs_parse(&ra_sr, e); }
