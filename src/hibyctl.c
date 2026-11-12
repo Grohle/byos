@@ -50,7 +50,7 @@ static int shot(const char *out, int which)
     return 0;
 }
 
-#define TS "/dev/input/event1"
+#define TS (getenv("HIBYCTL_TS") ? getenv("HIBYCTL_TS") : "/dev/input/event1")   /* HIBYCTL_TS=/dev/input/eventN: tocar otro dispositivo (p. ej. el del reproductor, bajo ByOS) */
 
 static int fd = -1;
 static struct input_event buf[32];

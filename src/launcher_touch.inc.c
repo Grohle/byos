@@ -53,6 +53,49 @@ static int wait_left_home(int timeout_ms)
     }
     return 0;
 }
+/* ---- editores de "Play" de HiBy (MSEB, ecualizador grafico, PEQ) desde Ajustes > Sonido.
+ * Inicio de HiBy -> su app Musica -> engranaje -> Play -> la fila. Cada paso se comprueba en la
+ * imagen del reproductor (fr1): la pagina principal de Musica tiene el engranaje grande arriba a
+ * la derecha; Play es una lista de fichas (filas 110/190/270) separadas por negro (150/230). */
+static int nav_stock_row = 110;           /* MSEB 110, Ecualizador 190, PEQ 270 */
+static int fr1_bright(int x0, int y0, int x1, int y1)
+{
+    int n = 0;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) if (lum(fr1[y * W + x]) > 150) n++;
+    return n;
+}
+static int is_hiby_list_page(const uint16_t *img)
+{
+    static const int card[] = { 110, 190, 270 }, gap[] = { 150, 230 };
+    for (int i = 0; i < 3; i++) { int l = lum(img[card[i] * W + 10]); if (l < 15 || l > 45) return 0; }
+    for (int i = 0; i < 2; i++) if (lum(img[gap[i] * W + 10]) > 8) return 0;
+    return has_statusbar(img);
+}
+static int open_stock_play_nav(void)
+{
+    inj_tap(116, 425);                                      /* la app Musica de HiBy */
+    if (!wait_left_home(6000)) { lg("nav: la app Musica de HiBy no se abrio (inicio %d)", is_home(fr1)); return 0; }
+    { uint32_t c = st->cap_frames; settle(c, 1500, 200); }
+    /* puede abrirse donde se dejo: atras hasta su pagina principal (la del engranaje) */
+    for (int i = 0; i < 4 && fr1_bright(284, 36, 308, 60) < 120; i++) { uint32_t c = st->cap_frames; inj_tap(22, 48); settle(c, 1200, 200); }
+    if (fr1_bright(284, 36, 308, 60) < 120) { lg("nav: la app Musica de HiBy no muestra su engranaje"); return 0; }
+    msleep(250);
+    uint32_t c = st->cap_frames; inj_tap(296, 48); settle(c, 2000, 300);
+    if (!is_hiby_list_page(fr1)) { lg("nav: el engranaje no abrio Play"); return 0; }
+    /* su lista entra deslizandose: un toque a mitad de la animacion se pierde. Quieta, tocar, y
+     * si en 1,5 s la pantalla sigue siendo la lista, otro toque */
+    msleep(350);
+    for (int k = 0; k < 2; k++) {
+        inj_tap(160, nav_stock_row);
+        /* el editor tarda en cargar (MSEB ~1 s): esperar a que la lista se vaya antes de
+         * repetir; un segundo toque a destiempo caia ya dentro del editor (en un control) */
+        double tw = now_ms();
+        while (is_hiby_list_page(fr1) && now_ms() - tw < 3500) { msleep(20); st->shell_beat++; }
+        if (!is_hiby_list_page(fr1)) { uint32_t c2 = st->cap_frames; settle(c2, 200, 250); return 1; }
+        lg("nav: la fila %d de Play no respondio (intento %d)", nav_stock_row, k + 1);
+    }
+    return 0;
+}
 static int open_app_nav(void)   /* en el hilo de navegacion; pantalla congelada */
 {
     struct lapp *ap = &apps[nav_app];

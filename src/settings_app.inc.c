@@ -989,6 +989,11 @@ static void settings_run(int ix, int iy, int mode)
         present(); if (t >= 1) break;
     }
     open_page(root_fn, 0);
+    if (ss_handoff) {   /* se abrio un editor de HiBy: su pantalla ya esta delante, sin animacion ni inicio */
+        ss_handoff = 0; sp_gone = 0; sp_self = -1; sp_root_name = "Ajustes";
+        drain_until_up();
+        return;
+    }
     if (!sp_gone) {   /* salir: encoger hacia el icono (el gesto de inicio ya lo hizo si sp_gone) */
         struct spage pg; root_fn(&pg); sp_render(img_app, &pg, -1, 0);
         render_launcher(img_base, now_ms());

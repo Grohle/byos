@@ -529,7 +529,8 @@ static void compose_sheet(uint16_t *dst, const uint16_t *under, const uint16_t *
 }
 
 /* ------------------------------------------------------------------ navegacion en segundo plano */
-enum { NAV_NONE, NAV_TO_PLANE, NAV_BACK, NAV_HOME, NAV_APP };
+enum { NAV_NONE, NAV_TO_PLANE, NAV_BACK, NAV_HOME, NAV_APP, NAV_STOCKPLAY };
+static int open_stock_play_nav(void);   /* launcher_touch.inc.c: un editor de Play de HiBy (MSEB, ecualizador, PEQ) */
 static volatile int nav_req, nav_done, nav_ok;
 static pthread_mutex_t nav_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t nav_cv = PTHREAD_COND_INITIALIZER;
@@ -593,6 +594,8 @@ static void *nav_thread(void *arg)
             ok = back_to_home();
         } else if (req == NAV_APP) {
             ok = open_app_nav();
+        } else if (req == NAV_STOCKPLAY) {
+            ok = back_to_home(); if (!ok) lg("nav: no se pudo volver al inicio de HiBy"); else ok = open_stock_play_nav();
         }
         lg("nav %d -> %s en %.0f ms", req, ok ? "ok" : "FALLO", now_ms() - t0);
         pthread_mutex_lock(&nav_mu);

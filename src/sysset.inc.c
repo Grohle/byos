@@ -574,6 +574,40 @@ static void page_eq(struct spage *p)
     }
 }
 static void nav_eq(void) { ps_refresh(); open_page(page_eq, "Sonido"); }
+/* editores completos de HiBy (MSEB con sus 10 controles, curva de 10 bandas, PEQ parametrico):
+ * se abren encima, como "Biblioteca de HiBy" en Musica; Ajustes se cierra sin animacion (la
+ * pantalla ya es la de HiBy) y se vuelve al inicio con el gesto de siempre */
+static void mu_spinner(uint16_t *d, int cx, int cy);
+static int ss_handoff;
+static void ss_open_hiby_editor(int row)
+{
+    memcpy(img_under, fr0, HM_FRAME_BYTES);
+    nav_stock_row = row; nav_start(NAV_STOCKPLAY);
+    double t0 = now_ms();
+    while (!nav_done && now_ms() - t0 < 9000) {
+        memcpy(fr0, img_under, HM_FRAME_BYTES);
+        fill_rrect(fr0, W / 2 - 36, H / 2 - 36, 72, 72, 16, rgb(28, 28, 30), 230);
+        mu_spinner(fr0, W / 2, H / 2);
+        present(); msleep(30);
+    }
+    int ok = nav_wait(1000);
+    if (ok != 1) { memcpy(fr0, img_under, HM_FRAME_BYTES); present(); toast(tr("No se pudo abrir")); lg("ajustes: editor de HiBy (fila %d): no se pudo abrir", row); return; }
+    double t1 = now_ms();
+    for (;;) {
+        double t = (now_ms() - t1) / 200; if (t > 1) t = 1;
+        unsigned al = (unsigned)(255 * ease_out(t));
+        for (int i = 0; i < W * H; i++) fr0[i] = mix565(fr1[i], img_under[i], al);
+        present();
+        if (t >= 1) break;
+    }
+    have_under = 0; launcher_on = 0; V.edit = 0; launcher_park_publish();
+    cmd('R');
+    lg("ajustes -> editor de HiBy (fila %d)", row);
+    ss_handoff = 1; sp_gone = 1;
+}
+static void nav_hiby_mseb(void) { ss_open_hiby_editor(110); }
+static void nav_hiby_eq(void) { ss_open_hiby_editor(190); }
+static void nav_hiby_peq(void) { ss_open_hiby_editor(270); }
 static void page_sound(struct spage *p)
 {
     *p = (struct spage){ "Sonido" };
@@ -587,8 +621,11 @@ static void page_sound(struct spage *p)
         ROWC("Modo de reproducción", &ps_v[PS_PLAYMODE], O_PLAYMODE, 4, ssa_playmode, 0),
         ROWT("Sin pausas", &ps_v[PS_GAPLESS], ssa_gapless, 0), ROWT("Fundido", &ps_v[PS_FADE], ssa_fade, 0),
         ROWI("Más opciones", nav_playback, 0, 0) }, 4 };
-    p->secs[2] = (struct ssec){ "ECUALIZACIÓN", "MSEB_HELP", { ROW("Ecualizador", R_NAV, 0, 0, 0, nav_eq, v_eq, 0),
-                                                           ROWT("MSEB", &ps_v[PS_MSEB], ssa_mseb, mseb_off) }, 2 };
+    p->secs[2] = (struct ssec){ "ECUALIZACIÓN", "EQ_EDITORS_HELP", { ROW("Ecualizador", R_NAV, 0, 0, 0, nav_eq, v_eq, 0),
+                                                           ROWI("Curva del ecualizador", nav_hiby_eq, 0, 0),
+                                                           ROWT("MSEB", &ps_v[PS_MSEB], ssa_mseb, mseb_off),
+                                                           ROWI("Ajustar MSEB", nav_hiby_mseb, 0, 0),
+                                                           ROWI("Ecualizador paramétrico (PEQ)", nav_hiby_peq, 0, 0) }, 5 };
     p->secs[3] = (struct ssec){ "DAC ES9219", au_filt_max >= 7 ? "FILT_HELP" : "FILT_HELP_OLD", {
         ROW("Filtro digital", R_CHOICE, &au_filt_i, n == 7 ? O_FILT8 : O_FILT2, n, apply_filter, 0, 0) }, 1 };
     ui_vlim = vl_on;
