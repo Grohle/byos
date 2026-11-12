@@ -179,7 +179,10 @@ static void draw_scaled(uint16_t *dst, const uint16_t *src, int rx, int ry, int 
     for (int x = 0; x < rw && x < W; x++) xm[x] = x * W / rw;
     for (int y = 0; y < rh; y++) {
         int yy = ry + y; if (yy < 0 || yy >= H) continue;
-        const uint16_t *s = src + (y * H / rh) * W;
+        /* reducida (zoom, tarjetas) la app no lleva su barra de estado: esas filas son su fondo
+         * (la fila 30), como las tarjetas de iOS; si no, se veian dos relojes al final del zoom */
+        int sy = y * H / rh; if (rh < H - 4 && sy < 30) sy = 30;
+        const uint16_t *s = src + sy * W;
         uint16_t *d = dst + yy * W;
         float edge = 0;                                /* x del borde curvo (con decimales) */
         if (r > 0.5f) {

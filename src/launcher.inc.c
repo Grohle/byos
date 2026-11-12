@@ -690,11 +690,24 @@ static void draw_app_at(uint16_t *dst, int a, int x, int y, int show_label, doub
 static void compose_statusbar_on(uint16_t *dst, const uint16_t *bg);
 static void compose_statusbar(uint16_t *dst) { compose_statusbar_on(dst, wall); }
 /* la misma barra sobre otro fondo (filas 0-29 de bg): la pagina de widgets la desenfoca */
+/* la barra del reproductor (negra opaca con el texto encima) es la fuente del reloj y los
+ * iconos. Tras cerrar una app propia, fr1 puede llevar aun la barra de la app (el reproductor
+ * recibe de vuelta sus buferes con la imagen del shell) hasta que redibuja la suya: se usa la
+ * ultima buena (si no, la barra del inicio salia negra ~0,6 s, revisor 12-11) */
+static uint16_t sb_good[30 * W]; static int sb_good_ok;
+static const uint16_t *sb_source(void)
+{
+    int black = 0, n = 0;
+    for (int y = 1; y < 30; y += 4) for (int x = 2; x < W; x += 6) { uint16_t q = fr1[y * W + x]; n++; if (q < 0x0841) black++; }
+    if (black * 100 >= n * 80) { memcpy(sb_good, fr1, sizeof sb_good); sb_good_ok = 1; return fr1; }
+    return sb_good_ok ? sb_good : fr1;
+}
 static void compose_statusbar_on(uint16_t *dst, const uint16_t *bg)
 {
     if (bg != dst) memcpy(dst, bg, 30 * W * 2);
+    const uint16_t *src = sb_source();
     for (int y = 0; y < 30; y++) {
-        uint16_t *d = dst + y * W; const uint16_t *s = fr1 + y * W;
+        uint16_t *d = dst + y * W; const uint16_t *s = src + y * W;
         int k = 22 + y * 10 / 30;
         for (int x = 0; x < W; x++) {
             uint16_t p = s[x];
