@@ -477,8 +477,12 @@ static int mu_cover_make_unlocked(const char *track, int cls, uint16_t *px, uint
     /* en el aparato suelen quedar 7-11 MB libres con el reproductor sonando: con el umbral
      * antiguo (12 MB) las caratulas de albumes aun sin cache (p. ej. las filas de una mezcla)
      * no se generaban nunca y salia siempre la nota. hibywall va limitado (ulimit -v). */
-    int avail = mu_mem_avail_kb(), lim = avail - 4096; if (lim > 10240) lim = 10240;
-    if (lim < 4096) return -2;                        /* poca memoria ahora: se reintentara (una sola decodificacion a la vez, nice 10) */
+    /* Con la reserva de 4 MB y un minimo de 4 MB hacian falta 8 MB libres, y con el reproductor
+     * sonando quedan 6-7 MB: no se generaba NINGUNA caratula (todas la nota; medido en el aparato
+     * con 3 albumes con cover.jpg). Una portada normal se decodifica con < 1 MB y hibywall va
+     * limitado (RLIMIT_AS = lim): si no cabe, falla sin dano y se reintenta. */
+    int avail = mu_mem_avail_kb(), lim = avail - 2048; if (lim > 10240) lim = 10240;
+    if (lim < 2048) return -2;                        /* poca memoria ahora: se reintentara (una sola decodificacion a la vez, nice 10) */
     mu_mkcache();
     int kind = mu_cover_src(track, dir, src, sizeof src);
     if (!kind) { int o = open(none, O_WRONLY | O_CREAT, 0644); if (o >= 0) close(o); return -1; }
@@ -545,7 +549,7 @@ static void *mu_cover_thread(void *arg)
                 if (mu_sl[i].state == 1 && (!best || mu_sl[i].use > best->use)) best = &mu_sl[i];
             if (best) break;
             /* en reposo y con la app abierta: adelantar las miniaturas del siguiente album */
-            if (mu_open && ML && !mu_busy && now_ms() - mu_last_input > 1200 && mu_pref_i < ML->nA && mu_mem_avail_kb() > 12288) { pref = mu_pref_i++; break; }
+            if (mu_open && ML && !mu_busy && now_ms() - mu_last_input > 1200 && mu_pref_i < ML->nA && mu_mem_avail_kb() > 5120) { pref = mu_pref_i++; break; }
             struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 1;
             pthread_cond_timedwait(&mu_cv, &mu_mu, &ts);
         }
