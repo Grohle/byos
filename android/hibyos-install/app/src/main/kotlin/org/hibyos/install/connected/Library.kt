@@ -19,6 +19,22 @@ data class Artist(val name: String, val albums: List<Album>) {
 
 /** The library grouped the way the player's own Music app shows it. */
 class Library(val artists: List<Artist>, val albums: List<Album>, val tracks: List<Track>) {
+    /** What matches [query] (every word, in any order, without case or accents), best kept in list order. */
+    class Found(val artists: List<Artist>, val albums: List<Album>, val tracks: List<Track>) {
+        val empty: Boolean get() = artists.isEmpty() && albums.isEmpty() && tracks.isEmpty()
+    }
+
+    fun search(query: String): Found {
+        val words = fold(query).split(' ').filter { it.isNotEmpty() }
+        if (words.isEmpty()) return Found(emptyList(), emptyList(), emptyList())
+        fun hit(vararg fields: String): Boolean {
+            val text = fields.joinToString(" ") { fold(it) }
+            return words.all { text.contains(it) }
+        }
+        return Found(artists.filter { hit(it.name) }, albums.filter { hit(it.title, it.artist) },
+            tracks.filter { hit(it.title, it.artist, it.albumArtist, it.album) })
+    }
+
     /** The library without the songs at these card paths (or inside these card folders). */
     fun without(paths: Set<String>, folders: Set<String> = emptySet()): Library = build(tracks.filter { t ->
         val p = cardPath(t.path)
@@ -26,6 +42,29 @@ class Library(val artists: List<Artist>, val albums: List<Album>, val tracks: Li
     })
 
     companion object {
+        /**
+         * Where an album's artwork is looked for: the folder of its songs; for an album split in
+         * sibling folders (CD1, CD2) their parent; otherwise the first song's folder.
+         */
+        fun artFolder(album: Album): String? {
+            val dirs = album.tracks.mapNotNull { cardPath(it.path) }.map { SyncPaths.parent(it) }.distinct()
+            if (dirs.isEmpty()) return null
+            if (dirs.size == 1) return dirs[0].ifEmpty { null }
+            val parents = dirs.map { SyncPaths.parent(it) }.distinct()
+            return (if (parents.size == 1) parents[0] else dirs[0]).ifEmpty { null }
+        }
+
+        /** Lower case, without accents: "Beyoncé" is found with "beyonce". */
+        fun fold(s: String): String =
+            java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
+
+        /** The artwork to show for files in [names] of an album folder: a known cover name first, then any picture. */
+        fun coverIn(names: List<SyncEntry>): SyncEntry? {
+            val pics = names.filter { !it.isFolder && FileKinds.of(it.name) == FileKind.IMAGE && it.size in 1..(8L shl 20) }
+            for (c in FileKinds.coverNames) pics.firstOrNull { it.name.equals(c, ignoreCase = true) }?.let { return it }
+            return pics.minByOrNull { it.name.lowercase() }
+        }
+
         /** Top folders of the card that are never deleted as an "album folder". */
         private val protectedFolders = setOf("music", "books", "pictures", "apps", "playlists", "byos", "download", "downloads",
             "recordings", "record", "podcasts", "audiobooks")

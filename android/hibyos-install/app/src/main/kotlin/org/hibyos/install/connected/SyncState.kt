@@ -72,7 +72,14 @@ data class Browser(
     val moving: String? = null,
     val prompt: Prompt? = null,
     val working: Boolean = false,
+    /** A card file being copied to the phone ("Save to phone"). */
+    val download: Download? = null,
 )
+
+/** GET of one card file into a document the user created on the phone. */
+data class Download(val name: String, val done: Long = 0, val total: Long = 0, val finished: Boolean = false, val error: ErrorInfo? = null) {
+    val running: Boolean get() = !finished && error == null
+}
 
 /** LIB_RESCAN mode 0: the player looks for new, changed and removed songs, then the library is read again. */
 sealed interface Rescan {
@@ -199,6 +206,10 @@ data class SyncState(
     val libError: ErrorInfo? = null,
     /** Files were moved, renamed or deleted on the card: the library is out of date until a rescan. */
     val libraryChanged: Boolean = false,
+    /** The search over artists, albums and songs ("" shows the lists). */
+    val libraryQuery: String = "",
+    /** Album artwork read from the card: album folder -> image file in the app's cache (null: none found). */
+    val covers: Map<String, String?> = emptyMap(),
     val otaPick: OtaPick = OtaPick(),
     val ota: OtaPhase = OtaPhase.Idle,
 ) {
@@ -209,7 +220,7 @@ data class SyncState(
     val busy: Boolean
         get() = link is Link.Searching || link is Link.Connecting || (link is Link.Pairing && link.waiting) ||
             transfer.running || library is LibraryPhase.Loading || update is UpdatePhase.Sending || browser.working ||
-            ota.running || rescan == Rescan.Running || libWorking
+            ota.running || rescan == Rescan.Running || libWorking || browser.download?.running == true
 }
 
 /** Everything the connected screens can ask for. */
@@ -261,6 +272,15 @@ interface SyncActions {
 
     /** Opens Files at the folder of the song or the album. */
     fun revealInFiles(target: LibTarget)
+
+    fun searchLibrary(text: String)
+
+    /** Fetches the artwork of the album in this card folder (once; the result lands in [SyncState.covers]). */
+    fun loadCover(folder: String)
+
+    /** Opens the system's "save as" for a card file of the browser, then copies it there. */
+    fun saveToPhone(entry: SyncEntry)
+    fun clearDownload()
 
     fun sendByosUpdate()
 

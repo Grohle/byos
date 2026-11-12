@@ -29,6 +29,8 @@ class FakeCard {
 
     fun fileKey(p: String): String? = files.keys.firstOrNull { it.equals(p, ignoreCase = true) }
 
+    var gets = 0
+
     // ---- LIB_RESCAN (section 13.3) ----
     /** Each request: null for a full rescan, else the paths. */
     val rescans = ArrayList<List<String>?>()
@@ -229,6 +231,18 @@ class FakeSession(private val card: FakeCard, override val info: SyncDeviceInfo)
                 }
             }
         }
+    }
+
+    override fun get(path: String, offset: Long, out: OutputStream, cancelled: () -> Boolean, progress: (done: Long, total: Long) -> Unit): GetResult {
+        live()
+        checkPath(path)
+        card.gets++
+        val k = card.fileKey(path) ?: throw SyncException(if (card.folders.any { it == path }) SyncException.E_IS_DIR else SyncException.E_NOT_FOUND)
+        val data = card.files[k]!!
+        if (offset > data.size) throw SyncException(SyncException.E_PROTO)
+        out.write(data, offset.toInt(), data.size - offset.toInt())
+        progress(data.size.toLong(), data.size.toLong())
+        return GetResult(data.size.toLong(), sha256(data))
     }
 
     var snapshot: ByteArray = ByteArray(0)

@@ -54,6 +54,9 @@ interface Host {
 
     /** Android 13+: asks once whether the transfer notification may be shown. */
     fun askNotifications()
+
+    /** ByOS connected: "save as" for a file copied from the player. */
+    fun createSyncDocument(name: String)
     fun open(url: String): Boolean
     fun share(files: List<File>)
 }
@@ -121,6 +124,9 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         override fun pickUpdateFiles() {
             host?.pickSyncUpdate()
         }
+        override fun createDocument(name: String) {
+            host?.createSyncDocument(name)
+        }
         override fun work(note: org.hibyos.install.connected.WorkNote?) {
             if (note != null && !askedNotifications) {
                 askedNotifications = true
@@ -152,6 +158,12 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         connected.addPicked { Picked.files(app, uris) }
         if (state.busy || connected.state.busy) return
         state = state.copy(stack = listOf(Screen.HOME, Screen.SYNC, Screen.SYNC_SEND))
+    }
+
+    /** The document created for "Save to phone": the card file is copied into it. */
+    fun syncSaveTo(uri: Uri) {
+        val app = getApplication<Application>()
+        connected.downloadTo { app.contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("the file cannot be written") }
     }
 
     fun syncUpdatePicked(uris: List<Uri>) {

@@ -280,6 +280,16 @@
     <string name="sync_note_reconnecting">Conexión perdida, volviendo a conectar…</string>
     <string name="sync_reconnecting">Conexión perdida. Volviendo a conectar (%1$d de %2$d)…</string>
     <string name="sync_sending_note_bg">Puedes salir de la app: el envío continúa y su progreso aparece en las notificaciones. Si se corta la conexión, se vuelve a conectar sola y sigue donde se quedó.</string>
+
+    <!-- Search, artwork, save to phone -->
+    <string name="sync_search_hint">Artistas, álbumes y canciones</string>
+    <string name="sync_search_clear">Borrar la búsqueda</string>
+    <string name="sync_search_none">Sin resultados para «%1$s»</string>
+    <string name="sync_search_none_text">Revisa la ortografía o busca menos palabras.</string>
+    <string name="sync_save_phone">Guardar en el teléfono</string>
+    <string name="sync_saving_phone">Guardando %1$s</string>
+    <string name="sync_saved_phone">%1$s guardado en el teléfono</string>
+    <string name="sync_dismiss">OK</string>
     <plurals name="sync_files">
         <item quantity="one">%d archivo</item>
         <item quantity="other">%d archivos</item>

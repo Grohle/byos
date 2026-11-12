@@ -286,6 +286,16 @@
     <string name="sync_note_reconnecting">Connection lost, connecting again…</string>
     <string name="sync_reconnecting">Connection lost. Connecting again (%1$d of %2$d)…</string>
     <string name="sync_sending_note_bg">You can leave the app: the transfer goes on and its progress is in the notifications. If the connection drops, it connects again by itself and goes on where it stopped.</string>
+
+    <!-- Search, artwork, save to phone -->
+    <string name="sync_search_hint">Artists, albums and songs</string>
+    <string name="sync_search_clear">Clear the search</string>
+    <string name="sync_search_none">No results for “%1$s”</string>
+    <string name="sync_search_none_text">Check the spelling, or search for fewer words.</string>
+    <string name="sync_save_phone">Save to phone</string>
+    <string name="sync_saving_phone">Saving %1$s</string>
+    <string name="sync_saved_phone">%1$s saved on the phone</string>
+    <string name="sync_dismiss">OK</string>
     <plurals name="sync_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>

@@ -50,6 +50,18 @@ class MainActivity : ComponentActivity(), Host {
         if (uris.isNotEmpty()) vm.syncUpdatePicked(uris)
     }
 
+    private val saveSyncFile = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri != null) vm.syncSaveTo(uri)
+    }
+
+    override fun createSyncDocument(name: String) {
+        try {
+            saveSyncFile.launch(name)
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         // either way the transfer goes on; without the permission its notification is not shown
     }

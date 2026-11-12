@@ -78,6 +78,9 @@ data class SyncEntry(val name: String, val kind: Int, val size: Long, val mtime:
 /** PUT_DONE.result: 0 written, 1 skipped (identical). */
 data class PutResult(val skipped: Boolean, val size: Long, val replaced: Boolean = false)
 
+/** The end of a GET: the file's size and the SHA-256 of all of it. */
+class GetResult(val size: Long, val sha256: ByteArray)
+
 /** UPDATE_STAGE_R (section 14.2). restart: 0 none, 1 shell, 2 reboot. */
 data class StagedUpdate(val version: String, val restart: Int, val needsFirmware: Boolean, val size: Long)
 
@@ -158,6 +161,12 @@ interface SyncSession : Closeable {
         cancelled: () -> Boolean,
         progress: (done: Long) -> Unit,
     ): PutResult
+
+    /**
+     * GET (section 12) of a card file into [out], from [offset] (the bytes before it are already
+     * on the phone). Returns the file's size and the SHA-256 of the whole file (GET_END).
+     */
+    fun get(path: String, offset: Long, out: OutputStream, cancelled: () -> Boolean, progress: (done: Long, total: Long) -> Unit): GetResult
 
     /** DB_SNAPSHOT (section 13.1) into [out]. Returns the revision (GET_END.sha256). */
     fun dbSnapshot(out: OutputStream, cancelled: () -> Boolean, progress: (done: Long, total: Long) -> Unit): ByteArray

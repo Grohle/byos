@@ -10,6 +10,7 @@ import com.github.takahirom.roborazzi.RoborazziTaskType
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.hibyos.install.connected.Browser
 import org.hibyos.install.connected.Destination
+import org.hibyos.install.connected.Download
 import org.hibyos.install.connected.JobStatus
 import org.hibyos.install.connected.Library
 import org.hibyos.install.connected.LibraryNav
@@ -157,6 +158,8 @@ class ConnectedScreensTest {
         shot("files_3_new_folder", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, prompt = Prompt.NewFolder("Live"))))
         shot("files_4_delete", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, prompt = Prompt.Delete(entries[0]))))
         shot("files_5_empty", Screen.SYNC_FILES, on.copy(browser = Browser("Books", emptyList())))
+        shot("files_6_saving", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, download = Download("01 Waterloo.flac", 9_000_000, 24_000_000))))
+        shot("files_7_saved", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, download = Download("01 Waterloo.flac", 24_000_000, 24_000_000, true))))
     }
 
     @Test
@@ -177,6 +180,26 @@ class ConnectedScreensTest {
         shot("library_8_new_music", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), transfer = Transfer(newMusic = 12)))
         shot("library_9_idle_rescan_done", Screen.SYNC_LIBRARY, on.copy(rescan = Rescan.Done))
         val gold = lib.albums.first { it.title == "Gold" }
+        // artwork: two pictures made here, as the cache would hold them
+        fun art(name: String, a: Int, b: Int): String {
+            val bmp = android.graphics.Bitmap.createBitmap(300, 300, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            c.drawColor(a)
+            val p = android.graphics.Paint().apply { color = b; isAntiAlias = true }
+            c.drawCircle(150f, 150f, 110f, p)
+            p.color = a
+            c.drawCircle(150f, 150f, 30f, p)
+            val f = File.createTempFile(name, ".png")
+            f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            return f.path
+        }
+        val covers = mapOf("ABBA/Gold" to art("gold", 0xFF1C1C1E.toInt(), 0xFFFFC107.toInt()),
+            "The Beatles/Abbey Road" to art("road", 0xFF0A84FF.toInt(), 0xFFF2F2F7.toInt()))
+        shot("library_14_albums_artwork", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1), covers = covers))
+        shot("library_15_album_artwork", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(artist = "ABBA", album = "ABBA" to "Gold"),
+            covers = covers))
+        shot("library_16_search", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryQuery = "ab", covers = covers))
+        shot("library_17_search_none", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryQuery = "zappa"))
         shot("library_10_delete_album", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1),
             libDelete = LibTarget.AlbumOf(gold)))
         shot("library_11_delete_song", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 2),

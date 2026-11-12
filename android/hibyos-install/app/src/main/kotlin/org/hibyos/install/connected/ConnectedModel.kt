@@ -49,6 +49,9 @@ interface SyncEnv {
     /** The keys a signed update must be signed with (docs/OTA.md). */
     val releaseKeys: List<String> get() = UpdatePackage.RELEASE_KEYS
 
+    /** Opens the system's "save as" for a file named [name]; the answer comes back through ConnectedModel.downloadTo. */
+    fun createDocument(name: String) {}
+
     /** Waits on the worker, between two UPDATE_STATUS requests (tests do not wait). */
     fun sleep(ms: Long) = Thread.sleep(ms)
 
@@ -283,6 +286,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         val d = device.copy(name = s.info.name.ifEmpty { device.name }, deviceId = s.info.deviceId, paired = true)
         current = d
         lastDevice = d
+        coverAsked.clear()
         ui { it.copy(link = Link.Connected(d, s.info, space), paired = paired, error = null, browser = Browser()) }
     }
 
@@ -995,6 +999,109 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             return false
         }
         return list.none { it.isFolder || (FileKinds.isAudio(it.name) && it.name.lowercase() !in mine) }
+    }
+
+    override fun searchLibrary(text: String) {
+        state = state.copy(libraryQuery = text.take(100))
+    }
+
+    private val coverAsked: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+
+    private fun coverFile(folder: String): File {
+        val id = (current?.deviceId ?: "") + "/" + folder.lowercase()
+        val h = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
+        return File(File(env.cacheDir, "sync/covers"), "$h.img")
+    }
+
+    /**
+     * The album's artwork, from its folder on the card (cover.jpg, folder.jpg..., else any
+     * picture): LIST, then GET into the app's cache, where it stays for the next time. Asked
+     * once per folder and per connection, when the album shows on screen.
+     */
+    override fun loadCover(folder: String) {
+        val s = session ?: return
+        if (folder.isEmpty() || !coverAsked.add(folder)) return
+        val f = coverFile(folder)
+        if (f.isFile && f.length() > 0) {
+            state = state.copy(covers = state.covers + (folder to f.path))
+            return
+        }
+        env.execute {
+            if (session !== s) {
+                coverAsked.remove(folder)
+                return@execute
+            }
+            try {
+                val pic = Library.coverIn(s.list(folder))
+                if (pic == null) {
+                    ui { it.copy(covers = it.covers + (folder to null)) }
+                    return@execute
+                }
+                f.parentFile?.mkdirs()
+                val tmp = File(f.path + ".tmp")
+                FileOutputStream(tmp).use { o -> s.get(SyncPaths.join(folder, pic.name), 0, o, { false }) { _, _ -> } }
+                f.delete()
+                if (!tmp.renameTo(f)) throw IOException("the artwork could not be kept")
+                ui { it.copy(covers = it.covers + (folder to f.path)) }
+            } catch (e: Exception) {
+                if (lost(e)) {
+                    coverAsked.remove(folder)
+                    failed(e)
+                } else {
+                    // no artwork is shown: the album keeps its music note
+                    ui { it.copy(covers = it.covers + (folder to null)) }
+                }
+            }
+        }
+    }
+
+    private var pendingDownload: String? = null
+
+    override fun saveToPhone(entry: SyncEntry) {
+        if (entry.isFolder || session == null || state.busy) return
+        pendingDownload = SyncPaths.join(state.browser.path, entry.name)
+        env.createDocument(entry.name)
+    }
+
+    override fun clearDownload() {
+        if (state.browser.download?.running == true) return
+        state = state.copy(browser = state.browser.copy(download = null))
+    }
+
+    /**
+     * Copies the card file chosen with [saveToPhone] into what the user created on the phone
+     * ([open] gives its stream), checking the whole file against the SHA-256 of GET_END.
+     */
+    fun downloadTo(open: () -> java.io.OutputStream) {
+        val s = session ?: return
+        val path = pendingDownload ?: return
+        pendingDownload = null
+        if (!begin()) return
+        val name = SyncPaths.name(path)
+        state = state.copy(browser = state.browser.copy(download = Download(name)))
+        env.execute {
+            try {
+                val pace = Pace()
+                val md = MessageDigest.getInstance("SHA-256")
+                val r = open().use { o ->
+                    java.security.DigestOutputStream(o, md).use { d ->
+                        s.get(path, 0, d, cancelled) { done, total ->
+                            if (pace.due(done == total)) ui { it.copy(browser = it.browser.copy(download = Download(name, done, total))) }
+                        }
+                    }
+                }
+                if (!md.digest().contentEquals(r.sha256)) throw SyncException(SyncException.E_HASH_MISMATCH, "$name: the copy differs from the card")
+                ui { it.copy(browser = it.browser.copy(download = Download(name, r.size, r.size, finished = true))) }
+            } catch (e: Exception) {
+                if (e is SyncException && e.code == SyncException.E_CANCELLED) {
+                    ui { it.copy(browser = it.browser.copy(download = null)) }
+                } else {
+                    val err = errorOf(e)
+                    if (lost(e)) dropSession()
+                    ui { it.copy(link = if (lost(e)) Link.Idle else it.link, browser = it.browser.copy(download = Download(name, error = err))) }
+                }
+            }
+        }
     }
 
     override fun rescanLibrary() {

@@ -743,6 +743,84 @@ class ConnectedTest {
     }
 
     @Test
+    fun searchFindsWordsWithoutAccents() {
+        val lib = Library.build(listOf(
+            Track("a:\\B\\Lemonade\\01.flac", "Pray You Catch Me", "Beyoncé", "", "Lemonade"),
+            Track("a:\\R\\Bodas\\01.flac", "Canción", "Rosalía", "", "Los Ángeles"),
+            Track("a:\\A\\Gold\\01.flac", "Dancing Queen", "ABBA", "", "Gold"),
+        ))
+        assertEquals(listOf("Beyoncé"), lib.search("beyonce").artists.map { it.name })
+        assertEquals(listOf("Los Ángeles"), lib.search("angeles rosalia").albums.map { it.title })
+        assertEquals(listOf("Canción"), lib.search("CANCION").tracks.map { it.title })
+        assertEquals(listOf("Dancing Queen"), lib.search("queen abba").tracks.map { it.title })
+        assertTrue(lib.search("zzz").empty)
+        assertTrue(lib.search("  ").empty)
+    }
+
+    @Test
+    fun artworkComesFromTheAlbumFolderOnce() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = libraryOnCard(env)
+        card.files["Music/ABBA/Gold/Folder.JPG"] = "jpeg".toByteArray()
+        val gold = lib(m).albums.first { it.title == "Gold" }
+        val folder = Library.artFolder(gold)!!
+        m.loadCover(folder)
+        // cover.jpg wins over folder.jpg
+        val path = m.state.covers[folder]!!
+        assertEquals("Music/ABBA/Gold/cover.jpg", String(File(path).readBytes()))
+        val gets = card.gets
+        m.loadCover(folder)
+        assertEquals(gets, card.gets)
+        // a folder without pictures has no artwork; a second connection reads the cache
+        m.loadCover("Music/Mix")
+        assertTrue(m.state.covers.containsKey("Music/Mix"))
+        assertNull(m.state.covers["Music/Mix"])
+        m.disconnect()
+        m.connectTo(env.c.device.copy(paired = true))
+        m.loadCover(folder)
+        assertEquals(gets, card.gets)
+        assertEquals(path, m.state.covers[folder])
+        // albums split in CD folders look in their parent
+        val cds = Album("Box", "X", 0, listOf(Track("a:\\Music\\Box\\CD1\\1.flac", "a", "X", "", "Box"), Track("a:\\Music\\Box\\CD2\\1.flac", "b", "X", "", "Box")))
+        assertEquals("Music/Box", Library.artFolder(cds))
+    }
+
+    @Test
+    fun savingACardFileToThePhone() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.folders += "Recordings"
+        card.files["Recordings/talk.wav"] = ByteArray(70_000) { it.toByte() }
+        var asked: String? = null
+        val m = ConnectedModel(object : SyncEnv by env {
+            override fun createDocument(name: String) {
+                asked = name
+            }
+        })
+        m.findDevices()
+        m.connectTo(m.state.found[0])
+        m.setCode("815365")
+        m.confirmCode()
+        m.openFolder("Recordings")
+        m.saveToPhone(m.state.browser.entries!!.single())
+        assertEquals("talk.wav", asked)
+        val out = java.io.ByteArrayOutputStream()
+        m.downloadTo { out }
+        val d = m.state.browser.download!!
+        assertTrue(d.finished)
+        assertEquals(70_000L, d.total)
+        assertTrue(out.toByteArray().contentEquals(card.files["Recordings/talk.wav"]))
+        assertFalse(m.state.busy)
+        m.clearDownload()
+        assertNull(m.state.browser.download)
+        // a file gone in the meantime
+        m.saveToPhone(SyncEntry("gone.mp3", 0, 3, 0))
+        m.downloadTo { java.io.ByteArrayOutputStream() }
+        assertEquals(R.string.sync_err_not_found, m.state.browser.download?.error?.title)
+    }
+
+    @Test
     fun movingFromTheLibraryOpensFiles() {
         val env = Env(FakeConnector())
         val card = env.c.card

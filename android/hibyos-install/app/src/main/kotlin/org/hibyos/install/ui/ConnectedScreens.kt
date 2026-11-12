@@ -65,6 +65,8 @@ import org.hibyos.install.connected.LibraryNav
 import org.hibyos.install.connected.LibraryPhase
 import org.hibyos.install.connected.Link
 import org.hibyos.install.connected.LibTarget
+import org.hibyos.install.connected.Library
+import androidx.compose.runtime.LaunchedEffect
 import org.hibyos.install.connected.Prompt
 import org.hibyos.install.connected.Rescan
 import org.hibyos.install.connected.Route
@@ -110,6 +112,10 @@ object NoSync : SyncActions {
     override fun loadLibrary() {}
     override fun libraryNav(nav: LibraryNav) {}
     override fun rescanLibrary() {}
+    override fun searchLibrary(text: String) {}
+    override fun loadCover(folder: String) {}
+    override fun saveToPhone(entry: SyncEntry) {}
+    override fun clearDownload() {}
     override fun libraryDelete(target: org.hibyos.install.connected.LibTarget?) {}
     override fun confirmLibraryDelete() {}
     override fun libraryMove(target: org.hibyos.install.connected.LibTarget) {}
@@ -648,6 +654,7 @@ fun SyncFiles(s: UiState, a: Actions) {
                 }
             }
             b.error?.let { ErrorSection(it) }
+            b.download?.let { DownloadSection(it, x) }
             val list = b.entries
             when {
                 list == null -> Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } }
@@ -670,11 +677,12 @@ fun SyncFiles(s: UiState, a: Actions) {
         }
         val e = sheet
         if (e != null) {
-            ActionSheet(e.name, onDismiss = { sheet = null }, actions = listOf(
-                stringResource(R.string.sync_rename) to { sheet = null; x.prompt(Prompt.Rename(e, e.name)) },
-                stringResource(R.string.sync_move) to { sheet = null; x.startMove(e) },
-                stringResource(R.string.sync_delete) to { sheet = null; x.prompt(Prompt.Delete(e)) },
-            ), destructive = 2)
+            val acts = ArrayList<Pair<String, () -> Unit>>()
+            if (!e.isFolder) acts += stringResource(R.string.sync_save_phone) to { sheet = null; x.saveToPhone(e) }
+            acts += stringResource(R.string.sync_rename) to { sheet = null; x.prompt(Prompt.Rename(e, e.name)) }
+            acts += stringResource(R.string.sync_move) to { sheet = null; x.startMove(e) }
+            acts += stringResource(R.string.sync_delete) to { sheet = null; x.prompt(Prompt.Delete(e)) }
+            ActionSheet(e.name, onDismiss = { sheet = null }, actions = acts, destructive = acts.size - 1)
         }
         when (val p = b.prompt) {
             is Prompt.NewFolder -> AlertBox(stringResource(R.string.sync_new_folder), null, p.name, stringResource(R.string.sync_create),
@@ -686,6 +694,36 @@ fun SyncFiles(s: UiState, a: Actions) {
                 stringResource(R.string.sync_delete), destructive = true, working = b.working,
                 onChange = {}, onOk = { x.applyPrompt() }, onCancel = { x.prompt(null) })
             null -> {}
+        }
+    }
+}
+
+/** "Save to phone": its progress, then the result. */
+@Composable
+private fun DownloadSection(d: org.hibyos.install.connected.Download, x: SyncActions) {
+    if (d.error != null) {
+        ErrorSection(d.error)
+        Section { row { Item(title = stringResource(R.string.sync_dismiss), titleColor = C.blue) { x.clearDownload() } } }
+        return
+    }
+    Section {
+        row {
+            if (d.finished) {
+                Item(title = stringResource(R.string.sync_saved_phone, d.name), subtitle = size(d.total), icon = { IconTile(Glyphs.Check, C.green) },
+                    trailing = { NavAction(stringResource(R.string.sync_dismiss)) { x.clearDownload() } })
+            } else {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Glyphs.Phone, C.blue)
+                        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                            Txt(stringResource(R.string.sync_saving_phone, d.name), T.body, maxLines = 2, overflow = TextOverflow.MiddleEllipsis)
+                            Txt(if (d.total > 0) "${size(d.done)} / ${size(d.total)}" else " ", T.sub, Modifier.padding(top = 2.dp))
+                        }
+                        NavAction(stringResource(R.string.cancel)) { x.cancelWork() }
+                    }
+                    ProgressBar(if (d.total > 0) d.done.toFloat() / d.total else 0f, Modifier.padding(top = 10.dp))
+                }
+            }
         }
     }
 }
@@ -814,6 +852,9 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
     val st = LocalSync.current.state
     val top = nav.artist == null && nav.album == null
     var sheet by remember { mutableStateOf<LibTarget?>(null) }
+    val artistsLabel = stringResource(R.string.sync_artists)
+    val albumsLabel = stringResource(R.string.sync_albums)
+    val songsLabel = stringResource(R.string.sync_songs)
     val trailing: (@Composable () -> Unit)? = when {
         !top -> null
         st.rescan == Rescan.Running -> ({ Box(Modifier.padding(horizontal = 16.dp)) { Spinner(20.dp) } })
@@ -827,6 +868,13 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
                 if (top && (st.rescan != Rescan.Idle || st.transfer.newMusic > 0 || st.libraryChanged)) item { RescanSection(st, x, st.transfer.newMusic) }
                 when {
                     album != null -> {
+                        item {
+                            val folder = remember(album) { Library.artFolder(album) }
+                            if (folder != null) LaunchedEffect(folder) { x.loadCover(folder) }
+                            Box(Modifier.fillMaxWidth().padding(bottom = 16.dp), contentAlignment = Alignment.Center) {
+                                Artwork(folder?.let { st.covers[it] }, 220.dp, 10.dp)
+                            }
+                        }
                         item {
                             Txt(listOfNotNull(album.artist.ifEmpty { unknown }, album.year.takeIf { it > 0 }?.toString(),
                                 songs(album.tracks.size)).joinToString("  ·  "),
@@ -846,11 +894,48 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
                     }
                     else -> {
                         if (L.tracks.isNotEmpty()) item {
+                            SearchBar(st.libraryQuery, stringResource(R.string.sync_search_hint)) { x.searchLibrary(it) }
+                        }
+                        val q = st.libraryQuery.trim()
+                        if (L.tracks.isNotEmpty() && q.isEmpty()) item {
                             Segments(listOf(stringResource(R.string.sync_artists), stringResource(R.string.sync_albums), stringResource(R.string.sync_songs)),
                                 nav.tab) { x.libraryNav(LibraryNav(tab = it)) }
                         }
                         if (L.tracks.isEmpty()) {
                             item { LibraryEmpty() }
+                        } else if (q.isNotEmpty()) {
+                            val found = L.search(q)
+                            if (found.empty) item {
+                                Hero(Glyphs.Search, C.grey, stringResource(R.string.sync_search_none, q), stringResource(R.string.sync_search_none_text))
+                            }
+                            fun header(text: String) = item { Txt(text.uppercase(), T.header, Modifier.padding(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 7.dp)) }
+                            val maxShown = 50
+                            if (found.artists.isNotEmpty()) {
+                                header(artistsLabel)
+                                cards(minOf(found.artists.size, maxShown)) { i ->
+                                    val ar = found.artists[i]
+                                    LibRow(ar.name.ifEmpty { unknown }, albumsSongs(ar.albums.size, ar.trackCount), chevron = true,
+                                        onMore = { sheet = LibTarget.ArtistOf(ar) }) { x.libraryNav(nav.copy(artist = ar.name)) }
+                                }
+                                item { Spacer(Modifier.height(22.dp)) }
+                            }
+                            if (found.albums.isNotEmpty()) {
+                                header(albumsLabel)
+                                cards(minOf(found.albums.size, maxShown)) { i ->
+                                    AlbumRow(found.albums[i], unknown, showArtist = true, onMore = { sheet = LibTarget.AlbumOf(it) }) {
+                                        x.libraryNav(nav.copy(album = it.artist to it.title))
+                                    }
+                                }
+                                item { Spacer(Modifier.height(22.dp)) }
+                            }
+                            if (found.tracks.isNotEmpty()) {
+                                header(songsLabel)
+                                cards(minOf(found.tracks.size, maxShown)) { i ->
+                                    val t: Track = found.tracks[i]
+                                    LibRow(t.title, listOf(t.albumArtist.ifEmpty { t.artist }.ifEmpty { unknown }, t.album.ifEmpty { unknown }).joinToString("  ·  "),
+                                        onMore = { sheet = LibTarget.Song(t) })
+                                }
+                            }
                         } else when (nav.tab) {
                             0 -> cards(L.artists.size) { i ->
                                 val ar = L.artists[i]
@@ -939,7 +1024,10 @@ private fun LibRow(title: String, sub: String?, lead: String? = null, chevron: B
 private fun AlbumRow(al: Album, unknown: String, showArtist: Boolean = false, onMore: ((Album) -> Unit)? = null, onClick: (Album) -> Unit) {
     val sub = listOfNotNull(if (showArtist) al.artist.ifEmpty { unknown } else null, al.year.takeIf { it > 0 }?.toString(),
         songs(al.tracks.size)).joinToString("  ·  ")
-    Item(title = al.title.ifEmpty { unknown }, subtitle = sub, icon = { IconTile(Glyphs.Music, C.pink) }, chevron = true,
+    val ui = LocalSync.current
+    val folder = remember(al) { Library.artFolder(al) }
+    if (folder != null) LaunchedEffect(folder) { ui.actions.loadCover(folder) }
+    Item(title = al.title.ifEmpty { unknown }, subtitle = sub, icon = { Artwork(folder?.let { ui.state.covers[it] }, 44.dp) }, chevron = true,
         trailing = onMore?.let { { MoreButton { it(al) } } }) { onClick(al) }
 }
 
