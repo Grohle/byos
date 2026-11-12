@@ -953,11 +953,14 @@ int ioctl(int fd, unsigned long req, ...)
         unsigned char *restore = 0;              /* bufer que deja de verse: vuelve el fotograma de HiBy */
         if (st->capture && frames) {
             unsigned char *b = buf_at(last_var.yoffset);
-            memcpy(frames + fsize, b, fsize);   /* fotograma del reproductor -> frames[1] */
-            /* el bloque del "%" sin mover, para devolverselo a HiBy tal cual lo dibujo */
-            for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) memcpy(sb_raw[y - TOPBAR_Y0], (const uint16_t *)(frames + fsize + y * fline) + TOPBAR_PCT_X, TOPBAR_PCT_W * 2);
-            sb_fix(frames + fsize);             /* el shell copia la barra de aqui */
-            sb_bolt(frames + fsize);
+            /* el bloque del "%" tal cual lo dibujo HiBy (se le devuelve en "restore"), luego la barra
+             * retocada EN SU BUFER y despues la copia a frames[1]: retocar la copia dejaba un hueco
+             * en el que el shell (pildora, barra de las apps) leia la barra sin el "%" ni el rayo y la
+             * mostraba un fotograma (medido con el probador) */
+            for (int y = TOPBAR_Y0; y < TOPBAR_Y1; y++) memcpy(sb_raw[y - TOPBAR_Y0], (const uint16_t *)(b + y * fline) + TOPBAR_PCT_X, TOPBAR_PCT_W * 2);
+            sb_fix(b);
+            sb_bolt(b);
+            memcpy(frames + fsize, b, fsize);   /* fotograma del reproductor (ya retocado) -> frames[1] */
             wait_even(&st->fr0_seq);
             memcpy(b, frames, fsize);           /* el panel sigue con la imagen del shell */
             corners_apply(b);
