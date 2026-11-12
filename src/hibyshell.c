@@ -289,6 +289,19 @@ static void load_home_sig(void)
         home_sig_n++;
     fclose(f);
 }
+/* is_home sin los puntos de la firma que caen en filas < ymin (la franja de volumen de HiBy) */
+static int is_home_below(const uint16_t *img, int ymin)
+{
+    int n = 0;
+    for (int i = 0; i < home_sig_n; i++) {
+        if (home_sig[i][1] < ymin) continue;
+        uint16_t p = img[home_sig[i][1] * W + home_sig[i][0]];
+        int r = (p >> 11) * 255 / 31, g = ((p >> 5) & 63) * 255 / 63, b = (p & 31) * 255 / 31, t = home_sig[i][5];
+        if (abs(r - home_sig[i][2]) > t || abs(g - home_sig[i][3]) > t || abs(b - home_sig[i][4]) > t) return 0;
+        n++;
+    }
+    return n >= 3;
+}
 static int is_home(const uint16_t *img)
 {
     if (!home_sig_n) return 0;
@@ -1144,9 +1157,10 @@ static void hud_upload(void)
 }
 static void update_overlay(void);
 static int hiby_modal;                      /* un dialogo de HiBy en pantalla: todo es suyo */
+static double vol_key_t;                    /* ultima tecla de volumen (su franja tapa la firma del inicio) */
 static void hud_key(int code)
 {
-    double t = now_ms();
+    double t = now_ms(); vol_key_t = t;
     if (hiby_modal) { lcd_boost(); lg("volumen: tecla %d (dialogo de HiBy en pantalla)", code); return; }
     /* indicador de HiBy: en sus pantallas lo dibuja el reproductor; nada que hacer aqui */
     if (!vol_ui && !st->capture) { lcd_boost(); lg("volumen: tecla %d (indicador de HiBy)", code); return; }
@@ -1905,7 +1919,10 @@ int main(int argc, char **argv)
             /* el reproductor dibujo algo: barra de estado nueva, o cambio de pantalla por su cuenta */
             if (st->cap_frames != last_cap) {
                 last_cap = st->cap_frames;
-                if (!is_home(fr1) && !vs_visible()) { lg("el reproductor cambio de pantalla"); launcher_leave(); }   /* su dialogo de volumen tapa la firma */
+                /* su dialogo de volumen tapa la firma; al aparecer y desaparecer (fundido) no es ni
+                 * inicio ni dialogo: salir ahi mostraba un fotograma del inicio de HiBy (barra negra) */
+                int vol_band = now_ms() - vol_key_t < 2500 && is_home_below(fr1, VS_Y + VS_H);
+                if (!is_home(fr1) && !vs_visible() && !vol_band) { lg("el reproductor cambio de pantalla"); launcher_leave(); }
                 else launcher_statusbar();
             } else if (now_ms() < toast_until + 40 || V.edit) launcher_present();   /* aviso o temblor */
             else if (widgets_on && (wg_fresh || npx_changed || now_ms() - WD.t > 10000 || (int)(time(0) / 60) != wg_cache_min)) launcher_present();
