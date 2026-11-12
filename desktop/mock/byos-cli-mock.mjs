@@ -9,17 +9,30 @@
 //   BYOS_MOCK_SCENARIO  ok (default) | usb_storage | no_device | daemon_not_running | slow |
 //                       silent_pair (no heartbeat while waiting for Allow) |
 //                       offline (firmware download fails) | build_fail | low_battery |
-//                       reinstall_refused (the HiBy's own checks say no)
+//                       reinstall_refused (the HiBy's own checks say no) |
+//                       snapshot_io (lib-index: the HiBy cannot share its database, scan instead) |
+//                       sync_partial (sync-apply: three files fail) | card_full (sync-plan: no room)
+// The library commands (lib-index, lib-scan, lib-art, lib-rescan, playlist-*, music-scan,
+// sync-plan, sync-apply, cover-cache-reset, art-fix) use the made-up music of
+// library-fixture.mjs; a full lib-rescan answers E_UNSUPPORTED, as the real HiBy does today.
 //   BYOS_MOCK_STEP_MS   pace of the build flow's fake progress (default 60; slow: 400)
 //   BYOS_MOCK_DELAY_MS  extra delay before the result line (default 0)
 //   BYOS_MOCK_PAIR_WAIT_MS   time until the fake user taps Allow (default 400)
 //   BYOS_MOCK_HEARTBEAT_MS   progress repeat interval while waiting (default 5000)
 // Options and paths can be mixed; "--" ends the options.
 
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { coverPng, hibyIndex, localCatalog, playlistItems } from './library-fixture.mjs';
+
+// The real CLI takes a card path ("Playlists/Road trip.m3u8"), a file name or a bare name; the
+// mock keeps its playlists by bare name (all of them are Playlists/<name>.m3u8).
+function mockPlaylistName(a) {
+  return a === undefined ? a : a.replace(/^.*\//, '').replace(/\.m3u8?$/i, '');
+}
 
 const T0 = Date.now();
 const SCENARIO = process.env.BYOS_MOCK_SCENARIO || 'ok';
@@ -343,8 +356,17 @@ const commands = {
     requireSd();
     const state = load();
     const deleted = [];
+    const libPaths = new Set(hibyIndex().tracks.map((t) => t.path));
     for (const p of args) {
       checkRemote(p);
+      // a song of the made-up library: remembered as deleted (it is not in the fake card's tree)
+      if (libPaths.has(p)) {
+        const lib = libState(state);
+        if (lib.deleted.includes(p)) throw remoteErr('E_NOT_FOUND', `Not found: ${p}`, p);
+        lib.deleted.push(p);
+        deleted.push(p);
+        continue;
+      }
       const { parent, name } = parentOf(state, p);
       const node = parent.children[name];
       if (!node) throw remoteErr('E_NOT_FOUND', `Not found: ${p}`, p);
@@ -361,7 +383,7 @@ const commands = {
       deleted.push(p);
     }
     save(state);
-    return { deleted };
+    return opts['prune-empty'] ? { deleted, pruned: [] } : { deleted };
   },
 
   async connect() {
@@ -586,10 +608,327 @@ const commands = {
   },
 };
 
+// ---- library and music sync (docs/BYOS_CLI.md, "Library and music") -------------------------
+// The fake HiBy has the made-up library of library-fixture.mjs. Files go where byos-cli puts
+// them: <config>/cache/... (the runner reads index.json, art, the catalogue and the plan there).
+
+const DEVICE_ID = '0123456789abcdef';
+const configDir = () => opts.config || path.join(os.tmpdir(), 'byos-cli-mock-config');
+const cachePath = (...p) => {
+  const f = path.join(configDir(), 'cache', ...p);
+  mkdirSync(path.dirname(f), { recursive: true });
+  return f;
+};
+const writeJson = (f, v) => { writeFileSync(`${f}.tmp`, `${JSON.stringify(v)}\n`); renameSync(`${f}.tmp`, f); };
+const LIB_STEP = SCENARIO === 'slow' ? 120 : 8;
+
+function libState(state) {
+  state.lib ??= { deleted: [], playlists: null };
+  return state.lib;
+}
+
+function indexResult(idx, file) {
+  return {
+    index: file, device: DEVICE_ID, source: idx.source, revision: idx.revision, tracks: idx.counts.tracks,
+    albums: idx.counts.albums, artists: idx.counts.artists, genres: idx.counts.genres, books: idx.counts.books,
+    playlists: idx.counts.playlists,
+  };
+}
+
+async function fakeTransfer(op, p, total, steps, rate = 9800000) {
+  for (let i = 1; i <= steps; i++) {
+    await tick(LIB_STEP);
+    emit('progress', { op, path: p, done: Math.round((total * i) / steps), total, rate, unit: 'bytes' });
+  }
+}
+
+Object.assign(commands, {
+  async 'lib-index'() {
+    connect();
+    requireSd();
+    if (SCENARIO === 'snapshot_io') {
+      await tick(LIB_STEP * 4);
+      throw new Fail('remote', "The HiBy can't share its library database yet; scan the card instead (lib-scan)",
+        { code: 5, name: 'E_IO' }, { hint: 'scan' });
+    }
+    emit('progress', { op: 'pull', path: null, done: 0, total: 0, rate: 0, unit: 'none' });
+    await fakeTransfer('pull', null, 2174976, 6);
+    const idx = hibyIndex({ deleted: libState(load()).deleted });
+    for (let i = 1; i <= 4; i++) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'index', path: null, done: Math.round((idx.tracks.length * i) / 4), total: idx.tracks.length, rate: 0, unit: 'rows' });
+    }
+    const f = opts.out || cachePath('library', DEVICE_ID, 'index.json');
+    writeJson(f, idx);
+    return indexResult(idx, f);
+  },
+
+  async 'lib-scan'() {
+    connect();
+    requireSd();
+    const idx = hibyIndex({ source: 'scan', deleted: libState(load()).deleted });
+    for (let i = 1; i <= 8; i++) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'list', path: `Music/${i}`, done: i * 7, total: 0, rate: 0, unit: 'folders' });
+    }
+    const n = idx.tracks.length;
+    for (let i = 0; i <= n; i += 13) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'tags', path: idx.tracks[Math.min(i, n - 1)].path, done: i, total: n, rate: 0, unit: 'files' });
+    }
+    const f = opts.out || cachePath('library', DEVICE_ID, 'index.json');
+    writeJson(f, idx);
+    return { ...indexResult(idx, f), files: n, cached: 0, fetched: n, bytes: n * 131072 };
+  },
+
+  async 'lib-art'(args) {
+    const size = Number(opts.size || 256);
+    if (![256, 500].includes(size)) throw new Fail('usage', '--size is 256 or 500');
+    if (!args.length) throw new Fail('usage', 'lib-art needs PATH...');
+    let connected = false;
+    const items = [];
+    for (const [k, p] of args.entries()) {
+      checkRemote(p);
+      const seed = p.slice(0, p.lastIndexOf('/'));
+      const key = `${createHash('sha1').update(`${seed}|${size}`).digest('hex')}-${size}`;
+      const file = cachePath('art', `${key}.jpg`);
+      const colorFile = cachePath('art', `${key}.color`);
+      if (!existsSync(file)) {
+        if (!connected) { connect(); connected = true; }
+        await tick(LIB_STEP);
+        const { png, color } = coverPng(seed, size === 256 ? 256 : 500);
+        writeFileSync(file, png);
+        writeFileSync(colorFile, color);
+      }
+      emit('progress', { op: 'art', path: p, done: k + 1, total: args.length, rate: 0, unit: 'files' });
+      items.push({ path: p, key, file, color: readFileSync(colorFile, 'utf8') });
+    }
+    return { count: items.length, items };
+  },
+
+  async 'lib-rescan'(args) {
+    connect();
+    if (opts.full) {
+      await tick(LIB_STEP * 4);
+      throw new Fail('remote', 'This HiBy cannot start a full library update from the computer yet; use Settings > Update library on the HiBy',
+        { code: 13, name: 'E_UNSUPPORTED' }, { mode: 'full' });
+    }
+    if (!args.length) throw new Fail('usage', 'lib-rescan needs --full or PATH...');
+    return { mode: 'paths', count: args.length };
+  },
+
+  async 'playlist-ls'() {
+    connect();
+    const state = load();
+    const lib = libState(state);
+    lib.playlists ??= playlistItems(hibyIndex());
+    save(state);
+    let count = 0;
+    for (const [name, items] of Object.entries(lib.playlists)) {
+      emit('entry', { name, path: `Playlists/${name}.m3u8`, size: items.length * 60, mtime: 1767225600, tracks: items.length, items });
+      count++;
+    }
+    return { count };
+  },
+
+  async 'playlist-add'(args) {
+    connect();
+    const [arg, ...paths] = args;
+    const name = mockPlaylistName(arg);
+    if (!name || !paths.length) throw new Fail('usage', 'playlist-add needs NAME PATH...');
+    const state = load();
+    const lib = libState(state);
+    lib.playlists ??= playlistItems(hibyIndex());
+    const exists = Object.hasOwn(lib.playlists, name);
+    if (!exists && !opts.create) throw new Fail('usage', `there is no playlist Playlists/${name}.m3u8 (add --create)`);
+    const cur = lib.playlists[name] ?? [];
+    const added = paths.filter((p) => !cur.includes(p));
+    lib.playlists[name] = [...cur, ...added];
+    save(state);
+    return { playlist: `Playlists/${name}.m3u8`, added: added.length, tracks: lib.playlists[name].length, created: !exists };
+  },
+
+  async 'playlist-rm'(args) {
+    connect();
+    const [arg, ...paths] = args;
+    const name = mockPlaylistName(arg);
+    const state = load();
+    const lib = libState(state);
+    lib.playlists ??= playlistItems(hibyIndex());
+    if (!Object.hasOwn(lib.playlists, name ?? '')) throw remoteErr('E_NOT_FOUND', `there is no playlist Playlists/${name}.m3u8`);
+    if (!paths.length) {
+      delete lib.playlists[name];
+      save(state);
+      return { playlist: `Playlists/${name}.m3u8`, deleted: true, removed: 0 };
+    }
+    const before = lib.playlists[name].length;
+    lib.playlists[name] = lib.playlists[name].filter((p) => !paths.includes(p));
+    save(state);
+    return { playlist: `Playlists/${name}.m3u8`, deleted: false, removed: before - lib.playlists[name].length, tracks: lib.playlists[name].length };
+  },
+
+  async 'music-scan'(args) {
+    if (!args.length) throw new Fail('usage', 'music-scan needs DIR...');
+    const cat = localCatalog(args.map((a) => a.replace(/\\/g, '/')));
+    for (let i = 1; i <= 6; i++) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'scan', path: `${args[0]}/${i}`, done: i * 5, total: 0, rate: 0, unit: 'folders' });
+    }
+    const n = cat.tracks.length;
+    for (let i = 0; i <= n; i += 17) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'tags', path: cat.tracks[Math.min(i, n - 1)].path, done: i, total: n, rate: 0, unit: 'files' });
+    }
+    const f = opts.out || cachePath('music', 'catalog.json');
+    writeJson(f, cat);
+    return {
+      catalog: f, roots: args, tracks: cat.counts.tracks, albums: cat.counts.albums, artists: cat.counts.artists,
+      books: cat.counts.books, bytes: cat.tracks.reduce((s, t) => s + t.size, 0), changed: n,
+    };
+  },
+
+  async 'sync-plan'() {
+    if (!opts.catalog) throw new Fail('usage', 'sync-plan needs --catalog CATALOG.json');
+    let cat;
+    try { cat = JSON.parse(readFileSync(opts.catalog, 'utf8')); } catch { throw new Fail('local_io', `${opts.catalog} cannot be read`); }
+    let sel = { all: true };
+    if (opts.select) { try { sel = JSON.parse(readFileSync(opts.select, 'utf8')); } catch { throw new Fail('local_io', `${opts.select} cannot be read`); } }
+    connect();
+    requireSd();
+    for (let i = 1; i <= 5; i++) {
+      await tick(LIB_STEP * 2);
+      emit('progress', { op: 'list', path: `Music/${i}`, done: i * 9, total: 0, rate: 0, unit: 'folders' });
+    }
+    const fold = (s) => String(s).normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+    const artists = new Set((sel.artists ?? []).map(fold));
+    const genres = new Set((sel.genres ?? []).map(fold));
+    const albums = new Set((sel.albums ?? []).map((a) => `${fold(a.artist)}\u0000${fold(a.title)}`));
+    const files = new Set(sel.files ?? []);
+    const wants = (t) => (t.book ? sel.books !== false : sel.all !== false || artists.has(fold(t.artist)) ||
+      albums.has(`${fold(t.artist)}\u0000${fold(t.album)}`) || genres.has(fold(t.genre)) || files.has(t.path));
+    const onHiby = new Set(hibyIndex().tracks.map((t) => `${fold(t.artist)}\u0000${fold(t.album)}\u0000${t.track}`));
+    const dest = opts.dest || 'Music';
+    const items = [];
+    for (const t of cat.tracks) {
+      if (!wants(t)) continue;
+      const d = t.book ? `Audiobooks/${t.album}/${t.path.slice(t.path.lastIndexOf('/') + 1)}`
+        : `${dest}/${t.artist}/${t.album}/${String(t.track).padStart(2, '0')} ${t.title}.${t.format.toLowerCase()}`;
+      const there = onHiby.has(`${fold(t.artist)}\u0000${fold(t.album)}\u0000${t.track}`);
+      const update = there && t.track === 3;
+      items.push({ action: update ? 'update' : there ? 'skip' : 'add', src: t.path, dest: d, size: t.size, mtime: t.mtime, reason: update ? 'changed' : there ? 'unchanged' : 'new', title: t.title, old_size: update ? t.size - 4096 : 0 });
+    }
+    if (opts['remove-unselected']) {
+      items.push({ action: 'remove', src: null, dest: `${dest}/Old Band/Old Album/01 Gone.flac`, size: 31000000, mtime: 1, reason: 'unselected', title: 'Gone', old_size: 0 });
+    }
+    const df = dfFields(load());
+    const sdFree = SCENARIO === 'card_full' ? 1200000000 : df.sd_free;
+    const count = (a) => items.filter((i) => i.action === a).length;
+    const bytesAdd = items.filter((i) => i.action === 'add').reduce((s, i) => s + i.size, 0) +
+      items.filter((i) => i.action === 'update').reduce((s, i) => s + i.size - i.old_size, 0);
+    const bytesRemove = items.filter((i) => i.action === 'remove').reduce((s, i) => s + i.size, 0);
+    const plan = {
+      format: 1, dest, layout: opts.layout || 'artist-album', covers: opts.covers || 'optimize',
+      add: count('add'), update: count('update'), skip: count('skip'), remove: count('remove'),
+      bytes_add: bytesAdd, bytes_remove: bytesRemove, sd_free: sdFree, fits: bytesAdd - bytesRemove + 64 * 1048576 <= sdFree, items,
+    };
+    const f = opts.out || cachePath('sync', 'plan.json');
+    writeJson(f, plan);
+    const { items: _drop, format: _f, dest: _d, layout: _l, covers: _c, ...result } = plan;
+    return { plan: f, ...result };
+  },
+
+  async 'sync-apply'(args) {
+    const f = args[0];
+    if (!f) throw new Fail('usage', 'sync-apply needs PLAN.json');
+    let plan;
+    try { plan = JSON.parse(readFileSync(f, 'utf8')); } catch { throw new Fail('local_io', `${f} cannot be read`); }
+    const copies = plan.items.filter((i) => i.action === 'add' || i.action === 'update');
+    const removals = plan.items.filter((i) => i.action === 'remove');
+    if (removals.length && !opts.yes) {
+      emit('prompt', { kind: 'confirm', message: `Remove ${removals.length} songs from the HiBy that are no longer selected?`, count: removals.length });
+      const a = await nextAnswer();
+      if (cancelled) throw new Fail('cancelled', 'Cancelled');
+      if (a !== true && a !== 'yes' && a !== 'y') throw new Fail('cancelled', 'nothing was copied or removed');
+    }
+    connect();
+    requireSd();
+    const total = copies.reduce((s, i) => s + i.size, 0);
+    let doneBytes = 0;
+    let written = 0; let failed = 0; let bytes = 0;
+    const items = [];
+    const failing = SCENARIO === 'sync_partial' ? new Set([2, 5, 9].map((k) => copies[k]?.dest).filter(Boolean)) : new Set();
+    const steps = SCENARIO === 'slow' ? 6 : 2;
+    for (const [k, it] of copies.entries()) {
+      emit('progress', { op: 'sync', path: null, done: doneBytes, total, rate: 11200000, unit: 'bytes', files_done: k, files_total: copies.length });
+      if (opts.covers !== 'keep') {
+        await tick(LIB_STEP / 2);
+        emit('progress', { op: 'prepare', path: it.dest, done: 0, total: 0, rate: 0, unit: 'none' });
+      }
+      if (failing.has(it.dest)) {
+        await tick(LIB_STEP);
+        failed++;
+        emit('warn', { code: 'failed', message: `${it.dest}: The HiBy could not write the file`, path: it.dest, src: it.src });
+        items.push({ dest: it.dest, src: it.src, result: 'failed', error: 'E_IO' });
+        continue;
+      }
+      for (let i = 1; i <= steps; i++) {
+        await tick(LIB_STEP);
+        emit('progress', { op: 'put', path: it.dest, done: Math.round((it.size * i) / steps), total: it.size, rate: 11200000, unit: 'bytes' });
+        emit('progress', { op: 'sync', path: null, done: doneBytes + Math.round((it.size * i) / steps), total, rate: 11200000, unit: 'bytes', files_done: k, files_total: copies.length });
+      }
+      doneBytes += it.size;
+      written++; bytes += it.size;
+      items.push({ dest: it.dest, result: 'written' });
+    }
+    emit('progress', { op: 'sync', path: null, done: total, total, rate: 11200000, unit: 'bytes', files_done: copies.length, files_total: copies.length });
+    for (const [k, it] of removals.entries()) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'remove', path: it.dest, done: k + 1, total: removals.length, rate: 0, unit: 'files' });
+    }
+    const then = opts.then || 'none';
+    let library = { action: then, ok: then === 'none' };
+    if (then !== 'none') {
+      await tick(LIB_STEP * 3);
+      emit('warn', { code: 'library_pending', message: 'Music copied. To see it in the player, open Settings > Update library on the HiBy.' });
+      library = { action: then, ok: false, code: 'E_UNSUPPORTED' };
+    }
+    return {
+      written, skipped: plan.items.filter((i) => i.action === 'skip').length, failed, removed: removals.length, bytes, items, library,
+    };
+  },
+
+  async 'cover-cache-reset'() {
+    connect();
+    await tick(LIB_STEP * 3);
+    return { deleted: 14 };
+  },
+
+  async 'art-fix'() {
+    connect();
+    const idx = hibyIndex();
+    const albums = idx.albums.filter((_, i) => i % 9 === 2);
+    for (const [k, a] of idx.albums.entries()) {
+      await tick(LIB_STEP / 2);
+      emit('progress', { op: 'scan', path: a.art, done: k + 1, total: idx.albums.length, rate: 0, unit: 'files' });
+    }
+    for (const a of albums) {
+      emit('entry', { path: a.art.slice(0, a.art.lastIndexOf('/')), files: a.tracks.length, reasons: ['large', 'progressive'] });
+    }
+    const files = albums.reduce((s, a) => s + a.tracks.length, 0);
+    if (opts['dry-run']) return { albums: albums.length, files, fixed: 0, skipped: 0, dry_run: true };
+    for (let i = 1; i <= files; i++) {
+      await tick(LIB_STEP);
+      emit('progress', { op: 'put', path: albums[0].art, done: i, total: files, rate: 0, unit: 'files' });
+    }
+    return { albums: albums.length, files, fixed: files, skipped: 0, cache_reset: 14 };
+  },
+});
+
 // ---- argument parsing ---------------------------------------------------------------------
 
 const VALUE_OPTS = new Set(['--device', '--adb', '--local-port', '--config', '--name', '--timeout', '--wait', '--code', '--max-depth',
-  '--from', '--dir', '--out', '--bundle', '--firmware', '--wait-max']);
+  '--from', '--dir', '--out', '--bundle', '--firmware', '--wait-max', '--size', '--max', '--db', '--catalog', '--select', '--dest',
+  '--layout', '--covers', '--then', '--root']);
 const opts = {};
 const positional = [];
 {

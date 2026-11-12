@@ -86,6 +86,15 @@ In demo mode the whole flow runs against the fake CLI. For a fixed picture of on
 `demo=NAME` to the address the runner prints (`...?t=TOKEN&demo=building#updates`), with
 `downloading`, `ready`, `building`, `sending`, `installing`, `done`, `failed` or `wifi`.
 
+The Library and Music tabs work against made-up music in demo mode (about 40 albums, 400
+songs and 6 audiobooks, covers drawn by `mock/library-fixture.mjs`). Fixed pictures of their
+states: `demo=lib-unavailable`, `lib-scanning`, `lib-empty`, `lib-stale`, `lib-open&open=3`
+(an open album; add `&menu=1`, `&info=1` or `&delete=1`), `lib-view` with `#library/songs`,
+`/artists`, `/books` or `/playlists` (and `&q=TEXT`), and `music-empty`, `music-plan`
+(`&selected=1`), `music-scanning`, `music-applying`, `music-partial`, `music-pending`,
+`music-done`, `music-full`. `BYOS_MOCK_SCENARIO=snapshot_io` makes the real flow fall back to
+a card scan, `sync_partial` makes three songs fail, `card_full` leaves no room.
+
 ## How it works
 
 ```

@@ -265,12 +265,14 @@ MOVE inside the SD. Result: `src`, `dst`.
 ### rm
 
 ```
-byos-cli rm PATH... [-r] [--yes]
+byos-cli rm PATH... [-r] [--yes] [--prune-empty]
 ```
 
 DELETE. With `-r` and no `--yes`, it first prints
 `prompt {"kind": "confirm", "message": "Delete folder X and everything in it?", "path": "X"}`
-and reads the answer. Result: `deleted` (list).
+and reads the answer. With `--prune-empty`, the folders the deletes left empty are removed
+too, from the deepest up (a folder with any entry stays, and a top-level folder such as
+`Music` always stays). Result: `deleted` (list), `pruned` (list).
 
 ### df
 
@@ -527,6 +529,183 @@ Result: `device` (as in the `device` event), `battery`, `charging`, `sd` (DF fie
 (`staged`, `live_sha256`, `live_size`, `last_apply`), `update` (`state`, `version`,
 `permille`), `transport`, `encrypted`.
 
+### Library and music
+
+The desktop app's Library and Music tabs (docs/DESKTOP_APP.md). Large output goes to files in
+the cache folder (`<config>/cache`, section 3.1), never to stdout. Every command prints
+`progress` lines while it works (the heartbeat repeats the last one at least every 5 s).
+
+#### lib-index
+
+```
+byos-cli lib-index [--pull] [--out FILE]
+byos-cli lib-index --db SNAPSHOT.db [--out FILE]
+```
+
+The HiBy's library from a DB_SNAPSHOT of its own database (by default), or from a snapshot
+file. Writes `index.json` (default `cache/library/<device id>/index.json`, with
+`snapshot.db` next to it): `format`, `source`, `revision`, `time`, `counts`, `tracks`
+(`id`, `path` on the card, `title`, `artist`, `albumArtist`, `album`, `genre`, `year`,
+`track`, `disc`, `duration` ms, `format`, `sr`, `bits`, `kbps`, `lossless`, `size`, `mtime`,
+`ctime`, `art`, `book`), `albums` (`title`, `artist`, `year`, `genre`, `tracks` as indexes
+into `tracks`, `art` = the path whose cover stands for the album), `artists` (`name`,
+`albums`, `tracks`), `genres`, `books` (`name`, `path`, `tracks`, `duration`, `size`),
+`playlists` (`path`, `name`). Grouping: album artist else artist; "The " ignored when
+sorting; files under `Audiobooks/` (and the other book folders) and `.m4b` files are books.
+
+Progress: `op "pull"` (bytes), `op "index"` (rows). Result: `index`, `device`, `source`
+(`snapshot`), `revision` (the snapshot's SHA-256), `tracks`, `albums`, `artists`, `genres`,
+`books`, `playlists`. When the HiBy cannot make a snapshot (`E_IO`, or `E_UNSUPPORTED`): `error
+remote` with `btp` and `"hint": "scan"`; run `lib-scan` instead.
+
+#### lib-scan
+
+```
+byos-cli lib-scan [ROOT...] [--full] [--out FILE]
+```
+
+The same `index.json` from the tags of the files on the card (default: the whole card but
+`ByOS`). Each audio file is read with partial GETs (the first 128 KB, then only the blocks the
+tag reader needs; a GET is cancelled once enough arrived); pictures are located, not read. Tags
+are cached in `cache/library/<id>/tags.json` by path, size and modification time; `--full`
+reads every file again. Progress: `op "list"` (folders), `op "tags"` (files); `warn
+unreadable` for a file whose tags cannot be read (it is listed by its name). Result: as
+`lib-index` with `source: "scan"`, plus `files`, `cached`, `fetched`, `bytes` (downloaded).
+
+#### lib-art
+
+```
+byos-cli lib-art PATH... [--size 256|500] [--max 64]
+```
+
+Album art for card files: the folder's image (`cover.jpg`, `folder.jpg`... as the HiBy picks
+it), else the embedded front cover, as a baseline JPEG at most `--size` px, in
+`cache/art/<sha1(path|size|mtime)>-<size>.jpg`. A file without usable art gets a `.none`
+marker, so it is not fetched again. Progress `op "art"`. Result: `count`, `items` (`path`,
+`key`, and `file` and `color` (the average colour, `#rrggbb`), or `none: true`).
+
+#### lib-rescan
+
+```
+byos-cli lib-rescan --full | PATH...
+```
+
+LIB_RESCAN: mode 0 (`--full`) or mode 1 for at most 256 paths. `E_UNSUPPORTED` comes back as
+`error remote` with `btp` (a full rescan cannot be started on the stock player yet,
+SYNC_PROTOCOL 13.3). Result: `mode`, `count`.
+
+#### playlist-ls, playlist-add, playlist-rm
+
+```
+byos-cli playlist-ls
+byos-cli playlist-add NAME PATH... [--create]
+byos-cli playlist-rm NAME [PATH...]
+```
+
+Playlists are `Playlists/<NAME>.m3u8`. NAME may also be a card path to a `.m3u`/`.m3u8`
+(`Playlists/Road Trip.m3u`) or such a file name in `Playlists`; give the path for a playlist
+that `playlist-ls` listed, so an `.m3u` file, or one next to an `.m3u8` of the same name, is
+the one changed. Format:
+UTF-8, `#EXTM3U`, one path per line relative to the playlist's folder, `\r\n`. `playlist-ls`
+prints one `entry` per playlist (`name`, `path`, `size`, `mtime`, `tracks`, `items`).
+`playlist-add` adds the paths that are not in it yet (`--create` makes a new one); result
+`playlist`, `added`, `tracks`, `created`. `playlist-rm` removes paths, or the whole playlist
+without paths; result `playlist`, `deleted`, `removed`.
+
+#### music-scan
+
+```
+byos-cli music-scan DIR... [--full] [--out FILE]
+```
+
+No HiBy needed. Reads the tags of the music in folders on this computer (cached in
+`cache/music/tags.json`) and writes a catalogue in the `index.json` form, with local paths
+and `roots` (default `cache/music/catalog.json`). Progress `op "scan"`, `op "tags"`. Result:
+`catalog`, `roots`, `tracks`, `albums`, `artists`, `books`, `bytes`, `changed` (files read
+again).
+
+#### sync-plan
+
+```
+byos-cli sync-plan --catalog CATALOG.json [--select SEL.json] [--dest Music]
+          [--layout artist-album|keep] [--covers optimize|keep] [--remove-unselected] [--out PLAN.json]
+```
+
+What a sync copies. `SEL.json`: `{"all": true}` or `{"all": false, "artists": [...], "albums":
+[{"artist", "title"}], "genres": [...], "files": [local paths], "books": true}` (names compare
+without case or accents). Lists `--dest` and `Audiobooks` on the card, reads
+`ByOS/sync/manifest.json` (what earlier syncs copied) and DF.
+
+- Layout `artist-album`: `<dest>/<Album artist or Artist>/<Album>/<NN> <Title>.<ext>`
+  (`<D>-<NN>` when the album has several discs); `keep`: the path under the source folder.
+  Books go to `Audiobooks/<Book>/<file>`. Names follow SYNC_PROTOCOL 9.2 (NFC, no
+  `\ : * ? " < > |`, no leading dot, no trailing dot or space); names that would collide get
+  " (2)".
+- `skip` (`reason "unchanged"`) when the manifest says the file came from the same source
+  (size, modification time) with the same cover choice and the card still has it. Without a
+  manifest entry, `skip` (`reason "same_size"`) when the card has a file of the same size
+  there: that file stays the user's (sync-apply does not add it to the manifest, so no later
+  sync replaces or removes it). A different file of the user's at that name is never
+  overwritten (the new one gets " (2)").
+- A source that moved (the music folder is now on another drive, or the same album was dropped
+  twice) finds its earlier copy: a manifest entry whose source is no longer in the catalogue,
+  with the same file name and size, keeps its place (`skip`, `reason "moved"`; sync-apply
+  records the new source). Two chosen files with the same name, size and place are copied once.
+- `--remove-unselected` removes only files the manifest lists whose source is under one of the
+  catalogue's `roots` (the folders scanned this time). Songs from a folder that was not scanned,
+  such as an unplugged drive, are kept.
+
+Writes the plan (default `cache/sync/plan.json`): the result fields plus `items` (`action`
+`add`/`update`/`skip`/`remove`, `src`, `dest`, `size`, `mtime`, `reason`, `title`). Result:
+`plan`, `add`, `update`, `skip`, `remove`, `bytes_add`, `bytes_remove`, `sd_free`, `fits`
+(64 MB to spare).
+
+#### sync-apply
+
+```
+byos-cli sync-apply PLAN.json [--covers optimize|keep] [--lyrics] [--then none|rescan|rebuild] [--yes]
+```
+
+Copies the plan. With `--covers optimize` (the default), a file whose cover is larger than
+1000 px, progressive, PNG, or only in the folder (`cover.jpg`...) is sent as a copy with a
+500 px baseline JPEG as its front cover (FLAC, MP3, M4A; the audio bytes stay the same; the
+file on this computer is never changed). This is what keeps the HiBy's covers sharp: its cover
+cache decodes a small baseline JPEG at 1/2 scale, where a 3000 px or progressive JPEG fails and
+falls back to the blurry 128 px copy. `--lyrics` also sends `<track>.lrc`.
+
+Removals ask first (`prompt confirm`) unless `--yes`. Progress: `op "prepare"`, `op "put"`
+per file, `op "sync"` overall (bytes, with `files_done`, `files_total`), `op "remove"`; `warn
+failed` per file that failed (the others go on). The manifest is written last, also after a
+cancel or a lost connection, for the files that were copied.
+
+`--then rescan` asks the HiBy for a full library update (LIB_RESCAN mode 0); `rebuild` would
+build the database on this computer (it needs SYNC_PROTOCOL 13.1/13.2 on the HiBy and is not
+done yet). When the library step cannot run: `warn library_pending` ("open Settings > Update
+library on the HiBy"). Result: `written`, `skipped`, `failed`, `removed`, `bytes`, `items`
+(`dest`, `result`, `error`), `library` (`action`, `ok`, `code`).
+
+#### cover-cache-reset
+
+```
+byos-cli cover-cache-reset
+```
+
+Deletes the HiBy's "no cover" markers (`*.none`) and large cover copies (`*_b.raw`) in
+`ByOS/cache/music`, so the Music app makes them again from the current art. Result: `deleted`.
+
+#### art-fix
+
+```
+byos-cli art-fix [--root Music] [--dry-run]
+```
+
+Finds the FLAC, MP3 and M4A files on the card whose embedded cover is larger than 1000 px,
+progressive or PNG, or that have none while their folder has an image, and gives each a 500 px
+baseline JPEG cover (GET, rewrite on this computer, PUT REPLACE), then runs
+`cover-cache-reset`. One `entry` per album (`path`, `files`, `reasons`). Progress `op "scan"`,
+`op "get"`, `op "put"`. Result: `albums`, `files`, `fixed`, `skipped`, `cache_reset`;
+`--dry-run` only lists.
+
 ## 6. Examples
 
 ```
@@ -568,5 +747,12 @@ $ java -jar byos-cli.jar --device wifi connect --pair
   the new version after the restart, with a fake `adb`).
 - `:core` tests `Build.kt` on made-up firmware (`BuildTest`): the build record, the copy
   order, the ByOS folder export, the firmware cache and the bundle store.
+- Library and music (`LibraryCliTest`, `:core` `LibraryIndexTest`, `PictureWriterTest`,
+  `SyncPlannerTest`): the index from a snapshot and its "scan" hint, a card scan with partial
+  GETs and its cache, thumbnails from folder and embedded art, LIB_RESCAN's `E_UNSUPPORTED`,
+  `rm --prune-empty`, playlists, the cover cache reset, a whole sync (covers made 500 px
+  baseline, a second plan that skips everything, removal with and without confirmation, the
+  library step) and `art-fix`; cover rewriting keeps the audio bytes (FLAC, MP3, M4A with moved
+  chunk offsets).
 - No test talks to a real HiBy. Device tests follow the project's device rules and are run by
   hand.

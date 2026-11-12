@@ -31,11 +31,12 @@
       <nav>
         <h2 data-i18n="library"></h2>
         <ul class="side-list">
-          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-clock"></span><span data-i18n="recentlyAdded"></span></li>
-          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-mic"></span><span data-i18n="artists"></span></li>
-          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-album"></span><span data-i18n="albums"></span></li>
-          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-note"></span><span data-i18n="songs"></span></li>
-          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-book"></span><span data-i18n="audiobooks"></span></li>
+          <li><button class="side-item side-lib" data-libview="recent"><span class="ico ico-clock"></span><span data-i18n="recentlyAdded"></span></button></li>
+          <li><button class="side-item side-lib" data-libview="artists"><span class="ico ico-mic"></span><span data-i18n="artists"></span></button></li>
+          <li><button class="side-item side-lib" data-libview="albums"><span class="ico ico-album"></span><span data-i18n="albums"></span></button></li>
+          <li><button class="side-item side-lib" data-libview="songs"><span class="ico ico-note"></span><span data-i18n="songs"></span></button></li>
+          <li><button class="side-item side-lib" data-libview="books"><span class="ico ico-book"></span><span data-i18n="audiobooks"></span></button></li>
+          <li><button class="side-item side-lib" data-libview="playlists"><span class="ico ico-list"></span><span data-i18n="playlists"></span></button></li>
         </ul>
         <h2 data-i18n="devices"></h2>
         <ul class="side-list" id="device-list"></ul>
@@ -123,8 +124,33 @@
           <p class="muted small-text status-line" id="files-status"></p>
         </div>
 
-        <div class="tab-panel" data-panel="music" hidden><div class="card later" data-later="musicLater" data-m="M4"></div></div>
-        <div class="tab-panel" data-panel="library" hidden><div class="card later" data-later="libraryLater" data-m="M4"></div></div>
+        <div class="tab-panel" data-panel="music" hidden>
+          <div class="music-body" id="music-body"></div>
+          <div class="sync-bar" id="sync-bar" hidden></div>
+        </div>
+        <div class="tab-panel" data-panel="library" hidden>
+          <div class="lib-toolbar">
+            <div class="segmented small" role="tablist" id="lib-views">
+              <button role="tab" data-view="albums" data-i18n="viewAlbums"></button>
+              <button role="tab" data-view="artists" data-i18n="viewArtists"></button>
+              <button role="tab" data-view="songs" data-i18n="viewSongs"></button>
+              <button role="tab" data-view="books" data-i18n="viewBooks"></button>
+              <button role="tab" data-view="playlists" data-i18n="viewPlaylists"></button>
+            </div>
+            <span class="spacer"></span>
+            <button class="tool-btn" id="lib-refresh" data-i18n-title="libRefresh" aria-label="Refresh">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 6.5A6 6 0 1 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M16 3v4h-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn menu-btn" id="lib-covers" aria-haspopup="menu"><span data-i18n="coversMenu"></span></button>
+            <label class="search-field">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3.2 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <input type="search" id="lib-search" autocomplete="off" spellcheck="false">
+            </label>
+          </div>
+          <div class="lib-banner" id="lib-banner" hidden></div>
+          <div class="lib-body" id="lib-body"></div>
+          <p class="lib-foot muted small-text" id="lib-foot"></p>
+        </div>
         <div class="tab-panel" data-panel="updates" hidden>
           <div class="card upd-hero">
             <div class="upd-icon" aria-hidden="true"></div>
@@ -170,6 +196,9 @@
       </div>
     </form>
   </dialog>
+
+  <div class="ctx-menu" id="ctx-menu" role="menu" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <dialog class="popover" id="activity">
     <h2 data-i18n="activity"></h2>

@@ -3,7 +3,8 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LineSplitter, parseEventLine, TERMINAL } from './jsonl.mjs';
@@ -60,6 +61,41 @@ function withPaths(head, flags, paths) {
   return paths.length ? [...head, ...flags, '--', ...paths] : [...head, ...flags];
 }
 
+// A playlist name as the page types it: one card-safe name, no folders.
+function playlistName(n) {
+  if (typeof n !== 'string') throw new UsageError('playlist: a name is required');
+  const s = n.normalize('NFC').trim();
+  if (!s || s.length > 120 || s.includes('/') || checkPath(s)) throw new UsageError(`playlist: invalid name "${n}"`);
+  return s;
+}
+
+// An existing playlist by its card path ("Playlists/Road Trip.m3u"): .m3u and .m3u8 files.
+function playlistFile(p) {
+  const n = remote(p, 'playlist');
+  if (!/\.m3u8?$/i.test(n)) throw new UsageError(`playlist: "${p}" is not an .m3u or .m3u8 file`);
+  return n;
+}
+
+function oneOf(v, allowed, what) {
+  if (!allowed.includes(v)) throw new UsageError(`${what}: one of ${allowed.join(', ')}`);
+  return v;
+}
+
+// A folder on this computer: absolute and existing (it comes from the runner's settings).
+function localDir(p, what) {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new UsageError(`${what}: folders must be absolute paths`);
+  let st;
+  try { st = statSync(p); } catch { throw new UsageError(`${what}: ${p} does not exist`); }
+  if (!st.isDirectory()) throw new UsageError(`${what}: ${p} is not a folder`);
+  return p;
+}
+
+// A file the runner made in its cache (catalogue, selection, plan).
+function localFile(p, what) {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new UsageError(`${what}: the runner's file must be an absolute path`);
+  return p;
+}
+
 function remoteList(list, what) {
   if (!Array.isArray(list) || list.length === 0 || list.length > 1000) {
     throw new UsageError(`${what}: 1 to 1000 paths are required`);
@@ -110,7 +146,81 @@ export function buildArgs(command, params = {}, globals = {}) {
       const flags = [];
       if (params.recursive) flags.push('-r');
       if (params.yes) flags.push('--yes');
+      if (params.pruneEmpty) flags.push('--prune-empty');
       a.push(...withPaths(['rm'], flags, remoteList(params.paths, 'rm')));
+      break;
+    }
+    // ---- Library and Music tabs (BYOS_CLI.md, "Library and music"). Files on this computer
+    // (catalogue, selection, plan, source folders) never come from the page: the runner
+    // (server.mjs) fills them in from its own cache and settings.
+    case 'lib-index':
+      a.push('lib-index');
+      break;
+    case 'lib-scan': {
+      const roots = params.roots === undefined ? [] : remoteList(params.roots, 'lib-scan');
+      a.push(...withPaths(['lib-scan'], params.full ? ['--full'] : [], roots));
+      break;
+    }
+    case 'lib-art': {
+      if (!Array.isArray(params.paths) || params.paths.length === 0 || params.paths.length > 64) {
+        throw new UsageError('lib-art: 1 to 64 paths are required');
+      }
+      const size = params.size ?? 256;
+      if (size !== 256 && size !== 500) throw new UsageError('lib-art: size is 256 or 500');
+      a.push(...withPaths(['lib-art'], ['--size', String(size)], params.paths.map((p) => remote(p, 'lib-art'))));
+      break;
+    }
+    case 'lib-rescan':
+      if (params.full) a.push('lib-rescan', '--full');
+      else {
+        if (!Array.isArray(params.paths) || params.paths.length === 0 || params.paths.length > 256) {
+          throw new UsageError('lib-rescan: --full or 1 to 256 paths');
+        }
+        a.push(...withPaths(['lib-rescan'], [], params.paths.map((p) => remote(p, 'lib-rescan'))));
+      }
+      break;
+    case 'playlist-ls':
+      a.push('playlist-ls');
+      break;
+    case 'playlist-add':
+    case 'playlist-rm': {
+      const name = params.path !== undefined ? playlistFile(params.path) : playlistName(params.name);
+      const paths = command === 'playlist-rm' && (params.paths === undefined || params.paths.length === 0)
+        ? [] : remoteList(params.paths, command);
+      const flags = command === 'playlist-add' && params.create ? ['--create'] : [];
+      a.push(...withPaths([command], flags, [name, ...paths]));
+      break;
+    }
+    case 'music-scan': {
+      if (!Array.isArray(params.sources) || params.sources.length === 0 || params.sources.length > 32) {
+        throw new UsageError('music-scan: 1 to 32 music folders are required');
+      }
+      a.push(...withPaths(['music-scan'], params.full ? ['--full'] : [], params.sources.map((s) => localDir(s, 'music-scan'))));
+      break;
+    }
+    case 'sync-plan': {
+      const flags = ['--catalog', localFile(params.catalog, 'sync-plan'), '--dest', remote(params.dest ?? 'Music', 'sync-plan destination')];
+      if (params.select !== undefined) flags.push('--select', localFile(params.select, 'sync-plan'));
+      flags.push('--layout', oneOf(params.layout ?? 'artist-album', ['artist-album', 'keep'], 'layout'));
+      flags.push('--covers', oneOf(params.covers ?? 'optimize', ['optimize', 'keep'], 'covers'));
+      if (params.removeUnselected) flags.push('--remove-unselected');
+      a.push('sync-plan', ...flags);
+      break;
+    }
+    case 'sync-apply': {
+      const flags = ['--covers', oneOf(params.covers ?? 'optimize', ['optimize', 'keep'], 'covers'),
+        '--then', oneOf(params.then ?? 'none', ['none', 'rescan', 'rebuild'], 'then')];
+      if (params.lyrics) flags.push('--lyrics');
+      if (params.yes) flags.push('--yes');
+      a.push(...withPaths(['sync-apply'], flags, [localFile(params.plan, 'sync-apply')]));
+      break;
+    }
+    case 'cover-cache-reset':
+      a.push('cover-cache-reset');
+      break;
+    case 'art-fix': {
+      a.push('art-fix', '--root', remote(params.root ?? 'Music', 'art-fix'));
+      if (params.dryRun) a.push('--dry-run');
       break;
     }
     case 'connect':
@@ -362,6 +472,13 @@ export class Job extends EventEmitter {
       });
     }
   }
+}
+
+// byos-cli's own configuration folder (BYOS_CLI.md 3.1); its cache is "<folder>/cache".
+export function cliConfigDir(env = process.env, platform = process.platform, home = os.homedir()) {
+  if (platform === 'win32') return path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'ByOS', 'cli');
+  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'ByOS', 'cli');
+  return env.XDG_CONFIG_HOME ? path.join(env.XDG_CONFIG_HOME, 'byos-cli') : path.join(home, '.config', 'byos-cli');
 }
 
 // Runs one job to the end and returns { final, events }. For tests and simple calls.

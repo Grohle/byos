@@ -5,6 +5,9 @@
 import { t, setLang, getLang, detectLang, LANGS, errorMessage } from '/i18n.js';
 import { checkPath } from '/btp-path.js';
 import { emptyFlow, applyInfo, startStep, applyEvent, finishStep, fraction, STEPS } from '/build-flow.js';
+import {
+  demoMedia, initMedia, mediaDeviceChanged, mediaLocation, mediaTabOpened, readMediaLocation, renderMedia,
+} from '/media.js';
 
 const TOKEN = document.querySelector('meta[name="byos-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -200,6 +203,18 @@ function selectDevice(id) {
     state.pendingPath = null;
   }
   if (state.tab === 'updates') loadBuildInfo();
+  mediaDeviceChanged();
+  if (state.tab === 'library' || state.tab === 'music') mediaTabOpened(state.tab);
+}
+
+// Switches the device page to a tab and loads what it shows.
+function setTab(tab) {
+  state.tab = tab;
+  saveLocation();
+  renderMain();
+  if (tab === 'files' && !state.entries.length) loadFolder(state.cwd);
+  if (tab === 'updates') loadBuildInfo();
+  mediaTabOpened(tab);
 }
 
 // The address keeps the tab and folder (#files/Music/ABBA), so a reload comes back to them.
@@ -207,7 +222,7 @@ function selectDevice(id) {
 function saveLocation() {
   const folder = state.tab === 'files' && state.cwd
     ? `/${state.cwd.split('/').map(encodeURIComponent).join('/')}` : '';
-  const hash = `#${state.tab}${folder}`;
+  const hash = `#${state.tab}${folder}${mediaLocation()}`;
   try { history.replaceState(null, '', hash); } catch { /* not important */ }
 }
 
@@ -226,6 +241,7 @@ function readLocation() {
   }
   if (document.querySelector(`#tabs button[data-tab="${CSS.escape(tab)}"]`)) state.tab = tab;
   if (tab === 'files' && folder && !checkPath(folder)) state.pendingPath = folder;
+  if (tab === 'library' && folder) readMediaLocation(folder);
 }
 
 async function loadStatus(start = false) {
@@ -778,6 +794,7 @@ function renderMain() {
   renderSummary();
   renderFiles();
   renderUpdates();
+  renderMedia();
 }
 
 function renderBanner() {
@@ -961,13 +978,7 @@ function wire() {
   $('activity').addEventListener('click', (e) => { if (e.target === $('activity')) $('activity').close(); });
 
   for (const b of document.querySelectorAll('#tabs button')) {
-    b.addEventListener('click', () => {
-      state.tab = b.dataset.tab;
-      saveLocation();
-      renderMain();
-      if (state.tab === 'files' && !state.entries.length) loadFolder(state.cwd);
-      if (state.tab === 'updates') loadBuildInfo();
-    });
+    b.addEventListener('click', () => setTab(b.dataset.tab));
   }
 
   $('btn-upd-go').addEventListener('click', () => buildAndInstall());
@@ -1021,6 +1032,9 @@ async function main() {
   readLocation();
   applyStaticText();
   wire();
+  initMedia({
+    t, el, getLang, api, runCli, sheet, errorMessage, selectedDevice, deviceSpec, fmtBytes, setTab, saveLocation, appState: state,
+  });
   try {
     state.info = await api('/api/info');
     const badge = $('mode-badge');
@@ -1028,7 +1042,11 @@ async function main() {
     if (state.info.error) { badge.hidden = false; badge.className = 'badge warn'; badge.textContent = t('cliMissing'); badge.title = state.info.error; }
     // Demo mode only: ?demo=NAME shows one fixed state of the Updates page (README, screenshots).
     const demo = new URLSearchParams(location.search).get('demo');
-    if (state.info.mock && demo) demoUpdates(demo);
+    if (state.info.mock && demo) {
+      const tab = await demoMedia(demo, new URLSearchParams(location.search));
+      if (tab) state.tab = tab;
+      else demoUpdates(demo);
+    }
   } catch { /* shown by the device list */ }
   renderLcd();
   renderMain();
