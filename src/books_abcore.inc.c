@@ -1343,7 +1343,11 @@ static int ab_worker_run(const char *qpath, const char *paused_path, const char 
         if (ab_mkdirs(dir)) { abw_stat(e.book, e.dest, 0, e.size, "nosd", 0, left); rc = 1; break; }
         int r = abw_get(net, &e, done + 1, done + left);
         if (r == 2) break;
-        if (r == 0) { if (e.kind == 'c') abw_cover_raw(wall, &e); continue; }
+        if (r == 0) {
+            if (e.kind == 'c') abw_cover_raw(wall, &e);
+            else { int pf = open("/usr/data/hibymod/rescan_pending", O_WRONLY | O_CREAT | O_CLOEXEC, 0644); if (pf >= 0) close(pf); }   /* capitulo nuevo: la biblioteca de HiBy no lo ve hasta reescanear */
+            continue;
+        }
         /* fallo: hasta 3 intentos (5, 15 s) y despues se salta en esta pasada */
         int t = -1; for (int k = 0; k < 8; k++) if (!strcmp(tries[k].dest, e.dest)) t = k;
         if (t < 0) { t = 0; for (int k = 1; k < 8; k++) if (tries[k].n < tries[t].n) t = k; ab_cpy(tries[t].dest, sizeof tries[t].dest, e.dest); tries[t].n = 0; }

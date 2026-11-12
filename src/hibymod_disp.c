@@ -392,6 +392,7 @@ static void copy_then_ov(unsigned char *d, const unsigned char *src)
 static void pl_kick(void);     /* v6, al final del fichero */
 static void st_kick(void);     /* v7 ajustes, al final del fichero */
 static void qc_kick(void);     /* v8 posicion/cola/volumen, al final del fichero */
+static void lu_kick(void);     /* actualizar la biblioteca ('U'), al final del fichero */
 static void *control(void *arg)
 {
     (void)arg;
@@ -403,6 +404,7 @@ static void *control(void *arg)
             if (c == 'L') { pl_kick(); continue; }   /* v6: sin el mutex de la pantalla */
             if (c == 'S') { st_kick(); continue; }   /* v7: ajustes del reproductor, idem */
             if (c == 'Q') { qc_kick(); continue; }   /* v8: posicion/salto, cola, volumen, idem */
+            if (c == 'U') { lu_kick(); continue; }   /* actualizar la biblioteca de HiBy */
             pthread_mutex_lock(&mu);
             if (c == 'C') {
                 if (!st->held && !st->capture && map_frames()) {
@@ -2128,4 +2130,51 @@ static void vol_publish(void)
     int v = *(const volatile int *)(uintptr_t)(vol_base + 0x23c), m = *(const volatile int *)(uintptr_t)(vol_base + 0x238);
     if (v >= 0 && v <= 255) st->vol_now = (uint32_t)v + 1;
     if (m > 0 && m <= 255) st->vol_max = (uint32_t)m + 1;
+}
+
+/* ================================================================ actualizar la biblioteca ('U')
+ * HiBy no reescanea la tarjeta salvo con "Actualizar base de datos" (Ajustes de reproduccion) o con
+ * la actualizacion automatica al insertar la SD. Ese mismo escaneo se pide con el mensaje de la
+ * interfaz 0x125 (lo que hace "startScanMusic" de HiBy Link; docs/research_library_rescan.md):
+ * su manejador abre music_update.dlg y lanza el hilo de escaneo EN EL HILO DE LA INTERFAZ (llamar
+ * a las funciones desde aqui no es seguro). Estado del escaneo: palabra 0x93bed8 (1 libre, 0
+ * escaneando). OJO: el escaneo para la musica y vacia la cola (lo hace HiBy).
+ * Resultado en LU_RES: "posted" / "busy" / "nosd" / "nosig" y, al acabar, "done" (o "timeout"). */
+#define LU_RES "/tmp/hibymod_libscan"
+#define LU_IDLE 0x93bed8u
+static void lu_write(const char *m)
+{
+    int f = r_open(LU_RES ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (f >= 0) { if (write(f, m, strlen(m)) < 0) {} r_close(f); rename(LU_RES ".tmp", LU_RES); }
+    int g = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (g >= 0) { char l[80]; int n = snprintf(l, sizeof l, "lu: %s\n", m); if (write(g, l, n) < 0) {} r_close(g); }
+}
+static void *lu_watch(void *a)
+{
+    (void)a;
+    volatile const int32_t *idle = (volatile const int32_t *)(uintptr_t)LU_IDLE;
+    int started = 0;
+    for (int i = 0; i < 100 && !started; i++) { if (*idle == 0) started = 1; else usleep(30000); }   /* 3 s para empezar */
+    if (!started) { lu_write("done"); return 0; }                 /* tan rapido que no se vio (o no arranco) */
+    for (int i = 0; i < 18000 && *idle == 0; i++) usleep(100000);  /* hasta 30 min */
+    lu_write(*idle == 0 ? "timeout" : "done");
+    return 0;
+}
+static void lu_kick(void)
+{
+    static const uint32_t sig_idle[4] = { 0x3c020094, 0x03e00008, 0x8c42bed8, 0x00000000 };   /* scan_idle() 0x507620 */
+    if (st_check() != 0 || !pl_mapped(0x507620, 16, 1) || memcmp((const void *)(uintptr_t)0x507620, sig_idle, 16) ||
+        !pl_mapped(0x7f88c0, 8, 0) || ((const uint32_t *)(uintptr_t)0x7f88c0)[0] != 0x125 || ((const uint32_t *)(uintptr_t)0x7f88c0)[1] != 0x464c40 ||
+        !pl_mapped(LU_IDLE, 4, 0)) { lu_write("nosig"); return; }
+    if (*(volatile const int32_t *)(uintptr_t)LU_IDLE != 1) { lu_write("busy"); return; }
+    { /* sin tarjeta montada el escaneo encuentra 0 pistas y vacia la biblioteca */
+        int ok = 0; FILE *m = r_fopen64("/proc/mounts", "r");
+        if (m) { char l[256]; while (fgets(l, sizeof l, m)) if (strstr(l, " /usr/data/mnt/sd_0 ")) ok = 1; fclose(m); }
+        if (!ok) { lu_write("nosd"); return; }
+    }
+    STF(3, st_v1_t)(0x125);
+    lu_write("posted");
+    pthread_t t; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&t, &at, lu_watch, 0)) lu_write("done");
+    pthread_attr_destroy(&at);
 }

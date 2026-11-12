@@ -935,6 +935,8 @@ static void fm_run_dl(int uid)
     for (int i = 0; i < fm_nq; i++) if (fm_q[i].uid == uid) {
         struct fm_dl *q = &fm_q[i];
         q->state = ok ? DS_DONE : q->cancel ? DS_CANCEL : DS_FAIL; q->err = (uint8_t)err;
+        /* descarga guardada en la tarjeta: la biblioteca de HiBy no la ve hasta reescanear (sysset.inc.c) */
+        if (ok && q->kind != DK_CACHE) { int pf = open("/usr/data/hibymod/rescan_pending", O_WRONLY | O_CREAT | O_CLOEXEC, 0644); if (pf >= 0) close(pf); }
         if (ok && q->total <= 0) { struct stat s; if (!stat(q->dest, &s)) q->total = q->got = s.st_size; }
         if (ok) q->got = q->total;
         if (err == 2) fm_dl_space = 1;

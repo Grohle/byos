@@ -643,6 +643,7 @@ static int fake_pkt(struct pkt *p)
     p->n = n; p->x = cur_x; p->y = cur_y; p->down = cur_down;
     return 1;
 }
+static double last_touch_ms;          /* ultimo toque leido (para tareas en reposo) */
 static int read_pkt(struct pkt *p, int timeout_ms)
 {
     p->n = 0;
@@ -693,7 +694,7 @@ static int read_pkt(struct pkt *p, int timeout_ms)
         }
         if (p->n < 24) p->ev[p->n++] = e;
         if (p->n == 1) lcd_boost();                /* refresco completo antes del primer fotograma */
-        if (e.type == EV_KEY && e.code == BTN_TOUCH) cur_down = e.value;
+        if (e.type == EV_KEY && e.code == BTN_TOUCH) { cur_down = e.value; last_touch_ms = now_ms(); }
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_X) cur_x = e.value;
         else if (e.type == EV_ABS && e.code == ABS_MT_POSITION_Y) cur_y = e.value;
         else if (e.type == EV_SYN && e.code == SYN_REPORT) {
@@ -1643,6 +1644,7 @@ static void guard_tick(void)
     if (t < next) return;
     next = t + 10000;
     memmap_dump();                                /* diagnostico bajo demanda (fichero disparador) */
+    lib_auto_tick();                              /* biblioteca tras descargas (sysset.inc.c) */
     cache_to_sd();                                /* la SD pudo montarse (o volver del PC) */
     DIR *d = opendir("/proc"); if (!d) return;
     struct dirent *e; int changed = 0;

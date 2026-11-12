@@ -528,13 +528,63 @@ static void page_sound(struct spage *p)
 static void nav_sound(void) { audio_sync(); open_page(page_sound, "Ajustes"); }
 
 /* ------------------------------------------------------------------ Biblioteca de musica */
+/* Actualizar la biblioteca de HiBy: la libreria (orden 'U') manda a su interfaz el mensaje 0x125,
+ * el mismo escaneo que "Actualizar base de datos" (docs/research_library_rescan.md). El escaneo
+ * PARA la musica y vacia la cola (lo hace HiBy), asi que a mano se avisa si algo suena y en
+ * automatico (tras descargas de Vinyl/Libros: fichero LIB_PENDING) solo se lanza en el inicio,
+ * sin musica y con la pantalla sin tocar 30 s. */
+#define LIB_RES "/tmp/hibymod_libscan"
+#define LIB_PENDING "/usr/data/hibymod/rescan_pending"
+static int lib_read(char *b, int n) { b[0] = 0; int f = open(LIB_RES, O_RDONLY | O_CLOEXEC); if (f < 0) return 0; int k = read(f, b, n - 1); close(f); if (k > 0) b[k] = 0; return k > 0; }
+static int lib_post(void)                 /* 1 lanzado; si no, deja el motivo en tst */
+{
+    unlink(LIB_RES); cmd('U');
+    char b[32]; double t = now_ms();
+    while (now_ms() - t < 2500) { if (lib_read(b, sizeof b)) break; msleep(30); st->shell_beat++; }
+    if (!strcmp(b, "posted")) { lg("biblioteca: actualizando"); unlink(LIB_PENDING); return 1; }
+    lg("biblioteca: no se pudo actualizar (%s)", b[0] ? b : "sin respuesta");
+    if (!strcmp(b, "nosd")) toast(tr("No hay tarjeta SD"));
+    else if (!strcmp(b, "busy")) toast(tr("Ya se está actualizando"));
+    else toast(tr("No disponible en esta versión"));
+    return 0;
+}
+static void act_rescan(void)
+{
+    struct np_info ni; static uint16_t cv[128 * 128]; int ok = 0; npx_snapshot(&ni, cv, &ok);
+    if (ni.playing) {
+        const char *o[1] = { tr("Actualizar") };
+        if (action_sheet(tr("La música se detendrá mientras se actualiza la biblioteca."), o, 1, -1) != 0) return;
+    }
+    if (!lib_post()) return;
+    progress_card(0, 0, -1);
+    char b[32] = ""; double t = now_ms();
+    for (;;) {
+        double s = (now_ms() - t) / 1000.0; char sub[48]; snprintf(sub, sizeof sub, "%.0f s", s);
+        progress_card(tr("Actualizando la biblioteca"), sub, fmod(s / 4.0, 1.0));   /* sin total: barra que avanza en ciclo */
+        if (lib_read(b, sizeof b) && strcmp(b, "posted")) break;
+        msleep(250); st->shell_beat++;
+        if (s > 1800) break;
+    }
+    lg("biblioteca: %s en %.0f s", b, (now_ms() - t) / 1000);
+    toast(!strcmp(b, "done") ? tr("Biblioteca actualizada") : tr("No se pudo actualizar"));
+}
+/* llamado cada 10 s (guard_tick) */
+static void lib_auto_tick(void)
+{
+    if (access(LIB_PENDING, F_OK) || !launcher_on || now_ms() - last_touch_ms < 30000) return;
+    struct np_info ni; static uint16_t cv[128 * 128]; int ok = 0; npx_snapshot(&ni, cv, &ok);
+    if (ni.playing) return;
+    lg("biblioteca: descargas nuevas -> actualizar (automatico)");
+    lib_post();
+}
 static void page_library(struct spage *p)
 {
     si_snap();
     *p = (struct spage){ "Biblioteca de música" };
     p->secs[0] = (struct ssec){ 0, 0, { ROWV("Canciones", v_songs), ROWV("Álbumes", v_albums), ROWV("Artistas", v_artists) }, 3 };
     p->secs[1] = (struct ssec){ "ACTUALIZACIÓN", ps_unsup[PS_UPDATE] ? "PS_NEEDLIB_HELP" : "UPDATE_HELP", {
-        ROWT("Buscar música nueva automáticamente", &ps_v[PS_UPDATE], ssa_update, ps_unsup[PS_UPDATE]) }, 1 };
+        ROWT("Buscar música nueva automáticamente", &ps_v[PS_UPDATE], ssa_update, ps_unsup[PS_UPDATE]),
+        ROW("Actualizar biblioteca ahora", R_ACTION, 0, 0, 0, act_rescan, 0, 0) }, 2 };
     p->secs[2] = (struct ssec){ "TARJETA SD", "TF_HELP", { ROWT("Biblioteca en la tarjeta SD", &au_tfdb, apply_tfdb, 0),
                                                          ROWT("Carátulas en caché en la SD", &au_tfimg, apply_tfimg, 0) }, 2 };
     if (au_reboot) { p->secs[2].rows[2] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[2].n = 3; }
