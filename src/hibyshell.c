@@ -1945,6 +1945,34 @@ static int hiby_modal_tick(void)
     return 0;
 }
 
+/* A ByOS payload that reached the card while it was away (the HiBy restarted into USB storage
+ * mode with the cable in, after the Windows app sent a new ByOS): the boot script only installs
+ * from the card at boot, so it waited forever. When the card comes back, install it now (the
+ * installer exits at once when the card's ByOS/payload is not newer) and restart. */
+static void sd_return_tick(void)
+{
+    static double next; static int prev = -1; static pid_t child;
+    double t = now_ms(); if (t < next) return; next = t + 2000;
+    if (child > 0) {
+        int stt; pid_t r = waitpid(child, &stt, WNOHANG);
+        if (r == 0) return;
+        child = 0;
+        if (r > 0 && WIFEXITED(stt) && WEXITSTATUS(stt) == 0) {
+            lg("sd: ByOS installed from the card after USB storage; restarting");
+            ota_st.restart = OTA_RS_REBOOT;
+            progress_card(tr("Reiniciando para actualizar…"), 0, 1);
+            act_ota_restart();
+        } else lg("sd: card back, nothing newer to install");
+        return;
+    }
+    int m = sd_mounted();
+    if (prev == 0 && m == 1 && !access("/usr/bin/hibyos_install.sh", X_OK) && access("/data/.hibymod_noinstall", F_OK)) {
+        char *argv[] = { "/usr/bin/hibyos_install.sh", "late", 0 };
+        if (posix_spawn(&child, argv[0], 0, 0, argv, environ)) child = 0;
+        else lg("sd: card back, checking for a ByOS update on it");
+    }
+    prev = m;
+}
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -2057,6 +2085,7 @@ int main(int argc, char **argv)
         st->shell_beat++;
         if (perf_on && pf.n && t - pf.last_end > 300) perf_flush();
         pw_tick();
+        sd_return_tick();
         struct pollfd pf[2] = { { ts, POLLIN, 0 }, { keys, POLLIN, 0 } };
         int pr = poll(pf, keys >= 0 ? 2 : 1, hud_active || (pend_kind && !fake_home_req) ? 0 : sp_on ? 16 : launcher_on ? (V.edit ? 0 : now_ms() < toast_until ? 30 : 250) : 60);
         if (keys >= 0 && pr > 0 && (pf[1].revents & POLLIN)) {
