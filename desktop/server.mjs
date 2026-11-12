@@ -6,7 +6,7 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
-  createWriteStream, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync,
+  copyFileSync, createWriteStream, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { buildArgs, cliConfigDir, DESKTOP_DIR, Job, resolveCli, UsageError } from './lib/cli.mjs';
 import { checkPath } from './lib/btp-path.mjs';
 import {
-  cacheFile, defaultIncomingDir, defaultSettingsDir, imageType, incomingTarget, isDir, SESSION, Settings,
+  cacheFile, DEVICE_ID, defaultIncomingDir, defaultSettingsDir, imageType, incomingTarget, isDir, SESSION, Settings,
 } from './lib/media-store.mjs';
 
 const UI_DIR = path.join(DESKTOP_DIR, 'ui');
@@ -34,6 +34,9 @@ const STATIC = {
   // The Library and Music tabs, and their formatting rules (shared with the tests).
   '/media.js': ['media.js', 'text/javascript; charset=utf-8'],
   '/media-format.js': ['../lib/media-format.mjs', 'text/javascript; charset=utf-8'],
+  // The Sync tab (linked folders) and its rules (shared with the tests).
+  '/sync.js': ['sync.js', 'text/javascript; charset=utf-8'],
+  '/sync-flow.js': ['../lib/sync-flow.mjs', 'text/javascript; charset=utf-8'],
 };
 const MAX_INCOMING = 4 * 1024 ** 3 - 1;
 const MAX_UPLOAD = 4 * 1024 ** 3 - 1; // FAT32 file limit
@@ -43,8 +46,14 @@ const MAX_FIRMWARE = 512 * 1024 ** 2; // HiBy's official firmware is about 47 MB
 const INSTANT = new Set(['devices', 'build-info']);
 const LOCAL_QUEUE = '#local';
 const LOCAL = new Set(['firmware-fetch', 'build', 'bundle-update', 'music-scan']);
+// Link commands with --device-id need no HiBy: they wait behind each other only.
+const LINKS_QUEUE = '#links';
+const LINK_COMMANDS = new Set(['link-ls', 'link-add', 'link-set', 'link-rm']);
 const JOB_KEEP_MS = 10 * 60 * 1000;
 const MAX_BODY = 64 * 1024;
+// A job request may carry the Sync preview's choices: one short entry per file of a large plan.
+const MAX_JOB_BODY = 16 * 1024 * 1024;
+const CHOICES = new Set(['delete', 'keep', 'pull', 'computer', 'player', 'both', 'skip']);
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -99,12 +108,12 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
   res.end(data);
 }
 
-async function readJson(req) {
+async function readJson(req, limit = MAX_BODY) {
   let size = 0;
   const chunks = [];
   for await (const c of req) {
     size += c.length;
-    if (size > MAX_BODY) throw new UsageError('request too large');
+    if (size > limit) throw new UsageError('request too large');
     chunks.push(c);
   }
   if (!size) return {};
@@ -117,6 +126,31 @@ async function readJson(req) {
   }
 }
 
+// The Sync preview's choices (DEC.json): item ids to a choice, and an optional policy per kind.
+export function checkDecisions(d) {
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) throw new UsageError('decisions must be an object');
+  const out = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(d)) {
+    if (k === 'policy') {
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new UsageError('decisions.policy must be an object');
+      const pol = {};
+      for (const [kind, pv] of Object.entries(v)) {
+        if (!['music', 'audiobooks', 'ebooks', 'video'].includes(kind) || !['keep', 'delete', 'ask'].includes(pv?.player_only)) {
+          throw new UsageError('decisions.policy: {kind: {player_only: keep|delete|ask}}');
+        }
+        pol[kind] = { player_only: pv.player_only };
+      }
+      out.policy = pol;
+      continue;
+    }
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(k) || !CHOICES.has(v)) throw new UsageError(`decisions: bad entry ${k.slice(0, 64)}`);
+    if (++n > 500000) throw new UsageError('decisions: too many entries');
+    out[k] = v;
+  }
+  return out;
+}
+
 export function createApp(options = {}) {
   const token = options.token ?? randomBytes(24).toString('hex');
   const resolved = resolveCli({ cli: options.cli, mock: options.mock, env: options.env });
@@ -127,6 +161,16 @@ export function createApp(options = {}) {
   const settings = new Settings(options.settingsDir ?? (options.mock ? path.join(os.tmpdir(), 'byos-desktop-mock-settings') : defaultSettingsDir(options.env ?? process.env)));
   const incoming = options.incomingDir ?? defaultIncomingDir(options.env ?? process.env);
   const pickFolder = options.pickFolder ?? (options.mock ? demoFolder : windowsFolderPicker);
+  const configDir = config ?? cliConfigDir(options.env ?? process.env);
+  // Folders chosen in this window, by an opaque token: the page names a folder for link-add or
+  // link-set only by its token, never by a path (design 10.2: the page never posts a path).
+  const folders = new Map();
+  const folderToken = (p) => {
+    for (const [k, v] of folders) if (v === p) return k;
+    const k = randomBytes(12).toString('hex');
+    folders.set(k, p);
+    return k;
+  };
   const jobs = new Map();
   // One queue per device spec: hibysync serves one session, so jobs for the same HiBy run one
   // at a time, while another HiBy is not held up. "devices" (discovery) needs no session and
@@ -157,7 +201,9 @@ export function createApp(options = {}) {
     const args = buildArgs(command, params, globals);
     const job = new Job(resolved, args, jobOptions);
     job.command = command;
-    job.spec = LOCAL.has(command) ? LOCAL_QUEUE : typeof params.device === 'string' ? params.device : '';
+    job.spec = LOCAL.has(command) ? LOCAL_QUEUE
+      : LINK_COMMANDS.has(command) && params.deviceId ? LINKS_QUEUE
+        : typeof params.device === 'string' ? params.device : '';
     job.state = 'queued';
     if (cleanup) job.once('end', cleanup);
     // Every job, however it ends (run, cancelled while queued, shut down), is forgotten later.
@@ -252,7 +298,7 @@ export function createApp(options = {}) {
         });
       }
       if (req.method === 'POST' && url.pathname === '/api/jobs') {
-        const body = await readJson(req);
+        const body = await readJson(req, MAX_JOB_BODY);
         if (body.command === 'put') throw new UsageError('use /api/upload');
         if (body.command === 'firmware-fetch' && body.params?.from !== undefined) throw new UsageError('use /api/firmware');
         const command = String(body.command ?? '');
@@ -262,7 +308,8 @@ export function createApp(options = {}) {
       // ---- Library and Music tabs: the files byos-cli made in its cache, the music folders
       const cm = url.pathname.match(/^\/api\/(library|art)\/([^/]+)$/);
       if (req.method === 'GET' && (cm || url.pathname === '/api/catalog' || url.pathname === '/api/plan')) {
-        const kind = cm ? cm[1] : url.pathname.slice(5);
+        // /api/plan?check=1: the idle check's own plan (it never replaces the plan of the preview)
+        const kind = cm ? cm[1] : url.pathname === '/api/plan' && url.searchParams.get('check') === '1' ? 'plan-check' : url.pathname.slice(5);
         const file = cacheFile(cache, kind, cm ? decodeURIComponent(cm[2]) : undefined);
         if (!file) return send(res, 400, { error: 'bad name' });
         let buf;
@@ -274,6 +321,29 @@ export function createApp(options = {}) {
         return res.end(buf);
       }
       if (req.method === 'GET' && url.pathname === '/api/sources') return send(res, 200, { sources: settings.sources() });
+      // ---- Sync tab: a folder for a link (by token), and the Music tab's folders to migrate
+      if (req.method === 'POST' && url.pathname === '/api/links/pick') {
+        // the kind only words the dialog ("Choose your music folder"); the folder is the user's choice
+        const { kind } = await readJson(req);
+        const picked = await pickFolder(FOLDER_KINDS[kind] ? kind : 'music');
+        if (!picked) return send(res, 200, { folder: null });
+        return send(res, 200, { folder: folderToken(picked), name: path.basename(picked) || picked, path: picked });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/migration') {
+        const id = url.searchParams.get('device') ?? '';
+        if (!DEVICE_ID.test(id)) throw new UsageError('device: a device id');
+        const done = (settings.read().migrated ?? []).includes(id);
+        const sources = settings.sources().map((s) => ({ ...s, folder: s.exists ? folderToken(s.path) : null, name: path.basename(s.path) }));
+        return send(res, 200, { migrated: done, sources });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/migration/done') {
+        const body = await readJson(req);
+        if (!DEVICE_ID.test(body.device ?? '')) throw new UsageError('device: a device id');
+        const v = settings.read();
+        v.migrated = [...new Set([...(Array.isArray(v.migrated) ? v.migrated : []), body.device])];
+        settings.write(v);
+        return send(res, 200, { ok: true });
+      }
       if (req.method === 'POST' && url.pathname === '/api/pick-folder') {
         const picked = await pickFolder();
         if (!picked) return send(res, 200, { picked: null, sources: settings.sources() });
@@ -322,7 +392,7 @@ export function createApp(options = {}) {
       }
       return send(res, 404, { error: 'not found' });
     } catch (e) {
-      if (e instanceof UsageError) return send(res, 400, { error: e.message });
+      if (e instanceof UsageError) return send(res, e.code === 'plan_changed' ? 409 : 400, e.code ? { error: e.message, code: e.code } : { error: e.message });
       return send(res, e.status ?? 500, { error: e.message });
     }
   }
@@ -387,35 +457,92 @@ export function createApp(options = {}) {
     return send(res, 202, { id: job.id });
   }
 
-  // The page never names files on this computer for the Library and Music commands: the music
-  // folders come from settings.json, the catalogue, selection and plan live in byos-cli's cache.
+  // The page never names files on this computer: music folders come from the links (or the
+  // settings), a link's folder from a picked token, the plan and decisions live in the cache.
   function mediaParams(command, p) {
     if (p === null || typeof p !== 'object' || Array.isArray(p)) throw new UsageError('params must be an object');
-    const { catalog, select, plan, sources, ...rest } = p;
+    const { catalog: _c, plan: _p, sources: _s, local: _l, out: _o, decisions, folder, check, runId, ...rest } = p;
     switch (command) {
       case 'music-scan': {
-        const dirs = settings.sources().filter((s) => s.exists).map((s) => s.path);
+        const dirs = musicFolders();
         if (!dirs.length) throw new UsageError('choose a music folder first');
         return { ...rest, sources: dirs };
       }
-      case 'sync-plan': {
-        const out = { ...rest, catalog: cacheFile(cache, 'catalog') };
-        if (rest.selection !== undefined) {
-          const s = rest.selection;
-          if (s === null || typeof s !== 'object' || Array.isArray(s)) throw new UsageError('selection must be an object');
-          const f = path.join(cache, 'sync', 'selection.json');
-          mkdirSync(path.dirname(f), { recursive: true });
-          writeFileSync(f, JSON.stringify(s));
-          out.select = f;
-        }
-        delete out.selection;
+      case 'link-add':
+      case 'link-set': {
+        const out = { ...rest };
+        if (folder !== undefined && folder !== null) {
+          const dir = typeof folder === 'string' ? folders.get(folder) : undefined;
+          if (!dir) throw new UsageError('folder: choose the folder again');
+          out.local = dir;
+        } else if (command === 'link-add') throw new UsageError('link-add: choose a folder first');
         return out;
       }
-      case 'sync-apply':
-        return { ...rest, plan: cacheFile(cache, 'plan') };
+      case 'sync-plan': {
+        // linked folders; the plan goes to the runner's cache, where /api/plan reads it. The Sync
+        // tab's quiet idle check ({check: true}) writes its own file: only the plan the user opened
+        // in the preview is the one sync-apply reads.
+        const { select: _x, selection: _y, dest: _d, layout: _la, covers: _co, removeUnselected: _r, ...keep } = rest;
+        const out = { ...keep, out: cacheFile(cache, check === true ? 'plan-check' : 'plan') };
+        mkdirSync(path.dirname(out.out), { recursive: true });
+        return out;
+      }
+      case 'sync-apply': {
+        // The choices name items of one plan (i1, i2… are numbered per plan): they are only sent
+        // with the plan they were made on. The page names it by its run_id; the plan is copied
+        // first, so a later sync-plan cannot change it under byos-cli.
+        const hasChoices = decisions !== undefined && decisions !== null && Object.keys(decisions).some((k) => k !== 'policy');
+        if (hasChoices && runId === undefined) throw new UsageError('sync-apply: runId (the plan the choices were made on) is required with decisions');
+        let planFile = cacheFile(cache, 'plan');
+        if (runId !== undefined) {
+          if (typeof runId !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/.test(runId)) throw new UsageError('runId: the run_id of the plan');
+          let cur = null;
+          try { cur = JSON.parse(readFileSync(planFile, 'utf8'))?.run_id ?? null; } catch { /* no plan */ }
+          if (cur !== runId) {
+            throw Object.assign(new UsageError('the changes were looked up again since this preview was made; review them again'), { code: 'plan_changed' });
+          }
+          const copy = cacheFile(cache, 'plan-apply');
+          mkdirSync(path.dirname(copy), { recursive: true });
+          copyFileSync(planFile, copy);
+          planFile = copy;
+        }
+        const out = { ...rest, linked: true, plan: planFile };
+        if (decisions !== undefined) {
+          const f = path.join(cache, 'sync', 'decisions.json');
+          mkdirSync(path.dirname(f), { recursive: true });
+          writeFileSync(f, JSON.stringify(checkDecisions(decisions)));
+          out.decisions = f;
+        }
+        return out;
+      }
       default:
         return rest;
     }
+  }
+
+  // The music and audiobook folders of every HiBy's links (byos-cli's links.json files), for the
+  // computer's library in the sidebar; before any link, the Music tab's folders.
+  function musicFolders() {
+    const dirs = [];
+    const seen = new Set();
+    const add = (p) => {
+      if (typeof p !== 'string' || !path.isAbsolute(p) || !isDir(p)) return;
+      const k = path.resolve(p).toLowerCase();
+      if (!seen.has(k)) { seen.add(k); dirs.push(p); }
+    };
+    let devs = [];
+    try { devs = readdirSync(path.join(configDir, 'sync')); } catch { /* no links yet */ }
+    for (const d of devs) {
+      if (!DEVICE_ID.test(d)) continue;
+      let lf;
+      try { lf = JSON.parse(readFileSync(path.join(configDir, 'sync', d, 'links.json'), 'utf8')); } catch { continue; }
+      for (const l of Array.isArray(lf?.links) ? lf.links : []) {
+        if (!l || l.enabled === false || !['music', 'audiobooks'].includes(l.kind)) continue;
+        add(typeof l.local === 'string' ? l.local : l.local?.path);
+      }
+    }
+    if (!dirs.length) for (const s of settings.sources()) if (s.exists) add(s.path);
+    return dirs.slice(0, 32);
   }
 
   // One file dropped on the Music tab, streamed into the drop's own folder under "incoming"
@@ -504,16 +631,23 @@ export function createApp(options = {}) {
   };
 }
 
+const FOLDER_KINDS = {
+  music: ['Music', 'Choose your music folder for ByOS'],
+  audiobooks: ['Audiobooks', 'Choose your audiobooks folder for ByOS'],
+  ebooks: ['Books', 'Choose your books folder for ByOS'],
+  video: ['Videos', 'Choose your video folder for ByOS'],
+};
+
 // Windows' own folder dialog, through PowerShell (no extra package). Resolves the chosen
 // folder, or null when the user closed the dialog.
-function windowsFolderPicker() {
+function windowsFolderPicker(kind = 'music') {
   if (process.platform !== 'win32') return Promise.resolve(null);
   const script = [
     'Add-Type -AssemblyName System.Windows.Forms',
     '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
     '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }',
     '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
-    '$d.Description = "Choose a music folder for ByOS"',
+    `$d.Description = "${FOLDER_KINDS[kind]?.[1] ?? FOLDER_KINDS.music[1]}"`,
     '$d.ShowNewFolderButton = $false',
     'if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }',
   ].join('; ');
@@ -530,8 +664,8 @@ function windowsFolderPicker() {
 }
 
 // The demo's "folder picker": a folder in the temporary folder (the fake byos-cli invents its music).
-function demoFolder() {
-  const d = path.join(os.tmpdir(), 'byos-demo-music', 'Music');
+function demoFolder(kind = 'music') {
+  const d = path.join(os.tmpdir(), 'byos-demo-music', FOLDER_KINDS[kind]?.[0] ?? 'Music');
   mkdirSync(d, { recursive: true });
   return Promise.resolve(d);
 }

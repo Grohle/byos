@@ -12,7 +12,7 @@ class CliError(
 
     companion object {
         val EXIT = mapOf("usage" to 1, "no_device" to 2, "auth" to 3, "remote" to 4, "local_io" to 5, "verify" to 6,
-            "cancelled" to 7, "rejected" to 8, "timeout" to 9, "internal" to 10)
+            "cancelled" to 7, "rejected" to 8, "timeout" to 9, "internal" to 10, "locked" to 11)
     }
 }
 

@@ -54,9 +54,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 const val VERSION = "0.1.0"
 
 /** Parsed command line: global options are accepted before or after the command. */
-class Args(val command: String, val pos: List<String>, val flags: Set<String>, val opts: Map<String, String>) {
+class Args(val command: String, val pos: List<String>, val flags: Set<String>, val opts: Map<String, String>,
+           val multi: Map<String, List<String>> = emptyMap()) {
     fun has(f: String) = f in flags
     fun opt(o: String) = opts[o]
+    /** Every value of an option that may be repeated (--exclude, --select). */
+    fun optAll(o: String): List<String> = multi[o] ?: emptyList()
     fun int(o: String, def: Int): Int = opts[o]?.let { it.toIntOrNull() ?: throw CliError("usage", "$o needs a number") } ?: def
 }
 
@@ -89,6 +92,10 @@ class Cli(
     private val reconnectWindowMs: Long = 60000,
     /** Silence after which the last progress line is repeated (BYOS_CLI.md section 2, heartbeat). */
     private val heartbeatMs: Long = Out.HEARTBEAT_MS,
+    /** Files between two card checkpoints of a sync run (SYNC_LIBRARY_DESIGN.md 3.5). */
+    internal val checkpointEvery: Int = 200,
+    /** Tests only: called after each journalled sync operation (a test stops the run here as a kill would). */
+    internal val syncHook: ((Int) -> Unit)? = null,
 ) {
     val out = Out(stdout, stderr)
     val cancelled = AtomicBoolean(false)
@@ -98,6 +105,7 @@ class Cli(
     internal lateinit var config: Config
     private var timeoutMs = 15000
     private val lib by lazy { LibraryCommands(this) }
+    private val sync by lazy { SyncCommands(this) }
 
     /** Starts hibysync over adb without --start (build-send waiting for the HiBy after its restart). */
     private var forceStart = false
@@ -113,6 +121,11 @@ class Cli(
 
         private val GLOBAL_VALUES = setOf("--device", "--adb", "--local-port", "--config", "--name", "--timeout", "--discovery")
         private val GLOBAL_FLAGS = setOf("--human", "--verbose", "--start")
+        private val LINK_FLAGS = setOf("--remove-unselected", "--no-sidecars", "--disable", "--select-all")
+        private val LINK_VALUES = setOf("--card-root", "--layout", "--player-only", "--select", "--select-file", "--exclude", "--label",
+            "--covers", "--device-id")
+        /** Options that may be given more than once. */
+        private val MULTI = setOf("--select", "--exclude")
         private val COMMANDS: Map<String, Pair<Set<String>, Set<String>>> = mapOf(
             "devices" to (setOf("--usb-only", "--wifi-only") to setOf("--wait")),
             "connect" to (setOf("--pair", "--forget") to setOf("--code")),
@@ -144,8 +157,17 @@ class Cli(
             "playlist-add" to (setOf("--create") to emptySet()),
             "playlist-rm" to (emptySet<String>() to emptySet()),
             "music-scan" to (setOf("--full") to setOf("--out")),
-            "sync-plan" to (setOf("--remove-unselected") to setOf("--catalog", "--select", "--dest", "--layout", "--covers", "--out")),
-            "sync-apply" to (setOf("--lyrics", "--yes") to setOf("--covers", "--then")),
+            // sync-plan --catalog is the branch's single-folder music sync; without it, the linked-folder sync (SyncCommands.kt)
+            "sync-plan" to (setOf("--remove-unselected", "--delete-untracked", "--no-scan") to setOf("--catalog", "--select", "--dest", "--layout", "--covers", "--out", "--kind")),
+            "sync-apply" to (setOf("--lyrics", "--yes", "--allow-mass-delete", "--take-over") to setOf("--covers", "--then", "--decisions")),
+            "sync-scan" to (setOf("--full") to setOf("--kind", "--device-id")),
+            "sync-resume" to (setOf("--take-over") to setOf("--then")),
+            "sync-status" to (emptySet<String>() to setOf("--device-id")),
+            "sync-unlock" to (setOf("--force") to emptySet()),
+            "link-ls" to (emptySet<String>() to setOf("--device-id")),
+            "link-add" to (LINK_FLAGS to (LINK_VALUES + "--kind")),
+            "link-set" to ((LINK_FLAGS + setOf("--enable", "--keep-unselected", "--sidecars", "--clear-exclude", "--select-all")) to (LINK_VALUES + "--local")),
+            "link-rm" to (emptySet<String>() to setOf("--device-id")),
             "cover-cache-reset" to (emptySet<String>() to emptySet()),
             "art-fix" to (setOf("--dry-run") to setOf("--root")),
         )
@@ -162,6 +184,7 @@ class Cli(
             val pos = ArrayList<String>()
             val flags = HashSet<String>()
             val opts = HashMap<String, String>()
+            val multi = HashMap<String, MutableList<String>>()
             var i = 0
             var onlyPos = false
             fun allowedFlags() = GLOBAL_FLAGS + (command?.let { COMMANDS[it]?.first } ?: emptySet())
@@ -176,6 +199,7 @@ class Cli(
                         in allowedFlags() -> { if (v != null) throw CliError("usage", "$t takes no value"); flags += t }
                         in allowedValues() -> {
                             opts[t] = v ?: (if (i < argv.size) argv[i++] else throw CliError("usage", "$t needs a value"))
+                            if (t in MULTI) multi.getOrPut(t) { ArrayList() } += opts[t]!!
                         }
                         else -> throw CliError("usage", "unknown option $t" + (command?.let { " for $it" } ?: ""))
                     }
@@ -186,7 +210,7 @@ class Cli(
                     command = t
                 } else pos += t
             }
-            return Args(command ?: throw CliError("usage", "no command given"), pos, flags, opts)
+            return Args(command ?: throw CliError("usage", "no command given"), pos, flags, opts, multi)
         }
     }
 
@@ -233,8 +257,20 @@ class Cli(
                 "playlist-add" -> lib.playlistAdd()
                 "playlist-rm" -> lib.playlistRm()
                 "music-scan" -> lib.musicScan()
-                "sync-plan" -> lib.syncPlan()
-                "sync-apply" -> lib.syncApply()
+                "sync-plan" -> if (a.opt("--catalog") != null) lib.syncPlan() else {
+                    for (o in listOf("--select", "--dest", "--layout", "--covers")) if (a.opt(o) != null) throw CliError("usage", "$o goes with --catalog; links keep their own options (link-set)")
+                    if (a.has("--remove-unselected")) throw CliError("usage", "--remove-unselected goes with --catalog; use link-set --remove-unselected")
+                    sync.syncPlan()
+                }
+                "sync-apply" -> if (isPlanV2()) sync.syncApply() else lib.syncApply()
+                "sync-scan" -> sync.syncScan()
+                "sync-resume" -> sync.syncResume()
+                "sync-status" -> sync.syncStatus()
+                "sync-unlock" -> sync.syncUnlock()
+                "link-ls" -> sync.linkLs()
+                "link-add" -> sync.linkAdd()
+                "link-set" -> sync.linkSet()
+                "link-rm" -> sync.linkRm()
                 "cover-cache-reset" -> lib.coverCacheReset()
                 "art-fix" -> lib.artFix()
                 else -> throw CliError("usage", "unknown command")
@@ -254,8 +290,16 @@ class Cli(
         }
     }
 
+    /** A sync plan of the linked-folder sync (format 2) rather than the branch's catalogue plan. */
+    private fun isPlanV2(): Boolean {
+        val f = a.pos.firstOrNull()?.let { File(it) } ?: return false
+        if (!f.isFile) return false
+        return try { Json.obj(Json.parse(f.readText()))["format"] == 2L } catch (e: Exception) { false }
+    }
+
     fun mapError(t: Throwable): CliError = when (t) {
         is CliError -> t
+        is org.hibyos.install.core.sync.SyncException -> sync.syncError(t)
         is BtpAuthException -> when (t.reason) {
             BtpAuthException.Reason.CODE_MISMATCH -> CliError("auth", "code does not match")
             else -> CliError("auth", t.message ?: "authentication failed")
@@ -303,7 +347,7 @@ class Cli(
     internal fun checkCancel() { if (cancelled.get()) throw CliError("cancelled", "cancelled") }
 
     /** Prints a prompt and reads one answer: a JSON {"answer": ...} or plain text; empty or EOF is null. */
-    private fun ask(kind: String, message: String, extra: Map<String, Any?> = emptyMap()): Any? {
+    internal fun ask(kind: String, message: String, extra: Map<String, Any?> = emptyMap()): Any? {
         out.event("prompt", linkedMapOf<String, Any?>("kind" to kind, "message" to message).apply { putAll(extra) })
         out.prompting = true // the only silent state: no heartbeat while the user answers
         try {

@@ -70,6 +70,41 @@ class FakeDevice(val sd: File, val data: File) {
     @Volatile var failAuthFinish = false
     /** Read AUTH_FINISH, then never answer (a link that stalls). */
     @Volatile var stallAfterAuthFinish = false
+    /** Free space DF reports. */
+    @Volatile var sdFree = 64000000000L
+    /** When >= 0: the bytes new uploads may still take; a larger PUT gets E_NO_SPACE. */
+    @Volatile var spaceLeft = -1L
+    /** When > 0: after this many finished SD uploads the card goes to USB storage (E_SD_UNAVAILABLE). */
+    @Volatile var sdUnavailableAfterPuts = -1
+    /** Close new connections right away (a HiBy that went away). */
+    @Volatile var refuseConnections = false
+    /** Entries per LIST_R page (small pages exercise the client's paging). */
+    @Volatile var listPage = 3
+    /** Uploads finished in NS_SD. */
+    @Volatile var sdPuts = 0
+
+    // ---- files that exist only in LIST/STAT (large synthetic libraries without real files)
+    private val vFiles = HashMap<String, ListEntry>()
+    private val vChildren = HashMap<String, LinkedHashMap<String, ListEntry>>()
+
+    /** Adds a file that LIST and STAT show but that has no content (GET fails). */
+    @Synchronized fun addVirtual(path: String, size: Long, mtime: Long) {
+        var p = path
+        var e = ListEntry(0, size, mtime, path.substringAfterLast('/'))
+        vFiles[path.lowercase()] = e
+        while (true) {
+            val dir = p.substringBeforeLast('/', "")
+            val kids = vChildren.getOrPut(dir.lowercase()) { LinkedHashMap() }
+            if (kids.containsKey(e.name.lowercase()) && e.kind == 1) break
+            kids[e.name.lowercase()] = e
+            if (dir.isEmpty()) break
+            p = dir
+            e = ListEntry(1, 0, mtime, dir.substringAfterLast('/'))
+        }
+    }
+
+    @Synchronized private fun virtualKids(dir: String): List<ListEntry>? = vChildren[dir.lowercase()]?.values?.toList()
+    @Synchronized private fun virtualStat(path: String): ListEntry? = vFiles[path.lowercase()] ?: if (vChildren.containsKey(path.lowercase())) ListEntry(1, 0, 0, path) else null
 
     // ---- state visible to tests
     @Volatile var lastSas: String? = null
@@ -92,7 +127,7 @@ class FakeDevice(val sd: File, val data: File) {
 
     init { sd.mkdirs(); dbDir.mkdirs() }
 
-    fun startLocal(): Int = listen(local = true)
+    fun startLocal(port: Int = 0): Int = listen(local = true, port = port)
     fun startWifi(): Int = listen(local = false)
 
     /** Answers discovery probes on a UDP port (returned); announces point at [tcpPort]. */
@@ -113,12 +148,15 @@ class FakeDevice(val sd: File, val data: File) {
         return s.localPort
     }
 
-    private fun listen(local: Boolean): Int {
-        val ss = ServerSocket(0, 10, InetAddress.getByName("127.0.0.1"))
+    private fun listen(local: Boolean, port: Int = 0): Int {
+        val ss = ServerSocket()
+        ss.reuseAddress = true
+        ss.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 10)
         servers += ss
         Thread {
             while (!stopped) {
                 val s = try { ss.accept() } catch (e: IOException) { break }
+                if (refuseConnections) { try { s.close() } catch (e: IOException) {}; continue }
                 Thread { Session(s, local || claimLocal).run() }.apply { isDaemon = true; start() }
             }
         }.apply { isDaemon = true; start() }
@@ -294,26 +332,35 @@ class FakeDevice(val sd: File, val data: File) {
                     val ns = r.u8(); val p = r.str16(); r.done()
                     if (ns != Btp.NS_SD && ns != Btp.NS_UPDATE && ns != Btp.NS_DB) throw Fail(Btp.E_NOT_ALLOWED, "ns")
                     val file = resolve(ns, p, allowRoot = true)
-                    if (!file.exists()) throw Fail(Btp.E_NOT_FOUND, "no such file")
+                    if (!file.exists()) {
+                        val v = if (ns == Btp.NS_SD) virtualStat(p) else null
+                        if (v == null) throw Fail(Btp.E_NOT_FOUND, "no such file")
+                        ok(s, Btp.STAT_R, StatR(v.kind, v.size, v.mtime).encode())
+                        return true
+                    }
                     ok(s, Btp.STAT_R, StatR(kind(file), if (file.isFile) file.length() else 0, file.lastModified() / 1000).encode())
                 }
                 Btp.LIST -> {
                     val ns = r.u8(); val fl = r.u8(); val p = r.str16(); r.done()
                     if (ns != Btp.NS_SD) throw Fail(Btp.E_NOT_ALLOWED, "LIST only in NS_SD")
                     val d = resolve(ns, p, allowRoot = true)
-                    if (!d.exists()) throw Fail(Btp.E_NOT_FOUND, "no such folder")
-                    if (!d.isDirectory) throw Fail(Btp.E_NOT_DIR, "not a folder")
-                    val entries = (d.listFiles() ?: emptyArray()).filter { fl and 1 != 0 || !it.name.startsWith(".") }
-                        .map { ListEntry(kind(it), if (it.isFile) it.length() else 0, it.lastModified() / 1000, it.name) } +
+                    val virtual = virtualKids(p)
+                    if (!d.exists() && virtual == null) throw Fail(Btp.E_NOT_FOUND, "no such folder")
+                    if (d.exists() && !d.isDirectory) throw Fail(Btp.E_NOT_DIR, "not a folder")
+                    val real = (d.listFiles() ?: emptyArray()).filter { fl and 1 != 0 || !it.name.startsWith(".") }
+                        .map { ListEntry(kind(it), if (it.isFile) it.length() else 0, it.lastModified() / 1000, it.name) }
+                    val realNames = real.map { it.name.lowercase() }.toSet()
+                    val entries = real + (virtual ?: emptyList()).filter { it.name.lowercase() !in realNames } +
                         listOfNotNull(extraListName?.let { ListEntry(0, 1, 0, it) })
                     // small pages to exercise the client's page handling
-                    val pages = entries.chunked(3).ifEmpty { listOf(emptyList()) }
+                    val pages = entries.chunked(listPage).ifEmpty { listOf(emptyList()) }
                     for ((i, pg) in pages.withIndex()) ch.send(Frame(Btp.LIST_R, s, ListR.encode(pg), if (i == pages.size - 1) Btp.F_END else 0))
                 }
                 Btp.DF -> {
                     r.done()
                     val mounted = sdState == 0 || sdState == 3
-                    ok(s, Btp.DF_R, DfR(sdState, if (mounted) sdFs else 0, if (mounted) 127865454592 else 0, if (mounted) 64000000000 else 0, 150994944, 25165824).encode())
+                    val free = if (spaceLeft >= 0) minOf(sdFree, spaceLeft) else sdFree
+                    ok(s, Btp.DF_R, DfR(sdState, if (mounted) sdFs else 0, if (mounted) 127865454592 else 0, if (mounted) free else 0, 150994944, 25165824).encode())
                 }
                 Btp.MKDIR -> {
                     val ns = r.u8(); val fl = r.u8(); val p = r.str16(); r.done()
@@ -463,6 +510,7 @@ class FakeDevice(val sd: File, val data: File) {
             if (putReadyDelayMs > 0) Thread.sleep(putReadyDelayMs)
             if (b.ns == Btp.NS_DB && b.size > 64L shl 20) throw Fail(Btp.E_FILE_TOO_BIG, "too big")
             if (sdFs == 1 && b.size > 4294967295L) throw Fail(Btp.E_FILE_TOO_BIG, "FAT32 limit")
+            if (b.ns == Btp.NS_SD && spaceLeft >= 0 && !b.path.startsWith("ByOS/") && b.size > spaceLeft) throw Fail(Btp.E_NO_SPACE, "card full")
             if (!target.parentFile.isDirectory) throw Fail(Btp.E_NOT_FOUND, "parent folder missing")
             if (target.isDirectory) throw Fail(Btp.E_IS_DIR, "is a folder")
             if (target.exists()) when (b.mode) {
@@ -483,6 +531,7 @@ class FakeDevice(val sd: File, val data: File) {
             } else {
                 part.createNewFile()
             }
+            log += "PUT_READY ${b.path} $offset"
             if (pingDuringPut) {
                 // in the same write as PUT_READY, so the client finds it waiting during the upload
                 ch.send(Frame(Btp.PUT_READY, s, Payloads.u64(offset)), flush = false)
@@ -534,6 +583,11 @@ class FakeDevice(val sd: File, val data: File) {
             if (b.mtime != 0L) target.setLastModified(b.mtime * 1000)
             if (b.ns == Btp.NS_DB) incomingThisSession = true
             ok(s, Btp.PUT_DONE, Payloads.putDone(0, b.size))
+            if (b.ns == Btp.NS_SD) {
+                if (spaceLeft >= 0 && !b.path.startsWith("ByOS/")) spaceLeft -= b.size
+                sdPuts++
+                if (sdUnavailableAfterPuts > 0 && --sdUnavailableAfterPuts == 0) sdState = 2
+            }
             return true
         }
     }

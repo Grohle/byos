@@ -719,7 +719,7 @@ class LibraryCommands(private val cli: Cli) {
      * HiBy (not there yet) and a copy of the card's music on the computer: not done here.
      * Either way, "library_pending" tells the user to update the library on the HiBy.
      */
-    private fun libraryStep(c: Conn, then: String, paths: List<String>): Map<String, Any?> {
+    internal fun libraryStep(c: Conn, then: String, paths: List<String>): Map<String, Any?> {
         out.progress("library", null, 0, 0, unit = "none")
         if (then == "rebuild") {
             out.warn("library_pending", "Music copied. To see it in the player, open Settings > Update library on the HiBy.")

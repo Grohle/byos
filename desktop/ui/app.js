@@ -6,8 +6,10 @@ import { t, setLang, getLang, detectLang, LANGS, errorMessage } from '/i18n.js';
 import { checkPath } from '/btp-path.js';
 import { emptyFlow, applyInfo, startStep, applyEvent, finishStep, fraction, STEPS } from '/build-flow.js';
 import {
-  demoMedia, initMedia, mediaDeviceChanged, mediaLocation, mediaTabOpened, readMediaLocation, renderMedia,
+  ageText, computerOpened, demoMedia, ICONS, icon, initMedia, libraryChanged, mediaDeviceChanged, mediaLocation, mediaTabOpened,
+  messageCard, readMediaLocation, renderMedia, toast,
 } from '/media.js';
+import { demoSync, initSync, renderSync, syncDeviceChanged, syncKind, syncTabOpened } from '/sync.js';
 
 const TOKEN = document.querySelector('meta[name="byos-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -29,6 +31,8 @@ const state = {
   devices: [],
   selectedId: null,
   tab: 'summary',
+  // "device": a HiBy's pages; "computer": the sidebar's Library (the music on this computer)
+  view: 'device',
   status: null,
   statusError: null,
   cwd: '',
@@ -71,7 +75,7 @@ async function api(path, { method = 'GET', body, raw } = {}) {
     body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, code: data.code });
   return data;
 }
 
@@ -112,7 +116,7 @@ async function runCli(command, params, opts = {}) {
     opts.onStarted?.(job);
     job.final = await follow(id, job);
   } catch (e) {
-    job.final = { v: 1, event: 'error', ok: false, code: e.status === 503 ? 'no_cli' : 'usage', message: e.message };
+    job.final = { v: 1, event: 'error', ok: false, code: e.code ?? (e.status === 503 ? 'no_cli' : 'usage'), message: e.message };
   }
   job.state = job.final.ok ? 'done' : 'failed';
   job.markEnded();
@@ -147,6 +151,14 @@ async function handlePrompt(job, ev) {
   } else if (ev.kind === 'confirm') {
     const r = await sheet({ title: t('deleteTitle'), body: ev.message, okText: t('ok'), danger: true, abort: job.ended });
     answer = r.ok;
+  } else if (ev.kind === 'confirm_mass_delete') {
+    // the count, typed (design 3.3.3)
+    const r = await sheet({
+      title: t('pvMassTitle', { n: ev.count }), body: t('pvMassBody', { n: ev.count, size: fmtBytes(ev.bytes ?? 0) }), okText: t('deleteAction'),
+      danger: true, input: '', abort: job.ended,
+      validate: (v) => (String(v ?? '').replace(/[\s.,\u00a0\u202f']/g, '') === String(ev.count) ? null : t('pvTypeWrong', { n: ev.count })),
+    });
+    answer = r.ok ? r.value : null;
   }
   if (job.final) return; // ended while the sheet was open
   if (answer === null) {
@@ -204,16 +216,46 @@ function selectDevice(id) {
   }
   if (state.tab === 'updates') loadBuildInfo();
   mediaDeviceChanged();
-  if (state.tab === 'library' || state.tab === 'music') mediaTabOpened(state.tab);
+  syncDeviceChanged();
+  if (state.view !== 'computer') {
+    if (state.tab === 'library') mediaTabOpened(state.tab);
+    if (state.tab === 'sync') syncTabOpened();
+  }
+}
+
+// The sidebar's Library: the computer's music, whatever HiBy is selected.
+function showComputer(view) {
+  state.view = 'computer';
+  renderDeviceList();
+  renderMain();
+  computerOpened(view);
+  saveLocation();
+}
+
+// Back to the selected HiBy's pages (from the computer's library).
+function showDevice(tab) {
+  state.view = 'device';
+  renderDeviceList();
+  if (tab) setTab(tab);
+  else { renderMain(); saveLocation(); }
+}
+
+// "Sync Music" in the computer's library: the HiBy's Sync tab, then the sync of that kind.
+function syncFromComputer(kind) {
+  if (!selectedDevice()) return;
+  showDevice('sync');
+  syncKind(kind);
 }
 
 // Switches the device page to a tab and loads what it shows.
 function setTab(tab) {
   state.tab = tab;
+  state.view = 'device';
   saveLocation();
   renderMain();
   if (tab === 'files' && !state.entries.length) loadFolder(state.cwd);
   if (tab === 'updates') loadBuildInfo();
+  if (tab === 'sync') syncTabOpened();
   mediaTabOpened(tab);
 }
 
@@ -222,7 +264,7 @@ function setTab(tab) {
 function saveLocation() {
   const folder = state.tab === 'files' && state.cwd
     ? `/${state.cwd.split('/').map(encodeURIComponent).join('/')}` : '';
-  const hash = `#${state.tab}${folder}${mediaLocation()}`;
+  const hash = state.view === 'computer' ? `#computer${mediaLocation()}` : `#${state.tab}${folder}${mediaLocation()}`;
   try { history.replaceState(null, '', hash); } catch { /* not important */ }
 }
 
@@ -237,6 +279,12 @@ function readLocation() {
     tab = decodeURIComponent(i < 0 ? raw : raw.slice(0, i));
     if (i > 0) folder = raw.slice(i + 1).split('/').map(decodeURIComponent).join('/');
   } catch {
+    return;
+  }
+  if (tab === 'music') tab = 'sync'; // the Music tab became Sync
+  if (tab === 'computer') {
+    state.view = 'computer';
+    if (folder) readMediaLocation(folder, true);
     return;
   }
   if (document.querySelector(`#tabs button[data-tab="${CSS.escape(tab)}"]`)) state.tab = tab;
@@ -766,8 +814,8 @@ function renderDeviceList() {
     const busy = state.jobs.some((j) => j.state === 'running') && d.id === state.selectedId;
     const li = el('li', {},
       el('button', {
-        class: `side-item device${d.id === state.selectedId ? ' selected' : ''}${offline ? ' offline' : ''}`,
-        onclick: () => selectDevice(d.id),
+        class: `side-item device${d.id === state.selectedId && state.view !== 'computer' ? ' selected' : ''}${offline ? ' offline' : ''}`,
+        onclick: () => { selectDevice(d.id); showDevice(); },
         title: offline ? t('notConnected') : '',
       },
       el('span', { class: `ico ${d.transport === 'wifi' ? 'ico-wifi' : 'ico-usb'}` }),
@@ -779,8 +827,11 @@ function renderDeviceList() {
 
 function renderMain() {
   const d = selectedDevice();
-  $('empty-state').hidden = !!d;
-  $('device-view').hidden = !d;
+  const pc = state.view === 'computer';
+  $('computer-view').hidden = !pc;
+  $('empty-state').hidden = pc || !!d;
+  $('device-view').hidden = pc || !d;
+  if (pc) { renderMedia(); return; }
   if (!d) return;
   $('dev-name').textContent = d.name;
   const parts = [`${t('byosVersion')} ${d.byos_version ?? '?'}`, d.transport === 'wifi' ? t('wifi') : t('usb')];
@@ -795,6 +846,7 @@ function renderMain() {
   renderFiles();
   renderUpdates();
   renderMedia();
+  renderSync();
 }
 
 function renderBanner() {
@@ -1032,9 +1084,12 @@ async function main() {
   readLocation();
   applyStaticText();
   wire();
-  initMedia({
+  const ctx = {
     t, el, getLang, api, runCli, sheet, errorMessage, selectedDevice, deviceSpec, fmtBytes, setTab, saveLocation, appState: state,
-  });
+    showComputer, showDevice, syncFromComputer, libraryChanged,
+  };
+  initMedia(ctx);
+  initSync(ctx, { icon, ICONS, toast, messageCard, ageText });
   try {
     state.info = await api('/api/info');
     const badge = $('mode-badge');
@@ -1043,13 +1098,25 @@ async function main() {
     // Demo mode only: ?demo=NAME shows one fixed state of the Updates page (README, screenshots).
     const demo = new URLSearchParams(location.search).get('demo');
     if (state.info.mock && demo) {
-      const tab = await demoMedia(demo, new URLSearchParams(location.search));
-      if (tab) state.tab = tab;
+      const params = new URLSearchParams(location.search);
+      // ?frame=MS: every animation stopped MS after it starts, for a frame-by-frame review
+      if (params.has('frame')) {
+        const ms = Math.max(0, Number(params.get('frame')) || 0);
+        const sheet = [...document.styleSheets].find((x) => (x.href ?? '').endsWith('/app.css'));
+        // only the element under review (?framesel=CSS), the rest of the page as it really is by then
+        const sel = params.get('framesel') || '*';
+        const target = sel.split(',').map((x) => `${x}, ${x} *, ${x}::backdrop`).join(', ');
+        sheet?.insertRule(`${target} { animation-play-state: paused !important; animation-delay: -${ms}ms !important; }`, sheet.cssRules.length);
+      }
+      const tab = demo.startsWith('sync-') ? await demoSync(demo, params) : await demoMedia(demo, params);
+      if (tab === 'computer') state.view = 'computer';
+      else if (tab) { state.tab = tab; state.view = 'device'; }
       else demoUpdates(demo);
     }
   } catch { /* shown by the device list */ }
   renderLcd();
   renderMain();
+  if (state.view === 'computer') computerOpened();
   refreshDevices();
 }
 
