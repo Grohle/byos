@@ -150,7 +150,8 @@ data class Playlists(
 
 sealed interface UpdatePhase {
     data object Idle : UpdatePhase
-    data class Sending(val done: Long, val total: Long, val path: String) : UpdatePhase
+    /** [reconnecting]: the connection dropped and this is the attempt to connect again (0: connected). */
+    data class Sending(val done: Long, val total: Long, val path: String, val reconnecting: Int = 0) : UpdatePhase
     data class Sent(val files: Int, val skipped: Int) : UpdatePhase
     data class Failed(val error: ErrorInfo) : UpdatePhase
 }
@@ -181,7 +182,7 @@ data class OtaPick(
 /** The install of a signed update over BTP/1 (sections 14.1 to 14.3). */
 sealed interface OtaPhase {
     data object Idle : OtaPhase
-    data class Sending(val done: Long, val total: Long, val path: String) : OtaPhase
+    data class Sending(val done: Long, val total: Long, val path: String, val reconnecting: Int = 0) : OtaPhase
 
     /** UPDATE_STAGE: the player checks the signature and hashes the payload. */
     data object Checking : OtaPhase
@@ -239,6 +240,14 @@ data class SyncState(
     val covers: Map<String, String?> = emptyMap(),
     val otaPick: OtaPick = OtaPick(),
     val ota: OtaPhase = OtaPhase.Idle,
+    /**
+     * The open session lost its connection outside a transfer or an update (browsing, the
+     * keep-alive) and connects again: the attempt (0: connected). The connection and file
+     * screens show it with a Cancel.
+     */
+    val reconnecting: Int = 0,
+    /** How many attempts the reconnection in progress makes (shown as "n of [reconnectOf]"). */
+    val reconnectOf: Int = 0,
 ) {
     val connected: Link.Connected? get() = link as? Link.Connected
     val target: String get() = destPath ?: dest.path

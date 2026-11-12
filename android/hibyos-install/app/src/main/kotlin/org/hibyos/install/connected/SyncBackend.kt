@@ -3,24 +3,36 @@ package org.hibyos.install.connected
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.wifi.WifiManager
+import org.hibyos.install.Net
 import java.io.File
 
 /**
  * Binds the screens to the BTP/1 client of the shared core (org.hibyos.install.core.btp) through
  * [CoreSync]. The client keys live in [keyDir] (the app's private storage). A Wi-Fi multicast
  * lock is held while discovery waits for the UDP answers (Android drops broadcasts otherwise).
+ * Every socket is tied to the Wi-Fi network, and when no ANNOUNCE comes back the phone's Wi-Fi
+ * neighbours are tried directly on the BTP port.
  */
 object SyncBackend {
     fun connector(context: Context, keyDir: File, version: String): SyncConnector? {
-        val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
+        val app = context.applicationContext
+        val wifi = app.getSystemService(WifiManager::class.java)
         val lock = try {
             wifi?.createMulticastLock("hibyos-sync")?.apply { setReferenceCounted(false) }
         } catch (e: Exception) {
             null
         }
+        val net = SyncNetwork(
+            // looked up for each socket: the Wi-Fi network changes when the phone roams or reconnects
+            socket = { Net.socketFactory(app)() },
+            datagram = { Net.datagramFactory(app)() },
+            broadcasts = { Net.broadcasts(app) },
+            neighbours = { Net.neighbours(app) },
+        )
         return CoreSync(keyDir, "ByOS Install $version",
             beforeDiscovery = { try { lock?.acquire() } catch (e: Exception) {} },
-            afterDiscovery = { try { lock?.release() } catch (e: Exception) {} })
+            afterDiscovery = { try { lock?.release() } catch (e: Exception) {} },
+            net = net)
     }
 }
 /** Reads the tracks of a DB snapshot with Android's own SQLite, read-only. */

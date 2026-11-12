@@ -332,4 +332,10 @@
         <item quantity="one">%d álbum</item>
         <item quantity="other">%d álbumes</item>
     </plurals>
+    <string name="sync_err_paired_gone">No se encontró el reproductor en esta Wi-Fi</string>
+    <string name="sync_hint_paired_gone">Sigue vinculado con este teléfono: no hace falta vincularlo de nuevo. Comprueba que el reproductor está encendido, en la misma Wi-Fi y con la sincronización Wi-Fi activada en Settings › ByOS Sync, y vuelve a tocarlo.</string>
+    <string name="sync_err_reconnected">La conexión se cortó un momento</string>
+    <string name="sync_hint_reconnected">El reproductor vuelve a estar conectado. Inténtalo de nuevo.</string>
+    <string name="sync_paired_no_address">Toca para buscarlo en esta Wi-Fi</string>
+    <string name="sync_reconnecting_footer">Puede que el servicio de sincronización del reproductor se esté reiniciando. Tus archivos y la vinculación se conservan.</string>
 </resources>

@@ -78,6 +78,24 @@ class FakeDevice(val sd: File, val data: File) {
     @Volatile var sdUnavailableAfterPuts = -1
     /** Close new connections right away (a HiBy that went away). */
     @Volatile var refuseConnections = false
+    /** Close this many connections right after AUTH_FINISH, without AUTH_OK (a daemon stopped mid-AUTH). */
+    @Volatile var closeAfterAuthFinish = 0
+    /** Answer this many HELLOs with ERROR E_BUSY on stream 0 (both session slots taken). */
+    @Volatile var busyHellos = 0
+    /** Connections accepted so far (each listener). */
+    @Volatile var accepted = 0
+    /**
+     * The shell stops hibysync gracefully (QUIT or SIGTERM: low memory, Wi-Fi option changed,
+     * shell restart) once this many PUT data bytes were received: like shutdown_all(), the
+     * running PUT gets ERROR E_CANCELLED, then BYE, then the connection closes.
+     */
+    @Volatile var stopPutAfter: Long = -1
+    /** The same graceful stop when PUT_END arrives, before PUT_DONE (the part holds every byte). */
+    @Volatile var stopAtPutEnd = false
+    /** The same graceful stop once this many bytes of a GET were sent. */
+    @Volatile var stopGetAfter: Long = -1
+    /** Graceful stops done ([stopPutAfter], [stopAtPutEnd], [stopGetAfter]). */
+    @Volatile var gracefulStops = 0
     /** Entries per LIST_R page (small pages exercise the client's paging). */
     @Volatile var listPage = 3
     /** Uploads finished in NS_SD. */
@@ -130,8 +148,18 @@ class FakeDevice(val sd: File, val data: File) {
     fun startLocal(port: Int = 0): Int = listen(local = true, port = port)
     fun startWifi(): Int = listen(local = false)
 
+    /** The TCP port that ANNOUNCE gives (changed by [moveWifi]). */
+    @Volatile var announcePort = 0
+
+    /** Probes received by the discovery socket. */
+    @Volatile var probes = 0
+
+    /** Ignore this many probes (lost broadcasts, or a daemon still starting). */
+    @Volatile var ignoreProbes = 0
+
     /** Answers discovery probes on a UDP port (returned); announces point at [tcpPort]. */
     fun startDiscovery(tcpPort: Int): Int {
+        announcePort = tcpPort
         val s = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
         udp = s
         Thread {
@@ -140,24 +168,53 @@ class FakeDevice(val sd: File, val data: File) {
                 val p = DatagramPacket(buf, buf.size)
                 try { s.receive(p) } catch (e: IOException) { break }
                 val nonce = Announce.parseProbe(p.data, p.length) ?: continue
+                probes++
+                if (ignoreProbes > 0) { ignoreProbes--; continue }
                 val flags = (if (pairingOpen) 1 else 0) or (if (sdState == 0) 2 else 0) or (if (peers.isNotEmpty()) 4 else 0)
-                val a = Announce(flags, nonce, tcpPort, deviceId, name).encode()
+                val a = Announce(flags, nonce, announcePort, deviceId, name).encode()
                 try { s.send(DatagramPacket(a, a.size, p.address, p.port)) } catch (e: IOException) {}
             }
         }.apply { isDaemon = true; start() }
         return s.localPort
     }
 
+    /**
+     * hibysync stopped and started again: every open connection is cut (no BYE), as when the
+     * shell kills the daemon. The listeners stay (a new daemon binds the same port).
+     */
+    fun restart() {
+        for (s in live) try { s.close() } catch (e: IOException) {}
+        live.clear()
+    }
+
+    /**
+     * The player got a new address: the Wi-Fi listeners close, a new one opens (its port is
+     * returned and announced), and open connections are cut.
+     */
+    fun moveWifi(): Int {
+        for (ss in servers.filter { !localServers.contains(it) }) { try { ss.close() } catch (e: IOException) {}; servers.remove(ss) }
+        restart()
+        val p = listen(local = false)
+        announcePort = p
+        return p
+    }
+
+    private val live = java.util.concurrent.CopyOnWriteArrayList<Socket>()
+    private val localServers = ArrayList<ServerSocket>()
+
     private fun listen(local: Boolean, port: Int = 0): Int {
         val ss = ServerSocket()
         ss.reuseAddress = true
         ss.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 10)
         servers += ss
+        if (local) localServers += ss
         Thread {
             while (!stopped) {
                 val s = try { ss.accept() } catch (e: IOException) { break }
+                accepted++
                 if (refuseConnections) { try { s.close() } catch (e: IOException) {}; continue }
-                Thread { Session(s, local || claimLocal).run() }.apply { isDaemon = true; start() }
+                live += s
+                Thread { try { Session(s, local || claimLocal).run() } finally { live.remove(s) } }.apply { isDaemon = true; start() }
             }
         }.apply { isDaemon = true; start() }
         return ss.localPort
@@ -181,6 +238,26 @@ class FakeDevice(val sd: File, val data: File) {
         var incomingThisSession = false
 
         fun err(stream: Int, code: Int, msg: String) = ch.send(Frame(Btp.ERROR, stream, ErrorMsg(code, msg).encode(), Btp.F_END))
+
+        /**
+         * hibysync's shutdown_all(1): the running stream ends with ERROR E_CANCELLED, then BYE, then
+         * the session closes. What the client still sends meanwhile is read and dropped, so that it
+         * reads the ERROR (not a reset), as it does when the daemon's last frames reach it first.
+         */
+        fun stopGracefully(stream: Int): Nothing {
+            gracefulStops++
+            log += "SHUTDOWN"
+            err(stream, Btp.E_CANCELLED, "cancelled")
+            ch.send(Frame(Btp.BYE, 0, ByteArray(0)))
+            try {
+                sock.soTimeout = 300
+                val until = System.nanoTime() + 2_000_000_000L
+                while (System.nanoTime() < until) ch.receive()
+            } catch (e: Exception) {
+                // the client closed, or stayed quiet
+            }
+            throw BtpException(-1, "stopped")
+        }
         fun ok(stream: Int, type: Int, payload: ByteArray = ByteArray(0)) = ch.send(Frame(type, stream, payload, Btp.F_END))
 
         fun run() {
@@ -190,6 +267,7 @@ class FakeDevice(val sd: File, val data: File) {
                 if (h.type != Btp.HELLO || h.stream != 0) { err(0, Btp.E_PROTO, "HELLO first"); return }
                 helloC = h.payload
                 Hello.decode(helloC)
+                if (busyHellos > 0) { busyHellos--; err(0, Btp.E_BUSY, "busy"); return }
                 val flags = (if (local) Btp.HF_LOCAL else 0) or (if (pairingOpen) Btp.HF_PAIRING_OPEN else 0) or
                     (if (sdState == 0) Btp.HF_SD_MOUNTED else 0) or (if (shellAttached) Btp.HF_SHELL_ATTACHED else 0)
                 helloD = Hello(role = 1, flags = flags, caps = Btp.ALL_CAPS, tlvs = listOf(
@@ -277,6 +355,7 @@ class FakeDevice(val sd: File, val data: File) {
             else ch.secure(BtpCrypto.hkdfExpand(prk, "BTP/1 d2c".toByteArray(), 32), BtpCrypto.hkdfExpand(prk, "BTP/1 c2d".toByteArray(), 32))
             val fin = ch.receive() // throws if it does not open: the session is closed
             if (fin.type != Btp.AUTH_FINISH) return false
+            if (closeAfterAuthFinish > 0) { closeAfterAuthFinish--; return false }
             if (stallAfterAuthFinish) { Thread.sleep(5000); return false }
             ch.send(Frame(Btp.AUTH_OK, 0, ByteArray(0)))
             secured = true
@@ -499,6 +578,11 @@ class FakeDevice(val sd: File, val data: File) {
                     if (withSha) md.update(buf, 0, n)
                     ch.send(Frame(Btp.DATA, s, Payloads.data(pos, buf, 0, n)), flush = getDelayMs > 0)
                     pos += n
+                    val stopAt = stopGetAfter
+                    if (stopAt >= 0 && pos - off >= stopAt) {
+                        stopGetAfter = -1
+                        stopGracefully(s)
+                    }
                     if (getDelayMs > 0) Thread.sleep(getDelayMs)
                 }
             }
@@ -567,9 +651,19 @@ class FakeDevice(val sd: File, val data: File) {
                                 log += "DROPPED at $pos"
                                 return false
                             }
+                            val stopAt = stopPutAfter
+                            if (stopAt >= 0 && pos >= stopAt) {
+                                stopPutAfter = -1
+                                raf.fd.sync()
+                                stopGracefully(s)
+                            }
                         }
                         Btp.PUT_END -> {
                             raf.fd.sync()
+                            if (stopAtPutEnd) {
+                                stopAtPutEnd = false
+                                stopGracefully(s)
+                            }
                             break
                         }
                         else -> { err(s, Btp.E_PROTO, "unexpected during PUT"); return false }

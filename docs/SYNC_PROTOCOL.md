@@ -888,6 +888,33 @@ most recent address.
 
 Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packets.
 
+What the core client (`BtpDiscovery`, `BtpReconnector`, `BtpLink`) does, so that a player is
+found and kept on a real Wi-Fi:
+
+- It sends the PROBE several times while it waits (at 0, 0.25, 0.7, 1.5, 2.5 and 4 s), to the
+  subnet broadcast of the Wi-Fi link and to 255.255.255.255. On Android the UDP and TCP sockets
+  are bound to the Wi-Fi network, so a phone that prefers mobile data still reaches the player.
+- When no ANNOUNCE comes back (networks that drop broadcasts), it connects to port 7340 on each
+  neighbour of the phone's subnet and reads the HELLO, which carries the same device id and
+  name. The connection is closed right after HELLO.
+- A paired device is reconnected with growing waits (0, 1, 2, 3, 5, 8 s), because the shell may
+  be restarting `hibysync`. When the stored address does not answer, or another device answers
+  there, the client looks for the device id (PROBE, then the sweep) and uses the new address.
+  `E_BUSY`, `E_RATE_LIMIT` and `E_TIMEOUT` are retried. A connection closed right after
+  AUTH_FINISH is retried once. `E_AUTH_FAILED` (the device forgot the client) and an `AUTH_OK`
+  that does not open are never retried.
+- An open session whose connection drops is replaced by a new one (AUTH, no code), and the
+  requests that can safely run twice are sent again: a PUT resumes from the part the device
+  kept (11.3), a GET goes on from the bytes already received. A lost connection is an I/O
+  error, BYE, `E_TIMEOUT` on stream 0, or a remote `E_CANCELLED` on a stream the client did
+  not cancel: a stopping daemon ends every running stream with `E_CANCELLED` and then sends
+  BYE (18.2), so this is how a graceful stop by the shell reaches the client. The answer to
+  the client's own CANCEL stays a cancel.
+- Short requests (browsing, PING, DF) use fewer, shorter attempts (0, 1, 2, 3 s, a 4 s connect
+  timeout, no sweep), so that a player that went away is reported within seconds. When the
+  attempts end on `E_BUSY` or `E_RATE_LIMIT`, the client reports a lost connection, not the
+  refusal.
+
 ## 17. Limits and timeouts
 
 | Item | Value |
