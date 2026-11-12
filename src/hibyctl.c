@@ -26,6 +26,9 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <signal.h>
+#ifndef FBIO_WAITFORVSYNC
+#define FBIO_WAITFORVSYNC _IOW('F', 0x20, uint32_t)
+#endif
 
 /* Captura el fotograma visible (doble bufer) a un fichero RGB565 crudo de 320x480. */
 static int shot(const char *out, int which)
@@ -420,6 +423,75 @@ static int recnet(int port, int sc)
     fprintf(stderr, "recnet: %ld fotogramas\n", nfr);
     return 0;
 }
+/* fbrec PORT SCALE PERIOD_US: tester recorder. Unlike recnet (which samples only when the shell
+ * or the player presents), it polls the buffer the panel is scanning (yoffset) continuously, every
+ * PERIOD_US, so writes straight into the visible buffer (one-frame flashes) are caught too. Every
+ * CHANGED sample is sent, reduced 1/SCALE, as the XOR with the previous sent sample, run-length
+ * coded (u16 count, u16 value). Header (32 bytes, little endian): "FBR2", u64 t_us, u16 w, u16 h,
+ * u16 yoffset, u16 identical polls skipped, u32 longest gap between polls (us), u32 payload bytes,
+ * u32 read time of this sample (us). Stats every 2 s on stderr. Loopback only (adb forward). */
+static uint64_t now_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000u + (uint64_t)t.tv_nsec / 1000u; }
+static int fbrec(int port, int sc, int period_us)
+{
+    if (sc < 1) sc = 1; if (sc > 4) sc = 4; if (period_us < 500) period_us = 500;
+    signal(SIGPIPE, SIG_IGN);
+    int f = open("/dev/fb0", O_RDONLY); if (f < 0) { perror("fb0"); return 2; }
+    struct fb_var_screeninfo v; struct fb_fix_screeninfo x;
+    ioctl(f, FBIOGET_VSCREENINFO, &v); ioctl(f, FBIOGET_FSCREENINFO, &x);
+    const uint16_t *fbm = mmap(0, x.smem_len, PROT_READ, MAP_SHARED, f, 0);
+    if (fbm == MAP_FAILED) { perror("mmap"); return 2; }
+    const int stride = (int)(x.line_length / 2), W_ = 320, H_ = 480;
+    int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+    setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons((uint16_t)port); a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(ls, (struct sockaddr *)&a, sizeof a) || listen(ls, 1)) { perror("socket"); return 2; }
+    fprintf(stderr, "fbrec: waiting on %d (scale %d, every %d us)\n", port, sc, period_us);
+    int c = accept(ls, 0, 0); if (c < 0) return 2;
+    setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    { int sb = 1 << 20; setsockopt(c, SOL_SOCKET, SO_SNDBUF, &sb, sizeof sb); }
+    const int ow = W_ / sc, oh = H_ / sc, tot = ow * oh;
+    static uint16_t cur[320 * 480], prev[320 * 480], row[320], enc[320 * 480 * 2 + 16];
+    memset(prev, 0, sizeof prev);
+    uint64_t t0 = now_us(), last_poll = t0, st_t = t0, st_rd = 0; uint32_t gap = 0; unsigned same = 0;
+    long polls = 0, sent = 0, st_polls = 0, st_sent = 0, st_bytes = 0; int first = 1;
+    for (;;) {
+        uint64_t tp = now_us(); uint32_t g = (uint32_t)(tp - last_poll); if (g > gap) gap = g; last_poll = tp;
+        struct fb_var_screeninfo vv; ioctl(f, FBIOGET_VSCREENINFO, &vv); uint32_t yo = vv.yoffset;
+        if (yo + (uint32_t)H_ > x.smem_len / x.line_length) yo = 0;
+        const uint16_t *b = fbm + (size_t)yo * stride;
+        for (int yy = 0; yy < oh; yy++) {        /* a whole source row in one burst, then subsample */
+            memcpy(row, b + (size_t)(yy * sc) * stride, W_ * 2);
+            uint16_t *o = cur + yy * ow; for (int xx = 0; xx < ow; xx++) o[xx] = row[xx * sc];
+        }
+        uint32_t rd = (uint32_t)(now_us() - tp); st_rd += rd; polls++; st_polls++;
+        if (first || memcmp(cur, prev, (size_t)tot * 2)) {
+            int n = 0;
+            for (int i = 0; i < tot; ) {
+                uint16_t d = cur[i] ^ prev[i]; int k = 1;
+                while (i + k < tot && (uint16_t)(cur[i + k] ^ prev[i + k]) == d && k < 65535) k++;
+                enc[n++] = (uint16_t)k; enc[n++] = d; i += k;
+            }
+            memcpy(prev, cur, (size_t)tot * 2);
+            uint8_t hd[32]; uint64_t t = tp - t0; memcpy(hd, "FBR2", 4); memcpy(hd + 4, &t, 8);
+            uint16_t w16 = (uint16_t)ow, h16 = (uint16_t)oh, y16 = (uint16_t)yo, s16 = (uint16_t)(same > 65535 ? 65535 : same);
+            uint32_t nb = (uint32_t)(n * 2);
+            memcpy(hd + 12, &w16, 2); memcpy(hd + 14, &h16, 2); memcpy(hd + 16, &y16, 2); memcpy(hd + 18, &s16, 2);
+            memcpy(hd + 20, &gap, 4); memcpy(hd + 24, &nb, 4); memcpy(hd + 28, &rd, 4);
+            if (send_all(c, hd, sizeof hd) || send_all(c, enc, nb)) break;
+            sent++; st_sent++; st_bytes += 32 + nb; same = 0; gap = 0; first = 0;
+        } else same++;
+        uint64_t te = now_us();
+        if (te - st_t >= 2000000) {
+            double dt = (double)(te - st_t) / 1e6;
+            fprintf(stderr, "fbrec: %.0f polls/s, read %.2f ms, %.0f frames/s, %.0f KB/s\n", st_polls / dt, st_polls ? (double)st_rd / st_polls / 1000.0 : 0.0, st_sent / dt, st_bytes / dt / 1024.0);
+            st_t = te; st_polls = st_sent = st_bytes = 0; st_rd = 0;
+        }
+        uint64_t used = te - tp;
+        if (used < (uint64_t)period_us) { struct timespec q = { 0, (long)((uint64_t)period_us - used) * 1000L }; nanosleep(&q, 0); }
+    }
+    fprintf(stderr, "fbrec: %ld polls, %ld frames sent\n", polls, sent);
+    return 0;
+}
 static int rec(int ms, const char *out, int maxn)
 {
     int s = open("/dev/shm/hibymod_fbstate", O_RDONLY);
@@ -512,6 +584,25 @@ int main(int argc, char **argv)
         printf("\n");
         return 0;
     }
+    if (!strcmp(c, "tcpsink") && argc >= 4) {   /* prueba de ancho de banda: manda KB ceros a quien se conecte (todas las interfaces) */
+        int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1; setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons((uint16_t)atoi(argv[2])); a.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (bind(ls, (struct sockaddr *)&a, sizeof a) || listen(ls, 1)) { perror("socket"); return 2; }
+        int cs = accept(ls, 0, 0); if (cs < 0) return 2;
+        static char z[65536]; long left = atol(argv[3]) * 1024L;
+        while (left > 0) { ssize_t w = write(cs, z, left > (long)sizeof z ? sizeof z : (size_t)left); if (w <= 0) break; left -= w; }
+        close(cs); return 0;
+    }
+    /* Measured 2026-11-12: the X1600 fb driver returns at once (avg 0.00 ms): no vsync wait, so
+     * fbrec polls the scanned buffer instead. */
+    if (!strcmp(c, "vsynctest")) {   /* does the driver support FBIO_WAITFORVSYNC? 50 waits, intervals */
+        int f = open("/dev/fb0", O_RDWR); uint32_t z = 0; uint64_t t = now_us(), mn = 1e9, mx = 0, sum = 0; int ok = 0;
+        for (int i = 0; i < 50; i++) { int r = ioctl(f, FBIO_WAITFORVSYNC, &z); uint64_t u = now_us(), d = u - t; t = u;
+            if (r) { perror("FBIO_WAITFORVSYNC"); break; } if (i) { ok++; sum += d; if (d < mn) mn = d; if (d > mx) mx = d; } }
+        if (ok) printf("vsync ok: %d waits, avg %.2f ms, min %.2f, max %.2f\n", ok, sum / 1000.0 / ok, mn / 1000.0, mx / 1000.0);
+        return 0;
+    }
+    if (!strcmp(c, "fbrec")) return fbrec(argc >= 3 ? atoi(argv[2]) : 5601, argc >= 4 ? atoi(argv[3]) : 2, argc >= 5 ? atoi(argv[4]) : 4000);
     if (!strcmp(c, "recnet")) return recnet(argc >= 3 ? atoi(argv[2]) : 5600, argc >= 4 ? atoi(argv[3]) : 2);
     if (!strcmp(c, "rec") && argc >= 4) return rec(atoi(argv[2]), argv[3], argc >= 5 ? atoi(argv[4]) : 80);
     if (!strcmp(c, "sheet") && argc >= 4) return sheet(atoi(argv[2]), atoi(argv[3]), argc >= 5 ? atoi(argv[4]) : 320);
