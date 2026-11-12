@@ -363,6 +363,9 @@ The player applies the command once and renames the file to `<name>.done`.
   - autocomplete from your library;
   - edit many files at once.
 - **iOS keyboard:**
+  - a keyboard for each of the 13 interface languages: Latin, Cyrillic, Korean (Hangul),
+    Thai, Japanese (romaji to kana) and Chinese (pinyin, simplified and traditional);
+    the globe key switches between the ones you turn on ([guide](docs/KEYBOARD.md));
   - adjustable height (drag its top edge) and an always-visible close key;
   - long-press accents and cursor movement on the space bar;
   - its settings are reachable from the keyboard itself.
