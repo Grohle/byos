@@ -488,6 +488,15 @@ static int wl_proc_alive(const char *name)
 static int wl_bluetoothd_alive(void) { return wl_proc_alive("bluetoothd"); }   /* aunque tarde en contestar */
 static double wl_bt_ok_t;                  /* ultima respuesta buena de bluetoothd */
 static int wl_disc_restarts;               /* reintentos de busqueda en esta visita a la pagina */
+static int wl_bt_slow;                      /* el ultimo volcado tardo > 3 s: espaciar */
+static int wl_mem_low(void)
+{
+    FILE *f = fopen("/proc/meminfo", "r"); if (!f) return 0;
+    char l[96]; long av = -1;
+    while (fgets(l, sizeof l, f)) if (!strncmp(l, "MemAvailable:", 13)) { av = atol(l + 13); break; }
+    fclose(f);
+    return av >= 0 && av < 5120;
+}
 static void wl_bt_refresh(void)
 {
     static struct wl_dev dv[WL_MAXDEV];
@@ -510,7 +519,21 @@ static void wl_bt_refresh(void)
     memcpy(WS.devs, dv, sizeof WS.devs); WS.ndevs = n;
     WS.gen++;
     pthread_mutex_unlock(&wl_mu);
-    lg("bt: estado en %.0f ms (%s, %d dispositivos)", now_ms() - t0, ad.found ? (ad.powered ? "encendido" : "apagado") : "sin bluez", n);
+    double took = now_ms() - t0;
+    lg("bt: estado en %.0f ms (%s, %d dispositivos)", took, ad.found ? (ad.powered ? "encendido" : "apagado") : "sin bluez", n);
+    wl_bt_slow = took > 3000;
+    /* BlueZ guarda toda baliza LE que ve (la busqueda de HiBy llena la lista): cada volcado crecia,
+     * tardaba > 15 s y con poca memoria hundia el aparato (medido: 10 min sin responder). Los no
+     * emparejados sin clase ni conexion (no son auriculares) se olvidan: lista y bluetoothd pequenos. */
+    if (!rc) {
+        int rm = 0; char out2[256];
+        for (int i = 0; i < n && rm < 10; i++) {
+            if (dv[i].paired || dv[i].connected || dv[i].cls || dv[i].audio || !dv[i].path[0]) continue;
+            char op[96]; snprintf(op, sizeof op, "objpath:%s", dv[i].path);
+            if (!wl_bt_call(out2, sizeof out2, 3000, "/org/bluez/hci0", "org.bluez.Adapter1.RemoveDevice", op, 0, 0)) rm++;
+        }
+        if (rm) lg("bt: %d balizas LE olvidadas", rm);
+    }
 }
 
 /* busqueda: un bluetoothctl con "scan on" mientras haga falta */
@@ -668,7 +691,9 @@ static void *wl_bt_thread(void *arg)
             if (!disc) { wl_disc_restarts++; lg("bt: la busqueda no arranco; reintentando (%d)", wl_disc_restarts); wl_disc_stop(); wl_disc_start(); }
         }
         double t = now_ms();
-        if (vis && t - last > (vis == 3 ? (wl_disc_pid > 0 ? 2000 : 4000) : 8000)) { wl_bt_refresh(); last = now_ms(); }
+        int iv = vis == 3 ? (wl_disc_pid > 0 ? 2000 : 4000) : 8000;
+        if (iv < 8000 && (wl_bt_slow || wl_mem_low())) iv = 8000;      /* lento o poca memoria: cada 8 s */
+        if (vis && t - last > iv) { wl_bt_refresh(); last = now_ms(); }
     }
     return 0;
 }
