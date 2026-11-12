@@ -226,6 +226,32 @@ class ConnectedScreensTest {
     }
 
     @Test
+    fun largeText() {
+        // the largest font size of the system settings, on the screens with the longest rows
+        RuntimeEnvironment.setFontScale(1.5f)
+        try {
+            val lib = Library.build(listOf(Track("a:\\ABBA\\Gold\\01 Dancing Queen.flac", "Dancing Queen", "ABBA", "", "Gold", year = 1992)))
+            shot("large_1_connected", Screen.SYNC, on)
+            shot("large_2_send", Screen.SYNC_SEND, on)
+            shot("large_3_install", Screen.SYNC_INSTALL, on.copy(otaPick = OtaPick("0.9.1", "hibyos-payload-0.9.1.tar", 9_437_184, false, "shell",
+                "hibyos-payload-0.9.1.tar", 9_437_184)))
+            shot("large_4_library", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1)))
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+        }
+    }
+
+    @Test
+    fun cardStates() {
+        for ((i, name) in listOf(1 to "none", 2 to "usb", 3 to "read_only")) {
+            shot("sync_8_card_$name", Screen.SYNC, on.copy(link = Link.Connected(dev.copy(paired = true), info, space.copy(sdState = i, sdFree = 0, sdTotal = 0))))
+        }
+        shot("files_8_card_empty", Screen.SYNC_FILES, on.copy(browser = Browser("", emptyList())))
+        shot("files_9_sd_unavailable", Screen.SYNC_FILES, on.copy(browser = Browser("", null, error = ErrorInfo(org.hibyos.install.R.string.sync_err_sd, null,
+            org.hibyos.install.R.string.sync_hint_sd))))
+    }
+
+    @Test
     fun install() {
         val pick = OtaPick("0.9.1", "hibyos-payload-0.9.1.tar", 9_437_184, false, "shell", "hibyos-payload-0.9.1.tar", 9_437_184)
         shot("install_1_empty", Screen.SYNC_INSTALL, on)

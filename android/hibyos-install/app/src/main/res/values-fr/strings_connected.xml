@@ -290,6 +290,18 @@
     <string name="sync_saving_phone">Enregistrement de %1$s</string>
     <string name="sync_saved_phone">%1$s enregistré sur le téléphone</string>
     <string name="sync_dismiss">OK</string>
+
+    <!-- Accessibility and states -->
+    <string name="sync_more">Plus d\'actions</string>
+    <string name="sync_code_a11y">Code affiché sur le baladeur, %1$d chiffres sur 6 saisis</string>
+    <string name="sync_card_none">Pas de carte dans le baladeur</string>
+    <string name="sync_card_usb">Utilisée par un ordinateur en USB : éjectez-la d\'abord</string>
+    <string name="sync_card_read_only">En lecture seule : rien ne peut être écrit</string>
+    <string name="sync_card_unknown">Le baladeur n\'en donne pas la raison</string>
+    <string name="sync_hint_too_big">La carte est en FAT32, qui limite les fichiers à 4 Go. Découpez le fichier, ou formatez la carte en exFAT sur un ordinateur.</string>
+    <string name="sync_err_kind">Un fichier et un dossier ont été confondus</string>
+    <string name="sync_empty_card">La carte est vide</string>
+    <string name="sync_empty_card_text">Envoyez musique, livres ou images depuis ce téléphone avec Envoyer des fichiers.</string>
     <plurals name="sync_files">
         <item quantity="one">%d fichier</item>
         <item quantity="other">%d fichiers</item>

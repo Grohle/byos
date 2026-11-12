@@ -296,6 +296,18 @@
     <string name="sync_saving_phone">Saving %1$s</string>
     <string name="sync_saved_phone">%1$s saved on the phone</string>
     <string name="sync_dismiss">OK</string>
+
+    <!-- Accessibility and states -->
+    <string name="sync_more">More actions</string>
+    <string name="sync_code_a11y">Code shown on the player, %1$d of 6 digits typed</string>
+    <string name="sync_card_none">No card in the player</string>
+    <string name="sync_card_usb">In use by a computer over USB: eject it there first</string>
+    <string name="sync_card_read_only">Read-only: nothing can be written</string>
+    <string name="sync_card_unknown">The player does not say why</string>
+    <string name="sync_hint_too_big">The card is formatted FAT32, which keeps files under 4 GB. Split the file, or format the card as exFAT on a computer.</string>
+    <string name="sync_err_kind">A file and a folder were mixed up</string>
+    <string name="sync_empty_card">The card is empty</string>
+    <string name="sync_empty_card_text">Send music, books or pictures from this phone with Send Files.</string>
     <plurals name="sync_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>

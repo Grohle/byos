@@ -174,7 +174,8 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             SyncException.E_SD_UNAVAILABLE -> ErrorInfo(R.string.sync_err_sd, d, R.string.sync_hint_sd)
             SyncException.E_EXISTS -> ErrorInfo(R.string.sync_err_exists, d)
             SyncException.E_BAD_PATH -> ErrorInfo(R.string.sync_err_bad_name, d)
-            SyncException.E_FILE_TOO_BIG -> ErrorInfo(R.string.sync_err_too_big, d)
+            SyncException.E_FILE_TOO_BIG -> ErrorInfo(R.string.sync_err_too_big, d, R.string.sync_hint_too_big)
+            SyncException.E_NOT_DIR, SyncException.E_IS_DIR -> ErrorInfo(R.string.sync_err_kind, d, R.string.sync_hint_refresh)
             SyncException.E_NOT_FOUND -> ErrorInfo(R.string.sync_err_not_found, d, R.string.sync_hint_refresh)
             SyncException.E_NOT_EMPTY -> ErrorInfo(R.string.sync_err_not_empty, d)
             SyncException.E_UNSUPPORTED, SyncException.E_VERSION, SyncException.E_NOT_ALLOWED ->

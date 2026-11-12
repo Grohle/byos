@@ -50,6 +50,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.hibyos.install.Actions
@@ -213,6 +218,12 @@ fun SyncHome(s: UiState, a: Actions) {
                     row {
                         if (sp == null || sp.sdState != 0) {
                             Item(title = stringResource(R.string.sync_card), value = stringResource(R.string.sync_card_unavailable), valueColor = C.orange,
+                                subtitle = stringResource(when (sp?.sdState) {
+                                    1 -> R.string.sync_card_none
+                                    2 -> R.string.sync_card_usb
+                                    3 -> R.string.sync_card_read_only
+                                    else -> R.string.sync_card_unknown
+                                }),
                                 icon = { IconTile(Glyphs.Card, C.orange) })
                         } else {
                             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp)) {
@@ -327,7 +338,9 @@ private fun PairingView(link: Link.Pairing, x: SyncActions) {
 /** Six boxes for the code shown on the player, typed with the number keyboard. */
 @Composable
 private fun CodeBoxes(code: String, enabled: Boolean, onChange: (String) -> Unit, onGo: () -> Unit) {
+    val described = stringResource(R.string.sync_code_a11y, code.length)
     BasicTextField(
+        modifier = Modifier.semantics { contentDescription = described },
         value = code,
         onValueChange = { onChange(it) },
         enabled = enabled,
@@ -447,10 +460,11 @@ private fun JobMark(j: SendJob) {
 
 /** An on/off switch drawn like the ones of ByOS. */
 @Composable
-fun Toggle(on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+fun Toggle(on: Boolean, enabled: Boolean = true, label: String? = null, onChange: (Boolean) -> Unit) {
     val f by animateFloatAsState(if (on) 1f else 0f, tween(180), label = "toggle")
     Canvas(Modifier.size(width = 51.dp, height = 31.dp).alpha(if (enabled) 1f else 0.4f)
-        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = enabled) { onChange(!on) }) {
+        .toggleable(value = on, enabled = enabled, role = Role.Switch, interactionSource = remember { MutableInteractionSource() }, indication = null) { onChange(it) }
+        .semantics { if (label != null) contentDescription = label }) {
         val h = size.height
         val track = androidx.compose.ui.graphics.lerp(C.fill, C.green, f)
         drawRoundRect(track, cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2, h / 2))
@@ -559,7 +573,7 @@ fun SyncSend(s: UiState, a: Actions) {
                         }
                         row {
                             Item(title = stringResource(R.string.sync_replace), subtitle = stringResource(R.string.sync_replace_sub),
-                                trailing = { Toggle(st.replace) { x.setReplace(it) } })
+                                trailing = { Toggle(st.replace, label = stringResource(R.string.sync_replace)) { x.setReplace(it) } })
                         }
                     }
                 }
@@ -658,6 +672,7 @@ fun SyncFiles(s: UiState, a: Actions) {
             val list = b.entries
             when {
                 list == null -> Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } }
+                list.isEmpty() && b.path.isEmpty() -> Hero(Glyphs.Card, C.grey, stringResource(R.string.sync_empty_card), stringResource(R.string.sync_empty_card_text))
                 list.isEmpty() -> Section { row { TextRow(stringResource(R.string.sync_empty_folder), T.sub) } }
                 else -> Section {
                     list.forEachIndexed { i, e ->
@@ -730,7 +745,10 @@ private fun DownloadSection(d: org.hibyos.install.connected.Download, x: SyncAct
 
 @Composable
 internal fun MoreButton(onClick: () -> Unit) {
-    Box(Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    val label = stringResource(R.string.sync_more)
+    // 44 dp: the touch target of iOS, inside a row that is at least as tall
+    Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(18.dp)) {
             val r = 1.8.dp.toPx()
             for (k in -1..1) drawCircle(C.secondary, r, Offset(size.width / 2 + k * 6.dp.toPx(), size.height / 2))
@@ -756,7 +774,7 @@ internal fun ActionSheet(title: String, onDismiss: () -> Unit, actions: List<Pai
                     overflow = TextOverflow.MiddleEllipsis)
                 actions.forEachIndexed { i, (label, f) ->
                     Box(Modifier.fillMaxWidth().height(0.5.dp).background(C.sep))
-                    Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { f() }, contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = Role.Button) { f() }, contentAlignment = Alignment.Center) {
                         Txt(label, T.body.copy(color = if (i == destructive) C.red else C.blue, fontSize = 20.sp, textAlign = TextAlign.Center))
                     }
                 }
@@ -1043,8 +1061,8 @@ internal fun albumsSongs(albums: Int, songs: Int): String =
 internal fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(C.card).padding(2.dp)) {
         labels.forEachIndexed { i, l ->
-            Box(Modifier.weight(1f).heightIn(min = 32.dp).clip(RoundedCornerShape(7.dp)).background(if (i == selected) C.fill else Color.Transparent)
-                .clickable { onSelect(i) }, contentAlignment = Alignment.Center) {
+            Box(Modifier.weight(1f).heightIn(min = 36.dp).clip(RoundedCornerShape(7.dp)).background(if (i == selected) C.fill else Color.Transparent)
+                .selectable(selected = i == selected, role = Role.Tab) { onSelect(i) }, contentAlignment = Alignment.Center) {
                 Txt(l, T.sub.copy(color = C.label, fontWeight = if (i == selected) androidx.compose.ui.text.font.FontWeight.SemiBold else null), maxLines = 1)
             }
         }

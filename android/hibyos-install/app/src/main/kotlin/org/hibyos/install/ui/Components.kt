@@ -53,6 +53,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -167,7 +171,7 @@ fun Page(
         NavBar(title, back, onBack, trailing, collapsed)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = contentWidth).fillMaxWidth().verticalScroll(scroll)) {
-                Txt(title, T.largeTitle, Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp))
+                Txt(title, T.largeTitle, Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp).semantics { heading() })
                 content()
                 Spacer(Modifier.height(8.dp))
             }
@@ -211,7 +215,7 @@ fun Section(header: String? = null, footer: String? = null, build: Rows.() -> Un
     val rows = Rows().apply(build)
     if (rows.list.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        if (header != null) Txt(header.uppercase(), T.header, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 7.dp))
+        if (header != null) Txt(header.uppercase(), T.header, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 7.dp).semantics { heading() })
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.card)) {
             rows.list.forEachIndexed { i, r ->
                 if (i > 0) Box(Modifier.padding(start = r.first).fillMaxWidth().height(0.5.dp).background(C.sep))
@@ -355,7 +359,7 @@ fun LinkButton(text: String, onClick: () -> Unit) {
 @Composable
 fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, color: Color = C.blue) {
     val f by animateFloatAsState(fraction.coerceIn(0f, 1f), tween(220, easing = LinearEasing), label = "progress")
-    Canvas(modifier.fillMaxWidth().height(6.dp)) {
+    Canvas(modifier.fillMaxWidth().height(6.dp).semantics { progressBarRangeInfo = ProgressBarRangeInfo(fraction.coerceIn(0f, 1f), 0f..1f) }) {
         val r = size.height / 2
         drawLine(C.fill, Offset(r, r), Offset(size.width - r, r), size.height, StrokeCap.Round)
         if (f > 0f) drawLine(color, Offset(r, r), Offset(r + (size.width - 2 * r) * f, r), size.height, StrokeCap.Round)
@@ -367,8 +371,9 @@ val LocalStill = staticCompositionLocalOf { false }
 
 @Composable
 fun Spinner(size: Dp = 22.dp, color: Color = C.secondary) {
+    val busy = Modifier.semantics { progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate }
     if (LocalStill.current) {
-        Canvas(Modifier.size(size)) {
+        Canvas(busy.size(size)) {
             val w = this.size.minDimension * 0.13f
             val inset = w / 2
             drawArc(color.copy(alpha = 0.25f), 0f, 360f, false, Offset(inset, inset), Size(this.size.width - w, this.size.height - w), style = Stroke(w))
@@ -379,7 +384,7 @@ fun Spinner(size: Dp = 22.dp, color: Color = C.secondary) {
     }
     val t = rememberInfiniteTransition(label = "spinner")
     val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "angle")
-    Canvas(Modifier.size(size)) {
+    Canvas(busy.size(size)) {
         val w = this.size.minDimension * 0.13f
         val inset = w / 2
         drawArc(color.copy(alpha = 0.25f), 0f, 360f, false, Offset(inset, inset),
@@ -422,7 +427,7 @@ fun Hero(glyph: GlyphDraw, color: Color, title: String, text: String? = null) {
         Box(Modifier.size(68.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
             Glyph(glyph, Color.White, 38.dp)
         }
-        Txt(title, T.title2, Modifier.padding(top = 16.dp))
+        Txt(title, T.title2.copy(textAlign = TextAlign.Center), Modifier.padding(top = 16.dp).semantics { heading() })
         if (text != null) Txt(rich(text), T.lead.copy(textAlign = TextAlign.Center), Modifier.padding(top = 6.dp))
     }
 }

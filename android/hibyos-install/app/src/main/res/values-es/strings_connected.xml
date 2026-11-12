@@ -290,6 +290,18 @@
     <string name="sync_saving_phone">Guardando %1$s</string>
     <string name="sync_saved_phone">%1$s guardado en el teléfono</string>
     <string name="sync_dismiss">OK</string>
+
+    <!-- Accessibility and states -->
+    <string name="sync_more">Más acciones</string>
+    <string name="sync_code_a11y">Código que muestra el reproductor, %1$d de 6 cifras escritas</string>
+    <string name="sync_card_none">No hay tarjeta en el reproductor</string>
+    <string name="sync_card_usb">En uso por un ordenador por USB: expúlsala allí primero</string>
+    <string name="sync_card_read_only">Solo lectura: no se puede escribir nada</string>
+    <string name="sync_card_unknown">El reproductor no dice por qué</string>
+    <string name="sync_hint_too_big">La tarjeta está en FAT32, que limita los archivos a 4 GB. Divide el archivo o formatea la tarjeta en exFAT en un ordenador.</string>
+    <string name="sync_err_kind">Se confundieron un archivo y una carpeta</string>
+    <string name="sync_empty_card">La tarjeta está vacía</string>
+    <string name="sync_empty_card_text">Envía música, libros o imágenes desde este teléfono con Enviar archivos.</string>
     <plurals name="sync_files">
         <item quantity="one">%d archivo</item>
         <item quantity="other">%d archivos</item>
