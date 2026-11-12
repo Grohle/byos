@@ -23,11 +23,92 @@ class AudioInfo(var codec: String) {
     var lossless = false
     var mqa = false
     var hasPicture = false
+    /**
+     * Where the embedded front cover's image bytes are (the front cover, else the first
+     * picture), when they can be read straight from the file: null for an ID3 tag with
+     * unsynchronisation, a compressed frame, or no picture at all.
+     */
+    var picture: PictureRef? = null
     /** Other text tags, upper-case keys (Vorbis comment names, TXXX descriptions, MP4 freeform names). */
     val extra = LinkedHashMap<String, String>()
 }
 
-class TagException(message: String) : IOException(message)
+/** An embedded picture: [length] image bytes at [offset] in the file; [type] is the ID3/FLAC picture type (3 = front cover). */
+class PictureRef(val offset: Long, val length: Long, val mime: String, val type: Int)
+
+open class TagException(message: String) : IOException(message)
+
+/** Random access to the bytes of an audio file, for [TagReader]. */
+interface TagSource {
+    fun length(): Long
+    /** Fills [b] with the bytes at [pos] (the caller keeps pos + b.size within length()). */
+    fun readAt(pos: Long, b: ByteArray)
+}
+
+class FileTagSource(private val f: RandomAccessFile) : TagSource {
+    override fun length(): Long = f.length()
+    override fun readAt(pos: Long, b: ByteArray) { f.seek(pos); f.readFully(b) }
+}
+
+/**
+ * A file read in blocks through [fetch] (offset, length) -> bytes, for instance partial
+ * downloads from the HiBy: only the blocks the tag reader touches are fetched, each once.
+ */
+class RangeTagSource(private val size: Long, private val block: Int = 64 * 1024,
+                     private val fetch: (Long, Int) -> ByteArray) : TagSource {
+    private val blocks = HashMap<Long, ByteArray>()
+    /** Bytes fetched so far. */
+    var fetched = 0L
+        private set
+    /** Number of fetch calls so far. */
+    var requests = 0
+        private set
+
+    override fun length(): Long = size
+
+    /** Prefetches [len] bytes from [pos] in one request (whole blocks), so later reads there are free. */
+    fun prefetch(pos: Long, len: Long) {
+        if (len <= 0 || pos >= size) return
+        val first = pos / block
+        val last = (minOf(size, pos + len) - 1) / block
+        var b = first
+        while (b <= last) {
+            if (blocks.containsKey(b)) { b++; continue }
+            var e = b
+            while (e + 1 <= last && !blocks.containsKey(e + 1)) e++
+            val start = b * block
+            val n = (minOf(size, (e + 1) * block) - start).toInt()
+            val got = get(start, n)
+            for (k in b..e) {
+                val o = ((k - b) * block).toInt()
+                blocks[k] = got.copyOfRange(o, minOf(got.size, o + block))
+            }
+            b = e + 1
+        }
+    }
+
+    private fun get(pos: Long, n: Int): ByteArray {
+        requests++
+        val got = fetch(pos, n)
+        if (got.size != n) throw TagException("short read at $pos ($n bytes asked, ${got.size} received)")
+        fetched += got.size
+        return got
+    }
+
+    override fun readAt(pos: Long, b: ByteArray) {
+        if (b.isEmpty()) return
+        prefetch(pos, b.size.toLong())
+        var done = 0
+        while (done < b.size) {
+            val p = pos + done
+            val blk = blocks[p / block]!!
+            val o = (p % block).toInt()
+            val n = minOf(blk.size - o, b.size - done)
+            System.arraycopy(blk, o, b, done, n)
+            done += n
+        }
+    }
+}
 
 /**
  * A small tag and stream-info reader written for ByOS from the public format
@@ -39,11 +120,13 @@ class TagException(message: String) : IOException(message)
 object TagReader {
     private const val MAX_TAG = 16 shl 20
 
-    fun read(file: File): AudioInfo {
-        RandomAccessFile(file, "r").use { f ->
-            val head = ByteArray(minOf(16L, f.length()).toInt())
-            f.readFully(head)
-            val ext = file.name.substringAfterLast('.', "").lowercase()
+    fun read(file: File): AudioInfo = RandomAccessFile(file, "r").use { read(FileTagSource(it), file.name) }
+
+    /** Reads any [TagSource]; [name] (the file name) only helps to recognise MP3 files without an ID3 tag. */
+    fun read(f: TagSource, name: String): AudioInfo {
+        run {
+            val head = bytesAt(f, 0, minOf(16L, f.length()).toInt())
+            val ext = name.substringAfterLast('.', "").lowercase()
             return when {
                 head.size >= 4 && String(head, 0, 4, Charsets.ISO_8859_1) == "fLaC" -> flac(f, 0)
                 head.size >= 12 && String(head, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> mp4(f)
@@ -53,8 +136,7 @@ object TagReader {
                     // FLAC files sometimes carry an ID3v2 tag in front
                     val tagEnd = id3End(head)
                     if (tagEnd + 4 <= f.length()) {
-                        f.seek(tagEnd)
-                        val m = ByteArray(4); f.readFully(m)
+                        val m = bytesAt(f, tagEnd, 4)
                         if (String(m, Charsets.ISO_8859_1) == "fLaC") return flac(f, tagEnd)
                     }
                     mp3(f)
@@ -72,9 +154,9 @@ object TagReader {
     private fun syncsafe(b: ByteArray, p: Int): Int =
         ((b[p].toInt() and 0x7f) shl 21) or ((b[p + 1].toInt() and 0x7f) shl 14) or ((b[p + 2].toInt() and 0x7f) shl 7) or (b[p + 3].toInt() and 0x7f)
 
-    private fun bytesAt(f: RandomAccessFile, pos: Long, n: Int): ByteArray {
+    private fun bytesAt(f: TagSource, pos: Long, n: Int): ByteArray {
         if (n < 0 || pos < 0 || pos + n > f.length()) throw TagException("truncated file")
-        val b = ByteArray(n); f.seek(pos); f.readFully(b); return b
+        val b = ByteArray(n); f.readAt(pos, b); return b
     }
 
     private fun clean(s: String?): String? = s?.replace("\u0000", "")?.trim()?.ifEmpty { null }
@@ -116,7 +198,7 @@ object TagReader {
 
     // ------------------------------------------------------------------ FLAC
 
-    private fun flac(f: RandomAccessFile, start: Long): AudioInfo {
+    private fun flac(f: TagSource, start: Long): AudioInfo {
         val info = AudioInfo("flac")
         info.lossless = true
         var pos = start + 4
@@ -136,7 +218,10 @@ object TagReader {
                     totalSamples = ((b[13].toLong() and 0x0f) shl 32) or be(b, 14, 4)
                 }
                 4 -> if (len <= MAX_TAG) vorbisComment(info, bytesAt(f, pos, len), 0)
-                6 -> info.hasPicture = true
+                6 -> {
+                    info.hasPicture = true
+                    flacPicture(f, pos, len)?.let { p -> if (info.picture == null || (p.type == 3 && info.picture!!.type != 3)) info.picture = p }
+                }
             }
             pos += len
             if (last || type == 127) break
@@ -149,6 +234,22 @@ object TagReader {
         }
         mqaFromTags(info)
         return info
+    }
+
+    /** A FLAC PICTURE block at [pos] ([len] bytes): type, MIME, description, size fields, then the image. */
+    private fun flacPicture(f: TagSource, pos: Long, len: Int): PictureRef? {
+        if (len < 32) return null
+        val h = bytesAt(f, pos, 8)
+        val type = be(h, 0, 4).toInt()
+        val mimeLen = be(h, 4, 4)
+        if (mimeLen > 256 || 8 + mimeLen + 4 > len) return null
+        val mime = String(bytesAt(f, pos + 8, mimeLen.toInt()), Charsets.ISO_8859_1)
+        val descLen = be(bytesAt(f, pos + 8 + mimeLen, 4), 0, 4)
+        val fixed = pos + 8 + mimeLen + 4 + descLen
+        if (8 + mimeLen + 4 + descLen + 20 > len) return null
+        val dataLen = be(bytesAt(f, fixed + 16, 4), 0, 4)
+        if (dataLen <= 0 || fixed + 20 + dataLen > pos + len) return null
+        return PictureRef(fixed + 20, dataLen, mime.lowercase(), type)
     }
 
     private fun vorbisComment(info: AudioInfo, b: ByteArray, start: Int) {
@@ -222,43 +323,60 @@ object TagReader {
         return s.split('\u0000').map { it.trim().removePrefix("﻿") }.filter { it.isNotEmpty() }
     }
 
-    private fun id3(info: AudioInfo, f: RandomAccessFile): Long {
+    private fun id3(info: AudioInfo, f: TagSource): Long {
         val h = bytesAt(f, 0, 10)
         val ver = h[3].toInt()
         val flags = h[5].toInt()
         val size = syncsafe(h, 6)
         val end = id3End(h)
         if (ver !in 2..4 || size > MAX_TAG) return end
-        var b = bytesAt(f, 10, minOf(size.toLong(), f.length() - 10).toInt())
-        if (flags and 0x80 != 0 && ver < 4) b = unsync(b)
+        val tagLen = minOf(size.toLong(), f.length() - 10).toInt()
+        // Without tag-wide unsynchronisation the frames are read one by one straight from the
+        // file, so a picture is located but never read (a partial download stays small).
+        val whole: ByteArray? = if (flags and 0x80 != 0 && ver < 4) unsync(bytesAt(f, 10, tagLen)) else null
+        val limit = whole?.size ?: tagLen
+        fun at(p: Int, n: Int): ByteArray = whole?.copyOfRange(p, p + n) ?: bytesAt(f, 10L + p, n)
         var p = 0
-        if (flags and 0x40 != 0 && ver >= 3) {
-            p = if (ver == 3) 4 + be(b, 0, 4).toInt() else syncsafe(b, 0)
+        if (flags and 0x40 != 0 && ver >= 3 && limit >= 4) {
+            val x = at(0, 4)
+            p = if (ver == 3) 4 + be(x, 0, 4).toInt() else syncsafe(x, 0)
         }
         val idLen = if (ver == 2) 3 else 4
         val hdrLen = if (ver == 2) 6 else 10
-        while (p + hdrLen <= b.size) {
-            val id = String(b, p, idLen, Charsets.ISO_8859_1)
+        while (p >= 0 && p + hdrLen <= limit) {
+            val fh = at(p, hdrLen)
+            val id = String(fh, 0, idLen, Charsets.ISO_8859_1)
             if (id[0] == '\u0000') break
             val fsize = when (ver) {
-                2 -> be(b, p + 3, 3).toInt()
-                3 -> be(b, p + 4, 4).toInt()
-                else -> syncsafe(b, p + 4)
+                2 -> be(fh, 3, 3).toInt()
+                3 -> be(fh, 4, 4).toInt()
+                else -> syncsafe(fh, 4)
             }
-            val fflags = if (ver == 2) 0 else be(b, p + 8, 2).toInt()
+            val fflags = if (ver == 2) 0 else be(fh, 8, 2).toInt()
             p += hdrLen
-            if (fsize < 0 || p + fsize > b.size) break
-            var data = b.copyOfRange(p, p + fsize)
+            if (fsize < 0 || p + fsize > limit) break
+            val dataPos = p
             p += fsize
             // compressed or encrypted frames are skipped
             if (ver == 3 && fflags and 0xc0 != 0) continue
+            if (ver == 4 && fflags and 0x000c != 0) continue
+            val isPic = id == "APIC" || id == "PIC"
+            if (isPic) info.hasPicture = true
+            if (!isPic && fsize > (1 shl 20)) continue
+            var data = at(dataPos, if (isPic) minOf(fsize, 1024) else fsize)
+            var dp = 0
             if (ver == 4) {
-                if (fflags and 0x000c != 0) continue
-                var dp = 0
                 if (fflags and 0x0040 != 0) dp += 1      // grouping identity
                 if (fflags and 0x0001 != 0) dp += 4      // data length indicator
                 data = data.copyOfRange(minOf(dp, data.size), data.size)
-                if (fflags and 0x0002 != 0 || flags and 0x80 != 0) data = unsync(data)
+            }
+            val frameUnsync = ver == 4 && (fflags and 0x0002 != 0 || flags and 0x80 != 0)
+            if (frameUnsync) data = unsync(data)
+            if (isPic) {
+                if (whole == null && !frameUnsync) id3Picture(data, ver, 10L + dataPos + dp, fsize - dp)?.let { pic ->
+                    if (info.picture == null || (pic.type == 3 && info.picture!!.type != 3)) info.picture = pic
+                }
+                continue
             }
             fun first() = id3Text(data, 0, data.size).firstOrNull()
             when (id) {
@@ -272,7 +390,6 @@ object TagReader {
                 "TPOS", "TPA" -> info.disc = info.disc ?: first()
                 "TENC", "TEN" -> first()?.let { info.extra.putIfAbsent("ENCODED-BY", it) }
                 "TSSE", "TSS" -> first()?.let { info.extra.putIfAbsent("ENCODER", it) }
-                "APIC", "PIC" -> info.hasPicture = true
                 "TXXX", "TXX" -> {
                     val parts = id3Text(data, 0, data.size)
                     if (parts.size >= 2) applyVorbisLike(info, parts[0], parts[1])
@@ -280,6 +397,41 @@ object TagReader {
             }
         }
         return end
+    }
+
+    /**
+     * The image inside an APIC (v2.3/2.4: encoding, MIME, NUL, type, description) or PIC
+     * (v2.2: encoding, 3-letter format, type, description) frame whose first bytes are [d];
+     * [dataPos] is where [d] starts in the file and [len] the frame's data length.
+     */
+    private fun id3Picture(d: ByteArray, ver: Int, dataPos: Long, len: Int): PictureRef? {
+        if (d.size < 4) return null
+        val enc = d[0].toInt()
+        var p: Int
+        val mime: String
+        if (ver == 2) {
+            val fmt = String(d, 1, 3, Charsets.ISO_8859_1).lowercase()
+            mime = if (fmt == "png") "image/png" else "image/jpeg"
+            p = 4
+        } else {
+            val z = (1 until d.size).firstOrNull { d[it].toInt() == 0 } ?: return null
+            val m = String(d, 1, z - 1, Charsets.ISO_8859_1).lowercase()
+            mime = when (m) { "", "jpg", "jpeg" -> "image/jpeg"; "png" -> "image/png"; else -> m }
+            p = z + 1
+        }
+        if (p >= d.size) return null
+        val type = d[p].toInt() and 0xff
+        p++
+        // the description ends with one NUL (Latin-1, UTF-8) or two aligned NULs (UTF-16)
+        if (enc == 1 || enc == 2) {
+            while (p + 1 < d.size && !(d[p].toInt() == 0 && d[p + 1].toInt() == 0)) p += 2
+            p += 2
+        } else {
+            while (p < d.size && d[p].toInt() != 0) p++
+            p += 1
+        }
+        if (p > d.size || p >= len) return null
+        return PictureRef(dataPos + p, (len - p).toLong(), mime, type)
     }
 
     private val BITRATES = arrayOf(
@@ -318,7 +470,7 @@ object TagReader {
         return MpegHeader(mpeg, layer, br, sr, if (mono) 1 else 2, len, samples, mono)
     }
 
-    private fun mp3(f: RandomAccessFile): AudioInfo {
+    private fun mp3(f: TagSource): AudioInfo {
         val info = AudioInfo("mp3")
         var start = 0L
         val head = bytesAt(f, 0, minOf(10L, f.length()).toInt())
@@ -386,7 +538,7 @@ object TagReader {
         val end get() = start + size
     }
 
-    private fun atoms(f: RandomAccessFile, from: Long, to: Long): List<Atom> {
+    private fun atoms(f: TagSource, from: Long, to: Long): List<Atom> {
         val out = ArrayList<Atom>()
         var p = from
         while (p + 8 <= to) {
@@ -403,7 +555,7 @@ object TagReader {
         return out
     }
 
-    private fun child(f: RandomAccessFile, a: Atom?, vararg path: String, skip: Int = 0): Atom? {
+    private fun child(f: TagSource, a: Atom?, vararg path: String, skip: Int = 0): Atom? {
         var cur = a ?: return null
         for ((i, t) in path.withIndex()) {
             val off = if (i == 0) skip else 0
@@ -412,7 +564,7 @@ object TagReader {
         return cur
     }
 
-    private fun mp4(f: RandomAccessFile): AudioInfo {
+    private fun mp4(f: TagSource): AudioInfo {
         val top = atoms(f, 0, f.length())
         val moov = top.firstOrNull { it.type == "moov" } ?: throw TagException("MP4 without moov")
         if (moov.size > 64L shl 20) throw TagException("MP4 moov too large")
@@ -468,7 +620,14 @@ object TagReader {
                 if (item.size > 64L shl 20) continue
                 val parts = atoms(f, item.body, item.end)
                 val data = parts.firstOrNull { it.type == "data" } ?: continue
-                if (item.type == "covr") { info.hasPicture = true; continue }
+                if (item.type == "covr") {
+                    info.hasPicture = true
+                    if (info.picture == null && data.size - data.header > 8) {
+                        val kind = be(bytesAt(f, data.body, 4), 1, 3).toInt()
+                        info.picture = PictureRef(data.body + 8, data.size - data.header - 8, if (kind == 14) "image/png" else "image/jpeg", 3)
+                    }
+                    continue
+                }
                 if (data.size - data.header > 1 shl 20) continue
                 val raw = bytesAt(f, data.body, (data.size - data.header).toInt())
                 if (raw.size < 8) continue
@@ -517,7 +676,7 @@ object TagReader {
 
     // ------------------------------------------------------------------ WAV and DSF (stream info only)
 
-    private fun wav(f: RandomAccessFile): AudioInfo {
+    private fun wav(f: TagSource): AudioInfo {
         val info = AudioInfo("wav")
         info.lossless = true
         var p = 12L
@@ -545,7 +704,7 @@ object TagReader {
         return info
     }
 
-    private fun dsf(f: RandomAccessFile): AudioInfo {
+    private fun dsf(f: TagSource): AudioInfo {
         val info = AudioInfo("dsd")
         info.lossless = true
         val b = bytesAt(f, 28, 52)
