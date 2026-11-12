@@ -385,7 +385,7 @@ static void radio_app_at(int ix, int iy)
                 if (ts == RT_DRAG) {
                     *pos = fm_rb(raw0 - (float)(cur_y - sy), lo, hi);
                     double t = now_ms();
-                    if (t > tmove) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; }
+                    if (t - tmove >= 8) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; } if (vy > 4) vy = 4; if (vy < -4) vy = -4;
                     dirty = 1;
                 }
                 continue;

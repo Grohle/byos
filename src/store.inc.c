@@ -2044,7 +2044,7 @@ static void store_app_ui(int ix, int iy)
                     if (ts == TS_DRAG) {
                         lo = st_minpos(pg); hi = st_maxpos();
                         *pos = st_rb(raw0 - (float)(cur_y - sy), lo, hi);
-                        double t = now_ms(); if (t > tmove) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; }
+                        double t = now_ms(); if (t - tmove >= 8) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; } if (vy > 4) vy = 4; if (vy < -4) vy = -4;
                         /* tirar para actualizar: al pasar el umbral empieza (sin esperar a soltar) */
                         if (pg < T_N && pg != T_SEARCH && *pos <= -ST_PTR_ARM && st_ptr_tab != pg) {
                             if (!st_upd_on) { st_refresh(); st_upd_start("tirar"); }

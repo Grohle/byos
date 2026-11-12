@@ -1472,6 +1472,8 @@ static int fm_pressed(int kind, int idx) { return fm_press_kind == kind && fm_pr
 /* ------------------------------------------------------------------ pages */
 enum { FP_ROOT, FP_ALBUM, FP_DL, FP_SET, FP_PICK, FP_SRCS, FP_N };
 static int fm_stack[8], fm_sp;                 /* fm_stack[fm_sp] = current page */
+#define FM_OVS 70.0f     /* how far a fling may overshoot the ends */
+#define FM_VMAX 4.0f     /* px/ms */
 static float fm_pos[FP_N], fm_vel; static int fm_ch[FP_N];
 static int fm_ptr_pg = -1;                     /* pull to refresh: page that keeps the gap with the indicator */
 static double fm_ptr_end;
@@ -2794,9 +2796,14 @@ static void freemusic_app_at(int ix, int iy)
         float *pos = &fm_pos[pg], lo = fm_minpos(pg), hi = fm_maxpos(pg);
         if (ts != FT_DRAG && ts != FT_PRESS && !moving && (*pos < lo - .5f || *pos > hi + .5f)) moving = 1;
         if (moving && ts != FT_DRAG) {
-            if (*pos < lo || *pos > hi) {
+            int outward = (*pos > hi && fm_vel > 0.05f) || (*pos < lo && fm_vel < -0.05f);
+            if (outward) {                     /* a fling past the edge: brakes hard, like iOS, and never runs away */
+                *pos += fm_vel * (float)dt; fm_vel *= (float)pow(0.95, dt);
+                if (*pos > hi + FM_OVS) { *pos = hi + FM_OVS; fm_vel = 0; }
+                if (*pos < lo - FM_OVS) { *pos = lo - FM_OVS; fm_vel = 0; }
+            } else if (*pos < lo || *pos > hi) {
                 float tgt = *pos < lo ? lo : hi;
-                *pos += (float)((tgt - *pos) * (1 - exp(-dt / 70.0))); fm_vel *= 0.5f;
+                *pos += (float)((tgt - *pos) * (1 - exp(-dt / 70.0))); fm_vel = 0;
                 if (fabsf(*pos - tgt) < 0.5f) { *pos = tgt; fm_vel = 0; }
             } else { *pos += fm_vel * (float)dt; fm_vel *= (float)pow(0.998, dt); }
             if (fabsf(fm_vel) < 0.02f && *pos >= lo && *pos <= hi) { moving = 0; fm_vel = 0; }
@@ -2860,7 +2867,10 @@ static void freemusic_app_at(int ix, int iy)
                 }
                 if (ts == FT_DRAG) {
                     *pos = fm_rb(raw0 - (float)(cur_y - sy), fm_minpos(pg), fm_maxpos(pg));
-                    double t = now_ms(); if (t > tmove) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; }
+                    /* finger speed over at least 8 ms (two touch reports 1 ms apart gave a 20x speed and a fling that jumped
+                     * past the end of the list in one frame), capped at 4 px/ms */
+                    double t = now_ms(); if (t - tmove >= 8) { vy = 0.6f * vy + 0.4f * (float)((ly - cur_y) / (t - tmove)); tmove = t; ly = cur_y; }
+                    if (vy > FM_VMAX) vy = FM_VMAX; if (vy < -FM_VMAX) vy = -FM_VMAX;
                     /* pull to refresh: past the threshold it starts (without waiting for the release) */
                     if ((pg == FP_ROOT || pg == FP_SRCS) && !fm_editing && *pos <= -FM_PTR_ARM && fm_ptr_pg != pg) {
                         fm_ptr_start(pg);
