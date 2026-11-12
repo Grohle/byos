@@ -475,6 +475,8 @@ static const char *const TRS[][1 + LANG_N] = {
     { "Apagado en %d min", "Apagado en %d min", "Turning Off in %d min", "Extinction dans %d min", "Aus in %d Min.", "Spegnimento tra %d min", "%d分後に電源オフ", "%d분 후 꺼짐", "Wyłączenie za %d min", "Выключение через %d мин", "%d 分钟后关机", "ปิดเครื่องใน %d นาที", "%d 分鐘後關機", "Вимкнення через %d хв" },
     { "Temporizador desactivado", "Temporizador desactivado", "Sleep Timer Off", "Minuterie désactivée", "Sleep-Timer aus", "Timer disattivato", "スリープタイマー オフ", "취침 타이머 끔", "Wyłącznik czasowy wyłączony", "Таймер сна выкл.", "睡眠定时已关闭", "ปิดตั้งเวลาปิด", "睡眠定時已關閉", "Таймер сну вимк." },
     { "No caben más controles: quita alguno", "No caben más controles: quita alguno", "No room for more controls: remove one", "Plus de place : retirez une commande", "Kein Platz mehr: eine Taste entfernen", "Non c’è più spazio: togline uno", "これ以上追加できません。どれかを外してください", "더 이상 추가할 수 없습니다. 하나를 빼세요", "Brak miejsca: usuń któryś przycisk", "Больше не помещается: уберите один", "没有更多空间：请移除一个", "ไม่มีที่ว่างแล้ว ให้นำออกหนึ่งปุ่ม", "沒有更多空間：請移除一個", "Більше не вміщається: приберіть одну" },
+    { "Formato de 24 horas", "Formato de 24 horas", "24-Hour Time", "Format 24 heures", "24-Stunden-Format", "Formato 24 ore", "24時間表示", "24시간 형식", "Format 24-godzinny", "24-часовой формат", "24 小时制", "รูปแบบ 24 ชั่วโมง", "24 小時制", "24-годинний формат" },
+    { "Firmware de HiBy", "Firmware de HiBy", "HiBy Firmware", "Firmware HiBy", "HiBy-Firmware", "Firmware HiBy", "HiBy ファームウェア", "HiBy 펌웨어", "Oprogramowanie HiBy", "Прошивка HiBy", "HiBy 固件", "เฟิร์มแวร์ HiBy", "HiBy 韌體", "Прошивка HiBy" },
 };
 /* traduccion de s al idioma l o 0 si la clave no es de esta tabla */
 static const char *trs_lookup(const char *s, int l)

@@ -1526,6 +1526,7 @@ static const struct st_opt {
     { "inline",    0x27,   0,   1, SF_OPT,      0,     0,     0x42a8b4, 0x42c1bc },
     { "led",       0x44,   0,   1, SF_OPT,      0,     0,     0x42a758, 0x42bda4 },
     { "mqadetect", 0x6e,   0,   1, SF_OPT,      0,     0,     0x42a650, 0x42bfd4 },
+    { "clock24",   0x7c,   0,   1, SF_OPT,      0,     0,     0x42a5d0, 0x42bbfc },   /* reloj de la barra de estado (lo dibuja HiBy) */
 };
 #define ST_NOPT ((int)(sizeof st_opt / sizeof st_opt[0]))
 #define ST_ID_LINEOUT 0x2d

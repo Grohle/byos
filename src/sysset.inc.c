@@ -27,7 +27,7 @@ enum { PS_BT, PS_WIFI, PS_DLNA, PS_AIRPLAY, PS_HLINK, PS_GAIN, PS_MSEB, PS_LINEO
        PS_EXT,                                   /* desde aqui: claves propuestas (libreria v8) */
        PS_BRIGHT = PS_EXT, PS_BKLON, PS_BKLTIME, PS_IDLE, PS_IDLEMIN, PS_UPDATE,
        PS_EQ, PS_EQPRESET, PS_RESUME, PS_RGAIN, PS_FOLDERSKIP, PS_ALBUMSKIP, PS_BOOTVOLMODE, PS_BOOTVOL,
-       PS_LOCKKEYS, PS_LOCKVOL, PS_INLINE, PS_LED, PS_MQADET, PS_N };   /* v9 */
+       PS_LOCKKEYS, PS_LOCKVOL, PS_INLINE, PS_LED, PS_MQADET, PS_CLOCK24, PS_N };   /* v9 */
 /* clave de la API, desplazamiento en user.ini (= en la estructura de ajustes) y rango valido */
 static const struct { const char *key; short off, lo, hi; } ps_def[PS_N] = {
     { "bt", 0x394, 0, 1 }, { "wifi", 0x3c8, 0, 1 }, { "dlna", 0x3d0, 0, 1 }, { "airplay", 0x3cc, 0, 1 }, { "hibylink", 0x3b4, 0, 1 },
@@ -39,7 +39,7 @@ static const struct { const char *key; short off, lo, hi; } ps_def[PS_N] = {
     { "eq", 0x3e4, 0, 1 }, { "eqpreset", 0x268, 0, 9 }, { "resume", 0x24, 0, 2 }, { "replaygain", 0x3b8, 0, 2 },
     { "folderskip", 0x390, 0, 1 }, { "albumskip", 0x410, 0, 1 }, { "bootvolmode", 0x244, 0, 1 }, { "bootvol", 0x240, 0, 100 },
     { "lockkeys", 0x264, 0, 1 }, { "lockvol", 0x6e8, 0, 1 }, { "inline", 0x388, 0, 1 }, { "led", 0x458, 0, 1 },
-    { "mqadetect", 0x734, 0, 1 },
+    { "mqadetect", 0x734, 0, 1 }, { "clock24", 0x784, 0, 1 },
 };
 static int ps_v[PS_N];          /* lo que se ve (incluye cambios aun sin confirmar) */
 static int ps_sh[PS_N];         /* ultimo valor confirmado por el reproductor (o leido) */
@@ -176,7 +176,7 @@ static void ps_tick(void)
 /* ------------------------------------------------------------------ informacion del sistema
  * Version, almacenamiento, biblioteca (hibymix stats) y memoria: en un hilo, para que abrir
  * Informacion o Biblioteca sea instantaneo. Se refresca al abrir Ajustes (si tiene > 5 s). */
-struct sinfo { char ver[48], mac[24]; long long sd_free, sd_tot, in_free, in_tot; long mem_kb; int songs, albums, artists, napps, lib, ready; };
+struct sinfo { char ver[48], mac[24], btmac[24], hiby[16]; long long sd_free, sd_tot, in_free, in_tot; long mem_kb; int songs, albums, artists, napps, lib, ready; };
 static struct sinfo si, si_ui;
 static pthread_mutex_t si_mu = PTHREAD_MUTEX_INITIALIZER;
 static volatile int si_busy; static double si_t;
@@ -201,6 +201,17 @@ static void *si_thread(void *a)
     f = fopen("/sys/class/net/wlan0/address", "r");
     if (f) { if (fgets(n.mac, sizeof n.mac, f)) n.mac[strcspn(n.mac, "\n")] = 0; fclose(f); }
     for (char *c = n.mac; *c; c++) *c = (char)toupper((unsigned char)*c);
+    /* Bluetooth: la del controlador si esta encendido; si no, la que guarda el reproductor */
+    n.btmac[0] = 0;
+    f = fopen("/sys/class/bluetooth/hci0/address", "r"); if (!f) f = fopen("/usr/data/bt_macaddr.txt", "r");
+    if (f) { if (fgets(n.btmac, sizeof n.btmac, f)) n.btmac[strcspn(n.btmac, "\r\n")] = 0; fclose(f); }
+    for (char *c = n.btmac; *c; c++) *c = (char)toupper((unsigned char)*c);
+    /* version del firmware oficial de HiBy sobre el que va ByOS ("version":"1.3" de config.json) */
+    if (!n.hiby[0]) {
+        f = fopen("/usr/resource/config.json", "r");
+        if (f) { char b[4096]; size_t k = fread(b, 1, sizeof b - 1, f); b[k] = 0; fclose(f);
+            char *q = strstr(b, "\"version\":\""); if (q) { q += 11; int i = 0; while (q[i] && q[i] != '"' && i < (int)sizeof n.hiby - 1) { n.hiby[i] = q[i]; i++; } n.hiby[i] = 0; } }
+    }
     n.napps = 0; DIR *d = opendir("/usr/data/hibymod/apps"); struct dirent *e;
     while (d && (e = readdir(d))) if (e->d_name[0] != '.') n.napps++;
     if (d) closedir(d);
@@ -415,6 +426,8 @@ static const char *v_model(void) { return "HiBy R3 II"; }
 static const char *v_mem2(void) { if (!si_ui.ready) return "…"; snprintf(ss_buf[3], 64, "%.0f MB", si_ui.mem_kb / 1024.0); return ss_buf[3]; }
 static const char *v_napps(void) { snprintf(ss_buf[4], 64, "%d", si_ui.napps); return si_ui.ready ? ss_buf[4] : "…"; }
 static const char *v_mac(void) { return si_ui.mac[0] ? si_ui.mac : si_ui.ready ? "—" : "…"; }
+static const char *v_btmac(void) { return si_ui.btmac[0] ? si_ui.btmac : si_ui.ready ? "—" : "…"; }
+static const char *v_hibyfw(void) { return si_ui.hiby[0] ? si_ui.hiby : si_ui.ready ? "—" : "…"; }
 static void ss_gb(char *b, long long v)
 {
     double g = v / 1e9;
@@ -705,7 +718,7 @@ static void page_about(struct spage *p)
                                         ROWV("Álbumes", v_albums), ROWV("Apps instaladas", v_napps) }, 5 };
     p->secs[1] = (struct ssec){ "ALMACENAMIENTO", 0, { ROWB("Tarjeta SD", &ui_sd_pm, v_sd), ROWB("Memoria interna", &ui_in_pm, v_int),
                                                        ROWV("Memoria libre", v_mem2) }, 3 };
-    p->secs[2] = (struct ssec){ 0, 0, { ROWV("Dirección Wi-Fi", v_mac) }, 1 };
+    p->secs[2] = (struct ssec){ 0, 0, { ROWV("Firmware de HiBy", v_hibyfw), ROWV("Dirección Wi-Fi", v_mac), ROWV("Bluetooth", v_btmac) }, 3 };
     p->secs[3] = (struct ssec){ "PROYECTO", "ABOUT_HELP", { sup_row(0) }, 1 };      /* GitHub: abre su QR */
     p->nsec = 4;
     if (sup_donate_sec(&p->secs[4])) p->nsec = 5;                                   /* donaciones, cada una con su QR */
@@ -737,9 +750,11 @@ static void page_datetime(struct spage *p)
     *p = (struct spage){ "Fecha y hora" };
     p->secs[0] = (struct ssec){ 0, 0, { ROWV("Fecha", v_date), ROWV("Hora", v_clock), ROWV("Zona horaria", v_tz) }, 3 };
     p->secs[1] = (struct ssec){ 0, "DATETIME_HELP", { ROW("Ajustar fecha y hora", R_ACTION, 0, 0, 0, ss_time_picker, 0, 0) }, 1 };
+    /* "Formato de 24 horas" (clock24, 0x7c) no cambia el reloj de la barra (probado con reinicio,
+     * 12-11): la clave queda en la libreria pero sin fila */
     p->nsec = 2;
 }
-static void nav_datetime(void) { open_page(page_datetime, "General"); }
+static void nav_datetime(void) { ps_refresh(); open_page(page_datetime, "General"); }
 
 /* Selector de ruedas (como el de iOS): dia, mes, ano | hora, minuto. Arrastre 1:1, inercia y
  * ajuste suave a la fila; las ruedas giran en bucle salvo el ano. "Guardar" fija el reloj del
