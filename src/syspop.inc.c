@@ -12,7 +12,7 @@
 #define SP_IN_MS 420.0
 #define SP_OUT_MS 260.0
 #define SP_HOLD_MS 6000.0
-static int sp_cap, sp_closing, sp_open_req, sp_in_tick, sp_kind;   /* sp_kind: 0 auriculares, 1 biblioteca, 2 volumen alto */
+static int sp_cap, sp_closing, sp_open_req, sp_in_tick, sp_kind;   /* sp_kind: 0 auriculares, 1 biblioteca, 2 volumen alto, 3 apagado (boton) */
 static double sp_t0, sp_tc, sp_last_check; static float sp_close_from = 1;
 static uint16_t *sp_tmp, *sp_base;
 
@@ -36,7 +36,7 @@ static void sp_present_over(const uint16_t *src)
     memcpy(sp_tmp, src, HM_FRAME_BYTES);
     if (!sp_cap) { statusbar_tint(sp_tmp); int a = 0, b = 0; homebar_layer(sp_tmp, src, &a, &b); }   /* como los de la app */
     else if (cap_ov == &spr_bar && spr_bar.w) blend_sprite(sp_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de la pantalla de HiBy */
-    if (sp_kind == 1) lib_popup_draw(sp_tmp, sp_progress()); else if (sp_kind == 2) vol_popup_draw(sp_tmp, sp_progress()); else buds_popup_draw(sp_tmp, sp_progress());
+    if (sp_kind == 1) lib_popup_draw(sp_tmp, sp_progress()); else if (sp_kind == 2) vol_popup_draw(sp_tmp, sp_progress()); else if (sp_kind == 3) pwr_popup_draw(sp_tmp, sp_progress()); else buds_popup_draw(sp_tmp, sp_progress());
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, sp_tmp, HM_FRAME_BYTES);
     st->dirty_y0 = 0; st->dirty_y1 = H;
@@ -54,15 +54,15 @@ static void sp_finish(void)
         hud_compose_present_ex(fr0, 0);              /* con barra de estado y de inicio, sin parpadeo */
         cmd('P'); double t = now_ms(); while (st->presents == p && now_ms() - t < 80) msleep(1);
     }
-    lg("aviso: %s cerrado", sp_kind == 1 ? "biblioteca" : sp_kind == 2 ? "volumen alto" : "auriculares");
+    lg("aviso: %s cerrado", sp_kind == 1 ? "biblioteca" : sp_kind == 2 ? "volumen alto" : sp_kind == 3 ? "apagado" : "auriculares");
 }
 static void sp_start(int kind)
 {
     sp_kind = kind;
     if (!sp_tmp) sp_tmp = lazy_alloc((void **)&sp_tmp, HM_FRAME_BYTES, 0);    /* se devuelven en reposo */
     if (!sp_base) sp_base = lazy_alloc((void **)&sp_base, HM_FRAME_BYTES, 0);
-    if (!sp_tmp || !sp_base) { if (kind == 1) { lib_popup_ack(); lib_popup_dismiss(); } else if (kind == 2) vol_popup_ack(); else buds_popup_dismiss(); return; }
-    if (kind == 1) lib_popup_ack(); else if (kind == 2) vol_popup_ack(); else buds_popup_ack();
+    if (!sp_tmp || !sp_base) { if (kind == 1) { lib_popup_ack(); lib_popup_dismiss(); } else if (kind == 2) vol_popup_ack(); else if (kind == 3) pwr_popup_ack(); else buds_popup_dismiss(); return; }
+    if (kind == 1) lib_popup_ack(); else if (kind == 2) vol_popup_ack(); else if (kind == 3) pwr_popup_ack(); else buds_popup_ack();
     sp_cap = 0;
     /* la pildora de volumen se aparta (el aviso ocupa su sitio, como en iOS); si tenia congelada
      * una pantalla de HiBy, el aviso se queda con ella: sin esto los dos presentaban a la vez y la
@@ -85,7 +85,7 @@ static void sp_start(int kind)
     if (!sp_cap) memcpy(sp_base, fr0, HM_FRAME_BYTES);   /* app del shell: su ultimo fotograma */
     sp_on = 1; sp_closing = 0; sp_t0 = now_ms();
     lcd_boost();
-    lg("aviso: %s (%s)", kind == 1 ? "biblioteca actualizandose" : kind == 2 ? "volumen alto" : "auriculares conectados", sp_cap ? "sobre HiBy" : "sobre el shell");
+    lg("aviso: %s (%s)", kind == 1 ? "biblioteca actualizandose" : kind == 2 ? "volumen alto" : kind == 3 ? "apagado (boton)" : "auriculares conectados", sp_cap ? "sobre HiBy" : "sobre el shell");
 }
 /* un paso: lo llama read_pkt mientras espera */
 static void syspop_tick(void)
@@ -93,14 +93,16 @@ static void syspop_tick(void)
     if (sp_in_tick) return;
     sp_in_tick = 1;
     double t = now_ms();
-    if (!sp_on && t - sp_last_check > 300) {
+    if (sp_on && sp_kind != 3 && !sp_closing && pwr_popup_needed()) sp_close();   /* the power window goes before any card */
+    if (!sp_on && (t - sp_last_check > 300 || pwr_popup_needed())) {
         sp_last_check = t;
-        if (vol_popup_needed()) sp_start(2);            /* el del volumen, enseguida: el usuario esta girando la rueda */
+        if (pwr_popup_needed()) sp_start(3);
+        else if (vol_popup_needed()) sp_start(2);            /* el del volumen, enseguida: el usuario esta girando la rueda */
         else if (buds_popup_needed()) sp_start(0);
         else if (lib_popup_needed()) sp_start(1);
     }
     if (sp_on) {
-        if (!sp_closing && (sp_kind == 1 ? lib_popup_expired() : sp_kind == 2 ? vol_popup_expired(sp_t0) : t - sp_t0 > SP_HOLD_MS)) sp_close();
+        if (!sp_closing && (sp_kind == 1 ? lib_popup_expired() : sp_kind == 2 ? vol_popup_expired(sp_t0) : sp_kind == 3 ? pwr_popup_expired() : t - sp_t0 > SP_HOLD_MS)) sp_close();
         if (sp_closing && t - sp_tc >= SP_OUT_MS) sp_finish();
         else {
             uint32_t p = st->presents;
@@ -129,7 +131,7 @@ static void syspop_after_present(void)
 static int syspop_touch(const struct pkt *p)
 {
     if (!sp_on || sp_closing || !p->down) return 0;
-    int hit = sp_kind == 1 ? lib_popup_hit(p->x, p->y, sp_progress()) : sp_kind == 2 ? vol_popup_hit(p->x, p->y, sp_progress()) : buds_popup_hit(p->x, p->y, sp_progress());
+    int hit = sp_kind == 1 ? lib_popup_hit(p->x, p->y, sp_progress()) : sp_kind == 2 ? vol_popup_hit(p->x, p->y, sp_progress()) : sp_kind == 3 ? pwr_popup_hit(p->x, p->y, sp_progress()) : buds_popup_hit(p->x, p->y, sp_progress());
     if (!hit) {
         if (sp_cap) sp_close();       /* en HiBy: el toque fuera la cierra y sigue hacia HiBy */
         return 0;

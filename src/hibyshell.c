@@ -1167,6 +1167,9 @@ static void hiby_dlgs_quiet(void)
 {
     hiby_dlg_quiet("/usr/data/hibymod/theme/layout/theme3/dialog/music_update.dlg");
     hiby_dlg_quiet("/usr/data/hibymod/theme/litegui/theme3/dialog/music_update.dlg");
+    /* "Shutting down / 3" al mantener el boton de encendido: ByOS pone su ventana (pwrpop.inc.c) */
+    hiby_dlg_quiet("/usr/data/hibymod/theme/layout/theme3/dialog/notice_second.dlg");
+    hiby_dlg_quiet("/usr/data/hibymod/theme/litegui/theme3/dialog/notice_second.dlg");
 }
 static void hud_compose_present_ex(const uint16_t *src, int pill);
 /* la capa (barra de inicio) que tenia la pantalla de HiBy al congelarla la pildora o un aviso:
@@ -1390,6 +1393,7 @@ static void mem_trim(const char *why);
 #include "ccair.inc.c"                 /* modo avion y control de ruido del centro de control */
 #include "libpop.inc.c"                /* aviso "Actualizando la biblioteca" (lo presenta syspop) */
 #include "vollimit.inc.c"              /* limite de volumen seguro de la UE y su aviso */
+#include "pwrpop.inc.c"                /* el boton de encendido mantenido: ventana "Apagando" */
 #include "syspop.inc.c"                /* avisos del sistema sobre cualquier pantalla */
 #include "sync.inc.c"                  /* ByOS Sync: demonio hibysync, pagina de Ajustes y avisos de emparejamiento */
 

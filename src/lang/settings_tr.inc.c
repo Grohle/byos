@@ -3,6 +3,8 @@
  * LANG_*). La clave es el literal en espanol o un id (MAYUSCULAS_CON_GUION) para textos largos.
  * tr_lang() mira aqui primero; tests/i18n_test.c lo comprueba como el resto. */
 static const char *const TRS[][1 + LANG_N] = {
+    { "Apagando", "Apagando", "Powering Off", "Extinction", "Wird ausgeschaltet", "Spegnimento", "電源を切っています", "전원 끄는 중", "Wyłączanie", "Выключение", "正在关机", "กำลังปิดเครื่อง", "正在關機", "Вимкнення" },
+    { "Suelta el botón para cancelar", "Suelta el botón para cancelar", "Release the button to cancel", "Relâchez le bouton pour annuler", "Taste loslassen zum Abbrechen", "Rilascia il tasto per annullare", "ボタンを離すとキャンセル", "버튼에서 손을 떼면 취소", "Puść przycisk, aby anulować", "Отпустите кнопку для отмены", "松开按钮以取消", "ปล่อยปุ่มเพื่อยกเลิก", "放開按鈕以取消", "Відпустіть кнопку, щоб скасувати" },
     { "Streaming", "Streaming", "Streaming", "Streaming", "Streaming", "Streaming", "ストリーミング", "스트리밍", "Streaming", "Стриминг", "串流", "สตรีมมิ่ง", "串流", "Стрімінг" },
     { "Pantalla y brillo", "Pantalla y brillo", "Display & Brightness", "Luminosité et affichage", "Anzeige & Helligkeit", "Schermo e luminosità", "画面表示と明るさ", "디스플레이 및 밝기", "Ekran i jasność", "Экран и яркость", "显示与亮度", "จอภาพและความสว่าง", "螢幕顯示與亮度", "Екран і яскравість" },
     { "Sonido", "Sonido", "Sound", "Son", "Ton", "Suono", "サウンド", "사운드", "Dźwięk", "Звук", "声音", "เสียง", "聲音", "Звук" },
