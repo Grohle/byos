@@ -15,6 +15,8 @@ sealed interface Link {
 
 /** The card destinations offered for sending (section "send" of the connected mode). */
 enum class Destination(val path: String) {
+    /** Each file to the folder of its kind (SendPlan.auto). */
+    AUTO(""),
     MUSIC("Music"), BOOKS("Books"), PICTURES("Pictures"), APPS("Apps"),
 
     /** The top of the card, where the player looks for firmware updates (r3ii_2025.upt). */
@@ -35,9 +37,10 @@ data class Transfer(
 ) {
     val sent: Int get() = jobs.count { it.status == JobStatus.SENT }
     val skipped: Int get() = jobs.count { it.status == JobStatus.SKIPPED }
-    /** Hidden files (".nomedia") are left out on purpose: they are not a problem. */
+    /** Hidden files (".nomedia") are left out on purpose, and ByOS update files go to Install Update: they are not a problem. */
     val problems: Int get() = jobs.count {
-        !it.finished && it.status != JobStatus.WAITING && !(it.status == JobStatus.BAD_NAME && it.local.substringAfterLast('/').startsWith("."))
+        !it.finished && it.status != JobStatus.WAITING && it.status != JobStatus.UPDATE_FILE &&
+            !(it.status == JobStatus.BAD_NAME && it.local.substringAfterLast('/').startsWith("."))
     }
     val left: Int get() = jobs.count { it.retryable }
     val finished: Boolean get() = !running && jobs.isNotEmpty() && jobs.none { it.status == JobStatus.WAITING }
@@ -168,7 +171,9 @@ data class SyncState(
     val paired: List<PairedDevice> = emptyList(),
     val link: Link = Link.Idle,
     val error: ErrorInfo? = null,
-    val dest: Destination = Destination.MUSIC,
+    val dest: Destination = Destination.AUTO,
+    /** With the automatic destination: groups sent to another folder than their default one. */
+    val routes: Map<Route, String> = emptyMap(),
     /** A folder chosen in the browser ("Send here"), instead of [dest]. */
     val destPath: String? = null,
     val replace: Boolean = false,
@@ -210,6 +215,12 @@ interface SyncActions {
     fun refreshSpace()
 
     fun setDestination(d: Destination)
+
+    /** With the automatic destination: the card folder for one group ("" is the top of the card). */
+    fun setRoute(route: Route, folder: String)
+
+    /** Hands the ByOS update files of the choice to Install Update. */
+    fun useUpdateFiles()
     fun setReplace(on: Boolean)
     fun pickFiles()
     fun pickFolder()

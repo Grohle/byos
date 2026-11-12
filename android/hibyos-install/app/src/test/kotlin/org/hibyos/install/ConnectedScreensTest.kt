@@ -21,6 +21,7 @@ import org.hibyos.install.connected.PairedDevice
 import org.hibyos.install.connected.LibTarget
 import org.hibyos.install.connected.Prompt
 import org.hibyos.install.connected.Rescan
+import org.hibyos.install.connected.Route
 import org.hibyos.install.connected.SendJob
 import org.hibyos.install.connected.SyncDevice
 import org.hibyos.install.connected.SyncDeviceInfo
@@ -90,9 +91,10 @@ class ConnectedScreensTest {
     private val space = SyncSpace(0, 1, 63_864_569_856, 21_474_836_480, 1L shl 30, 300L shl 20)
     private val on = SyncState(available = true, link = Link.Connected(dev.copy(paired = true), info, space))
 
-    private fun shot(name: String, screen: Screen, sync: SyncState, state: UiState = base) {
+    /** [tall]: a page tall enough to show everything, for the long lists. */
+    private fun shot(name: String, screen: Screen, sync: SyncState, state: UiState = base, tall: Boolean = false) {
         val s = state.copy(stack = listOf(Screen.HOME, Screen.SYNC, screen).distinct())
-        RuntimeEnvironment.setQualifiers("w412dp-h892dp-xhdpi")
+        RuntimeEnvironment.setQualifiers(if (tall) "w412dp-h1700dp-xhdpi" else "w412dp-h892dp-xhdpi")
         captureRoboImage(File(dir, "$name.png").path, options) {
             CompositionLocalProvider(LocalSync provides SyncUi(sync, NoSync), LocalStill provides true) {
                 Box(Modifier.fillMaxSize().background(C.bg)) { ScreenContent(screen, s, nothing) }
@@ -127,6 +129,17 @@ class ConnectedScreensTest {
         shot("send_3_running", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs, running = true, done = 99_000_000, total = 118_840_000,
             current = "Music/Album/02 Song.flac")))
         shot("send_4_done", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs.map { if (it.id == 4) it else it.copy(status = JobStatus.SENT, done = it.size) })))
+        val mixed = listOf(
+            SendJob(1, "Abba Gold/01 Dancing Queen.flac", "Music/Abba Gold/01 Dancing Queen.flac", 31_000_000, route = Route.MUSIC),
+            SendJob(2, "Abba Gold/cover.jpg", "Music/Abba Gold/cover.jpg", 420_000, route = Route.MUSIC),
+            SendJob(3, "Holiday/beach.jpg", "Pictures/Holiday/beach.jpg", 2_400_000, route = Route.PICTURES),
+            SendJob(4, "novel.epub", "Books/novel.epub", 800_000, route = Route.BOOKS),
+            SendJob(5, "r3ii_2025.upt", "r3ii_2025.upt", 46_759_936, route = Route.FIRMWARE),
+            SendJob(6, "hibyos-update.json", "", 2_100, JobStatus.UPDATE_FILE, route = Route.BYOS_UPDATE),
+        )
+        shot("send_7_auto_groups", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs = mixed), routes = mapOf(Route.PICTURES to "Music")), tall = true)
+        shot("send_8_no_space", Screen.SYNC_SEND, on.copy(link = Link.Connected(dev.copy(paired = true), info, space.copy(sdFree = 30_000_000)),
+            transfer = Transfer(jobs = mixed)))
         shot("send_6_done_music", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs.map { if (it.id == 4) it else it.copy(status = JobStatus.SENT, done = it.size) },
             newMusic = 2)))
         shot("send_5_lost", Screen.SYNC_SEND, SyncState(available = true, transfer = Transfer(jobs.map { if (it.id == 2) it.copy(status = JobStatus.FAILED) else it },

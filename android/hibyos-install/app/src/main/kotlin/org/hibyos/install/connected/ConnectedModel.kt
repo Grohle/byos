@@ -421,6 +421,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         replan()
     }
 
+    override fun setRoute(route: Route, folder: String) {
+        if (state.transfer.running) return
+        state = state.copy(routes = if (folder == route.folder) state.routes - route else state.routes + (route to folder))
+        replan()
+    }
+
+    override fun useUpdateFiles() {
+        if (state.transfer.running) return
+        val upd = picked.filter { FileKinds.of(it.parts.last()) == FileKind.BYOS_UPDATE }
+        if (upd.isEmpty()) return
+        picked = picked - upd.toSet()
+        replan()
+        addUpdateFiles { upd }
+    }
+
     override fun setReplace(on: Boolean) {
         if (state.transfer.running) return
         state = state.copy(replace = on)
@@ -461,9 +476,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     }
 
     private fun replan() {
-        if (state.transfer.jobs.any { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME && it.status != JobStatus.TOO_BIG }) return
+        if (state.transfer.jobs.any { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME && it.status != JobStatus.TOO_BIG &&
+                it.status != JobStatus.UPDATE_FILE }) return
         val max = state.connected?.space?.maxFile ?: Long.MAX_VALUE
-        val plan = SendPlan.build(picked, state.target, max)
+        val plan = if (state.destPath == null && state.dest == Destination.AUTO) SendPlan.auto(picked, state.routes, max)
+        else SendPlan.build(picked, state.target, max)
         sources = plan.sources
         folders = plan.folders
         hashes.clear()

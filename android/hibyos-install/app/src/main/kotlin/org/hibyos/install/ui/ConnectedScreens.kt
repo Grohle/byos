@@ -66,6 +66,7 @@ import org.hibyos.install.connected.Link
 import org.hibyos.install.connected.LibTarget
 import org.hibyos.install.connected.Prompt
 import org.hibyos.install.connected.Rescan
+import org.hibyos.install.connected.Route
 import org.hibyos.install.connected.SendJob
 import org.hibyos.install.connected.SyncActions
 import org.hibyos.install.connected.SyncDevice
@@ -90,6 +91,8 @@ object NoSync : SyncActions {
     override fun disconnect() {}
     override fun refreshSpace() {}
     override fun setDestination(d: Destination) {}
+    override fun setRoute(route: org.hibyos.install.connected.Route, folder: String) {}
+    override fun useUpdateFiles() {}
     override fun setReplace(on: Boolean) {}
     override fun pickFiles() {}
     override fun pickFolder() {}
@@ -349,6 +352,7 @@ private fun CodeBoxes(code: String, enabled: Boolean, onChange: (String) -> Unit
 // ---- send -----------------------------------------------------------------------------------
 
 private fun destRes(d: Destination): Int = when (d) {
+    Destination.AUTO -> R.string.sync_dest_auto
     Destination.MUSIC -> R.string.sync_dest_music
     Destination.BOOKS -> R.string.sync_dest_books
     Destination.PICTURES -> R.string.sync_dest_pictures
@@ -357,6 +361,7 @@ private fun destRes(d: Destination): Int = when (d) {
 }
 
 private fun destGlyph(d: Destination): GlyphDraw = when (d) {
+    Destination.AUTO -> Glyphs.Layers
     Destination.MUSIC -> Glyphs.Music
     Destination.BOOKS -> Glyphs.Book
     Destination.PICTURES -> Glyphs.Picture
@@ -365,11 +370,45 @@ private fun destGlyph(d: Destination): GlyphDraw = when (d) {
 }
 
 private fun destColor(d: Destination): Color = when (d) {
+    Destination.AUTO -> C.green
     Destination.MUSIC -> C.pink
     Destination.BOOKS -> C.orange
     Destination.PICTURES -> C.purple
     Destination.APPS -> C.blue
     Destination.UPDATE -> C.grey
+}
+
+private fun routeRes(r: Route): Int = when (r) {
+    Route.MUSIC -> R.string.sync_route_music
+    Route.PICTURES -> R.string.sync_route_pictures
+    Route.BOOKS -> R.string.sync_route_books
+    Route.PLAYLISTS -> R.string.sync_route_playlists
+    Route.APPS -> R.string.sync_route_apps
+    Route.FIRMWARE -> R.string.sync_route_firmware
+    Route.OTHER -> R.string.sync_route_other
+    Route.BYOS_UPDATE -> R.string.sync_route_update
+}
+
+private fun routeGlyph(r: Route): GlyphDraw = when (r) {
+    Route.MUSIC -> Glyphs.Music
+    Route.PICTURES -> Glyphs.Picture
+    Route.BOOKS -> Glyphs.Book
+    Route.PLAYLISTS -> Glyphs.Layers
+    Route.APPS -> Glyphs.Grid
+    Route.FIRMWARE -> Glyphs.Card
+    Route.OTHER -> Glyphs.Doc
+    Route.BYOS_UPDATE -> Glyphs.Download
+}
+
+private fun routeColor(r: Route): Color = when (r) {
+    Route.MUSIC -> C.pink
+    Route.PICTURES -> C.purple
+    Route.BOOKS -> C.orange
+    Route.PLAYLISTS -> C.cyan
+    Route.APPS -> C.blue
+    Route.FIRMWARE -> C.grey
+    Route.OTHER -> C.grey
+    Route.BYOS_UPDATE -> C.green
 }
 
 private fun jobRes(st: JobStatus): Int = when (st) {
@@ -383,6 +422,7 @@ private fun jobRes(st: JobStatus): Int = when (st) {
     JobStatus.BAD_NAME -> R.string.sync_job_bad_name
     JobStatus.FAILED -> R.string.sync_job_failed
     JobStatus.CANCELLED -> R.string.sync_job_cancelled
+    JobStatus.UPDATE_FILE -> R.string.sync_job_update_file
 }
 
 @Composable
@@ -391,7 +431,7 @@ private fun JobMark(j: SendJob) {
         when (j.status) {
             JobStatus.SENT, JobStatus.SKIPPED -> Glyph(Glyphs.Check, C.green, 18.dp)
             JobStatus.HASHING, JobStatus.SENDING -> Spinner(18.dp, C.blue)
-            JobStatus.WAITING -> {}
+            JobStatus.WAITING, JobStatus.UPDATE_FILE -> {}
             JobStatus.CANCELLED -> Glyph(Glyphs.Cross, C.secondary, 16.dp)
             else -> Glyph(Glyphs.Alert, C.red, 18.dp)
         }
@@ -412,6 +452,20 @@ fun Toggle(on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     }
 }
 
+/** The folders a group of the automatic destination can go to ("" is the top of the card). */
+private val routeFolders = listOf("Music", "Pictures", "Books", "Playlists", "Apps", "")
+
+@Composable
+private fun folderLabel(path: String): String = if (path.isEmpty()) stringResource(R.string.sync_top_of_card) else path
+
+@Composable
+private fun JobRow(j: SendJob) {
+    val status = stringResource(jobRes(j.status))
+    val sub = if (j.status == JobStatus.SENDING && j.size > 0) "$status  ·  ${size(j.done)} / ${size(j.size)}"
+    else "$status  ·  ${size(j.size)}"
+    Item(title = SyncPaths.name(j.remote.ifEmpty { j.local }), subtitle = sub, trailing = { JobMark(j) })
+}
+
 @Composable
 fun SyncSend(s: UiState, a: Actions) {
     val ui = LocalSync.current
@@ -420,12 +474,14 @@ fun SyncSend(s: UiState, a: Actions) {
     val t = st.transfer
     val connected = st.connected != null
     val todo = t.jobs.filter { it.retryable }
+    var routeSheet by remember { mutableStateOf<Route?>(null) }
     val bottom: (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit)? = when {
         t.running -> { { GreyButton(stringResource(R.string.cancel)) { x.cancelWork() } } }
         todo.isNotEmpty() && !connected -> { { PrimaryButton(stringResource(R.string.sync_reconnect)) { a.go(Screen.SYNC) } } }
         todo.isNotEmpty() -> {
             {
-                val started = t.jobs.any { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME && it.status != JobStatus.TOO_BIG }
+                val started = t.jobs.any { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME && it.status != JobStatus.TOO_BIG &&
+                    it.status != JobStatus.UPDATE_FILE }
                 PrimaryButton(if (started) stringResource(R.string.sync_resume, todo.size)
                 else stringResource(R.string.sync_send_n, pluralStringResource(R.plurals.sync_files, todo.size, todo.size), size(todo.sumOf { it.size }))) { x.startSend() }
                 if (!started) LinkButton(stringResource(R.string.sync_clear)) { x.clearSend() }
@@ -434,64 +490,120 @@ fun SyncSend(s: UiState, a: Actions) {
         t.finished -> { { PrimaryButton(stringResource(R.string.sync_done)) { x.clearSend(); a.back() } } }
         else -> null
     }
-    SyncPage(s, a, Screen.SYNC_SEND, st.busy, bottom = bottom) {
-        if (!connected && t.jobs.isEmpty()) {
-            NotConnected(a)
-            return@SyncPage
-        }
-        if (t.running) {
-            ProgressCard(title = stringResource(R.string.sync_sending),
-                fraction = if (t.total > 0) t.done.toFloat() / t.total else 0f,
-                detail = stringResource(if (t.hashing) R.string.sync_job_hashing else R.string.sync_job_sending),
-                detail2 = t.current.ifEmpty { " " }, note = stringResource(R.string.sync_sending_note))
-        } else if (t.finished) {
-            val ok = t.problems == 0
-            Hero(if (ok) Glyphs.Check else Glyphs.Alert, if (ok) C.green else C.orange,
-                stringResource(if (ok) R.string.sync_sent_title else R.string.sync_sent_some_title),
-                stringResource(R.string.sync_sent_text, t.sent, t.skipped, t.problems))
-            if (connected && (t.newMusic > 0 || st.rescan != Rescan.Idle)) RescanSection(st, x, t.newMusic)
-        }
-        t.error?.let { ErrorSection(it) }
-        if (!t.running && !t.finished) {
-            Section(header = stringResource(R.string.sync_dest_h), footer = stringResource(R.string.sync_dest_footer)) {
-                val custom = st.destPath
-                Destination.entries.forEachIndexed { i, d ->
-                    row(if (i == 0) 16.dp else iconInset) {
-                        val label = stringResource(destRes(d))
-                        Item(title = label, subtitle = if (d.path.isEmpty()) stringResource(R.string.sync_dest_update_sub) else if (d.path == label) null else d.path,
-                            icon = { IconTile(destGlyph(d), destColor(d)) },
-                            trailing = { if (custom == null && st.dest == d) Glyph(Glyphs.Check, C.blue, 18.dp) }) { x.setDestination(d) }
+    Box(Modifier.fillMaxSize()) {
+        SyncPage(s, a, Screen.SYNC_SEND, st.busy, bottom = bottom) {
+            if (!connected && t.jobs.isEmpty()) {
+                NotConnected(a)
+                return@SyncPage
+            }
+            if (t.running) {
+                ProgressCard(title = stringResource(R.string.sync_sending),
+                    fraction = if (t.total > 0) t.done.toFloat() / t.total else 0f,
+                    detail = stringResource(if (t.hashing) R.string.sync_job_hashing else R.string.sync_job_sending),
+                    detail2 = t.current.ifEmpty { " " }, note = stringResource(R.string.sync_sending_note))
+            } else if (t.finished) {
+                val ok = t.problems == 0
+                Hero(if (ok) Glyphs.Check else Glyphs.Alert, if (ok) C.green else C.orange,
+                    stringResource(if (ok) R.string.sync_sent_title else R.string.sync_sent_some_title),
+                    stringResource(R.string.sync_sent_text, t.sent, t.skipped, t.problems))
+                if (connected && (t.newMusic > 0 || st.rescan != Rescan.Idle)) RescanSection(st, x, t.newMusic)
+            }
+            t.error?.let { ErrorSection(it) }
+            val space = st.connected?.space
+            val need = todo.sumOf { it.size }
+            if (!t.running && space != null && space.sdState == 0 && need > space.sdFree) {
+                Section {
+                    row {
+                        Item(title = stringResource(R.string.sync_space_short), subtitle = stringResource(R.string.sync_space_short_sub, size(need), size(space.sdFree)),
+                            icon = { IconTile(Glyphs.Alert, C.orange) })
                     }
                 }
-                if (custom != null) row(iconInset) {
-                    Item(title = SyncPaths.name(custom).ifEmpty { stringResource(R.string.sync_card) }, subtitle = custom,
-                        icon = { IconTile(Glyphs.Folder, C.cyan) }, trailing = { Glyph(Glyphs.Check, C.blue, 18.dp) })
+            }
+            val setup: @Composable () -> Unit = {
+                if (!t.running && !t.finished) {
+                    Section(header = stringResource(R.string.sync_dest_h), footer = stringResource(R.string.sync_dest_footer)) {
+                        val custom = st.destPath
+                        Destination.entries.forEachIndexed { i, d ->
+                            row(if (i == 0) 16.dp else iconInset) {
+                                val label = stringResource(destRes(d))
+                                Item(title = label,
+                                    subtitle = when {
+                                        d == Destination.AUTO -> stringResource(R.string.sync_dest_auto_sub)
+                                        d.path.isEmpty() -> stringResource(R.string.sync_dest_update_sub)
+                                        d.path == label -> null
+                                        else -> d.path
+                                    },
+                                    icon = { IconTile(destGlyph(d), destColor(d)) },
+                                    trailing = { if (custom == null && st.dest == d) Glyph(Glyphs.Check, C.blue, 18.dp) }) { x.setDestination(d) }
+                            }
+                        }
+                        if (custom != null) row(iconInset) {
+                            Item(title = SyncPaths.name(custom).ifEmpty { stringResource(R.string.sync_card) }, subtitle = custom,
+                                icon = { IconTile(Glyphs.Folder, C.cyan) }, trailing = { Glyph(Glyphs.Check, C.blue, 18.dp) })
+                        }
+                    }
+                    Section(header = stringResource(R.string.sync_choose_h), footer = stringResource(R.string.sync_choose_footer)) {
+                        row {
+                            Item(title = stringResource(R.string.sync_choose_files), icon = { IconTile(Glyphs.Doc, C.blue) }, chevron = true) { x.pickFiles() }
+                        }
+                        row(iconInset) {
+                            Item(title = stringResource(R.string.sync_choose_folder), icon = { IconTile(Glyphs.Folder, C.cyan) }, chevron = true) { x.pickFolder() }
+                        }
+                        row {
+                            Item(title = stringResource(R.string.sync_replace), subtitle = stringResource(R.string.sync_replace_sub),
+                                trailing = { Toggle(st.replace) { x.setReplace(it) } })
+                        }
+                    }
                 }
             }
-            Section(header = stringResource(R.string.sync_choose_h), footer = stringResource(R.string.sync_choose_footer)) {
-                row {
-                    Item(title = stringResource(R.string.sync_choose_files), icon = { IconTile(Glyphs.Doc, C.blue) }, chevron = true) { x.pickFiles() }
-                }
-                row(iconInset) {
-                    Item(title = stringResource(R.string.sync_choose_folder), icon = { IconTile(Glyphs.Folder, C.cyan) }, chevron = true) { x.pickFolder() }
-                }
-                row {
-                    Item(title = stringResource(R.string.sync_replace), subtitle = stringResource(R.string.sync_replace_sub),
-                        trailing = { Toggle(st.replace) { x.setReplace(it) } })
+            if (t.jobs.isEmpty()) setup()
+            if (t.jobs.isNotEmpty()) {
+                val grouped = t.jobs.any { it.route != null }
+                if (!grouped) {
+                    val shown = t.jobs.take(300)
+                    Section(header = pluralStringResource(R.plurals.sync_files, t.jobs.size, t.jobs.size),
+                        footer = if (t.jobs.size > shown.size) stringResource(R.string.sync_jobs_more, t.jobs.size - shown.size) else null) {
+                        for (j in shown) row { JobRow(j) }
+                    }
+                } else {
+                    val editable = !t.running && !t.finished && t.jobs.none { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME &&
+                        it.status != JobStatus.TOO_BIG && it.status != JobStatus.UPDATE_FILE }
+                    for (r in Route.entries) {
+                        val js = t.jobs.filter { it.route == r }
+                        if (js.isEmpty()) continue
+                        val shown = js.take(200)
+                        val header = stringResource(routeRes(r)) + "  ·  " + pluralStringResource(R.plurals.sync_files, js.size, js.size)
+                        if (r == Route.BYOS_UPDATE) {
+                            Section(header = header, footer = stringResource(R.string.sync_route_update_footer)) {
+                                row {
+                                    Item(title = stringResource(R.string.sync_route_update_open), titleColor = C.blue, icon = { IconTile(routeGlyph(r), routeColor(r)) },
+                                        chevron = true, enabled = editable) { x.useUpdateFiles(); a.go(Screen.SYNC_INSTALL) }
+                                }
+                                for (j in shown) row(iconInset) { JobRow(j) }
+                            }
+                            continue
+                        }
+                        val folder = st.routes[r] ?: r.folder
+                        Section(header = header,
+                            footer = if (js.size > shown.size) stringResource(R.string.sync_jobs_more, js.size - shown.size) else null) {
+                            row {
+                                Item(title = stringResource(R.string.sync_route_folder), value = folderLabel(folder),
+                                    icon = { IconTile(routeGlyph(r), routeColor(r)) }, chevron = editable, enabled = editable,
+                                    onClick = if (editable) ({ routeSheet = r }) else null)
+                            }
+                            for (j in shown) row(iconInset) { JobRow(j) }
+                        }
+                    }
                 }
             }
+            // with files chosen, their list (and where each group goes) comes first; the choice can still change below
+            if (t.jobs.isNotEmpty()) setup()
         }
-        if (t.jobs.isNotEmpty()) {
-            val shown = t.jobs.take(300)
-            Section(header = pluralStringResource(R.plurals.sync_files, t.jobs.size, t.jobs.size),
-                footer = if (t.jobs.size > shown.size) stringResource(R.string.sync_jobs_more, t.jobs.size - shown.size) else null) {
-                for (j in shown) row {
-                    val status = stringResource(jobRes(j.status))
-                    val sub = if (j.status == JobStatus.SENDING && j.size > 0) "$status  ·  ${size(j.done)} / ${size(j.size)}"
-                    else "$status  ·  ${size(j.size)}"
-                    Item(title = SyncPaths.name(j.remote.ifEmpty { j.local }), subtitle = sub, trailing = { JobMark(j) })
-                }
-            }
+        val r = routeSheet
+        if (r != null) {
+            val top = stringResource(R.string.sync_top_of_card)
+            ActionSheet(stringResource(R.string.sync_route_sheet, stringResource(routeRes(r))), onDismiss = { routeSheet = null },
+                actions = routeFolders.map { f -> (if (f.isEmpty()) top else f) to { routeSheet = null; x.setRoute(r, f) } })
         }
     }
 }

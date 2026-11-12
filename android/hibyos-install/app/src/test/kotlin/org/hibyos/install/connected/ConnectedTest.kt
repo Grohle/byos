@@ -106,6 +106,76 @@ class ConnectedTest {
         assertTrue(p.folders.isEmpty())
     }
 
+    @Test
+    fun automaticPlanRoutesByKind() {
+        val p = SendPlan.auto(listOf(
+            item("Abba Gold", "01 Dancing Queen.flac"),
+            item("Abba Gold", "01 Dancing Queen.lrc"),
+            item("Abba Gold", "cover.jpg"),
+            item("Abba Gold", "album.cue"),
+            item("Holiday", "beach.jpg"),
+            item("song.mp3"),
+            item("folder.jpg"),
+            item("novel.epub"),
+            item("notes.txt"),
+            item("Mix", "road trip.m3u8"),
+            item("Downloads", "r3ii_2025.upt"),
+            item("Weather.hpk"),
+            item("hibyos-update.json"),
+            item("hibyos-payload-0.9.1.tar"),
+            item("Other", "data.bin"),
+        ))
+        val byLocal = p.jobs.associate { it.local to it }
+        fun at(l: String) = byLocal[l]!!.remote
+        assertEquals("Music/Abba Gold/01 Dancing Queen.flac", at("Abba Gold/01 Dancing Queen.flac"))
+        assertEquals("Music/Abba Gold/01 Dancing Queen.lrc", at("Abba Gold/01 Dancing Queen.lrc"))
+        assertEquals("Music/Abba Gold/cover.jpg", at("Abba Gold/cover.jpg"))
+        assertEquals("Music/Abba Gold/album.cue", at("Abba Gold/album.cue"))
+        assertEquals("Pictures/Holiday/beach.jpg", at("Holiday/beach.jpg"))
+        assertEquals("Music/song.mp3", at("song.mp3"))
+        // picked next to loose songs: the cover stays with them
+        assertEquals("Music/folder.jpg", at("folder.jpg"))
+        assertEquals("Books/novel.epub", at("novel.epub"))
+        assertEquals("Books/notes.txt", at("notes.txt"))
+        assertEquals("Playlists/road trip.m3u8", at("Mix/road trip.m3u8"))
+        assertEquals("r3ii_2025.upt", at("Downloads/r3ii_2025.upt"))
+        assertEquals("Apps/Weather.hpk", at("Weather.hpk"))
+        assertEquals("Other/data.bin", at("Other/data.bin"))
+        assertEquals(JobStatus.UPDATE_FILE, byLocal["hibyos-update.json"]!!.status)
+        assertEquals(JobStatus.UPDATE_FILE, byLocal["hibyos-payload-0.9.1.tar"]!!.status)
+        assertFalse(p.jobs.first { it.local == "hibyos-update.json" }.retryable)
+        assertTrue(p.folders.containsAll(listOf("Music", "Music/Abba Gold", "Pictures", "Pictures/Holiday", "Books", "Playlists", "Apps", "Other")))
+        assertTrue(p.folders.indexOf("Music") < p.folders.indexOf("Music/Abba Gold"))
+        // a group sent elsewhere
+        val q = SendPlan.auto(listOf(item("Holiday", "beach.jpg"), item("x.flac")), mapOf(Route.PICTURES to "Music/Art", Route.MUSIC to ""))
+        assertEquals(listOf("Music/Art/Holiday/beach.jpg", "x.flac"), q.jobs.map { it.remote })
+    }
+
+    @Test
+    fun automaticDestinationInTheModel() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        assertEquals(Destination.AUTO, m.state.dest)
+        m.addPicked { listOf(item("Album", "a.flac"), item("photo.png"), item("hibyos-update.json", data = "{}".toByteArray())) }
+        assertEquals(listOf(Route.MUSIC, Route.PICTURES, Route.BYOS_UPDATE), m.state.transfer.jobs.map { it.route })
+        m.setRoute(Route.PICTURES, "Music")
+        assertEquals("Music/photo.png", m.state.transfer.jobs[1].remote)
+        // the update file goes to Install Update instead (its signature is checked there)
+        m.useUpdateFiles()
+        assertEquals(2, m.state.transfer.jobs.size)
+        assertEquals(R.string.sync_err_signature, m.state.otaPick.error?.title)
+        m.startSend()
+        assertTrue(m.state.transfer.finished)
+        assertEquals(0, m.state.transfer.problems)
+        assertTrue(card.files.containsKey("Music/Album/a.flac"))
+        assertTrue(card.files.containsKey("Music/photo.png"))
+        // back to the default folder
+        m.clearSend()
+        m.setRoute(Route.PICTURES, "Pictures")
+        assertTrue(m.state.routes.isEmpty())
+    }
+
     // ---- library ----------------------------------------------------------------------------
 
     @Test
@@ -299,6 +369,7 @@ class ConnectedTest {
             opens++
             ByteArrayInputStream((if (opens == 1) "old" else "new").toByteArray())
         }
+        m.setDestination(Destination.MUSIC)
         m.addPicked { listOf(changing) }
         m.startSend()
         assertEquals(JobStatus.FAILED, m.state.transfer.jobs[0].status)

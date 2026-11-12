@@ -334,6 +334,7 @@ class CoreSyncTest {
         val l = m.state.link as Link.Connected
         assertEquals("TinyHiBy", l.device.name)
         assertEquals(20L shl 30, l.space?.sdFree)
+        m.setDestination(Destination.MUSIC)
         m.addPicked { listOf(LocalItem(listOf("a.txt"), 3, 0) { ByteArrayInputStream("abc".toByteArray()) }) }
         m.startSend()
         assertEquals(JobStatus.SENT, m.state.transfer.jobs.single().status)

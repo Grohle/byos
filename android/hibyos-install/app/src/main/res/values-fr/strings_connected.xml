@@ -248,6 +248,26 @@
     <string name="sync_lib_changed">Des fichiers ont été déplacés, renommés ou supprimés sur la carte. Mettez à jour la bibliothèque pour que le baladeur en tienne compte.</string>
     <string name="sync_library_empty_title">Aucun morceau</string>
     <string name="sync_library_empty_text">Envoyez de la musique avec Envoyer des fichiers, puis mettez à jour la bibliothèque. Les morceaux déjà sur la carte apparaissent une fois analysés par le baladeur.</string>
+
+    <!-- Automatic destination -->
+    <string name="sync_dest_auto">Automatique</string>
+    <string name="sync_dest_auto_sub">Morceaux dans Music, images dans Pictures, livres dans Books, firmware en haut de la carte</string>
+    <string name="sync_route_music">Musique</string>
+    <string name="sync_route_pictures">Images</string>
+    <string name="sync_route_books">Livres</string>
+    <string name="sync_route_playlists">Listes de lecture</string>
+    <string name="sync_route_apps">Apps ByOS</string>
+    <string name="sync_route_firmware">Mise à jour du firmware</string>
+    <string name="sync_route_other">Autres fichiers</string>
+    <string name="sync_route_update">Mise à jour ByOS</string>
+    <string name="sync_route_folder">Dossier sur la carte</string>
+    <string name="sync_route_sheet">Où mettre %1$s ?</string>
+    <string name="sync_route_update_open">Installer avec Installer une mise à jour</string>
+    <string name="sync_route_update_footer">Ce sont les fichiers d\'une mise à jour ByOS signée. Ils ne sont pas copiés sur la carte : Installer une mise à jour les vérifie et les installe.</string>
+    <string name="sync_job_update_file">Pour Installer une mise à jour</string>
+    <string name="sync_top_of_card">Haut de la carte</string>
+    <string name="sync_space_short">Pas assez de place sur la carte</string>
+    <string name="sync_space_short_sub">%1$s à envoyer, %2$s libres. Supprimez quelque chose dans Fichiers ou choisissez moins de fichiers.</string>
     <plurals name="sync_files">
         <item quantity="one">%d fichier</item>
         <item quantity="other">%d fichiers</item>

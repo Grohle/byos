@@ -248,6 +248,26 @@
     <string name="sync_lib_changed">Se han movido, renombrado o borrado archivos en la tarjeta. Actualiza la biblioteca para que el reproductor lo refleje.</string>
     <string name="sync_library_empty_title">Todavía no hay canciones</string>
     <string name="sync_library_empty_text">Envía música con Enviar archivos y después actualiza la biblioteca. Las canciones que ya están en la tarjeta aparecen cuando el reproductor las escanea.</string>
+
+    <!-- Automatic destination -->
+    <string name="sync_dest_auto">Automático</string>
+    <string name="sync_dest_auto_sub">Canciones a Music, imágenes a Pictures, libros a Books, el firmware arriba de la tarjeta</string>
+    <string name="sync_route_music">Música</string>
+    <string name="sync_route_pictures">Imágenes</string>
+    <string name="sync_route_books">Libros</string>
+    <string name="sync_route_playlists">Listas de reproducción</string>
+    <string name="sync_route_apps">Apps de ByOS</string>
+    <string name="sync_route_firmware">Actualización de firmware</string>
+    <string name="sync_route_other">Otros archivos</string>
+    <string name="sync_route_update">Actualización de ByOS</string>
+    <string name="sync_route_folder">Carpeta en la tarjeta</string>
+    <string name="sync_route_sheet">¿Dónde va %1$s?</string>
+    <string name="sync_route_update_open">Instalar con Instalar actualización</string>
+    <string name="sync_route_update_footer">Son los archivos de una actualización firmada de ByOS. No se copian a la tarjeta: Instalar actualización los comprueba y los instala.</string>
+    <string name="sync_job_update_file">Para Instalar actualización</string>
+    <string name="sync_top_of_card">Raíz de la tarjeta</string>
+    <string name="sync_space_short">No hay espacio suficiente en la tarjeta</string>
+    <string name="sync_space_short_sub">%1$s por enviar, %2$s libres. Borra algo en Archivos o elige menos archivos.</string>
     <plurals name="sync_files">
         <item quantity="one">%d archivo</item>
         <item quantity="other">%d archivos</item>

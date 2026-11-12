@@ -254,6 +254,26 @@
     <string name="sync_lib_changed">Files were moved, renamed or deleted on the card. Update the library so that the player shows the change.</string>
     <string name="sync_library_empty_title">No songs yet</string>
     <string name="sync_library_empty_text">Send music with Send Files, then update the library. Songs already on the card appear once the player has scanned them.</string>
+
+    <!-- Automatic destination -->
+    <string name="sync_dest_auto">Automatic</string>
+    <string name="sync_dest_auto_sub">Songs to Music, pictures to Pictures, books to Books, the firmware to the top of the card</string>
+    <string name="sync_route_music">Music</string>
+    <string name="sync_route_pictures">Pictures</string>
+    <string name="sync_route_books">Books</string>
+    <string name="sync_route_playlists">Playlists</string>
+    <string name="sync_route_apps">ByOS apps</string>
+    <string name="sync_route_firmware">Firmware update</string>
+    <string name="sync_route_other">Other files</string>
+    <string name="sync_route_update">ByOS update</string>
+    <string name="sync_route_folder">Folder on the card</string>
+    <string name="sync_route_sheet">Where should %1$s go?</string>
+    <string name="sync_route_update_open">Install with Install Update</string>
+    <string name="sync_route_update_footer">These are the files of a signed ByOS update. They are not copied to the card: Install Update checks them and installs them.</string>
+    <string name="sync_job_update_file">For Install Update</string>
+    <string name="sync_top_of_card">Top of the card</string>
+    <string name="sync_space_short">Not enough space on the card</string>
+    <string name="sync_space_short_sub">%1$s to send, %2$s free. Delete something in Files or choose fewer files.</string>
     <plurals name="sync_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>
