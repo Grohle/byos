@@ -381,7 +381,7 @@ static void cc_app_restore(void) { if (cc_app_frame) memcpy(fr0, cc_app_frame, H
  * decia "Vuelve al inicio para abrirlo". */
 static void cc_go_app(const uint16_t *under, uint16_t *panel, const char *id)
 {
-    cc_animate(under, panel, 1, 0, 160);
+    cc_animate(under, panel, 1, 0, 240);
     if (!cc_in_app) { cc_open_app(id); return; }
     snprintf(pend_id, sizeof pend_id, "%s", id); pend_kind = 1; fake_home_req = 1; fk_step = 0;
     lg("cc: abrir %s al cerrar la app", id);
@@ -389,7 +389,7 @@ static void cc_go_app(const uint16_t *under, uint16_t *panel, const char *id)
 }
 static void cc_go_settings(const uint16_t *under, uint16_t *panel, int start)
 {
-    cc_animate(under, panel, 1, 0, 160);
+    cc_animate(under, panel, 1, 0, 240);
     if (!cc_in_app) { cc_open_settings(start); return; }
     pend_start = start; pend_kind = 2; fake_home_req = 1; fk_step = 0;
     lg("cc: abrir Ajustes (%d) al cerrar la app", start);
@@ -698,7 +698,7 @@ static int cc_close_drag(const uint16_t *under, uint16_t *panel, const uint16_t 
     }
     if (!from_launcher && !cc_in_app) nav_start(NAV_HOME);  /* el reproductor va al inicio durante el fundido */
     double t0 = now_ms(), e0 = e;
-    for (;;) { double t = (now_ms() - t0) / 180.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 * (1 - ease_out(t))); present(); if (t >= 1) break; }
+    for (;;) { double t = (now_ms() - t0) / 240.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 * (1 - ease_out(t))); present(); if (t >= 1) break; }
     if (cc_in_app) { cc_app_restore(); return 1; }
     if (from_launcher) { launcher_present(); return 1; }
     nav_wait(3000); if (!launcher_resume()) cmd('R');
@@ -727,9 +727,9 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             if (got && !p.down) break;
         }
         lg("cc: suelta e=%.2f vel=%.2f", e, vel);
-        if (e < 0.3 && vel < 0.3) { cc_animate(under, panel, e, 0, 160); goto out; }
+        if (e < 0.3 && vel < 0.3) { cc_animate(under, panel, e, 0, 220); goto out; }
     }
-    if (start_y != -2) cc_animate(under, panel, e, 1, start_y >= 0 ? 200 : 260);
+    if (start_y != -2) cc_animate(under, panel, e, 1, start_y >= 0 ? 300 : 360);   /* el desenfoque crece en varios fotogramas (revisor r2) */
     for (;;) {
         if (!read_pkt(&p, cc_caption && now_ms() - cc_caption_t < 1900 ? 100 : 500)) {
             int ext = cc_ext_poll();              /* puede dejar un rotulo (error de los auriculares) */
@@ -742,7 +742,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         if (hit == 101) {                                    /* brillo (iOS); mantener: sus ajustes */
             if (cc_brightness_drag(panel, blur, sy) && !cc_in_app) {
                 while (cur_down && read_pkt(&p, 3000)) {}
-                cc_animate(under, panel, 1, 0, 160); cc_open_settings(SET_DISPLAY); return;
+                cc_animate(under, panel, 1, 0, 240); cc_open_settings(SET_DISPLAY); return;
             }
             continue;
         }
@@ -804,7 +804,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             if (cc_player_right) { cc_hpage(panel, under, 0); double t0 = now_ms();   /* volver al reproductor */
                 for (;;) { double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1; cc_hpage(panel, under, -(int)(W * ease_out(t))); present(); if (t >= 1) break; }
                 cmd('R'); return; }
-            cc_animate(under, panel, 1, 0, 180);
+            cc_animate(under, panel, 1, 0, 240);
             if (cc_in_app) { np_from_screen(cc_app_frame); cc_app_restore(); return; }
             cc_open_app("nowplaying"); return;
         }
@@ -855,7 +855,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         }
         cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
     }
-    cc_animate(under, panel, 1, 0, 200);
+    cc_animate(under, panel, 1, 0, 260);
 out:
     if (cc_in_app) cc_app_restore();
     else if (from_launcher) launcher_present(); else cmd('R');
