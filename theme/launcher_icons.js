@@ -90,7 +90,10 @@ const ICONS = {};
 
 // Musica: corcheas unidas sobre degradado rosa-rojo vivo
 ICONS.music = s => tile(s, [[0, '#ff6a88'], [1, '#f9203f']], shadow('sh', 1.4, 1.5, .22, '#7a0018'),
-  `<g filter="url(#sh)" fill="#fff" transform="translate(3.5 1)">
+  // centrada: la caja del dibujo (x 25,5-71, y 23,3-75,9) al centro del icono, 0,3 mas arriba
+  // por el peso de las cabezas; en x, centrado optico entre la caja y la masa (que cae a la
+  // derecha por las plicas): antes iba 3,5 a la derecha y se veia descentrada
+  `<g filter="url(#sh)" fill="#fff" transform="translate(0 0.15)">
      <path d="M38.5 33.2c0-1.6 1.1-2.9 2.6-3.3l26.2-6.6c1.9-.5 3.7.9 3.7 2.9v38.2h-5.4V36.1l-21.7 5.4v26.8h-5.4z"/>
      <ellipse cx="34.6" cy="68.3" rx="9.4" ry="7.2" transform="rotate(-22 34.6 68.3)"/>
      <ellipse cx="61.6" cy="64.4" rx="9.4" ry="7.2" transform="rotate(-22 61.6 64.4)"/>

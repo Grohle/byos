@@ -559,8 +559,9 @@ static void page_eq(struct spage *p)
     *p = (struct spage){ "Ecualizador" };
     p->secs[0] = (struct ssec){ 0, "EQ_HELP", { ROWT("Ecualizador", &ps_v[PS_EQ], ssa_eq, ps_dis(PS_EQ)) }, 1 };
     p->nsec = 1;
-    if (ps_v[PS_EQ]) {
-        p->secs[1] = (struct ssec){ "ESTILO", 0, { ROW("Estilo", R_CHOICE, &ps_v[PS_EQPRESET], O_EQPRESET, 10, ssa_eqpreset, 0, 0) }, 1 };
+    if (ps_v[PS_EQ]) {                       /* los estilos en la misma pagina, con marca (como iOS) */
+        p->secs[1] = (struct ssec){ "ESTILO", 0, { 0 }, 10 };
+        for (int i = 0; i < 10; i++) p->secs[1].rows[i] = ROW(O_EQPRESET[i], R_CHECK, &ps_v[PS_EQPRESET], 0, i, ssa_eqpreset, 0, 0);
         p->nsec = 2;
     }
 }

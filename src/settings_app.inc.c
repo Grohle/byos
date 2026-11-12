@@ -20,7 +20,7 @@ struct srow {
     int dis;                           /* atenuada: no responde (aviso breve) */
     int icon;                          /* icono de color a la izquierda (IC_*), 0 = sin icono */
 };
-struct ssec { const char *header, *footer; struct srow rows[8]; int n; };
+struct ssec { const char *header, *footer; struct srow rows[12]; int n; };   /* 12: estilos del ecualizador (10) */
 struct spage { const char *title; struct ssec secs[6]; int nsec; int hero; void (*hero_fn)(uint16_t *d, int y, int h); };   /* hero: alto de la cabecera (logo, o hero_fn la dibuja) */
 static int wrap_cw;                   /* > 0: draw_wrapped centra cada linea en ese ancho (alertas) */
 
@@ -769,8 +769,11 @@ static void ps_tick(void); static int ps_busy(void); static void ps_refresh(void
 static void choice_page(const struct srow *rw, const char *back)
 {
     struct spage pg = { rw->title }; int demo = rw->gesture;
-    pg.secs[0].n = rw->nopts; pg.secs[0].header = 0;
-    for (int i = 0; i < rw->nopts; i++) pg.secs[0].rows[i] = ROW(rw->opts[i], R_INFO, 0, 0, 0, 0, 0, 0);
+    /* sin desplazamiento: como mucho las filas que caben (y las que admite la seccion) */
+    int nmax = (H - NAVH - 30 - 12 - 14) / ROWH; if (nmax > (int)(sizeof pg.secs[0].rows / sizeof pg.secs[0].rows[0])) nmax = (int)(sizeof pg.secs[0].rows / sizeof pg.secs[0].rows[0]);
+    int nopt = rw->nopts < nmax ? rw->nopts : nmax;
+    pg.secs[0].n = nopt; pg.secs[0].header = 0;
+    for (int i = 0; i < nopt; i++) pg.secs[0].rows[i] = ROW(rw->opts[i], R_INFO, 0, 0, 0, 0, 0, 0);
     pg.nsec = 1;
     int top_extra = demo ? 176 : 0;
     float saved = sp_scroll; sp_scroll = -top_extra;
