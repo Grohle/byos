@@ -11,12 +11,13 @@
  * Rendimiento: el panel completo (fondo desenfocado + controles) se compone UNA vez en
  * img_base y cada fotograma es solo una mezcla lineal con la pantalla de debajo. */
 
-enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_BT, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_AIRPLANE, CT_NOISE, CT_N };
-static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "bt", "wireless", "filter", "files", "settings", "airplane", "noise" };
-static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Wi-Fi", "Filtro digital", "Archivos", "Ajustes", "Modo avión", "Control de ruido" };
+/* los tipos de control (CT_*) y CC_CELLS estan en settings_app.inc.c (se incluye antes) */
+static const char *const ct_id[CT_N] = { "nocharge", "power", "dac", "bt", "wireless", "filter", "files", "settings", "airplane", "noise", "gain", "mseb", "eq", "sleep" };
+static const char *const ct_name[CT_N] = { "Solo USB", "Modo de energía", "DAC USB", "Bluetooth", "Wi-Fi", "Filtro digital", "Archivos", "Ajustes", "Modo avión", "Control de ruido",
+                                          "Ganancia", "MSEB", "Ecualizador", "Temporizador" };
 /* por defecto: modo avion y control de ruido en la columna derecha, junto a los modulos grandes */
 static int cc_tiles[CT_N] = { CT_AIRPLANE, CT_NOISE, CT_BT, CT_NOCHARGE, CT_POWER, CT_DAC, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS };
-static int cc_ntiles = CT_N;
+static int cc_ntiles = 10;                 /* los de antes; los nuevos se anaden a mano */
 
 static void cc_conf_line(char *rest)      /* "cc id id id..." de launcher.conf */
 {
@@ -164,11 +165,27 @@ static void cc_tile(uint16_t *d, int x, int y, int tile)
     case CT_FILTER: on = cc_filter_short() > 0; acc = rgb(191, 90, 242); ic = "wave"; break;
     case CT_FILES: ic = "folder"; break;
     case CT_SETTINGS: ic = "gear"; break;
+    case CT_GAIN: on = ps_v[PS_GAIN] == 1; acc = rgb(255, 149, 0); ic = 0; break;
+    case CT_MSEB: on = ps_v[PS_MSEB] == 1; acc = rgb(191, 90, 242); ic = 0; break;
+    case CT_EQ: on = ps_v[PS_EQ] == 1; acc = rgb(255, 55, 95); ic = "sliders"; break;
+    case CT_SLEEP: on = ps_v[PS_SLEEP] == 1; acc = rgb(94, 92, 230); ic = 0; break;
     }
     if (on) cc_rrect(d, x, y, CC_T, CC_T, CC_T / 2.f, acc, 255);                 /* iOS 26: circulo de color */
     else cc_rrect(d, x, y, CC_T, CC_T, CC_T / 2.f, rgb(255, 255, 255), 46);      /* cristal */
-    const struct sprite *s = cc_icon(ic);
+    const struct sprite *s = ic ? cc_icon(ic) : 0;
     if (s && s->w) blit(d, s, x + (CC_T - s->w) / 2, y + (CC_T - s->h) / 2, 32, 255);
+    int cx = x + CC_T / 2, cy = y + CC_T / 2;
+    if (tile == CT_GAIN) {                       /* "Hi" / "Lo", como el selector de ganancia */
+        const char *g = ps_v[PS_GAIN] == 1 ? "Hi" : "Lo"; int tw = tw_n(g, 20, -1);
+        draw_text(d, cx - tw / 2, cy + 7, g, 20, 0xFFFF, 0, 0, H);
+    } else if (tile == CT_MSEB) {                /* tres mandos de ajuste fino */
+        for (int i = 0; i < 3; i++) { int bx = cx - 10 + i * 10, ky = cy - 8 + (i == 1 ? 10 : i == 0 ? 3 : 6);
+            fill_rrect(d, bx - 1, cy - 11, 3, 22, 1, 0xFFFF, 200); fill_circle(d, bx + .5f, ky + 2, 4, 0xFFFF, 255); }
+    } else if (tile == CT_SLEEP) {               /* luna; con el temporizador puesto, los minutos */
+        float my = on ? cy - 6 : cy;
+        fill_circle(d, cx, my, 10, 0xFFFF, 255); fill_circle(d, cx + 6, my - 4, 8.5f, on ? acc : rgb(70, 70, 74), 255);
+        if (on) { char t[12]; snprintf(t, sizeof t, "%d", ps_v[PS_SLEEPMIN]); int tw = tw_n(t, 12, -1); draw_text(d, cx - tw / 2, cy + 22, t, 12, 0xFFFF, 0, 0, H); }
+    }
 }
 static int cc_bl_level(void) { int b = sysfs_get(BL_PATH, 60); return b < 0 ? 60 : b; }
 /* compone el panel completo en dst a partir del fondo desenfocado */
@@ -549,6 +566,7 @@ static int cc_prepare(void)
 static void cc_open(int start_y)
 {
     cc_player_right = 0;
+    ps_start(); ps_refresh();                    /* ganancia, MSEB, ecualizador, temporizador */
     if (!cc_prepare()) return;
     cc_session(img_under, img_base, img_sheet, 0, start_y);
 }
@@ -751,6 +769,8 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             case CT_DAC: cc_go_settings(under, panel, SET_USB); return;
             case CT_FILTER: cc_go_settings(under, panel, SET_SOUND); return;
             case CT_FILES: cc_go_app(under, panel, "files"); return;
+            case CT_GAIN: case CT_MSEB: case CT_EQ: cc_go_settings(under, panel, SET_SOUND); return;
+            case CT_SLEEP: cc_go_settings(under, panel, SET_ROOT); return;
             default: cc_go_settings(under, panel, SET_CCPAGE); return;
             }
         }
@@ -814,6 +834,18 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         case CT_WIRELESS: cc_go_settings(under, panel, SET_WIRELESS); return;
         case CT_FILES: cc_go_app(under, panel, "files"); return;
         case CT_SETTINGS: cc_go_settings(under, panel, SET_ROOT); return;
+        case CT_GAIN:
+            if (ps_v[PS_LINEOUT]) { cc_set_caption(tr("No disponible con la salida de línea")); break; }
+            ps_set_now(PS_GAIN, !ps_v[PS_GAIN]); cc_set_caption(tr(ps_v[PS_GAIN] ? "Ganancia alta" : "Ganancia baja")); break;
+        case CT_MSEB:
+            ps_set_now(PS_MSEB, !ps_v[PS_MSEB]); cc_set_caption(tr(ps_v[PS_MSEB] ? "MSEB activado" : "MSEB desactivado")); break;
+        case CT_EQ:
+            ps_set_now(PS_EQ, !ps_v[PS_EQ]); cc_set_caption(tr(ps_v[PS_EQ] ? "Ecualizador activado" : "Ecualizador desactivado")); break;
+        case CT_SLEEP: {                                       /* no -> 15 -> 30 -> 45 -> 60 -> 90 -> 120 -> no */
+            ss_derive(); ui_sleep_i = (ui_sleep_i + 1) % 7; ssa_sleep();
+            if (ui_sleep_i) { char t[64]; snprintf(t, sizeof t, tr("Apagado en %d min"), V_SLEEP[ui_sleep_i]); cc_set_caption(t); }
+            else cc_set_caption(tr("Temporizador desactivado"));
+            break; }
         }
         cc_render(panel, blur, -1); cc_mask_build(panel, blur); memcpy(fr0, panel, HM_FRAME_BYTES); present();
     }

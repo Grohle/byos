@@ -4,7 +4,12 @@
  * animacion de ejemplo), Teclado, Desarrollador (ADB) y Acerca de. Navegacion con transicion
  * de iOS y "atras" deslizando desde el borde. Todo el texto pasa por tr() (13 idiomas). */
 
-static int cc_tiles[10], cc_ntiles;   /* definidos en cc.inc.c */
+/* controles del Centro de control (cc.inc.c). CT_GAIN..CT_SLEEP (12-11): ajustes de fabrica en el
+ * panel, opcionales (Ajustes > Centro de control) */
+enum { CT_NOCHARGE, CT_POWER, CT_DAC, CT_BT, CT_WIRELESS, CT_FILTER, CT_FILES, CT_SETTINGS, CT_AIRPLANE, CT_NOISE,
+       CT_GAIN, CT_MSEB, CT_EQ, CT_SLEEP, CT_N };
+#define CC_CELLS 12                       /* lo que cabe: 2 en la columna derecha + 10 en las filas */
+static int cc_tiles[CT_N], cc_ntiles;   /* definidos en cc.inc.c */
 enum { R_NAV, R_TOGGLE, R_CHOICE, R_ACTION, R_INFO, R_CHECK,   /* R_CHECK: opcion con marca; nopts = su valor */
        R_SLIDER,                       /* deslizador: *ival entre lo y hi; nopts = estilo (SL_*) */
        R_BAR };                        /* barra de ocupacion (almacenamiento): *ival en milesimas */
@@ -721,15 +726,19 @@ static void act_reboot(void)
 /* las paginas Sonido y Biblioteca (sysset.inc.c) usan lo de arriba */
 
 /* ------------------------------------------------------------------ Centro de control (configurable) */
-static int cc_on[10];
+static int cc_on[CT_N];
 static void cc_sync(void) { memset(cc_on, 0, sizeof cc_on); for (int i = 0; i < cc_ntiles; i++) cc_on[cc_tiles[i]] = 1; }
 static void apply_cc(void)
 {
     /* conserva el orden actual y anade los nuevos al final */
-    int keep[10], n = 0;
+    int keep[CT_N], n = 0, cells = 0;
     for (int i = 0; i < cc_ntiles; i++) if (cc_on[cc_tiles[i]]) keep[n++] = cc_tiles[i];
-    for (int t = 0; t < 10; t++) if (cc_on[t]) { int have = 0; for (int i = 0; i < n; i++) have |= keep[i] == t; if (!have) keep[n++] = t; }
-    memcpy(cc_tiles, keep, sizeof keep); cc_ntiles = n; lconf_save();
+    for (int t = 0; t < CT_N; t++) if (cc_on[t]) { int have = 0; for (int i = 0; i < n; i++) have |= keep[i] == t; if (!have) keep[n++] = t; }
+    for (int i = 0; i < n; i++) cells += keep[i] == CT_BT ? 2 : 1;
+    if (cells > CC_CELLS) {                      /* no cabe: se deshace el ultimo cambio */
+        cc_sync(); toast(tr("No caben más controles: quita alguno")); return;
+    }
+    memcpy(cc_tiles, keep, sizeof(int) * (size_t)n); cc_ntiles = n; lconf_save();
 }
 static void apply_power(void) { pw_apply(); }
 static int set_nocharge;
@@ -745,7 +754,10 @@ static void page_cc(struct spage *p)
     p->secs[1] = (struct ssec){ 0, "CC_HELP", {
         ROW("DAC USB", R_TOGGLE, &cc_on[2], 0, 0, apply_cc, 0, 0), ROW("Filtro digital", R_TOGGLE, &cc_on[5], 0, 0, apply_cc, 0, 0),
         ROW("Archivos", R_TOGGLE, &cc_on[6], 0, 0, apply_cc, 0, 0), ROW("Ajustes", R_TOGGLE, &cc_on[7], 0, 0, apply_cc, 0, 0) }, 4 };
-    p->nsec = 2;
+    p->secs[2] = (struct ssec){ "SONIDO", "CC_SOUND_HELP", {
+        ROW("Ganancia", R_TOGGLE, &cc_on[CT_GAIN], 0, 0, apply_cc, 0, 0), ROW("MSEB", R_TOGGLE, &cc_on[CT_MSEB], 0, 0, apply_cc, 0, 0),
+        ROW("Ecualizador", R_TOGGLE, &cc_on[CT_EQ], 0, 0, apply_cc, 0, 0), ROW("Temporizador", R_TOGGLE, &cc_on[CT_SLEEP], 0, 0, apply_cc, 0, 0) }, 4 };
+    p->nsec = 3;
 }
 static const char *const O_HZ[] = { "45 Hz (de serie)", "60 Hz" };
 static int set_hz_i;
