@@ -655,6 +655,11 @@ static void nu_build_all(void)
     nu.cov_sum = nu.cov_ok ? nu_sum(nu.cov) : 0;
     lg("np: capas en %.1f ms (caratula %s, pista %d)", now_ms() - t0, nu.art_src == 2 ? "nitida" : nu.art_src ? "ampliada" : "ninguna", nu.trk);
 }
+/* "acaba de empezar a sonar" (Libros, al pulsar reproducir): el reproductor abre ya en
+ * reproduccion (boton de pausa, caratula grande) aunque el estado real tarde en llegar; antes
+ * pasaba de pausa a reproduccion y la caratula crecia en cuanto se abria: parecia cerrarse y
+ * volver a abrirse. */
+static double nu_start_playing_t;
 static int nu_init(void)
 {
     memset(&nu, 0, sizeof nu);
@@ -665,6 +670,8 @@ static int nu_init(void)
     if (!cf) nu.cov_ok = 0;
     if (!cf && mu_npcov_ok) { memcpy(nu.cov, mu_npcov, sizeof nu.cov); nu.cov_ok = 1; }   /* la del mini reproductor */
     nu.playing = nu.ni.playing; nu.sc = nu.playing ? 1 : NU_PAUSE; nu.pressed = -1; nu.lcur = -1;
+    if (now_ms() - nu_start_playing_t < 4000) { nu.playing = 1; nu.sc = 1; nu.hold = 1; nu.hold_t = now_ms() + 2500; }   /* hasta ~5 s */
+    nu_start_playing_t = 0;
     nu_anchor_init(now_ms());
     nu_build_all();
     return 1;
@@ -1447,7 +1454,8 @@ static int np_app_run(const uint16_t *home, int ix, int iy)
     double t0 = now_ms();
     if (!nu_init()) { nu_free(); toast(tr("No se pudo abrir")); return NU_HOME; }
     memcpy(img_under, home, HM_FRAME_BYTES);
-    if (ix >= 0) {
+    if (ix == -2) { nu_sheet_build(); nu_sheet_anim((float)H, 0, 0, 0.32f, 1, 0); }   /* sube desde abajo (como iOS) */
+    else if (ix >= 0) {
         uint16_t *pg = img_app; nu_render(pg, 1);
         for (;;) {
             double t = (now_ms() - t0) / 300; if (t > 1) t = 1; double e = ease_out(t);

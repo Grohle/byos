@@ -1673,6 +1673,25 @@ static int ab_np_ours(void)
 }
 /* indice del capitulo a partir del nombre "NN - ..." */
 static int ab_np_chapter(void) { const char *f = strrchr(ab_np.path, '/'); return f ? atoi(f + 1) - 1 : -1; }
+static int ab_np_tick(int force);
+static int ab_open_player(void);
+/* este libro es el que suena (o esta en pausa) en el reproductor */
+static int ab_np_this_book(void)
+{
+    size_t l = strlen(ab_cur_dir);
+    return l && ab_np_ours() && !strncmp(ab_np.path, ab_cur_dir, l) && ab_np.path[l] == '/';
+}
+/* Pulsar reproducir en el libro (o el capitulo) que ya suena: no volver a mandar la cola (cortaba
+ * el audio y repetia toda la secuencia del reproductor); seguir si estaba en pausa y abrirlo. */
+static int ab_resume_current(int ch)
+{
+    ab_np_tick(1);
+    if (!ab_np_this_book() || (ch >= 0 && ab_np_chapter() != ch)) return 0;
+    if (!ab_np.playing) pc_toggle();
+    lg("audiolibro: ya era este; %s sin volver a mandar la cola", ab_np.playing ? "se abre" : "sigue");
+    nu_start_playing_t = now_ms(); ab_open_player();
+    return 1;
+}
 static double ab_saved_t; static int ab_saved_ch = -1, ab_saved_pos = -1;
 /* mira lo que suena; guarda el progreso del audiolibro que suena (cada 20 s, al cambiar de
  * capitulo y al salir). Devuelve 1 si cambio algo visible. */
@@ -1882,7 +1901,7 @@ static int ab_open_player(void)
     static uint16_t *under; if (!under) under = lazy_alloc((void **)&under, HM_FRAME_BYTES, 0);
     if (!under) return 0;
     memcpy(under, fr0, HM_FRAME_BYTES);
-    int r = np_app_run(under, -1, -1);   /* al cerrarlo se ve la pestana (debajo) */
+    int r = np_app_run(under, -2, -1);   /* sube desde abajo; al cerrarlo se ve la pestana (debajo) */
     (void)r;
     ab_np_t = 0; ab_np_tick(1);
     return 0;
@@ -2202,11 +2221,13 @@ static void ab_tap(int kind, int idx)
             ab_mine_scan(); ab_ds_read(); ab_sec_refresh(); ab_present();
             break;
         }
+        if (ab_ndone && ab_resume_current(-1)) { ab_present(); break; }
         if (ab_ndone) { struct ab_pos p; int has = ab_pos_load(ab_cur.id, &p) && !p.done; ab_play(has ? p.ch : 0, has ? p.pos : 0); ab_present(); break; }
         ab_enqueue(-1); ab_present();
         break;
     case H_SEC:
         if (idx < 0 || idx >= ab_cur.nsec) break;
+        if (ab_sst[idx] == 3 && ab_resume_current(idx)) { ab_present(); break; }
         if (ab_sst[idx] == 3) { struct ab_pos p; int has = ab_pos_load(ab_cur.id, &p) && p.ch == idx; ab_play(idx, has ? p.pos : 0); }
         else if (ab_sst[idx] == 0) ab_enqueue(idx);
         else {   /* en cola o descargando: quitarlo */
@@ -2309,7 +2330,7 @@ static int ab_run(void)
     for (;;) {
         if (!bk_tab) return 0;
         int ch = ab_poll();
-        if (ch == 2) { ab_open_player(); ch = 1; }
+        if (ch == 2) { nu_start_playing_t = now_ms(); ab_open_player(); ch = 1; }
         if (ab_deb_t && now_ms() >= ab_deb_t) { ab_search_fire(); ch = 1; }
         if (fabsf(vel) > 0.03f) {
             double t = now_ms(); if (!lt_fl || t - lt_fl > 100) lt_fl = t - 16;
