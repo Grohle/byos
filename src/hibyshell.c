@@ -88,6 +88,7 @@ static int sp_on;                  /* aviso del sistema en pantalla (syspop.inc.
 static void present(void);
 static void syspop_tick(void);
 static void sync_tick(void);         /* ByOS Sync: control pipe of hibysync (sync.inc.c) */
+static int oom_adj_pid(int pid);
 static void syspop_after_present(void);
 /* pildora de volumen (mas abajo): se mueve desde read_pkt y se pinta encima en present() */
 static int hud_active, hud_in;
@@ -1741,7 +1742,7 @@ static void guard_tick(void)
             /* lo que esta sonando hereda la reserva: con la radio en marcha su ayudante de red
              * queda justo detras del reproductor (y sin nice), no entre lo prescindible */
             int radio = (!strcmp(comm, "hibynet") && ra_active()) || (fg_helper_pid && atoi(e->d_name) == (int)fg_helper_pid)
-                     || (!strcmp(comm, "hibysync") && sync_xfer_busy());
+                     || (!strcmp(comm, "hibysync") && (sync_xfer_busy() || oom_adj_pid(atoi(e->d_name)) <= -500));   /* -700 propio: tiene un cliente */
             if (guard_write(p, radio ? -700 : guard_rules[i].oom) > 0) changed++;
             if (radio) break;
             if (guard_rules[i].nice > -99) {

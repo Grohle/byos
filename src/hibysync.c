@@ -1300,6 +1300,11 @@ static void pair_fail_n(struct sess *s, const char *why, int count)
     s->ps = PS_NONE;
 }
 static void pair_fail(struct sess *s, const char *why) { pair_fail_n(s, why, 1); }
+/* Con un cliente conectado, que el guardian de memoria no corte el demonio (respeta -700): sin
+ * esto un demonio arrancado desde el PC (byos-cli --start, sin el shell que lo proteja) moria a
+ * mitad de DB_SNAPSHOT con poca memoria. Sin clientes vuelve a 600 (el primero en irse). */
+static void oom_self(int v) { int f = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC); if (f >= 0) { char b[8]; int n = snprintf(b, sizeof b, "%d", v); if (write(f, b, (size_t)n) < 0) {} close(f); } }
+static void oom_by_sessions(void);
 static void sess_close(struct sess *s)
 {
     if (!s->st) return;
@@ -1312,6 +1317,7 @@ static void sess_close(struct sess *s)
     if (s->st == SS_OPEN || s->st == SS_SECURING) ctl_send("GONE %d", s->sid);
     btp_wipe(s->k_rx, 32); btp_wipe(s->k_tx, 32); btp_wipe(s->de, 32);
     s->st = SS_FREE; s->fd = -1; s->hq_n = 0; s->hq_bytes = 0;
+    oom_by_sessions();
     /* give the session's buffer pages back (they are zero-filled again on next use) */
     int idx = (int)(s - S);
     madvise(RXB[idx], RXSTRIDE, MADV_DONTNEED); madvise(TXB[idx], TXSTRIDE, MADV_DONTNEED);
@@ -1319,6 +1325,12 @@ static void sess_close(struct sess *s)
     int any = 0; for (int i = 0; i < MAX_SESS; i++) if (S[i].st) any = 1;
     if (!any) { G.idle_since = mono(); madvise(FBUF, sizeof FBUF, MADV_DONTNEED); }
     oom_adjust();
+}
+static void oom_by_sessions(void)
+{
+    int n = 0; for (int k = 0; k < MAX_SESS; k++) if (S[k].st) n++;
+    static int last = 1; int v = n ? -700 : 600;
+    if (v != last) { oom_self(v); last = v; }
 }
 /* Time spent blocked inside one request (helper processes, hashing a payload tar, deleting a
  * tree...) is not the other side's idleness: push every session clock forward by it. */
@@ -1773,6 +1785,7 @@ static void accept_on(int lfd, int local)
     int idx = (int)(s - S);
     memset(s, 0, sizeof *s);
     s->fd = fd; s->st = SS_HELLO; s->local = local; s->peer_addr = a.sin_addr.s_addr; s->sid = ++G.next_sid;
+    oom_by_sessions();
     s->rx = RXB[idx]; s->tx = TXB[idx]; s->sf_fd = -1; s->peer_idx = -1; s->put.fd = s->put.dfd = -1; s->get.fd = -1;
     s->hello_deadline = mono() + T_HELLO_S; s->secure_deadline = mono() + SP.t_secure; s->last_rx = mono();
     s->hj.fd = -1;
