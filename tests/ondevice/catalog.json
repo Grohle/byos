@@ -14810,7 +14810,7 @@
     "6. Update the topbar.py preview (bar(), :312-330) and docs/WIRELESS.md test B3 with the new rule. Add the icon check to the tests/ harness: render a bar with bt_link=2 and compare pixels 201-209 by 9-21."
    ],
    "reproduce_on_device": [
-    "Do this later, only after the restore and ADB Wi-Fi session is free. Do not run it in parallel with that session. Find the device first by its MAC prefix 54-78-c9; its IP changes.",
+    "Do this later, only after the restore and ADB Wi-Fi session is free. Do not run it in parallel with that session. Find the device first by the MAC vendor prefix of the player; its IP changes.",
     "A. Baseline on stock flow: turn off ByOS's home screen replacement (or open HiBy's own Bluetooth page), then pair and connect the headphones through HiBy's own Bluetooth list. Run 'python tools/hiby.py shot:bt_stock'. Expected: a white rune at x 201-209, y 9-21 of the screenshot. This shows HiBy lights topbar_iv_bt when the connection is its own.",
     "B. Disconnect. Open ByOS Wireless > Bluetooth (CC tile or icon), tap the paired headphones and wait for the row spinner to finish. On the device, check 'dbus-send --system --print-reply --dest=org.bluez /org/bluez/hci0/dev_XX_XX_.. org.freedesktop.DBus.Properties.Get string:org.bluez.Device1 string:Connected' and 'ls /var/run/bluealsa' (or 'bluealsa-aplay -L'). Expected now: Connected=true, yet a 'shot:bt_byos' screenshot has no visible pixels at x 200-210, y 5-25.",
     "C. Play a track while in state B. Check whether the sound goes to the headphones or to the 3.5 mm jack. Also check whether /proc/<hiby_player pid>/fd holds a bluealsa socket. Expected now: it is not routed to Bluetooth. This confirms the player does not know about the connection.",
