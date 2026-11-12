@@ -50,7 +50,7 @@ sd_upt()
 
 case "$1" in
   status)
-    echo "ByOS 0.8.0"
+    echo "ByOS 0.9.0"
     [ -f $D/.hibymod_safe ] && echo "modo seguro: SI ($(cat $D/.hibymod_safe))" || echo "modo seguro: no"
     [ -f $D/.hibymod_theme_dev ] && echo "tema: desde la SD (desarrollo)" || echo "tema: interno"
     cat /tmp/hibymod/theme.txt 2>/dev/null

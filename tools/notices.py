@@ -104,6 +104,17 @@ ARTEFACTS = {
         "LICENSES/IJG-libjpeg-README.txt",
     ],
 
+    # byos-cli.jar (desktop app) and the ByOS Install app's core (THIRD_PARTY_NOTICES section 7).
+    "byos-cli": [
+        "LICENSES/hiby-mods-LICENSE.txt",        # database rules, re-implemented in Kotlin
+        "LICENSES/TweetNaCl-public-domain.txt",  # X25519, re-implemented
+        "LICENSES/Apache-2.0.txt",               # Kotlin standard library, JetBrains annotations
+    ],
+    "android-install": [
+        "LICENSES/hiby-mods-LICENSE.txt",
+        "LICENSES/TweetNaCl-public-domain.txt",
+    ],
+
     # Hello sample app: bin/hola with the Terminus bitmap font.
     "hpk:org.hibymod.hola": _MIPS_RUNTIME + [
         "LICENSES/OFL-1.1-Terminus.txt",
