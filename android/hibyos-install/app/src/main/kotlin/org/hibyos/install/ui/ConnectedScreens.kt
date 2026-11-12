@@ -70,6 +70,7 @@ import org.hibyos.install.connected.LibraryNav
 import org.hibyos.install.connected.LibraryPhase
 import org.hibyos.install.connected.Link
 import org.hibyos.install.connected.LibTarget
+import org.hibyos.install.connected.M3u
 import org.hibyos.install.connected.Library
 import androidx.compose.runtime.LaunchedEffect
 import org.hibyos.install.connected.Prompt
@@ -118,6 +119,14 @@ object NoSync : SyncActions {
     override fun libraryNav(nav: LibraryNav) {}
     override fun rescanLibrary() {}
     override fun searchLibrary(text: String) {}
+    override fun loadPlaylists() {}
+    override fun openPlaylist(file: String) {}
+    override fun addToPlaylist(target: org.hibyos.install.connected.LibTarget?) {}
+    override fun addToPlaylistFile(file: String) {}
+    override fun newPlaylistName(text: String?) {}
+    override fun createPlaylist() {}
+    override fun removeFromPlaylist(index: Int) {}
+    override fun deletePlaylist(file: String) {}
     override fun loadCover(folder: String) {}
     override fun saveToPhone(entry: SyncEntry) {}
     override fun clearDownload() {}
@@ -866,10 +875,14 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
     val artist = nav.artist?.let { n -> L.artists.firstOrNull { it.name == n } }
     val album = nav.album?.let { (ar, al) -> L.albums.firstOrNull { it.artist == ar && it.title == al } }
     val unknown = stringResource(R.string.sync_unknown)
-    val title = album?.title?.ifEmpty { unknown } ?: artist?.name?.ifEmpty { unknown } ?: stringResource(R.string.sync_library_title)
+    val pls = LocalSync.current.state.playlists
+    val title = nav.playlist?.let { M3u.title(it) } ?: album?.title?.ifEmpty { unknown } ?: artist?.name?.ifEmpty { unknown }
+        ?: stringResource(R.string.sync_library_title)
     val st = LocalSync.current.state
-    val top = nav.artist == null && nav.album == null
+    val top = nav.artist == null && nav.album == null && nav.playlist == null
     var sheet by remember { mutableStateOf<LibTarget?>(null) }
+    var plSheet by remember { mutableStateOf<String?>(null) }
+    var songSheet by remember { mutableStateOf<Int?>(null) }
     val artistsLabel = stringResource(R.string.sync_artists)
     val albumsLabel = stringResource(R.string.sync_albums)
     val songsLabel = stringResource(R.string.sync_songs)
@@ -883,8 +896,33 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
             LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 28.dp)) {
                 item { Txt(title, T.largeTitle, Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 st.libError?.let { e -> item { ErrorSection(e) } }
+                pls.error?.let { e -> item { ErrorSection(e) } }
+                pls.added?.let { name ->
+                    item { Section { row { Item(title = stringResource(R.string.sync_pl_added, name), icon = { IconTile(Glyphs.Check, C.green) }) } } }
+                }
                 if (top && (st.rescan != Rescan.Idle || st.transfer.newMusic > 0 || st.libraryChanged)) item { RescanSection(st, x, st.transfer.newMusic) }
                 when {
+                    nav.playlist != null -> {
+                        val p = pls.open
+                        if (p == null || p.file != nav.playlist) {
+                            item { Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } } }
+                        } else {
+                            item { Txt(songs(p.songs.size), T.sub, Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp)) }
+                            if (p.songs.isEmpty()) item {
+                                Hero(Glyphs.Layers, C.cyan, stringResource(R.string.sync_pl_empty_title), stringResource(R.string.sync_pl_empty_songs))
+                            }
+                            else {
+                                val byPath = L.tracks.associateBy { (Library.cardPath(it.path) ?: "").lowercase() }
+                                cards(p.songs.size) { i ->
+                                    val t = byPath[p.songs[i].lowercase()]
+                                    LibRow(t?.title ?: SyncPaths.name(p.songs[i]),
+                                        if (t != null) listOf(t.albumArtist.ifEmpty { t.artist }.ifEmpty { unknown }, t.album.ifEmpty { unknown }).joinToString("  ·  ")
+                                        else stringResource(R.string.sync_pl_not_in_library),
+                                        lead = "${i + 1}", onMore = { songSheet = i })
+                                }
+                            }
+                        }
+                    }
                     album != null -> {
                         item {
                             val folder = remember(album) { Library.artFolder(album) }
@@ -916,7 +954,8 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
                         }
                         val q = st.libraryQuery.trim()
                         if (L.tracks.isNotEmpty() && q.isEmpty()) item {
-                            Segments(listOf(stringResource(R.string.sync_artists), stringResource(R.string.sync_albums), stringResource(R.string.sync_songs)),
+                            Segments(listOf(stringResource(R.string.sync_artists), stringResource(R.string.sync_albums), stringResource(R.string.sync_songs),
+                                stringResource(R.string.sync_playlists)),
                                 nav.tab) { x.libraryNav(LibraryNav(tab = it)) }
                         }
                         if (L.tracks.isEmpty()) {
@@ -967,10 +1006,35 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
                                     x.libraryNav(nav.copy(album = it.artist to it.title))
                                 }
                             }
-                            else -> cards(L.tracks.size) { i ->
+                            2 -> cards(L.tracks.size) { i ->
                                 val t: Track = L.tracks[i]
                                 LibRow(t.title, listOf(t.albumArtist.ifEmpty { t.artist }.ifEmpty { unknown }, t.album.ifEmpty { unknown }).joinToString("  ·  "),
                                     onMore = { sheet = LibTarget.Song(t) })
+                            }
+                            else -> {
+                                val files = pls.files
+                                when {
+                                    files == null -> item {
+                                        LaunchedEffect(Unit) { x.loadPlaylists() }
+                                        Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } }
+                                    }
+                                    files.isEmpty() -> item {
+                                        Hero(Glyphs.Layers, C.cyan, stringResource(R.string.sync_pl_none_title), stringResource(R.string.sync_pl_none_text))
+                                    }
+                                    else -> cards(files.size) { i ->
+                                        Item(title = M3u.title(files[i]), icon = { IconTile(Glyphs.Layers, C.cyan) }, chevron = true,
+                                            trailing = { MoreButton { plSheet = files[i] } }) { x.openPlaylist(files[i]) }
+                                    }
+                                }
+                                if (!files.isNullOrEmpty()) item { Spacer(Modifier.height(22.dp)) }
+                                item {
+                                    Section(footer = stringResource(R.string.sync_pl_footer)) {
+                                        row {
+                                            Item(title = stringResource(R.string.sync_pl_new), titleColor = C.blue, icon = { IconTile(Glyphs.Plus, C.blue) },
+                                                enabled = !st.busy) { x.addToPlaylist(null); x.newPlaylistName("") }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -982,8 +1046,29 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
             val acts = ArrayList<Pair<String, () -> Unit>>()
             if (t !is LibTarget.ArtistOf) acts += stringResource(R.string.sync_lib_show) to { sheet = null; x.revealInFiles(t); a.go(Screen.SYNC_FILES) }
             if (t.cardPath != null) acts += stringResource(R.string.sync_move) to { sheet = null; x.libraryMove(t); a.go(Screen.SYNC_FILES) }
+            acts += stringResource(R.string.sync_pl_add) to { sheet = null; x.addToPlaylist(t) }
             acts += stringResource(R.string.sync_delete) to { sheet = null; x.libraryDelete(t) }
             ActionSheet(libTargetName(t, unknown), onDismiss = { sheet = null }, actions = acts, destructive = acts.size - 1)
+        }
+        val adding = pls.adding
+        if (adding != null && pls.newName == null && !pls.working) {
+            val acts = ArrayList<Pair<String, () -> Unit>>()
+            for (f in pls.files ?: emptyList()) acts += M3u.title(f) to { x.addToPlaylistFile(f) }
+            acts += stringResource(R.string.sync_pl_new_dots) to { x.newPlaylistName("") }
+            ActionSheet(stringResource(R.string.sync_pl_add_q, libTargetName(adding, unknown)), onDismiss = { x.addToPlaylist(null) }, actions = acts)
+        }
+        pls.newName?.let { name ->
+            AlertBox(stringResource(R.string.sync_pl_new), stringResource(R.string.sync_pl_new_text), name, stringResource(R.string.sync_create),
+                working = pls.working, onChange = { x.newPlaylistName(it) }, onOk = { x.createPlaylist() },
+                onCancel = { x.newPlaylistName(null); x.addToPlaylist(null) })
+        }
+        plSheet?.let { f ->
+            ActionSheet(M3u.title(f), onDismiss = { plSheet = null }, actions = listOf(
+                stringResource(R.string.sync_delete) to { plSheet = null; x.deletePlaylist(f) }), destructive = 0)
+        }
+        songSheet?.let { i ->
+            ActionSheet(pls.open?.songs?.getOrNull(i)?.let { SyncPaths.name(it) } ?: "", onDismiss = { songSheet = null }, actions = listOf(
+                stringResource(R.string.sync_pl_remove) to { songSheet = null; x.removeFromPlaylist(i) }), destructive = 0)
         }
         val d = st.libDelete
         if (d != null) {

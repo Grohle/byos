@@ -121,8 +121,26 @@ sealed interface LibTarget {
         }
 }
 
-/** Which list of the library is open: tab 0 artists, 1 albums, 2 songs; then an artist, then an album. */
-data class LibraryNav(val tab: Int = 0, val artist: String? = null, val album: Pair<String, String>? = null)
+/**
+ * Which list of the library is open: tab 0 artists, 1 albums, 2 songs, 3 playlists; then an
+ * artist, then an album, or a playlist (its card path).
+ */
+data class LibraryNav(val tab: Int = 0, val artist: String? = null, val album: Pair<String, String>? = null, val playlist: String? = null)
+
+/** The playlists of the card (the .m3u and .m3u8 files in Playlists) and what is being done with them. */
+data class Playlists(
+    /** The playlist files; null until read. */
+    val files: List<String>? = null,
+    val open: Playlist? = null,
+    /** Songs waiting for the user to choose the playlist they go to. */
+    val adding: LibTarget? = null,
+    /** The name typed for a new playlist (null: no question open). */
+    val newName: String? = null,
+    val working: Boolean = false,
+    val error: ErrorInfo? = null,
+    /** The playlist songs were just added to, shown as a short confirmation. */
+    val added: String? = null,
+)
 
 sealed interface UpdatePhase {
     data object Idle : UpdatePhase
@@ -206,6 +224,7 @@ data class SyncState(
     val libError: ErrorInfo? = null,
     /** Files were moved, renamed or deleted on the card: the library is out of date until a rescan. */
     val libraryChanged: Boolean = false,
+    val playlists: Playlists = Playlists(),
     /** The search over artists, albums and songs ("" shows the lists). */
     val libraryQuery: String = "",
     /** Album artwork read from the card: album folder -> image file in the app's cache (null: none found). */
@@ -220,7 +239,7 @@ data class SyncState(
     val busy: Boolean
         get() = link is Link.Searching || link is Link.Connecting || (link is Link.Pairing && link.waiting) ||
             transfer.running || library is LibraryPhase.Loading || update is UpdatePhase.Sending || browser.working ||
-            ota.running || rescan == Rescan.Running || libWorking || browser.download?.running == true
+            ota.running || rescan == Rescan.Running || libWorking || browser.download?.running == true || playlists.working
 }
 
 /** Everything the connected screens can ask for. */
@@ -274,6 +293,19 @@ interface SyncActions {
     fun revealInFiles(target: LibTarget)
 
     fun searchLibrary(text: String)
+
+    fun loadPlaylists()
+    fun openPlaylist(file: String)
+
+    /** Asks which playlist [target]'s songs go to (null closes the question). */
+    fun addToPlaylist(target: LibTarget?)
+    fun addToPlaylistFile(file: String)
+
+    /** The name of a new playlist being typed (null closes the question). */
+    fun newPlaylistName(text: String?)
+    fun createPlaylist()
+    fun removeFromPlaylist(index: Int)
+    fun deletePlaylist(file: String)
 
     /** Fetches the artwork of the album in this card folder (once; the result lands in [SyncState.covers]). */
     fun loadCover(folder: String)

@@ -308,6 +308,22 @@
     <string name="sync_err_kind">A file and a folder were mixed up</string>
     <string name="sync_empty_card">The card is empty</string>
     <string name="sync_empty_card_text">Send music, books or pictures from this phone with Send Files.</string>
+
+    <!-- Playlists -->
+    <string name="sync_playlists">Playlists</string>
+    <string name="sync_pl_add">Add to a playlist</string>
+    <string name="sync_pl_add_q">Add %1$s to</string>
+    <string name="sync_pl_new">New playlist</string>
+    <string name="sync_pl_new_dots">New playlist…</string>
+    <string name="sync_pl_new_text">It is saved as a .m3u8 file in the Playlists folder of the card.</string>
+    <string name="sync_pl_added">Added to %1$s</string>
+    <string name="sync_pl_remove">Remove from the playlist</string>
+    <string name="sync_pl_none_title">No playlists yet</string>
+    <string name="sync_pl_none_text">Use ••• › Add to a playlist on a song or an album, or make a new one below.</string>
+    <string name="sync_pl_empty_title">This playlist is empty</string>
+    <string name="sync_pl_empty_songs">Use ••• › Add to a playlist on songs and albums.</string>
+    <string name="sync_pl_not_in_library">Not in the library</string>
+    <string name="sync_pl_footer">Playlists are .m3u8 files in the Playlists folder of the card: the player and computers can open them.</string>
     <plurals name="sync_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>

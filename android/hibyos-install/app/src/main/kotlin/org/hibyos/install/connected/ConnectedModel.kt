@@ -1002,6 +1002,117 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         return list.none { it.isFolder || (FileKinds.isAudio(it.name) && it.name.lowercase() !in mine) }
     }
 
+    // ---- playlists (.m3u8 files in Playlists) ---------------------------------------------------
+
+    private fun pl(f: (Playlists) -> Playlists) = ui { it.copy(playlists = f(it.playlists)) }
+
+    /** Runs a playlist job on the worker: errors are shown on the playlists, a lost connection ends the session. */
+    private fun playlistJob(f: (SyncSession) -> Unit) {
+        val s = session ?: return
+        if (!begin()) return
+        state = state.copy(playlists = state.playlists.copy(working = true, error = null, added = null))
+        env.execute {
+            try {
+                f(s)
+                pl { it.copy(working = false) }
+            } catch (e: Exception) {
+                val err = errorOf(e)
+                if (lost(e)) dropSession()
+                ui { it.copy(link = if (lost(e)) Link.Idle else it.link, playlists = it.playlists.copy(working = false, error = err, newName = null)) }
+            }
+        }
+    }
+
+    private fun listPlaylists(s: SyncSession): List<String> = try {
+        s.list(M3u.FOLDER).filter { !it.isFolder && M3u.isPlaylist(it.name) }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }).map { SyncPaths.join(M3u.FOLDER, it.name) }
+    } catch (e: SyncException) {
+        if (e.code != SyncException.E_NOT_FOUND) throw e
+        emptyList()
+    }
+
+    private fun readPlaylist(s: SyncSession, file: String): Playlist {
+        val out = java.io.ByteArrayOutputStream()
+        s.get(file, 0, out, cancelled) { _, _ -> }
+        return Playlist(file, M3u.read(SyncPaths.parent(file), String(out.toByteArray(), Charsets.UTF_8)))
+    }
+
+    private fun writePlaylist(s: SyncSession, file: String, songs: List<String>, create: Boolean) {
+        val titles = ((state.library as? LibraryPhase.Ready)?.library?.tracks ?: emptyList())
+            .associate { (Library.cardPath(it.path) ?: "").lowercase() to listOf(it.artist, it.title).filter { t -> t.isNotEmpty() }.joinToString(" - ") }
+        val data = M3u.write(SyncPaths.parent(file), songs.map { it to (titles[it.lowercase()] ?: "") }).toByteArray(Charsets.UTF_8)
+        s.mkdir(SyncPaths.parent(file), true)
+        s.put(Ns.SD, file, data.size.toLong(), MessageDigest.getInstance("SHA-256").digest(data), 0,
+            if (create) PutMode.CREATE else PutMode.REPLACE, { off -> openAt({ data.inputStream() }, off) }, cancelled) {}
+    }
+
+    override fun loadPlaylists() = playlistJob { s ->
+        val files = listPlaylists(s)
+        pl { it.copy(files = files) }
+    }
+
+    override fun openPlaylist(file: String) {
+        state = state.copy(libraryNav = state.libraryNav.copy(playlist = file), playlists = state.playlists.copy(open = null))
+        playlistJob { s ->
+            val p = readPlaylist(s, file)
+            pl { it.copy(open = p) }
+        }
+    }
+
+    override fun addToPlaylist(target: LibTarget?) {
+        if (state.playlists.working) return
+        state = state.copy(playlists = state.playlists.copy(adding = target, error = null, added = null))
+        if (target != null && state.playlists.files == null) loadPlaylists()
+    }
+
+    private fun songsOf(t: LibTarget): List<String> = t.tracks.mapNotNull { Library.cardPath(it.path) }
+
+    override fun addToPlaylistFile(file: String) {
+        val t = state.playlists.adding ?: return
+        playlistJob { s ->
+            val p = readPlaylist(s, file)
+            val songs = p.songs + songsOf(t)
+            writePlaylist(s, file, songs, false)
+            pl { it.copy(adding = null, added = M3u.title(file), open = if (it.open?.file == file) Playlist(file, songs) else it.open) }
+        }
+    }
+
+    override fun newPlaylistName(text: String?) {
+        if (state.playlists.working) return
+        state = state.copy(playlists = state.playlists.copy(newName = text?.take(80)))
+    }
+
+    override fun createPlaylist() {
+        val name = SyncPaths.cleanName(state.playlists.newName ?: return)
+        if (name == null) {
+            state = state.copy(playlists = state.playlists.copy(error = ErrorInfo(R.string.sync_err_bad_name, null)))
+            return
+        }
+        val file = SyncPaths.join(M3u.FOLDER, "$name.m3u8")
+        val songs = state.playlists.adding?.let { songsOf(it) } ?: emptyList()
+        playlistJob { s ->
+            writePlaylist(s, file, songs, true)
+            val files = listPlaylists(s)
+            pl { it.copy(files = files, newName = null, adding = null, added = if (songs.isEmpty()) null else M3u.title(file)) }
+        }
+    }
+
+    override fun removeFromPlaylist(index: Int) {
+        val p = state.playlists.open ?: return
+        if (index !in p.songs.indices) return
+        val songs = p.songs.filterIndexed { i, _ -> i != index }
+        playlistJob { s ->
+            writePlaylist(s, p.file, songs, false)
+            pl { it.copy(open = Playlist(p.file, songs)) }
+        }
+    }
+
+    override fun deletePlaylist(file: String) = playlistJob { s ->
+        s.delete(file, false)
+        val files = listPlaylists(s)
+        ui { it.copy(playlists = it.playlists.copy(files = files, open = null), libraryNav = it.libraryNav.copy(playlist = null)) }
+    }
+
     override fun searchLibrary(text: String) {
         state = state.copy(libraryQuery = text.take(100))
     }
@@ -1133,6 +1244,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     fun libraryBack(): Boolean {
         val n = state.libraryNav
         return when {
+            n.playlist != null -> {
+                state = state.copy(libraryNav = n.copy(playlist = null), playlists = state.playlists.copy(open = null))
+                true
+            }
             n.album != null -> {
                 state = state.copy(libraryNav = n.copy(album = null))
                 true

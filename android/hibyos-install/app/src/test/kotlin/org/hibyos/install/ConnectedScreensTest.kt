@@ -20,6 +20,8 @@ import org.hibyos.install.connected.OtaPhase
 import org.hibyos.install.connected.OtaPick
 import org.hibyos.install.connected.PairedDevice
 import org.hibyos.install.connected.LibTarget
+import org.hibyos.install.connected.Playlist
+import org.hibyos.install.connected.Playlists
 import org.hibyos.install.connected.Prompt
 import org.hibyos.install.connected.Rescan
 import org.hibyos.install.connected.Route
@@ -200,6 +202,15 @@ class ConnectedScreensTest {
             covers = covers))
         shot("library_16_search", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryQuery = "ab", covers = covers))
         shot("library_17_search_none", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryQuery = "zappa"))
+        val withPl = on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 3))
+        shot("library_18_playlists", Screen.SYNC_LIBRARY, withPl.copy(playlists = Playlists(files = listOf("Playlists/Road trip.m3u8", "Playlists/Sunday.m3u8"))))
+        shot("library_19_playlists_none", Screen.SYNC_LIBRARY, withPl.copy(playlists = Playlists(files = emptyList())))
+        shot("library_20_playlist", Screen.SYNC_LIBRARY, withPl.copy(libraryNav = LibraryNav(tab = 3, playlist = "Playlists/Road trip.m3u8"),
+            playlists = Playlists(files = listOf("Playlists/Road trip.m3u8"), open = Playlist("Playlists/Road trip.m3u8",
+                listOf("ABBA/Gold/01 Dancing Queen.flac", "The Beatles/Abbey Road/01 Come Together.flac", "Other/missing.mp3")), added = "Road trip")))
+        shot("library_21_add_to", Screen.SYNC_LIBRARY, withPl.copy(libraryNav = LibraryNav(tab = 1),
+            playlists = Playlists(files = listOf("Playlists/Road trip.m3u8", "Playlists/Sunday.m3u8"), adding = LibTarget.AlbumOf(lib.albums.first { it.title == "Gold" }))))
+        shot("library_22_new_playlist", Screen.SYNC_LIBRARY, withPl.copy(playlists = Playlists(files = emptyList(), newName = "Road trip")))
         shot("library_10_delete_album", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1),
             libDelete = LibTarget.AlbumOf(gold)))
         shot("library_11_delete_song", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 2),

@@ -98,7 +98,7 @@ class ConnectedA11yTest {
         show(Screen.SYNC_LIBRARY, on.copy(library = org.hibyos.install.connected.LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1)))
         rule.onNodeWithText("Albums").assertIsSelected()
         val tabs = rule.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)).fetchSemanticsNodes()
-        assertEquals(3, tabs.size)
+        assertEquals(4, tabs.size)
         rule.onNodeWithContentDescription("Artists, albums and songs").performClick()
     }
 

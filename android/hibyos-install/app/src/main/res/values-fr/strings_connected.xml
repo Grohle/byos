@@ -302,6 +302,22 @@
     <string name="sync_err_kind">Un fichier et un dossier ont été confondus</string>
     <string name="sync_empty_card">La carte est vide</string>
     <string name="sync_empty_card_text">Envoyez musique, livres ou images depuis ce téléphone avec Envoyer des fichiers.</string>
+
+    <!-- Playlists -->
+    <string name="sync_playlists">Listes</string>
+    <string name="sync_pl_add">Ajouter à une liste de lecture</string>
+    <string name="sync_pl_add_q">Ajouter %1$s à</string>
+    <string name="sync_pl_new">Nouvelle liste de lecture</string>
+    <string name="sync_pl_new_dots">Nouvelle liste de lecture…</string>
+    <string name="sync_pl_new_text">Elle est enregistrée en fichier .m3u8 dans le dossier Playlists de la carte.</string>
+    <string name="sync_pl_added">Ajouté à %1$s</string>
+    <string name="sync_pl_remove">Retirer de la liste</string>
+    <string name="sync_pl_none_title">Aucune liste de lecture</string>
+    <string name="sync_pl_none_text">Utilisez ••• › Ajouter à une liste de lecture sur un morceau ou un album, ou créez-en une ci-dessous.</string>
+    <string name="sync_pl_empty_title">Cette liste est vide</string>
+    <string name="sync_pl_empty_songs">Utilisez ••• › Ajouter à une liste de lecture sur des morceaux et des albums.</string>
+    <string name="sync_pl_not_in_library">Absent de la bibliothèque</string>
+    <string name="sync_pl_footer">Les listes de lecture sont des fichiers .m3u8 du dossier Playlists de la carte : le baladeur et les ordinateurs savent les ouvrir.</string>
     <plurals name="sync_files">
         <item quantity="one">%d fichier</item>
         <item quantity="other">%d fichiers</item>

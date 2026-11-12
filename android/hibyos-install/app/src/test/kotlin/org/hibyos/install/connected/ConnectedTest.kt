@@ -821,6 +821,55 @@ class ConnectedTest {
     }
 
     @Test
+    fun m3uPathsRoundTrip() {
+        assertEquals("../Music/ABBA/Gold/01.flac", M3u.relative("Playlists", "Music/ABBA/Gold/01.flac"))
+        assertEquals("01.flac", M3u.relative("Music/ABBA/Gold", "Music/ABBA/Gold/01.flac"))
+        assertEquals("../B/x.mp3", M3u.relative("Music/A", "Music/B/x.mp3"))
+        val text = M3u.write("Playlists", listOf("Music/ABBA/Gold/01 Dancing Queen.flac" to "ABBA - Dancing Queen", "Music/x.mp3" to ""))
+        assertTrue(text.startsWith("#EXTM3U\n#EXTINF:-1,ABBA - Dancing Queen\n../Music/ABBA/Gold/01 Dancing Queen.flac\n"))
+        assertEquals(listOf("Music/ABBA/Gold/01 Dancing Queen.flac", "Music/x.mp3"), M3u.read("Playlists", text))
+        // what other tools write: Windows paths, the player's own absolute paths, a BOM; URLs and paths off the card are skipped
+        val other = "﻿#EXTM3U\r\n..\\Music\\a.flac\r\n/usr/data/mnt/sd_0/Music/b.flac\r\na:\\Music\\c.flac\r\nhttp://radio/x\r\n/etc/passwd\r\n../../out.mp3\r\n"
+        assertEquals(listOf("Music/a.flac", "Music/b.flac", "Music/c.flac"), M3u.read("Playlists", other))
+    }
+
+    @Test
+    fun playlistsAreMadeAndChanged() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = libraryOnCard(env)
+        val gold = lib(m).albums.first { it.title == "Gold" }
+        // no Playlists folder yet: an empty list, not an error
+        m.loadPlaylists()
+        assertEquals(emptyList<String>(), m.state.playlists.files)
+        m.addToPlaylist(LibTarget.AlbumOf(gold))
+        m.newPlaylistName("Road trip")
+        m.createPlaylist()
+        val file = "Playlists/Road trip.m3u8"
+        assertEquals(listOf(file), m.state.playlists.files)
+        assertEquals("Road trip", m.state.playlists.added)
+        assertNull(m.state.playlists.adding)
+        val text = String(card.files[file]!!)
+        assertTrue(text, text.contains("#EXTINF:-1,ABBA - Dancing Queen\n../Music/ABBA/Gold/01 Dancing Queen.flac"))
+        // add a song to it, open it, remove the first song
+        m.addToPlaylist(LibTarget.Song(lib(m).tracks.first { it.title == "Loose" }))
+        m.addToPlaylistFile(file)
+        m.openPlaylist(file)
+        assertEquals(listOf("Music/ABBA/Gold/01 Dancing Queen.flac", "Music/ABBA/Gold/02 Knowing Me.flac", "Music/loose.mp3"), m.state.playlists.open!!.songs)
+        m.removeFromPlaylist(0)
+        assertEquals(2, M3u.read("Playlists", String(card.files[file]!!)).size)
+        // a second playlist with the same name is refused, the first one stays
+        m.newPlaylistName("road trip")
+        m.createPlaylist()
+        assertEquals(R.string.sync_err_exists, m.state.playlists.error?.title)
+        assertTrue(m.libraryBack())
+        assertNull(m.state.libraryNav.playlist)
+        m.deletePlaylist(file)
+        assertFalse(card.files.containsKey(file))
+        assertEquals(emptyList<String>(), m.state.playlists.files)
+    }
+
+    @Test
     fun movingFromTheLibraryOpensFiles() {
         val env = Env(FakeConnector())
         val card = env.c.card

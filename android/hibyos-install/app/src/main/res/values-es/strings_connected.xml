@@ -302,6 +302,22 @@
     <string name="sync_err_kind">Se confundieron un archivo y una carpeta</string>
     <string name="sync_empty_card">La tarjeta está vacía</string>
     <string name="sync_empty_card_text">Envía música, libros o imágenes desde este teléfono con Enviar archivos.</string>
+
+    <!-- Playlists -->
+    <string name="sync_playlists">Listas</string>
+    <string name="sync_pl_add">Añadir a una lista</string>
+    <string name="sync_pl_add_q">Añadir %1$s a</string>
+    <string name="sync_pl_new">Nueva lista</string>
+    <string name="sync_pl_new_dots">Nueva lista…</string>
+    <string name="sync_pl_new_text">Se guarda como archivo .m3u8 en la carpeta Playlists de la tarjeta.</string>
+    <string name="sync_pl_added">Añadido a %1$s</string>
+    <string name="sync_pl_remove">Quitar de la lista</string>
+    <string name="sync_pl_none_title">Todavía no hay listas</string>
+    <string name="sync_pl_none_text">Usa ••• › Añadir a una lista en una canción o un álbum, o crea una nueva abajo.</string>
+    <string name="sync_pl_empty_title">Esta lista está vacía</string>
+    <string name="sync_pl_empty_songs">Usa ••• › Añadir a una lista en canciones y álbumes.</string>
+    <string name="sync_pl_not_in_library">No está en la biblioteca</string>
+    <string name="sync_pl_footer">Las listas son archivos .m3u8 de la carpeta Playlists de la tarjeta: el reproductor y los ordenadores pueden abrirlas.</string>
     <plurals name="sync_files">
         <item quantity="one">%d archivo</item>
         <item quantity="other">%d archivos</item>
