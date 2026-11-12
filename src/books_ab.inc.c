@@ -186,7 +186,7 @@ static void ab_play_glyph(uint16_t *d, int cx, int cy, int s, uint16_t c)
 static void ab_pause_glyph(uint16_t *d, int cx, int cy, int s, uint16_t c) { fill_rrect(d, cx - s * 2 / 3, cy - s, s / 2 + 1, 2 * s, 1, c, 255); fill_rrect(d, cx + s / 6, cy - s, s / 2 + 1, 2 * s, 1, c, 255); }
 
 /* ------------------------------------------------------------------ imagenes (LRU) */
-struct ab_img { uint64_t h; int w, hh; uint16_t *px; unsigned use; int miss; };
+struct ab_img { uint64_t h; int w, hh; uint16_t *px; unsigned use; int miss; double t; };
 static struct ab_img ab_im[40]; static unsigned ab_im_tick;
 /* imagen RGB565 de w x h desde un fichero; 0 si no esta (cargar con ab_img_load, nunca al pintar) */
 static const uint16_t *ab_img_get(const char *path, int w, int h)
@@ -194,6 +194,18 @@ static const uint16_t *ab_img_get(const char *path, int w, int h)
     uint64_t k = ab_hash(path) ^ (uint64_t)(w * 1000 + h);
     for (int i = 0; i < 40; i++) if (ab_im[i].px && ab_im[i].h == k) { ab_im[i].use = ++ab_im_tick; return ab_im[i].miss ? 0 : ab_im[i].px; }
     return 0;
+}
+/* a cover fades in over its grey placeholder for AB_FADE ms after it is loaded, instead of popping
+ * in (all at once, or one by one while scrolling: reviewer r2) */
+#define AB_FADE 180.0
+static double ab_fading;
+static void ab_img_draw(uint16_t *d, const uint16_t *im, const char *path, int w, int h, int x, int y, int r, int c0, int c1)
+{
+    uint64_t k = ab_hash(path) ^ (uint64_t)(w * 1000 + h); double age = AB_FADE;
+    for (int i = 0; i < 40; i++) if (ab_im[i].px && ab_im[i].h == k) { age = now_ms() - ab_im[i].t; break; }
+    int a = age >= AB_FADE ? 32 : (int)(32 * ease_out(age / AB_FADE));
+    if (a < 32) { if (y >= c0 && y + h <= c1) fill_rrect(d, x, y, w, h, (float)r, rgb(44, 44, 48), 255); ab_fading = now_ms() + 30; }
+    if (a > 0) bk_blit_scaled(d, im, w, h, x, y, w, h, a, r, c0, c1);
 }
 static int ab_img_known(const char *path, int w, int h)
 {
@@ -218,7 +230,7 @@ static int ab_img_load(const char *path, int w, int h)
     if (!m->px) m->px = malloc(w * h * 2);
     if (!m->px) return -1;
     int f = open(path, O_RDONLY); int ok = f >= 0 && read(f, m->px, w * h * 2) == w * h * 2; if (f >= 0) close(f);
-    m->h = ab_hash(path) ^ (uint64_t)(w * 1000 + h); m->w = w; m->hh = h; m->use = ++ab_im_tick; m->miss = !ok;
+    m->h = ab_hash(path) ^ (uint64_t)(w * 1000 + h); m->w = w; m->hh = h; m->use = ++ab_im_tick; m->miss = !ok; m->t = now_ms();
     return ok ? 1 : -1;
 }
 static void ab_img_forget(const char *path, int w, int h)
@@ -1105,7 +1117,7 @@ static void ab_store_row(uint16_t *d, int y, int i, int c0, int c1, int last)
     char tp[300]; ab_thumb_path(h->id, ab_src, tw, th, tp, sizeof tp);
     const uint16_t *im = ab_img_get(tp, tw, th);
     int ix = 16 + (56 - tw) / 2, iy = y + (AB_ROW - th) / 2;
-    if (im) bk_blit_scaled(d, im, tw, th, ix, iy, tw, th, 32, 5, c0, c1);
+    if (im) ab_img_draw(d, im, tp, tw, th, ix, iy, 5, c0, c1);
     else if (iy >= c0 && iy + th <= c1) fill_rrect(d, ix, iy, tw, th, 5, rgb(44, 44, 48), 255);
     int x = 84, mw = W - x - 16;
     int local = ab_src == 0 ? ab_mine_find(h->id) >= 0 : gut_ready(h->id);
@@ -1402,7 +1414,7 @@ static int ab_render_dl(uint16_t *d, int y0, int c0, int c1)
             if (!drawn) {
                 char tp[300]; ab_thumb_path(g->id, 1, 40, 60, tp, sizeof tp);
                 const uint16_t *im = ab_img_get(tp, 40, 60);
-                if (im) { bk_blit_scaled(d, im, 40, 60, tx, ty, 40, 60, 32, 4, c0, c1); drawn = 1; }
+                if (im) { ab_img_draw(d, im, tp, 40, 60, tx, ty, 4, c0, c1); drawn = 1; }
             }
             if (!drawn && ty >= c0 && ty + 60 <= c1) fill_rrect(d, tx, ty, 40, 60, 4, rgb(44, 44, 48), 255);
             if (!g->st && gut_focus_h && g->h == gut_focus_h && ty >= c0 && ty + 60 <= c1) { bk_host_x = tx; bk_host_y = ty; bk_host_w = 40; bk_host_h = 60; bk_host_c0 = c0; }
@@ -1501,7 +1513,7 @@ static void ab_feed_row(uint16_t *d, int y, int i, int c0, int c1, int last)
         char id[24], tp[300]; opds_book_id(e->h, id, sizeof id); ab_thumb_path(id, 1, 40, 60, tp, sizeof tp);
         const uint16_t *im = ab_img_get(tp, 40, 60);
         int ix = 24, iy = y + (AB_ROW - 60) / 2;
-        if (im) bk_blit_scaled(d, im, 40, 60, ix, iy, 40, 60, 32, 5, c0, c1);
+        if (im) ab_img_draw(d, im, tp, 40, 60, ix, iy, 5, c0, c1);
         else if (iy >= c0 && iy + 60 <= c1) fill_rrect(d, ix, iy, 40, 60, 5, rgb(44, 44, 48), 255);
         int x = 84, mw = W - x - 16;
         int local = gut_ready(id); if (local) mw -= 24;
@@ -2341,9 +2353,9 @@ static int ab_run(void)
             vel = 0; if (p.down) { drain_until_up(); continue; }
         } else {
             int busy = ab_jl.pid || ab_jm.pid || ab_jt.pid || ab_play_id || ab_deb_t || ab_res_state == 1 || ab_cur_state == 1 || (ab_ds.alive && !strcmp(ab_ds.state, "dl"));
-            int anim = (ab_res_state == 1 && AB_PG->kind == AP_STORE) || ab_play_id || (ab_nqueued && AB_PG->kind == AP_BOOK && !ab_paused) || (ab_np_ok && ab_np.playing && AB_PG->kind == AP_BOOK) || ab_anim_hint;
+            int anim = (ab_res_state == 1 && AB_PG->kind == AP_STORE) || ab_play_id || (ab_nqueued && AB_PG->kind == AP_BOOK && !ab_paused) || (ab_np_ok && ab_np.playing && AB_PG->kind == AP_BOOK) || ab_anim_hint || now_ms() < ab_fading;
             if (ch || anim || now_ms() < toast_until + 40) { ab_present(); }
-            if (!read_pkt(&p, anim ? 80 : busy ? 100 : 400)) continue;
+            if (!read_pkt(&p, now_ms() < ab_fading ? 16 : anim ? 80 : busy ? 100 : 400)) continue;
         }
         if (!p.down) continue;
         if (ab_searching) kb_map(&p);

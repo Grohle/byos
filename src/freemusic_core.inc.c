@@ -41,6 +41,7 @@ struct fm_item {
     char lic[120];                                   /* licence URL (may be empty) */
     char probe[300];                                 /* Jamendo: FLAC URL to read STREAMINFO from; OPML: the feed URL */
     uint16_t *thumb;                                 /* FM_TH x FM_TH RGB565 (UI) */
+    double th_t;                                     /* when it arrived: fades in over FM_FADE ms (0 = shown as is) */
 };
 struct fm_file {
     char name[170];                                  /* IA: file name; Jamendo: full URL */

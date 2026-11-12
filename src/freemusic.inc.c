@@ -1472,6 +1472,8 @@ static int fm_pressed(int kind, int idx) { return fm_press_kind == kind && fm_pr
 /* ------------------------------------------------------------------ pages */
 enum { FP_ROOT, FP_ALBUM, FP_DL, FP_SET, FP_PICK, FP_SRCS, FP_N };
 static int fm_stack[8], fm_sp;                 /* fm_stack[fm_sp] = current page */
+#define FM_FADE 180.0     /* ms a cover takes to fade in */
+static double fm_fading;  /* a cover is fading in until then: keep drawing */
 #define FM_OVS 70.0f     /* how far a fling may overshoot the ends */
 #define FM_VMAX 4.0f     /* px/ms */
 static float fm_pos[FP_N], fm_vel; static int fm_ch[FP_N];
@@ -1554,7 +1556,11 @@ static void fm_row(uint16_t *d, int y, const struct fm_item *it, int last, int h
 {
     if (y > H || y + FM_RH < 0) return;
     if (fm_pressed(FH_ROW, hit_idx)) for (int yy = y; yy < y + FM_RH && yy < H; yy++) if (yy >= 0) fm_hline(d, 0, W, yy, rgb(38, 38, 42));
-    fm_thumb(d, it->thumb, FM_TH, 16, y + 10, 8);
+    {   /* the cover fades in over the placeholder instead of popping (reviewer r2) */
+        double age = it->thumb && it->th_t > 0 ? now_ms() - it->th_t : FM_FADE;
+        if (age < FM_FADE) { fm_thumb(d, 0, FM_TH, 16, y + 10, 8); mu_blit(d, it->thumb, FM_TH, 16, y + 10, 8, (int)(255 * ease_out(age / FM_FADE))); fm_fading = now_ms() + 30; }
+        else fm_thumb(d, it->thumb, FM_TH, 16, y + 10, 8);
+    }
     draw_text(d, 84, y + 26, it->title, 15, 0xFFFF, W - 84 - 14, 0, H);
     char sub[200], dur[32] = "";
     if (it->tlen > 0) { int m = (int)(it->tlen / 60 + .5f); if (m >= 60) snprintf(dur, sizeof dur, "%d h %02d min", m / 60, m % 60); else snprintf(dur, sizeof dur, "%d min", m < 1 ? 1 : m); }
@@ -2285,7 +2291,7 @@ static int fm_poll(void)
                 struct fm_item *x = &fm_l[s].it[i];
                 if (!fm_same_item(x, j->src, j->sid, j->id)) continue;
                 if (j->rc || !j->px) { x->thumb_state = j->rc == -3 ? 0 : 2; continue; }
-                if (!x->thumb) { x->thumb = malloc(FM_TH * FM_TH * 2); if (x->thumb) memcpy(x->thumb, j->px, FM_TH * FM_TH * 2); }
+                if (!x->thumb) { x->thumb = malloc(FM_TH * FM_TH * 2); if (x->thumb) { memcpy(x->thumb, j->px, FM_TH * FM_TH * 2); x->th_t = now_ms(); } }
                 x->thumb_state = 2;
             }
             if (fm_alb && !fm_alb->it.thumb && fm_same_item(&fm_alb->it, j->src, j->sid, j->id) && j->px) { fm_alb->it.thumb = j->px; j->px = 0; }
@@ -2814,7 +2820,7 @@ static void freemusic_app_at(int ix, int iy)
         for (int s = 0; s < fm_nl; s++) if (fm_l[s].state == 1) busy = 1;
         if ((pg == FP_ALBUM && (fm_alb_state == 1 || fm_ls.on)) || (pg == FP_SET && fm_test_state == 1) || (pg == FP_SRCS && fm_srcs_busy()) || fm_ptr_pg >= 0 || now_ms() - fm_ptr_end < 420) busy = 1;
         pthread_mutex_lock(&fm_dmu); for (int i = 0; i < fm_nq; i++) if (fm_q[i].state == DS_RUN) busy = 1; pthread_mutex_unlock(&fm_dmu);
-        int anim = moving || now_ms() < toast_until + 40;
+        int anim = moving || now_ms() < toast_until + 40 || now_ms() < fm_fading;
         static double last_busy; if (busy && now_ms() - last_busy > 90) { last_busy = now_ms(); dirty = 1; }
         if (fm_press_kind && !fm_press_vis && now_ms() - fm_press_t >= 70) { fm_press_vis = 1; dirty = 1; }
         if (dirty || anim) { fm_render(); present(); dirty = 0; }
