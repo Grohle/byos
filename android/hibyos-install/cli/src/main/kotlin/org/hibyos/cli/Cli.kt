@@ -84,7 +84,7 @@ class Cli(
     private val runner: ProcessRunner = ProcessRunner.SYSTEM,
     private val updateKeys: List<String> = UpdatePackage.RELEASE_KEYS,
     /** Delays before the 3 upload reconnects (2, 4, 8 s by default). */
-    private val retryDelaysMs: List<Long> = listOf(2000, 4000, 8000),
+    internal val retryDelaysMs: List<Long> = listOf(2000, 4000, 8000),
     private val pollMs: Long = 1000,
     private val reconnectWindowMs: Long = 60000,
     /** Silence after which the last progress line is repeated (BYOS_CLI.md section 2, heartbeat). */
@@ -94,9 +94,10 @@ class Cli(
     val cancelled = AtomicBoolean(false)
     private val answers = LinkedBlockingQueue<String>()
     private val eof = "\u0000EOF"
-    private lateinit var a: Args
-    private lateinit var config: Config
+    internal lateinit var a: Args
+    internal lateinit var config: Config
     private var timeoutMs = 15000
+    private val lib by lazy { LibraryCommands(this) }
 
     /** Starts hibysync over adb without --start (build-send waiting for the HiBy after its restart). */
     private var forceStart = false
@@ -120,7 +121,7 @@ class Cli(
             "get" to (setOf("--recursive", "--overwrite", "--no-verify") to emptySet()),
             "mkdir" to (setOf("-p") to emptySet()),
             "mv" to (setOf("--replace") to emptySet()),
-            "rm" to (setOf("-r", "--yes") to emptySet()),
+            "rm" to (setOf("-r", "--yes", "--prune-empty") to emptySet()),
             "df" to (emptySet<String>() to emptySet()),
             "db-pull" to (emptySet<String>() to emptySet()),
             "db-build" to (emptySet<String>() to setOf("--base", "--music", "--out", "--sd-root", "--covers", "--lyrics", "--sort", "--report")),
@@ -134,6 +135,19 @@ class Cli(
             "update-send" to (setOf("--latest", "--allow-downgrade", "--install", "--no-confirm", "--no-wait", "--wait") to emptySet()),
             "update-install" to (setOf("--no-confirm", "--allow-downgrade", "--wait", "--no-wait") to emptySet()),
             "status" to (emptySet<String>() to emptySet()),
+            // library and music sync (LibraryCommands.kt)
+            "lib-index" to (setOf("--pull") to setOf("--db", "--out")),
+            "lib-scan" to (setOf("--full") to setOf("--out")),
+            "lib-art" to (emptySet<String>() to setOf("--size", "--max")),
+            "lib-rescan" to (setOf("--full") to emptySet()),
+            "playlist-ls" to (emptySet<String>() to emptySet()),
+            "playlist-add" to (setOf("--create") to emptySet()),
+            "playlist-rm" to (emptySet<String>() to emptySet()),
+            "music-scan" to (setOf("--full") to setOf("--out")),
+            "sync-plan" to (setOf("--remove-unselected") to setOf("--catalog", "--select", "--dest", "--layout", "--covers", "--out")),
+            "sync-apply" to (setOf("--lyrics", "--yes") to setOf("--covers", "--then")),
+            "cover-cache-reset" to (emptySet<String>() to emptySet()),
+            "art-fix" to (setOf("--dry-run") to setOf("--root")),
         )
 
         val USAGE = """
@@ -211,6 +225,18 @@ class Cli(
                 "update-send" -> cmdUpdateSend()
                 "update-install" -> withConn { c -> installAndWait(c, null) }
                 "status" -> cmdStatus()
+                "lib-index" -> lib.index()
+                "lib-scan" -> lib.scan()
+                "lib-art" -> lib.art()
+                "lib-rescan" -> lib.rescan()
+                "playlist-ls" -> lib.playlistLs()
+                "playlist-add" -> lib.playlistAdd()
+                "playlist-rm" -> lib.playlistRm()
+                "music-scan" -> lib.musicScan()
+                "sync-plan" -> lib.syncPlan()
+                "sync-apply" -> lib.syncApply()
+                "cover-cache-reset" -> lib.coverCacheReset()
+                "art-fix" -> lib.artFix()
                 else -> throw CliError("usage", "unknown command")
             }
             out.event("result", linkedMapOf<String, Any?>("ok" to true).apply { putAll(result) })
@@ -274,7 +300,7 @@ class Cli(
         }.apply { isDaemon = true; name = "byos-cli-stdin"; start() }
     }
 
-    private fun checkCancel() { if (cancelled.get()) throw CliError("cancelled", "cancelled") }
+    internal fun checkCancel() { if (cancelled.get()) throw CliError("cancelled", "cancelled") }
 
     /** Prints a prompt and reads one answer: a JSON {"answer": ...} or plain text; empty or EOF is null. */
     private fun ask(kind: String, message: String, extra: Map<String, Any?> = emptyMap()): Any? {
@@ -298,7 +324,7 @@ class Cli(
         }
     }
 
-    private fun confirm(message: String, extra: Map<String, Any?>): Boolean = when (val v = ask("confirm", message, extra)) {
+    internal fun confirm(message: String, extra: Map<String, Any?>): Boolean = when (val v = ask("confirm", message, extra)) {
         is Boolean -> v
         is String -> v.lowercase() in setOf("y", "yes", "true", "s", "si", "sí", "o", "oui")
         else -> false
@@ -321,7 +347,7 @@ class Cli(
             "sd_state" to if (c.session.sdMounted) "mounted" else "unavailable", "byos_version" to d.byosVersion, "firmware" to d.firmware)
     }
 
-    private fun <T> withConn(allowUnauth: Boolean = false, quiet: Boolean = false, f: (Conn) -> T): T {
+    internal fun <T> withConn(allowUnauth: Boolean = false, quiet: Boolean = false, f: (Conn) -> T): T {
         val c = connect(allowUnauth, quiet)
         try {
             return f(c)
@@ -509,13 +535,13 @@ class Cli(
 
     // ------------------------------------------------------------------ helpers
 
-    private fun remotePath(p: String, allowRoot: Boolean = false): String {
+    internal fun remotePath(p: String, allowRoot: Boolean = false): String {
         val n = BtpPaths.nfc(p.replace('\\', '/').trim('/'))
         BtpPaths.check(n, allowRoot)?.let { throw CliError("usage", "\"$p\" is not a valid path on the HiBy ($it)", path = p) }
         return n
     }
 
-    private fun sha256File(f: File, op: String = "hash", path: String? = null): ByteArray {
+    internal fun sha256File(f: File, op: String = "hash", path: String? = null): ByteArray {
         val md = MessageDigest.getInstance("SHA-256")
         val total = f.length()
         var done = 0L
@@ -535,11 +561,11 @@ class Cli(
         return md.digest()
     }
 
-    private fun rate(done: Long, t0: Long): Long { val dt = System.currentTimeMillis() - t0; return if (dt <= 0) 0 else done * 1000 / dt }
+    internal fun rate(done: Long, t0: Long): Long { val dt = System.currentTimeMillis() - t0; return if (dt <= 0) 0 else done * 1000 / dt }
 
-    private fun hex(b: ByteArray) = Config.hexOf(b)
+    internal fun hex(b: ByteArray) = Config.hexOf(b)
 
-    private fun dfFields(d: DfR): Map<String, Any?> = linkedMapOf(
+    internal fun dfFields(d: DfR): Map<String, Any?> = linkedMapOf(
         "sd_state" to (DfR.SD_STATES.getOrNull(d.sdState) ?: "unknown"), "sd_fs" to (DfR.SD_FS.getOrNull(d.sdFs) ?: "unknown"),
         "sd_total" to d.sdTotal, "sd_free" to d.sdFree, "data_total" to d.dataTotal, "data_free" to d.dataFree)
 
@@ -547,7 +573,7 @@ class Cli(
         "staged_sha256" to if (d.staged == 1) hex(d.stagedSha256) else null, "live_sha256" to hex(d.liveSha256),
         "live_size" to d.liveSize, "last_apply" to (DbStatusR.LAST_APPLY.getOrNull(d.lastApply) ?: "unknown"), "data_free" to d.dataFree)
 
-    private fun writeJson(f: File, m: Map<String, Any?>) {
+    internal fun writeJson(f: File, m: Map<String, Any?>) {
         val tmp = File(f.path + ".tmp")
         tmp.writeText(JsonOut.encode(m) + "\n")
         Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
@@ -909,14 +935,38 @@ class Cli(
                 }
             }
         }
+        val pruned = ArrayList<String>()
         withConn(quiet = quiet) { c ->
             for (p in paths) {
                 checkCancel()
                 c.session.delete(p, a.has("-r"))
                 deleted += p
             }
+            if (a.has("--prune-empty")) pruned += pruneEmpty(c, deleted)
         }
-        return linkedMapOf("deleted" to deleted)
+        return linkedMapOf("deleted" to deleted, "pruned" to pruned)
+    }
+
+    /**
+     * Removes the folders that [removed] left empty, from the deepest up, never a top-level
+     * folder of the card (Music, Audiobooks...). A folder with any entry, hidden ones included,
+     * stays.
+     */
+    internal fun pruneEmpty(c: Conn, removed: Collection<String>): List<String> {
+        val out = ArrayList<String>()
+        val dirs = removed.mapNotNull { p -> p.substringBeforeLast('/', "").ifEmpty { null } }.toSortedSet(compareByDescending<String> { it.count { c -> c == '/' } }.thenBy { it })
+        val seen = HashSet<String>()
+        while (dirs.isNotEmpty()) {
+            val d = dirs.first()
+            dirs.remove(d)
+            if (!d.contains('/') || !seen.add(d)) continue
+            val st = c.session.statOrNull(d) ?: continue
+            if (st.kind != 1 || c.session.list(d, true).isNotEmpty()) continue
+            c.session.delete(d, false)
+            out += d
+            dirs += d.substringBeforeLast('/')
+        }
+        return out
     }
 
     // ------------------------------------------------------------------ library database
@@ -950,7 +1000,7 @@ class Cli(
         return linkedMapOf("path" to dst.path, "size" to size, "sha256" to sha)
     }
 
-    private fun fileSha(f: File): String {
+    internal fun fileSha(f: File): String {
         val md = MessageDigest.getInstance("SHA-256")
         FileInputStream(f).use { s -> val b = ByteArray(1 shl 16); while (true) { val n = s.read(b); if (n < 0) break; md.update(b, 0, n) } }
         return hex(md.digest())

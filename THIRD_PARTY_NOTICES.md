@@ -503,7 +503,11 @@ carries a copy of this document and of the licence texts named below in
   (`core/.../library/LibraryBuilder.kt`) re-implements, in Kotlin, rules learned from that
   script: rebuilding the stock `usrlocal_media.db` on a computer from a copy of the device's
   database, the `a:\` path form with NFC text and a trailing NUL, the stock format codes
-  (`FORMAT_CODES`), the cover file names and the list of rebuilt tables. The notice is kept
+  (`FORMAT_CODES`), the cover file names and the list of rebuilt tables. The cover preparation
+  of byos-cli (`cli/.../CoverArt.kt`, used by `sync-apply` and `art-fix`) follows another idea
+  of that script: art is resized on the computer for the player, and transparent images are
+  put on white (ByOS uses its own Lanczos-3 code, 500 px and a baseline JPEG; no code was
+  copied, and the script's libraries, mutagen and Pillow, are not used). The notice is kept
   because the work is derived from those ideas.
 - Licence text: `LICENSES/hiby-mods-LICENSE.txt`
 
