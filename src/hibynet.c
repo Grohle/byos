@@ -698,6 +698,18 @@ typedef struct { long id; char artist[160], title[160], album[160], first[160]; 
 static lyr_t g_lyr[40]; static int g_nlyr;
 static const char *g_lyr_dir;                    /* lyrics ... OUTDIR: cada resultado tambien en OUTDIR/<id>.lrc */
 static int lyr_save(const char *o, const char *out, int *synced);
+static void norm(const char *s, char *o, size_t cap);
+static int art_unknown(const char *n);
+/* Artista buscado (normalizado): si se conoce, los resultados de OTRO artista se descartan. Antes
+ * la consulta de respaldo "solo titulo" ganaba con titulos genericos: "01 - Intro" de Jack Johnson
+ * acabo con la letra de "Intro" de TLC (medido en el aparato). */
+static char g_lyr_art[256];
+static int lyr_artist_ok(const char *a)
+{
+    if (!g_lyr_art[0]) return 1;
+    char n[256]; norm(a, n, sizeof n);
+    return n[0] && (strstr(n, g_lyr_art) || strstr(g_lyr_art, n));
+}
 
 /* primera linea con texto (sin [mm:ss.xx], <mm:ss.xx> ni [ar:...]); sin cortar UTF-8 */
 static void lyr_first(const char *v, char *out, size_t cap) {
@@ -728,6 +740,7 @@ static void lyr_add(const char *o, double want_dur, int bonus) {
     const char *sl = jget(o, "syncedLyrics"), *pl = jget(o, "plainLyrics");
     int has_s = sl && !jnull(sl), has_p = pl && !jnull(pl);
     if (!has_s && !has_p) return;                /* instrumental / vacio */
+    { char an[160]; jstr(jget(o, "artistName"), an, sizeof an); if (!lyr_artist_ok(an)) return; }
     lyr_t *L = &g_lyr[g_nlyr];
     memset(L, 0, sizeof *L);
     L->id = id; L->ord = g_nlyr++;
@@ -760,6 +773,7 @@ static int cmd_lyrics(int argc, char **argv) {
     const char *art = argv[0], *tit = argv[1];
     double dur = argc > 3 ? atof(argv[3]) : 0;
     g_lyr_dir = argc > 4 && argv[4][0] ? argv[4] : NULL;
+    norm(art, g_lyr_art, sizeof g_lyr_art); if (art_unknown(g_lyr_art)) g_lyr_art[0] = 0;
     char ea[600], et[600], url[2400], q[1300], eq[3000];
     urlenc(art, ea, sizeof ea); urlenc(tit, et, sizeof et);
     int neterr = 0;
