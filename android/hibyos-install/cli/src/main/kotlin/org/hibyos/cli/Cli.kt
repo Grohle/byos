@@ -1335,9 +1335,19 @@ class Cli(
                 checkCancel()
                 val t0 = System.currentTimeMillis()
                 out.progress("put", p, 0, f.length())
-                val r = c.session.put(p, f.length(), DeviceRecord.hex(want.second), if (p == m.upt) Btp.MODE_REPLACE else Btp.MODE_SKIP_IDENTICAL,
-                    f.lastModified() / 1000, Btp.NS_SD, { cancelled.get() }, { d, t -> out.progress("put", p, d, t, rate(d, t0)) }) { off ->
-                    FileInputStream(f).also { s -> s.channel.position(off) }
+                // SKIP_IDENTICAL answers E_EXISTS when the card holds a DIFFERENT file (an older ByOS
+                // folder: every update): that one is replaced. Before, any update stopped at the first
+                // changed file with "already exists".
+                val sendWith = { mode: Int ->
+                    c.session.put(p, f.length(), DeviceRecord.hex(want.second), mode,
+                        f.lastModified() / 1000, Btp.NS_SD, { cancelled.get() }, { d, t -> out.progress("put", p, d, t, rate(d, t0)) }) { off ->
+                        FileInputStream(f).also { s -> s.channel.position(off) }
+                    }
+                }
+                val r = if (p == m.upt) sendWith(Btp.MODE_REPLACE) else try {
+                    sendWith(Btp.MODE_SKIP_IDENTICAL)
+                } catch (e: BtpException) {
+                    if (e.remote && e.code == Btp.E_EXISTS) sendWith(Btp.MODE_REPLACE) else throw e
                 }
                 if (r.result == 1) skipped++ else { written++; bytes += r.size }
             }
