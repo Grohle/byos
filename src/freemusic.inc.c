@@ -588,12 +588,15 @@ static void fm_run_image(struct fm_job *j)
     char raw[160], jpg[170], th[180];
     fm_hpath(big ? FM_CACHE "/cv" : FM_CACHE "/th2", j->url, ".raw", raw, sizeof raw);
     uint16_t *px = fm_load_raw(raw, s);
+    char no[180]; snprintf(no, sizeof no, "%.*s.none", (int)strlen(raw) - 4, raw);
+    if (!px && !big && !access(no, F_OK)) { j->rc = -1; return; }   /* known: not a cover */
     if (!px) {
         snprintf(jpg, sizeof jpg, "%.*s.jpg", (int)strlen(raw) - 4, raw);
         snprintf(th, sizeof th, "%.*s.thumb.raw", (int)strlen(raw) - 4, raw);
         char sz[8]; snprintf(sz, sizeof sz, "%d", big ? 400 : 160);
         char *argv[] = { NETBIN, "cover-get", j->url, jpg, sz, 0 };
         int rc = fm_wait(fm_spawn(argv, 0, 0));
+        if (rc == 5 && !big) { FILE *o = fopen(no, "wb"); if (o) fclose(o); }
         if (!rc) {
             if (big) {
                 char ss[8]; snprintf(ss, sizeof ss, "%d", FM_BIG);
@@ -903,7 +906,8 @@ static void fm_run_dl(int uid)
     }
     if (!err && d.kind == DK_COVER) {
         char *argv[] = { NETBIN, "cover-get", d.url, d.dest, "600", 0 };
-        ok = !fm_wait(fm_spawn(argv, 0, 0));
+        int rc = fm_wait(fm_spawn(argv, 0, 0));
+        ok = rc == 0 || rc == 5;        /* 5: the "cover" is a banner strip, not a cover: none, and that is fine */
         char th[300]; snprintf(th, sizeof th, "%.*s.thumb.raw", (int)strlen(d.dest) - 4, d.dest); unlink(th);
         if (!ok) err = 1;
     } else if (!err) {

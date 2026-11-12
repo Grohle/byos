@@ -1171,7 +1171,10 @@ static void hiby_dlgs_quiet(void)
 static void hud_compose_present_ex(const uint16_t *src, int pill);
 /* la capa (barra de inicio) que tenia la pantalla de HiBy al congelarla la pildora o un aviso:
  * se compone encima mientras esta congelada; antes desaparecia en cada pulsacion de volumen */
-static const struct sprite *cap_ov;
+static const struct sprite *cap_ov, *cap_pend;   /* cap_pend: seen before the first 'C' of a try */
+/* the bar goes back into shared memory BEFORE 'R', so the library draws it in the same copy that
+ * gives the screen back (otherwise one frame, or up to a main-loop poll, without it) */
+static void cap_ov_restore(void);
 static void hud_compose_present(const uint16_t *src) { hud_compose_present_ex(src, 1); }
 static void hud_compose_present_ex(const uint16_t *src, int pill)
 {
@@ -1197,10 +1200,11 @@ static void hud_frame(void)
      * franja del inicio por encima de la app */
     if (launcher_on && hud_main) { launcher_present_hud(); return; }
     if (!hud_cap && !st->capture && !st->held) {           /* pantalla de HiBy: tomarla */
-        cap_ov = ov_cur;                                   /* su barra de inicio se sigue viendo (revisor r3) */
+        if (ov_cur) cap_pend = ov_cur;                     /* su barra de inicio se sigue viendo (revisor r3) */
         st->ov_on = 0; ov_cur = 0; cmd('C');
         double t = now_ms(); while (!st->capture && now_ms() - t < 200) msleep(2);
-        if (!st->capture) return;
+        if (!st->capture) return;                          /* otro intento: cap_pend se conserva */
+        cap_ov = cap_pend; cap_pend = 0;
         hud_cap = 1;
     }
     uint32_t p = st->presents; double t = now_ms();
@@ -1209,7 +1213,7 @@ static void hud_frame(void)
 }
 static void hud_end(void)
 {
-    if (hud_cap) { hud_cap = 0; cmd('R'); double t = now_ms(); while (st->held && now_ms() - t < 200) msleep(2); return; }
+    if (hud_cap) { hud_cap = 0; cap_ov_restore(); cmd('R'); double t = now_ms(); while ((st->capture || st->held) && now_ms() - t < 200) msleep(2); return; }
     if (st->capture && !(launcher_on && hud_main)) {       /* app de ByOS: su imagen, con las mismas capas */
         uint32_t p = st->presents; double t = now_ms();
         /* con la barra de estado y la de inicio como cualquier fotograma de la app: la imagen
@@ -1307,6 +1311,17 @@ static int hud_update(int present_it)
 
 /* decide la capa segun lo que se ve */
 static int music_on;
+static void cap_ov_restore(void)
+{
+    const struct sprite *s = cap_ov; cap_ov = 0; cap_pend = 0;
+    if (!s || !s->w) return;
+    int x = (W - s->w) / 2, y = s == &spr_chev ? CHEV_Y : BAR_Y;
+    st->ov_seq++; __sync_synchronize();
+    memcpy(st->ov_rgb, s->rgb, s->w * s->h * 2); memcpy(st->ov_a, s->a, s->w * s->h);
+    st->ov_x = x; st->ov_y = y; st->ov_w = s->w; st->ov_h = s->h; st->ov_on = 1;
+    __sync_synchronize(); st->ov_seq++;
+    ov_cur = s; ov_cx = x; ov_cy = y;
+}
 static void update_overlay(void)
 {
     if (st->capture || st->held || hud_active || launcher_on || hiby_modal) return;

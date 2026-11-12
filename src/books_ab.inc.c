@@ -210,11 +210,13 @@ static void ab_img_draw(uint16_t *d, const uint16_t *im, const char *path, int w
 /* a book's cover: its real cover (fading in over the generated one when it has just loaded) or
  * the generated one. a5 is the usual 0..32 opacity of bk_blit_scaled (pressed cells pass 22). */
 static const uint16_t *ab_gen_cover(const char *title, const char *author);
+static const uint16_t *ab_gen_cached(const char *title, const char *author);
 static void ab_cover_draw(uint16_t *d, const char *path, const char *title, const char *author, int x, int y, int w, int h, int a5, int r, int c0, int c1)
 {
     const uint16_t *cv = ab_img_get(path, AB_CS, AB_CS);
     uint64_t k = ab_hash(path) ^ (uint64_t)(AB_CS * 1000 + AB_CS); double age = AB_FADE;
     if (cv) for (int i = 0; i < 40; i++) if (ab_im[i].px && ab_im[i].h == k) { age = now_ms() - ab_im[i].t; break; }
+    if (cv && age < AB_FADE && !ab_gen_cached(title, author)) age = AB_FADE;   /* several fading: no rebuild per frame, no fade */
     if (!cv || age < AB_FADE) { const uint16_t *g = ab_gen_cover(title, author); if (g) bk_blit_scaled(d, g, AB_CS, AB_CS, x, y, w, h, a5, r, c0, c1); }
     if (cv) {
         int a = age >= AB_FADE ? a5 : (int)(a5 * ease_out(age / AB_FADE));
@@ -256,6 +258,12 @@ static void ab_img_forget(const char *path, int w, int h)
 static void ab_img_free(void) { for (int i = 0; i < 40; i++) { free(ab_im[i].px); memset(&ab_im[i], 0, sizeof ab_im[i]); } }
 /* portada generada (degradado + titulo), cuadrada s x s, en un hueco de la LRU */
 static uint16_t ab_gen_buf[AB_CS * AB_CS];
+static uint64_t ab_gen_key;
+/* the generated cover only if it is the one already built (no rebuild) */
+static const uint16_t *ab_gen_cached(const char *title, const char *author)
+{
+    return ab_gen_key == (ab_hash(title) ^ ab_hash(author)) ? ab_gen_buf : 0;
+}
 static const uint16_t *ab_gen_cover(const char *title, const char *author)
 {
     static uint64_t key; uint64_t k = ab_hash(title) ^ ab_hash(author);
@@ -270,7 +278,7 @@ static const uint16_t *ab_gen_cover(const char *title, const char *author)
     ab_wrap(tmp, 12, 86, AB_CS - 24, title, 15, 0xFFFF, 19, 3, 0, AB_CS);
     if (author && *author) draw_text(tmp, 12, AB_CS - 14, author, 11, rgb(230, 230, 235), AB_CS - 24, 0, AB_CS);
     for (int y = 0; y < AB_CS; y++) memcpy(ab_gen_buf + y * AB_CS, tmp + y * W, AB_CS * 2);
-    key = k;
+    key = ab_gen_key = k;
     return ab_gen_buf;
 }
 

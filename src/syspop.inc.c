@@ -46,8 +46,8 @@ static void sp_finish(void)
 {
     sp_on = 0; sp_closing = 0;
     if (sp_cap) {                     /* pantalla de HiBy: soltar al reproductor */
-        sp_cap = 0; cmd('R');
-        double t = now_ms(); while (st->held && now_ms() - t < 200) msleep(2);
+        sp_cap = 0; cap_ov_restore(); cmd('R');
+        double t = now_ms(); while ((st->capture || st->held) && now_ms() - t < 200) msleep(2);
         update_overlay();
     } else if (st->capture) {         /* pantalla del shell: volver a la imagen de la app tal cual */
         uint32_t p = st->presents;
@@ -73,11 +73,12 @@ static void sp_start(int kind)
         if (hud_cap) { hud_cap = 0; memcpy(sp_base, fr1, HM_FRAME_BYTES); sp_cap = 1; took = 1; }
     }
     if (!took && !st->capture && !st->held && !launcher_on) {      /* pantalla de HiBy: congelarla */
-        cap_ov = ov_cur;
+        if (ov_cur) cap_pend = ov_cur;
         st->ov_on = 0; ov_cur = 0;
         cmd('C');
         double t = now_ms(); while (!st->capture && now_ms() - t < 200) msleep(2);
         if (!st->capture) { lg("aviso: no se pudo congelar la pantalla de HiBy"); return; }
+        cap_ov = cap_pend; cap_pend = 0;
         memcpy(sp_base, fr0_shm, HM_FRAME_BYTES);
         sp_cap = 1;
     }

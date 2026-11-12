@@ -71,7 +71,7 @@ static const char *g_ua = UA;     /* HIBYNET_UA lo cambia (la radio se identific
 #define IMG_CAP (16 * 1024 * 1024)/* tope de descarga de imagen */
 #define THUMB 96
 
-enum { E_OK = 0, E_NONE = 1, E_NET = 2, E_USAGE = 3, E_IO = 4 };
+enum { E_OK = 0, E_NONE = 1, E_NET = 2, E_USAGE = 3, E_IO = 4, E_NOTCOVER = 5 };   /* 5: cover-get, the image is a strip (> 2:1), not a cover */
 
 static int g_verbose;
 static double g_deadline;   /* reloj monotonic; 0 = sin limite */
@@ -1215,7 +1215,7 @@ static int cmd_cover_get(int argc, char **argv) {
         strncat(th, ".thumb.raw", sizeof th - strlen(th) - 1);
         rc = write_thumb(th, img, w, h);
         if (!rc) printf("%s\t%d\t%d\t%s\n", out, w, h, th);
-        if (rc == 1) { unlink(out); free(img); logf_("no es una caratula (%dx%d)", w, h); return E_NONE; }
+        if (rc == 1) { unlink(out); free(img); logf_("no es una caratula (%dx%d)", w, h); return E_NOTCOVER; }
     }
     free(img);
     return rc ? E_IO : E_OK;
