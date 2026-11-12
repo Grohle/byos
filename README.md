@@ -102,6 +102,13 @@ steps 1 to 4 on your phone: it downloads the official v1.3, builds ByOS on the p
 sends it to the player over Wi-Fi (the player's own "Import Music via Wi-Fi" screen) or lets
 you copy it by hand. Get the APK and its SHA-256 from the project's releases page.
 
+**On Windows?** The **[ByOS Desktop](desktop/README.md)** app (preview) does the same from
+your computer over the USB cable: it downloads the official v1.3 (or uses the file you pick),
+builds ByOS and installs it. It also manages the SD card, the music library and playlists.
+Download `ByOS-Desktop-<version>-windows.zip` from the releases page, unzip it and
+double-click `ByOS Desktop.cmd` (it needs Node.js 20+ and Java 17+; it tells you where to
+get them if they are missing).
+
 **Why do I have to build the firmware myself?** HiBy's firmware belongs to HiBy, so this
 project does not share it, not even modified. You download the official firmware from HiBy
 and a script adds ByOS to *your* copy. It takes one command and about 5 minutes.
