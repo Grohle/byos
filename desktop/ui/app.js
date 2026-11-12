@@ -4,6 +4,7 @@
 
 import { t, setLang, getLang, detectLang, LANGS, errorMessage } from '/i18n.js';
 import { checkPath } from '/btp-path.js';
+import { emptyFlow, applyInfo, startStep, applyEvent, finishStep, fraction, STEPS } from '/build-flow.js';
 
 const TOKEN = document.querySelector('meta[name="byos-token"]').content;
 const $ = (id) => document.getElementById(id);
@@ -33,6 +34,8 @@ const state = {
   showHidden: false,
   jobs: [],
   scanning: false,
+  // Updates page: "build-info", the build-and-install steps, the job that runs now.
+  upd: { info: null, flow: emptyFlow(), running: false, job: null, demo: null },
 };
 
 // ---- formatting -------------------------------------------------------------------------
@@ -103,6 +106,7 @@ async function runCli(command, params, opts = {}) {
       ? await api(opts.upload, { method: 'POST', raw: opts.file })
       : await api('/api/jobs', { method: 'POST', body: { command, params } });
     job.id = id;
+    opts.onStarted?.(job);
     job.final = await follow(id, job);
   } catch (e) {
     job.final = { v: 1, event: 'error', ok: false, code: e.status === 503 ? 'no_cli' : 'usage', message: e.message };
@@ -195,6 +199,7 @@ function selectDevice(id) {
     loadFolder(state.pendingPath ?? '');
     state.pendingPath = null;
   }
+  if (state.tab === 'updates') loadBuildInfo();
 }
 
 // The address keeps the tab and folder (#files/Music/ABBA), so a reload comes back to them.
@@ -359,6 +364,274 @@ async function pairFlow() {
   }
 }
 
+// ---- updates: build ByOS on this computer and install it over the cable ------------------------
+// Four byos-cli runs (docs/DESKTOP_APP.md 5.7): firmware-fetch (or a picked file), build,
+// build-send --install. lib/build-flow.mjs turns their lines into the four steps.
+
+const isUsb = (d) => !!d && d.transport === 'usb' && d.reachable !== false && state.upd.demo?.usb !== false;
+
+function versionNewer(a, b) {
+  const p = (v) => String(v ?? '').split(/[.+-]/).map((x) => Number.parseInt(x, 10) || 0);
+  const x = p(a); const y = p(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  }
+  return false;
+}
+
+async function loadBuildInfo() {
+  if (state.upd.demo || state.upd.running) return;
+  const final = await runCli('build-info', {}, { quiet: true });
+  if (state.upd.running) return;
+  state.upd.info = final.ok ? final : null;
+  state.upd.infoError = final.ok ? null : final;
+  // A finished install stays on screen; otherwise the steps start from what is already there.
+  if (state.upd.flow.phase !== 'done') state.upd.flow = applyInfo(emptyFlow(), final);
+  renderUpdates();
+}
+
+// Runs one byos-cli job for one step and follows it into the flow.
+async function runStep(name, command, params, opts = {}) {
+  const f = state.upd.flow;
+  startStep(f, name);
+  renderUpdates();
+  const final = await runCli(command, params, {
+    ...opts,
+    onStarted: (job) => { state.upd.job = job; },
+    onEvent: (ev) => {
+      if (ev.event === 'progress' || ev.event === 'warn') {
+        applyEvent(f, name, ev);
+        renderUpdates();
+      }
+    },
+  });
+  state.upd.job = null;
+  finishStep(f, name, final);
+  renderUpdates();
+  return final;
+}
+
+function resetFailed() {
+  const f = state.upd.flow;
+  if (f.phase === 'done') state.upd.flow = applyInfo(emptyFlow(), state.upd.info ?? {});
+  for (const s of STEPS) if (state.upd.flow.steps[s].status === 'failed') state.upd.flow.steps[s].status = 'todo';
+  state.upd.flow.error = null;
+  state.upd.flow.errorStep = null;
+}
+
+// The whole flow, hands-free after the one confirmation: firmware, build, copy, install.
+async function buildAndInstall() {
+  const u = state.upd;
+  if (u.running || u.demo) return;
+  resetFailed();
+  u.running = true;
+  u.flow.phase = 'running';
+  renderUpdates();
+  try {
+    const f = u.flow;
+    if (f.steps.firmware.status !== 'done') {
+      if (!(await runStep('firmware', 'firmware-fetch', {}, { title: t('updJobFirmware') })).ok) return;
+    }
+    if (f.steps.build.status !== 'done') {
+      if (!(await runStep('build', 'build', {}, { title: t('updJobBuild') })).ok) return;
+    }
+    const d = selectedDevice();
+    if (!isUsb(d)) {
+      f.phase = 'idle';
+      return;
+    }
+    const v = u.info?.hibyos_version ?? '';
+    const ok = await sheet({ title: t('updConfirmTitle', { v }), body: t('updConfirmBody'), okText: t('updInstall') });
+    if (!ok.ok) {
+      f.phase = 'idle';
+      return;
+    }
+    const final = await runStep('send', 'build-send', { device: deviceSpec(d), install: true, yes: true }, { title: t('updJobInstall', { v }) });
+    if (final.ok) {
+      refreshDevices();
+      loadStatus();
+    }
+  } finally {
+    u.running = false;
+    u.job = null;
+    renderUpdates();
+  }
+}
+
+// A firmware file the user already has (for example from HiBy's page): byos-cli checks it.
+async function useFirmwareFile(file) {
+  const u = state.upd;
+  if (u.running || u.demo || !file) return;
+  resetFailed();
+  u.running = true;
+  try {
+    await runStep('firmware', 'firmware-fetch', null, { title: t('updJobCheckFile'), upload: '/api/firmware', file });
+    if (u.flow.phase !== 'failed') u.flow.phase = 'idle';
+  } finally {
+    u.running = false;
+    renderUpdates();
+  }
+}
+
+function cancelUpdate() {
+  const job = state.upd.job;
+  if (job?.id) api(`/api/jobs/${job.id}/cancel`, { method: 'POST', body: {} }).catch(() => {});
+}
+
+function stepTitle(name, info) {
+  const v = info?.hibyos_version ?? '';
+  switch (name) {
+    case 'firmware': return t('updStepFirmware', { v: info?.firmware?.version ?? '' });
+    case 'build': return t('updStepBuild', { v });
+    case 'send': return t('updStepSend');
+    default: return t('updStepInstall');
+  }
+}
+
+function stepDetail(name, s, info, flow) {
+  const d = selectedDevice();
+  if (s.status === 'failed') {
+    const e = flow.error;
+    if (name === 'firmware' && e?.code === 'verify') return t('updFwWrong', { file: info?.firmware?.file ?? 'r3ii_2025.upt' });
+    if (name === 'firmware' && e?.code === 'no_device') return t('updFwOffline');
+    if (name === 'build') return `${t('updBuildFailed')} ${e?.message ?? ''}`.trim();
+    if (name === 'install' && e?.btp?.name !== 'E_BATTERY' && e?.code === 'remote') return `${t('updRefused')} ${e?.message ?? ''}`.trim();
+    return errorMessage(e);
+  }
+  const fw = info?.firmware;
+  if (name === 'firmware') {
+    if (s.status === 'active') {
+      return s.phase === 'check' ? t('updFwChecking')
+        : s.total ? t('updFwDownloading', { done: fmtBytes(s.done), total: fmtBytes(s.total) }) : t('updFwStarting');
+    }
+    if (s.status === 'done') return s.detail === 'file' ? t('updFwFromFile') : t('updFwReady');
+    return t('updFwTodo', { size: fmtBytes(fw?.size) });
+  }
+  if (name === 'build') {
+    if (s.status === 'active') return t(`stage_${s.phase ?? 'check'}`);
+    if (s.status === 'done') return t('updBuildDone', { size: fmtBytes(flow.buildSize || null) || '' });
+    return t('updBuildTodo');
+  }
+  if (name === 'send') {
+    if (s.status === 'active') {
+      return s.phase === 'put' && s.total ? t('updSendPut', { done: fmtBytes(s.done), total: fmtBytes(s.total) }) : t('updSendHash');
+    }
+    if (s.status === 'done') return flow.parked.length ? `${t('updSendDone')} ${t('updParked', { names: flow.parked.join(', ') })}` : t('updSendDone');
+    return isUsb(d) ? t('updSendTodo') : t('updNeedsUsb');
+  }
+  if (s.status === 'active') return s.phase === 'reconnect' ? t('updInstallReconnect') : t('updInstallReboot');
+  if (s.status === 'done') return t('updInstallDone', { v: flow.result?.version ?? info?.hibyos_version ?? '' });
+  return t('updInstallTodo');
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const MARKS = { done: 'M3.5 8.5 6.5 11.5 12.5 4.5', failed: 'M4.5 4.5l7 7M11.5 4.5l-7 7' };
+
+function stepMark(s, i) {
+  const m = el('span', { class: 'mark' });
+  if (s.status === 'active') m.append(el('span', { class: 'spinner' }));
+  else if (MARKS[s.status]) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(SVG_NS, 'path');
+    for (const [k, v] of Object.entries({ d: MARKS[s.status], fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) path.setAttribute(k, v);
+    svg.append(path);
+    m.append(svg);
+  } else m.textContent = String(i + 1);
+  return m;
+}
+
+function renderUpdates() {
+  const u = state.upd;
+  const d = selectedDevice();
+  const info = u.info;
+  const f = u.flow;
+  // after an install, the new version (the device list catches up on its next refresh)
+  const installed = f.phase === 'done' && f.result?.version ? f.result.version : d?.byos_version ?? null;
+  $('upd-title').textContent = installed ? t('updInstalled', { v: installed }) : t('updTitleNoDevice');
+  const pill = $('upd-pill');
+  if (info) {
+    const newer = installed && versionNewer(info.hibyos_version, installed);
+    $('upd-sub').textContent = newer
+      ? t('updNewer', { v: info.hibyos_version, fw: info.firmware?.version ?? '' })
+      : t('updSame', { v: info.hibyos_version, fw: info.firmware?.version ?? '' });
+    pill.hidden = !newer && f.phase !== 'done';
+    pill.textContent = f.phase === 'done' ? t('updPillDone') : t('updPillNew');
+    pill.className = `pill${f.phase === 'done' ? ' ok' : ''}`;
+  } else {
+    $('upd-sub').textContent = u.infoError ? errorMessage(u.infoError) : t('updLoading');
+    pill.hidden = true;
+  }
+
+  const list = $('upd-steps');
+  list.replaceChildren();
+  STEPS.forEach((name, i) => {
+    const s = f.steps[name];
+    const frac = fraction(s);
+    const li = el('li', { class: `step ${s.status}` },
+      stepMark(s, i),
+      el('div', { class: 'step-body' },
+        el('div', { class: 'step-title', text: stepTitle(name, info) }),
+        el('div', { class: 'step-detail', text: stepDetail(name, s, info, f) }),
+        s.status === 'active'
+          ? el('div', { class: `step-bar${frac === null ? ' wait' : ''}` }, el('span', { style: frac === null ? '' : `width:${(frac * 100).toFixed(1)}%` }))
+          : null));
+    list.append(li);
+  });
+
+  const res = $('upd-result');
+  res.hidden = !(f.phase === 'done' || (f.phase === 'failed' && f.error?.code !== 'cancelled'));
+  res.className = `upd-result${f.phase === 'done' ? ' ok' : ' fail'}`;
+  res.replaceChildren();
+  if (f.phase === 'done') {
+    res.append(el('strong', { text: t('updDoneTitle', { v: f.result?.version ?? info?.hibyos_version ?? '' }) }), el('span', { text: t('updDoneBody') }));
+  } else if (!res.hidden) {
+    res.append(el('strong', { text: t('updFailTitle') }), el('span', { text: errorMessage(f.error) }));
+    if (f.error?.page) res.append(el('span', { class: 'muted', text: t('updPage', { page: f.error.page }) }));
+  }
+
+  const go = $('btn-upd-go');
+  const usb = isUsb(d);
+  go.hidden = u.running || f.phase === 'done';
+  go.disabled = !info;
+  if (f.phase === 'failed') go.textContent = t('retry');
+  else if (!usb) go.textContent = f.steps.build.status === 'done' ? t('updConnectUsb') : t('updBuildOnly');
+  else go.textContent = installed && info && installed === info.hibyos_version ? t('updReinstall') : t('updGo');
+  if (!usb && f.steps.build.status === 'done') go.disabled = true;
+  $('btn-upd-cancel').hidden = !u.running;
+  $('btn-fw-file').hidden = u.running || f.steps.firmware.status === 'done';
+}
+
+// Demo mode only (?demo=NAME): a fixed picture of one state, for screenshots and design review.
+function demoUpdates(name) {
+  const info = {
+    ok: true, hibyos_version: '0.9.0', bundle: 'builtin',
+    firmware: { version: '1.3', file: 'r3ii_2025.upt', size: 46759936, can_download: true },
+    firmware_ready: false, build: null,
+  };
+  const f = emptyFlow();
+  const doneTo = (n) => { for (const s of STEPS.slice(0, n)) Object.assign(f.steps[s], { status: 'done', detail: 'download' }); };
+  f.sendTotal = 47845376 + 8063528;
+  f.buildSize = 47845376;
+  const usb = name !== 'wifi';
+  switch (name) {
+    case 'downloading': f.phase = 'running'; Object.assign(f.steps.firmware, { status: 'active', phase: 'download', done: 19 * 1024 ** 2, total: 46759936, unit: 'bytes' }); break;
+    case 'building': f.phase = 'running'; doneTo(1); Object.assign(f.steps.build, { status: 'active', phase: 'verify_rootfs', done: 560, total: 1000, unit: 'permille' }); break;
+    case 'sending': f.phase = 'running'; doneTo(2); Object.assign(f.steps.send, { status: 'active', phase: 'put', done: 31 * 1024 ** 2, total: f.sendTotal, unit: 'bytes' }); break;
+    case 'installing': f.phase = 'running'; doneTo(3); Object.assign(f.steps.install, { status: 'active', phase: 'reboot' }); break;
+    case 'done': f.phase = 'done'; doneTo(4); f.result = { version: '0.9.0', state: 'installed' }; break;
+    case 'failed': f.phase = 'failed'; doneTo(2); f.steps.send.status = 'done'; f.steps.install.status = 'failed'; f.errorStep = 'install';
+      f.error = { ok: false, code: 'remote', message: "the HiBy's battery is at 12 %", btp: { code: 67, name: 'E_BATTERY' } }; break;
+    case 'wifi': doneTo(2); break;
+    case 'ready': doneTo(1); break;
+    default: break;
+  }
+  if (['building', 'sending', 'installing', 'done', 'failed', 'wifi', 'ready'].includes(name)) info.firmware_ready = true;
+  state.upd = { info, flow: f, running: f.phase === 'running', job: null, demo: { name, usb } };
+  state.tab = 'updates';
+}
+
 // ---- sheets -------------------------------------------------------------------------------------
 
 let sheetBusy = Promise.resolve();
@@ -501,6 +774,7 @@ function renderMain() {
   renderBanner();
   renderSummary();
   renderFiles();
+  renderUpdates();
 }
 
 function renderBanner() {
@@ -530,6 +804,7 @@ function capacityBar(container, parts, total) {
   container.replaceChildren();
   for (const [cls, value] of parts) {
     const span = el('span', { class: cls });
+    if (value > 0) span.style.minWidth = '4px';   // a few MB on a 128 GB card still shows
     container.append(span);
     requestAnimationFrame(() => { span.style.flexBasis = `${total ? (100 * value) / total : 0}%`; });
   }
@@ -545,7 +820,7 @@ function renderSummary() {
     $('capacity-legend').replaceChildren(
       el('span', {}, el('i', { style: 'background:var(--accent)' }), t('used'), el('span', { class: 'v', text: fmtBytes(usedBytes) })),
       el('span', {}, el('i', { style: 'background:var(--cap-free)' }), t('freeLabel'), el('span', { class: 'v', text: fmtBytes(sd.sd_free) })),
-      el('span', { class: 'muted', text: fmtBytes(sd.sd_total) }),
+      el('span', { class: 'muted', text: t('totalCap', { size: fmtBytes(sd.sd_total) }) }),
     );
   } else {
     capacityBar($('capacity'), [], 1);
@@ -688,8 +963,14 @@ function wire() {
       saveLocation();
       renderMain();
       if (state.tab === 'files' && !state.entries.length) loadFolder(state.cwd);
+      if (state.tab === 'updates') loadBuildInfo();
     });
   }
+
+  $('btn-upd-go').addEventListener('click', () => buildAndInstall());
+  $('btn-upd-cancel').addEventListener('click', () => cancelUpdate());
+  $('btn-fw-file').addEventListener('click', () => $('fw-input').click());
+  $('fw-input').addEventListener('change', (e) => { useFirmwareFile(e.target.files?.[0]); e.target.value = ''; });
 
   $('btn-up').addEventListener('click', () => {
     const i = state.cwd.lastIndexOf('/');
@@ -742,6 +1023,9 @@ async function main() {
     const badge = $('mode-badge');
     if (state.info.mock) { badge.hidden = false; badge.textContent = t('mockBadge'); }
     if (state.info.error) { badge.hidden = false; badge.className = 'badge warn'; badge.textContent = t('cliMissing'); badge.title = state.info.error; }
+    // Demo mode only: ?demo=NAME shows one fixed state of the Updates page (README, screenshots).
+    const demo = new URLSearchParams(location.search).get('demo');
+    if (state.info.mock && demo) demoUpdates(demo);
   } catch { /* shown by the device list */ }
   renderLcd();
   renderMain();

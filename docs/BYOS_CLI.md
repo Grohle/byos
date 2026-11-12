@@ -121,7 +121,10 @@ the same `put` again resumes.
 |---|---|
 | `client.key` | the client static X25519 secret `cs` (32 bytes). Created on first use, readable only by the user (POSIX 0600; on Windows, an ACL for the current user only). Never printed. |
 | `devices.json` | paired devices: `[{"id", "name", "public_key" (Ds hex), "paired", "last_address", "last_seen"}]`, written to `.tmp` and then renamed |
-| `cache/` | downloaded firmware and release files (`firmware-fetch`, `update-send --latest`) |
+| `cache/` | downloaded release files (`update-send --latest`) |
+| `cache/bundle/` | the ByOS files: `builtin.zip` (unpacked from the jar), `updated.zip` (`bundle-update`) |
+| `cache/firmware/` | HiBy's official firmware and its `firmware.ok` check record (`firmware-fetch`) |
+| `cache/build/` | the last build: `r3ii_2025.upt`, `ByOS/`, `result.txt`, `build.json` (`build`, `build-send`) |
 
 ## 4. Connection
 
@@ -131,7 +134,7 @@ Every device command connects first:
    the connection is refused or closed before HELLO (adb accepts and drops it when nothing
    listens on the device), the daemon is not running. byos-cli then prints
    `warn {"code": "daemon_not_running"}` and, only with `--start`, runs
-   `adb shell /usr/data/hibymod/bin/hibysync serve --idle-exit 300 --detach` and retries for
+   `adb shell /usr/data/hibymod/shell/hibysync serve --idle-exit 300 --detach` (where the installer puts it; `bin/hibysync` for a hand-copied daemon) and retries for
    5 s. Otherwise it fails with `no_device` and a message asking the user to open
    *Settings › ByOS Sync* on the HiBy.
 2. **Wi-Fi**: the address from discovery or `devices.json`, then TCP to port 7340, HELLO, and
@@ -334,20 +337,133 @@ pull and build again".
 Result: `staged` (true), `sha256`, `live_sha256`, `restart_needed` (true), `message` ("Restart
 the HiBy to use the new library").
 
+### Build ByOS: the ByOS files
+
+The firmware and build commands below use the **same code as the Android app**: the core's
+`BundleStore`, `FirmwareCache` and `ByosBuild` (`core/.../Build.kt`) on top of `Patcher` and
+`FirmwareFetcher`. Which ByOS files (the "bundle") they build with:
+
+1. `--bundle BUNDLE.zip`, when given;
+2. otherwise the bundle **built into `byos-cli.jar`** (Gradle copies the Android app's
+   `app/src/main/assets/hibyos-bundle.zip` into the jar), unpacked once to
+   `cache/bundle/builtin.zip`;
+3. or, when it is newer, a bundle downloaded by `bundle-update` (`cache/bundle/updated.zip`).
+   The Android app follows the same rule.
+
+### build-info
+
+```
+byos-cli build-info [--bundle BUNDLE.zip] [--dir DIR]
+```
+
+No device and no network. Says what a build would use and what is already done.
+
+Result: `hibyos_version`, `generated_from`, `bundle` (`builtin`, `updated` or `file`),
+`bundle_path`, `firmware` (`label`, `version`, `file`, `size`, `md5`, `sha256`, `build`,
+`page`, `can_download`), `firmware_ready` (the official firmware is in `cache/firmware/` and
+was checked), `firmware_path`, and `build`: `null`, or the finished build in `DIR` (default
+`cache/build/`) made from these ByOS files (`dir`, `upt`, `size`, `sha256`, `hibyos_version`,
+`build_id`, `files`, `sd_size`).
+
+### bundle-update
+
+```
+byos-cli bundle-update [--check]
+```
+
+Asks the project's releases for newer ByOS files (the signed index named in the built-in
+bundle, checked with the release keys of the built-in bundle, never with keys from a download)
+and, without `--check`, downloads them (`progress op "download"`) to `cache/bundle/updated.zip`.
+This is the Android app's "Check for updates" of the ByOS files.
+
+Result: `current`, `latest`, `available` (bool), `updated` (bool), `size`.
+
 ### firmware-fetch
 
 ```
-byos-cli firmware-fetch [--bundle BUNDLE.zip] [--out FILE.upt]
+byos-cli firmware-fetch [--bundle BUNDLE.zip] [--from FILE.upt] [--out FILE.upt]
 ```
 
-Downloads the **official** HiBy firmware that the ByOS bundle is made for (the bundle's
-`FirmwareSpec`: HiBy's own links, tried in order), with resume, into `cache/` or `--out`. It
-checks size, MD5 and SHA-256 with the core's `Downloader` and `Patcher.identify`. HiBy's
-firmware is never redistributed by ByOS: it always comes from HiBy's servers to the user's
-computer. If no link works, the error gives the `page` URL so the user can download the file
-themselves.
+Gets the **official** HiBy firmware that the ByOS bundle is made for and keeps it, checked,
+in `cache/firmware/` (the file under the bundle's name plus `firmware.ok` with its size and
+SHA-256, written only after the check):
 
-Result: `path`, `version`, `size`, `md5`, `sha256`.
+- Without `--from`: if the cache already holds the right file, nothing is downloaded
+  (`cached: true`). Otherwise it downloads from the bundle's `FirmwareSpec` (HiBy's own links,
+  tried in order, with resume): `progress op "download"` (bytes), then `op "check"`
+  (permille). Size, MD5 and SHA-256 must match. If no link works, the error carries the `page`
+  URL so the user can download the file themselves.
+- `--from FILE.upt`: a file the user already has. It is checked (`op "check"`) and copied
+  into the cache. A wrong file is `error verify` with its `size` and `md5`, and nothing is kept.
+- `--out FILE.upt` also writes a copy there.
+
+HiBy's firmware is never redistributed by ByOS: it always comes from HiBy's servers to the
+user's computer.
+
+Result: `path`, `version`, `size`, `md5`, `sha256`, `cached` (bool), `source` (`download`,
+`file` or `cache`).
+
+### build
+
+```
+byos-cli build [--bundle BUNDLE.zip] [--firmware FILE.upt] [--out DIR] [--force]
+```
+
+Builds ByOS for the HiBy from the official firmware (by default the one `firmware-fetch` kept)
+into `DIR` (default `cache/build/`), with no device and no network:
+
+```
+DIR/r3ii_2025.upt   the ByOS firmware (the patched official firmware)
+DIR/ByOS/...        the ByOS folder for the card (the bundle's SD files, each checked)
+DIR/result.txt      the core's build record (the same file the Android app keeps)
+DIR/build.json      what build-send copies, in copy order, with sizes and SHA-256
+```
+
+Progress: `op "patch"` with `unit "permille"` for the whole patch and an extra `stage` key
+(`check`, `read`, `apply`, `build`, `verify_rootfs`, `write`, `verify_upt`, in this order),
+then `op "export"` (bytes) for the ByOS folder. A finished build of the same ByOS files is
+reused (`cached: true`) unless `--force` or `--firmware` is given. The patch takes a few
+seconds on a PC. Wrong firmware: `error verify`. No firmware yet: `error usage`.
+
+Result: `out`, `upt`, `size`, `md5`, `sha256`, `hibyos_version`, `build_id`, `files` (files
+in the ByOS folder), `sd_size`, `cached`.
+
+### build-send
+
+```
+byos-cli build-send [--dir DIR] [--install [--yes] [--no-wait] [--wait-max S]]
+```
+
+Copies a build to the HiBy and, with `--install`, installs it **hands-free**. **USB only**:
+over Wi-Fi it is `error usage` before anything is sent (firmware files never travel over
+Wi-Fi, DESKTOP_APP.md 5.7).
+
+1. Every file of `build.json` is hashed again (`op "hash"`). A file that changed since the
+   build is `error verify` and nothing is sent.
+2. Other `.upt` files at the card root are moved to `ByOS/firmware/parked/` (`warn` with code
+   `parked` for each): the recovery flashes the first one it finds (`update.upt` first), so
+   only the ByOS firmware may be there.
+3. The ByOS folder is copied with SKIP_IDENTICAL (a second run copies only what changed), in
+   `build.json` order: the payload's `MANIFEST.md5` and `VERSION` last, so a copy that stops
+   half way leaves the old version on the card and the HiBy does not install a half-copied
+   payload. Then the firmware goes to the card root with REPLACE. `op "put"` per file.
+4. With `--install`: a `prompt {"kind": "confirm", "version": ...}` (or `--yes`), then a
+   battery check (at least 30 % or charging, else `error remote` with `E_BATTERY`). Then
+   byos-cli runs, over adb, the HiBy's own reinstall command
+   `/usr/bin/hibymod reinstall --yes`, the same command the HiBy's *Software Update › On the
+   SD card* page runs. It checks that HiBy's recovery is intact and that the `.upt` at the
+   card root is a firmware image, switches to the recovery and restarts. If it refuses
+   (`abortado: ...`), that is `error remote` with its message and nothing restarts.
+5. byos-cli waits for the HiBy (`op "reboot"`, then `op "reconnect"`, both repeated as
+   heartbeats): the recovery installs the firmware, ByOS starts and installs its folder from
+   the card (one more restart when the payload changed). It starts `hibysync` over adb when
+   needed and checks `byos_version` in HELLO. The same version as before only counts after the
+   HiBy was seen restarting. Default limit 900 s (`--wait-max`), then `error timeout`.
+   `--no-wait` returns right after the restart was started (`state "rebooting"`).
+
+Result: `version`, `upt`, `files`, `written`, `skipped`, `bytes`, `parked` (list), `state`
+(`sent` without `--install`, `rebooting` with `--no-wait`, `installed`), `installed` (the
+version the HiBy reported).
 
 ### patch
 
@@ -355,12 +471,12 @@ Result: `path`, `version`, `size`, `md5`, `sha256`.
 byos-cli patch --firmware FILE.upt [--bundle BUNDLE.zip] --out BYOS.upt [--work DIR]
 ```
 
-Builds the ByOS firmware from the user's official firmware with the core's `Patcher` (the same
-code as the Android app). `progress` reports the patcher stages (`op` = stage name, `unit`
-`"permille"`). Wrong firmware: `error verify`.
+Builds only the ByOS firmware file from the user's official firmware with the core's
+`Patcher` (the same code as the Android app). `progress` reports the patcher stages
+(`op` = stage name, `unit` `"permille"`). Wrong firmware: `error verify`. `build` is the
+complete version of this command (firmware plus ByOS folder plus record).
 
-Result: `out`, `size`, `md5`, `sha256`, `hibyos_version`. Installing a patched firmware still
-goes through HiBy's recovery (see the README). byos-cli does not flash.
+Result: `out`, `size`, `md5`, `sha256`, `hibyos_version`.
 
 ### update-send
 
@@ -445,6 +561,12 @@ $ java -jar byos-cli.jar --device wifi connect --pair
   written in Kotlin for tests only) over a loopback socket. They check the JSON-lines output
   (one `start`, one final `result`/`error`, exit codes), PUT resume after a dropped connection,
   CREATE vs REPLACE vs SKIP_IDENTICAL, `E_SD_UNAVAILABLE` handling, cancellation, and pairing
-  with a right and a wrong code.
+  with a right and a wrong code. For the build commands: the built-in bundle, a wrong firmware
+  file, `build` without firmware, and `build-send` against the fake device (parking a stray
+  `update.upt`, copy order with the payload version last, the confirmation prompt, a low
+  battery, the HiBy refusing the reinstall, a changed build, Wi-Fi refused, and the wait for
+  the new version after the restart, with a fake `adb`).
+- `:core` tests `Build.kt` on made-up firmware (`BuildTest`): the build record, the copy
+  order, the ByOS folder export, the firmware cache and the bundle store.
 - No test talks to a real HiBy. Device tests follow the project's device rules and are run by
   hand.

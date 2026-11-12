@@ -612,10 +612,123 @@ class CliTest {
     }
 
     @Test
-    fun firmwareFetchNeedsBundle() {
-        val r = run("firmware-fetch", device = null)
-        assertEquals(1, r.code)
+    fun firmwareFetchMissingBundle() {
+        val r = run("firmware-fetch", "--bundle", File(dir, "none.zip").path, device = null)
+        assertEquals(5, r.code)
         assertNull(r.last["btp"])
         assertNotNull(r.last["message"])
+    }
+
+    // ------------------------------------------------------------------ ByOS build (no network, no real firmware)
+
+    @Test
+    fun buildInfoUsesTheBuiltInBundle() {
+        val r = run("build-info", device = null)
+        assertEquals(r.raw, 0, r.code)
+        assertEquals("builtin", r.last["bundle"])
+        assertTrue((r.last["hibyos_version"] as String).isNotEmpty())
+        assertEquals(false, r.last["firmware_ready"])
+        assertNull(r.last["build"])
+        val fw = r.last["firmware"] as Map<*, *>
+        assertTrue((fw["file"] as String).endsWith(".upt"))
+        // unpacked once into the cache, like the Android app does
+        assertTrue(File(cfg, "cache/bundle/builtin.zip").isFile)
+    }
+
+    @Test
+    fun firmwareFromAWrongFileIsRefused() {
+        val junk = File(dir, "junk.upt"); junk.writeBytes(data(70_000))
+        val r = run("firmware-fetch", "--from", junk.path, device = null)
+        assertEquals(r.raw, 6, r.code)
+        assertEquals("verify", r.last["code"])
+        assertNotNull(r.last["md5"])
+        assertFalse(File(cfg, "cache/firmware/firmware.ok").exists())
+        assertEquals(false, run("build-info", device = null).last["firmware_ready"])
+    }
+
+    @Test
+    fun buildNeedsTheFirmwareFirst() {
+        val r = run("build", device = null)
+        assertEquals(1, r.code)
+        assertTrue(r.last["message"].toString().contains("firmware-fetch"))
+    }
+
+    /** A made-up build folder as `build` leaves it (the patch itself is tested in :core). */
+    private fun fakeBuild(version: String = "9.9.9"): File {
+        val out = File(dir, "build")
+        val files = linkedMapOf("ByOS/payload/apps/a.bin" to data(150_000, 3), "ByOS/payload/MANIFEST.md5" to "x  apps/a.bin\n".toByteArray(),
+            "ByOS/payload/VERSION" to "$version\n".toByteArray())
+        for ((p, b) in files) File(out, p).apply { parentFile.mkdirs(); writeBytes(b) }
+        val upt = data(300_000, 5)
+        File(out, "r3ii_2025.upt").writeBytes(upt)
+        val list = files.entries.joinToString(",") { (p, b) -> """{"path":"$p","size":${b.size},"sha256":"${sha(b)}"}""" }
+        File(out, "build.json").writeText("""{"format":1,"hibyos_version":"$version","upt":"r3ii_2025.upt","size":${upt.size},""" +
+            """"md5":"00","sha256":"${sha(upt)}","build_id":"b1","files":[$list]}""")
+        return out
+    }
+
+    @Test
+    fun buildSendCopiesParksAndInstalls() {
+        val out = fakeBuild()
+        File(dev.sd, "update.upt").writeBytes(data(1000, 9)) // would be flashed first by the recovery
+        val calls = ArrayList<List<String>>()
+        val runner = ProcessRunner { cmd, _ ->
+            calls += cmd
+            if (cmd.last().contains("reinstall")) dev.byosVersion = "9.9.9" // the HiBy restarts with the new ByOS
+            0 to "arrancando el recovery oficial para reinstalar el .upt de la SD...\n"
+        }
+        val r = run("build-send", "--dir", out.path, "--install", "--yes", "--adb", "fake-adb", runner = runner)
+        assertEquals(r.raw, 0, r.code)
+        assertEquals("installed", r.last["state"])
+        assertEquals("9.9.9", r.last["version"])
+        assertEquals(listOf("update.upt"), r.last["parked"])
+        assertEquals(4L, r.last["files"])
+        assertTrue(File(dev.sd, "ByOS/firmware/parked/update.upt").isFile)
+        assertFalse(File(dev.sd, "update.upt").exists())
+        assertArrayEquals(File(out, "r3ii_2025.upt").readBytes(), File(dev.sd, "r3ii_2025.upt").readBytes())
+        assertArrayEquals(File(out, "ByOS/payload/apps/a.bin").readBytes(), File(dev.sd, "ByOS/payload/apps/a.bin").readBytes())
+        assertEquals(listOf("fake-adb", "shell", "/usr/bin/hibymod reinstall --yes"), calls.single())
+        // the version file is copied after the rest of the payload, the firmware last
+        val puts = r.events("progress").filter { it["op"] == "put" }.map { it["path"] }.distinct()
+        assertEquals(listOf("ByOS/payload/apps/a.bin", "ByOS/payload/MANIFEST.md5", "ByOS/payload/VERSION", "r3ii_2025.upt"), puts)
+        // a second send skips what is already there
+        val again = run("build-send", "--dir", out.path)
+        assertEquals("sent", again.last["state"]); assertEquals(3L, again.last["skipped"])
+    }
+
+    @Test
+    fun buildSendRefusesWhatIsNotSafe() {
+        val out = fakeBuild()
+        // over Wi-Fi: never
+        assertEquals(1, run("build-send", "--dir", out.path, device = "wifi").code)
+        // low battery and not charging: nothing is restarted
+        dev.battery = 12; dev.charging = false
+        val low = run("build-send", "--dir", out.path, "--install", "--yes", "--adb", "fake-adb",
+            runner = ProcessRunner { _, _ -> throw AssertionError("must not run adb") })
+        assertEquals(low.raw, 4, low.code)
+        assertEquals("E_BATTERY", (low.last["btp"] as Map<*, *>)["name"])
+        // the HiBy's own checks refuse: reported, not waited for
+        dev.battery = 80
+        val refused = run("build-send", "--dir", out.path, "--install", "--yes", "--adb", "fake-adb",
+            runner = ProcessRunner { _, _ -> 1 to "recovery: kernel2=00 rootfs2=00\nabortado: el recovery no parece valido\n" })
+        assertEquals(refused.raw, 4, refused.code)
+        assertTrue(refused.last["message"].toString().contains("abortado"))
+        // a file changed after the build: nothing is sent
+        File(out, "ByOS/payload/VERSION").writeText("other\n")
+        val changed = run("build-send", "--dir", out.path)
+        assertEquals(6, changed.code)
+        // no build at all
+        assertEquals(1, run("build-send", "--dir", File(dir, "nothing").path).code)
+    }
+
+    @Test
+    fun buildSendAsksBeforeInstalling() {
+        val out = fakeBuild()
+        val r = run("build-send", "--dir", out.path, "--install", "--adb", "fake-adb",
+            stdin = ByteArrayInputStream("{\"answer\": false}\n".toByteArray()),
+            runner = ProcessRunner { _, _ -> throw AssertionError("must not run adb") })
+        assertEquals(7, r.code)
+        assertEquals("confirm", r.events("prompt").single()["kind"])
+        assertTrue(File(dev.sd, "r3ii_2025.upt").isFile) // copied, not installed
     }
 }

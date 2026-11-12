@@ -56,3 +56,11 @@ tasks.test {
     }
     outputs.upToDateWhen { false }
 }
+
+// The ByOS files the Android app ships, inside the jar too: build-info, firmware-fetch and build
+// work without --bundle, from the very same file (docs/BYOS_CLI.md, "Build ByOS").
+tasks.named<ProcessResources>("processResources") {
+    // the same preparation as the app (exported from the Python definitions, or -PhibyosBundle=<file>)
+    dependsOn(":app:prepareHibyosBundle")
+    from(rootProject.file("app/src/main/assets/hibyos-bundle.zip")) { into("org/hibyos/cli") }
+}

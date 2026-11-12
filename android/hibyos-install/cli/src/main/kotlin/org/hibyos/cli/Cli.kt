@@ -2,6 +2,9 @@ package org.hibyos.cli
 
 import org.hibyos.install.core.Bundle
 import org.hibyos.install.core.BundleException
+import org.hibyos.install.core.BundleStore
+import org.hibyos.install.core.ByosBuild
+import org.hibyos.install.core.FirmwareCache
 import org.hibyos.install.core.DownloadException
 import org.hibyos.install.core.Downloader
 import org.hibyos.install.core.FirmwareFetcher
@@ -95,7 +98,18 @@ class Cli(
     private lateinit var config: Config
     private var timeoutMs = 15000
 
+    /** Starts hibysync over adb without --start (build-send waiting for the HiBy after its restart). */
+    private var forceStart = false
+
     companion object {
+        /** The ByOS files shipped in the jar (cli/build.gradle.kts copies the Android app's asset). */
+        const val BUILTIN_BUNDLE = "/org/hibyos/cli/hibyos-bundle.zip"
+        const val BUILD_MANIFEST = "build.json"
+        /** Where build-send moves other firmware files found at the card root. */
+        const val PARKED = "ByOS/firmware/parked"
+        /** The OTA installer's own battery rule (docs/OTA.md): at least 30 %, or charging. */
+        const val MIN_BATTERY = 30
+
         private val GLOBAL_VALUES = setOf("--device", "--adb", "--local-port", "--config", "--name", "--timeout", "--discovery")
         private val GLOBAL_FLAGS = setOf("--human", "--verbose", "--start")
         private val COMMANDS: Map<String, Pair<Set<String>, Set<String>>> = mapOf(
@@ -111,7 +125,11 @@ class Cli(
             "db-pull" to (emptySet<String>() to emptySet()),
             "db-build" to (emptySet<String>() to setOf("--base", "--music", "--out", "--sd-root", "--covers", "--lyrics", "--sort", "--report")),
             "db-push" to (setOf("--force") to setOf("--base-sha256")),
-            "firmware-fetch" to (emptySet<String>() to setOf("--bundle", "--out")),
+            "build-info" to (emptySet<String>() to setOf("--bundle", "--dir")),
+            "bundle-update" to (setOf("--check") to emptySet()),
+            "firmware-fetch" to (emptySet<String>() to setOf("--bundle", "--out", "--from")),
+            "build" to (setOf("--force") to setOf("--bundle", "--firmware", "--out")),
+            "build-send" to (setOf("--install", "--yes", "--no-wait") to setOf("--dir", "--wait-max")),
             "patch" to (emptySet<String>() to setOf("--firmware", "--bundle", "--out", "--work")),
             "update-send" to (setOf("--latest", "--allow-downgrade", "--install", "--no-confirm", "--no-wait", "--wait") to emptySet()),
             "update-install" to (setOf("--no-confirm", "--allow-downgrade", "--wait", "--no-wait") to emptySet()),
@@ -184,7 +202,11 @@ class Cli(
                 "db-pull" -> cmdDbPull()
                 "db-build" -> cmdDbBuild()
                 "db-push" -> cmdDbPush()
+                "build-info" -> cmdBuildInfo()
+                "bundle-update" -> cmdBundleUpdate()
                 "firmware-fetch" -> cmdFirmwareFetch()
+                "build" -> cmdBuild()
+                "build-send" -> cmdBuildSend()
                 "patch" -> cmdPatch()
                 "update-send" -> cmdUpdateSend()
                 "update-install" -> withConn { c -> installAndWait(c, null) }
@@ -433,12 +455,12 @@ class Cli(
         return try {
             attempt()
         } catch (e: BtpConnectionException) {
-            out.warn("daemon_not_running", "ByOS Sync is not running on the HiBy")
-            if (!a.has("--start")) {
+            if (!forceStart) out.warn("daemon_not_running", "ByOS Sync is not running on the HiBy")
+            if (!a.has("--start") && !forceStart) {
                 cleanup()
                 throw CliError("no_device", "open Settings > ByOS Sync on the HiBy (or run again with --start)")
             }
-            adb.shell(chosen.serial, "/usr/data/hibymod/bin/hibysync serve --idle-exit 300 --detach")
+            adb.shell(chosen.serial, "d=/usr/data/hibymod; for b in \$d/shell/hibysync \$d/bin/hibysync; do [ -x \$b ] && exec \$b serve --idle-exit 300 --detach; done; echo no-hibysync")
             val deadline = System.currentTimeMillis() + 5000
             while (true) {
                 try { return attempt() } catch (x: BtpConnectionException) {
@@ -997,34 +1019,280 @@ class Cli(
 
     // ------------------------------------------------------------------ firmware and patch
 
-    private fun bundleFile(): File {
-        a.opt("--bundle")?.let { return File(it) }
-        val cands = listOf(File(config.cache, "hibyos-bundle.zip"), File("hibyos-bundle.zip"))
-        return cands.firstOrNull { it.isFile } ?: throw CliError("usage", "give the ByOS bundle with --bundle BUNDLE.zip")
+    // ------------------------------------------------------------------ ByOS build (docs/BYOS_CLI.md, "Build ByOS")
+
+    /** Where the bundle in use came from: "file" (--bundle), "builtin" (shipped in this jar) or "updated". */
+    private var bundleSource = "file"
+
+    private fun bundleStore() = BundleStore(File(config.cache, "bundle"))
+    private fun firmwareDir() = File(config.cache, "firmware")
+    private fun buildDir(opt: String) = a.opt(opt)?.let { File(it) } ?: File(config.cache, "build")
+
+    /** The ByOS files shipped inside byos-cli.jar (the same file the Android app ships), unpacked to the cache. */
+    private fun builtinBundle(store: BundleStore): Bundle? {
+        val bytes = Cli::class.java.getResourceAsStream(BUILTIN_BUNDLE)?.use { it.readBytes() } ?: return null
+        val stamp = "${bytes.size}:${hex(MessageDigest.getInstance("SHA-256").digest(bytes))}"
+        return try { store.builtin(stamp) { bytes.inputStream() } } catch (e: BundleException) {
+            throw CliError("verify", e.message ?: "bad bundle")
+        }
     }
 
-    private fun openBundle(): Bundle = try { Bundle.open(bundleFile()) } catch (e: BundleException) { throw CliError("verify", e.message ?: "bad bundle") }
+    /** --bundle FILE, else the newest of the built-in and the updated ByOS files (the Android app's rule). */
+    private fun openBundle(): Bundle = try {
+        val given = a.opt("--bundle")
+        if (given != null) {
+            if (!File(given).isFile) throw CliError("local_io", "$given does not exist", path = given)
+            bundleSource = "file"
+            Bundle.open(File(given))
+        } else {
+            val store = bundleStore()
+            val base = builtinBundle(store) ?: throw CliError("usage", "this byos-cli has no built-in ByOS files; give them with --bundle BUNDLE.zip")
+            val cur = store.current(base)
+            bundleSource = if (cur.builtIn) "builtin" else "updated"
+            cur.bundle
+        }
+    } catch (e: BundleException) { throw CliError("verify", e.message ?: "bad bundle") }
+
+    private fun downloadError(e: DownloadException, page: String?): CliError {
+        val hint = page?.let { " Download it yourself from $it" } ?: ""
+        return when (e.kind) {
+            DownloadException.Kind.CANCELLED -> CliError("cancelled", "cancelled")
+            DownloadException.Kind.MISMATCH, DownloadException.Kind.UNTRUSTED -> CliError("verify", (e.message ?: "wrong file") + "." + hint, extra = mapOf("page" to page))
+            DownloadException.Kind.STORAGE -> CliError("local_io", e.message ?: "cannot save")
+            else -> CliError("no_device", (e.message ?: "download failed") + "." + hint, extra = mapOf("page" to page))
+        }
+    }
+
+    private fun patchError(e: PatchException): CliError = when (e.reason) {
+        PatchException.Reason.CANCELLED -> CliError("cancelled", "cancelled")
+        PatchException.Reason.STORAGE -> CliError("local_io", e.message ?: "storage error")
+        PatchException.Reason.WRONG_FIRMWARE -> CliError("verify", (e.message ?: "wrong firmware") + (e.detail?.let { " (MD5 $it)" } ?: ""))
+        else -> CliError("verify", e.message ?: "patch failed")
+    }
+
+    private fun firmwareFields(spec: org.hibyos.install.core.FirmwareSpec): Map<String, Any?> = linkedMapOf(
+        "label" to spec.label, "version" to spec.version, "file" to spec.fileName, "size" to spec.size, "md5" to spec.md5,
+        "sha256" to spec.sha256, "build" to spec.build, "page" to spec.page, "can_download" to spec.sources.isNotEmpty())
+
+    private fun cmdBuildInfo(): Map<String, Any?> {
+        val b = openBundle()
+        val fw = FirmwareCache.ready(firmwareDir(), b.firmware)
+        val dir = buildDir("--dir")
+        val built = readBuild(dir)?.takeIf { it.hibyosVersion == b.hibyosVersion && ByosBuild.restore(b, dir) != null }
+        return linkedMapOf("hibyos_version" to b.hibyosVersion, "generated_from" to b.generatedFrom, "bundle" to bundleSource,
+            "bundle_path" to b.file.path, "firmware" to firmwareFields(b.firmware), "firmware_ready" to (fw != null),
+            "firmware_path" to fw?.file?.path, "build" to built?.let {
+                linkedMapOf("dir" to dir.path, "upt" to File(dir, it.upt).path, "size" to it.size, "sha256" to it.sha256,
+                    "hibyos_version" to it.hibyosVersion, "build_id" to it.buildId, "files" to it.files.size, "sd_size" to it.files.sumOf { f -> f.second })
+            })
+    }
+
+    private fun cmdBundleUpdate(): Map<String, Any?> {
+        val store = bundleStore()
+        val base = builtinBundle(store) ?: throw CliError("usage", "this byos-cli has no built-in ByOS files to update")
+        val cur = store.current(base).bundle
+        val remote = try { store.check(base, cur, { cancelled.get() }) } catch (e: DownloadException) {
+            throw downloadError(e, null)
+        } catch (e: BundleException) { throw CliError("usage", e.message ?: "no update index") }
+        if (remote == null) return linkedMapOf("current" to cur.hibyosVersion, "latest" to cur.hibyosVersion, "available" to false, "updated" to false)
+        if (a.has("--check")) return linkedMapOf("current" to cur.hibyosVersion, "latest" to remote.version, "available" to true,
+            "updated" to false, "size" to remote.size)
+        val t0 = System.currentTimeMillis()
+        val b = try {
+            store.install(remote, { cancelled.get() }, { d, t -> out.progress("download", "hibyos-bundle", d, t, rate(d, t0)) })
+        } catch (e: DownloadException) { throw downloadError(e, null) }
+        return linkedMapOf("current" to b.hibyosVersion, "latest" to remote.version, "available" to true, "updated" to true, "size" to remote.size)
+    }
 
     private fun cmdFirmwareFetch(): Map<String, Any?> {
-        openBundle().use { b ->
-            val spec = b.firmware
-            val dest = a.opt("--out")?.let { File(it) } ?: File(config.cache, spec.fileName)
-            dest.absoluteFile.parentFile?.mkdirs()
-            val t0 = System.currentTimeMillis()
-            val id = try {
-                FirmwareFetcher.fetch(spec, dest, { cancelled.get() }, { d, t -> out.progress("download", dest.path, d, t, rate(d, t0)) },
-                    { f -> out.progress("check", dest.path, (f * 1000).toLong(), 1000, unit = "permille") })
-            } catch (e: DownloadException) {
-                val page = spec.page?.let { " Download it yourself from $it" } ?: ""
-                throw when (e.kind) {
-                    DownloadException.Kind.CANCELLED -> CliError("cancelled", "cancelled")
-                    DownloadException.Kind.MISMATCH, DownloadException.Kind.UNTRUSTED -> CliError("verify", (e.message ?: "wrong file") + "." + page, extra = mapOf("page" to spec.page))
-                    DownloadException.Kind.STORAGE -> CliError("local_io", e.message ?: "cannot save")
-                    else -> CliError("no_device", (e.message ?: "download failed") + "." + page, extra = mapOf("page" to spec.page))
+        val b = openBundle()
+        val spec = b.firmware
+        val dir = firmwareDir()
+        val outF = a.opt("--out")?.let { File(it) }
+        fun done(f: File, size: Long, md5: String, sha: String, cached: Boolean, source: String): Map<String, Any?> {
+            if (outF != null && outF.absoluteFile != f.absoluteFile) {
+                outF.absoluteFile.parentFile?.mkdirs()
+                f.copyTo(outF, overwrite = true)
+            }
+            return linkedMapOf("path" to (outF ?: f).path, "version" to spec.version, "size" to size, "md5" to md5, "sha256" to sha,
+                "cached" to cached, "source" to source)
+        }
+        a.opt("--from")?.let { from ->
+            // a file the user picked: checked, then kept in the cache like a download
+            val src = File(from)
+            if (!src.isFile) throw CliError("local_io", "$from does not exist", path = from)
+            var wrong: org.hibyos.install.core.FirmwareId? = null
+            val c = try {
+                FirmwareCache.import(src, dir, spec, { cancelled.get() }, { f -> out.progress("check", src.path, (f * 1000).toLong(), 1000, unit = "permille") }) { wrong = it }
+            } catch (e: PatchException) { throw patchError(e) }
+            if (c == null) {
+                val w = wrong
+                throw CliError("verify", "this file is not ${spec.label}" + (w?.md5?.takeIf { it.isNotEmpty() }?.let { " (MD5 $it)" } ?: ""),
+                    path = from, extra = linkedMapOf("page" to spec.page, "size" to w?.size, "md5" to w?.md5?.ifEmpty { null }))
+            }
+            return done(c.file, c.size, spec.md5, c.sha256, false, "file")
+        }
+        FirmwareCache.ready(dir, spec)?.let { return done(it.file, it.size, spec.md5, it.sha256, true, "cache") }
+        val dest = FirmwareCache.file(dir, spec)
+        dir.mkdirs()
+        FirmwareCache.unmark(dir)
+        val t0 = System.currentTimeMillis()
+        val id = try {
+            FirmwareFetcher.fetch(spec, dest, { cancelled.get() }, { d, t -> out.progress("download", dest.path, d, t, rate(d, t0)) },
+                { f -> out.progress("check", dest.path, (f * 1000).toLong(), 1000, unit = "permille") })
+        } catch (e: DownloadException) { throw downloadError(e, spec.page) }
+        FirmwareCache.mark(dir, id)
+        return done(dest, id.size, id.md5, id.sha256, false, "download")
+    }
+
+    /** build.json: what `build` made, in the order `build-send` copies it. */
+    private class BuildManifest(val hibyosVersion: String, val upt: String, val size: Long, val md5: String, val sha256: String,
+                                val buildId: String, val files: List<Triple<String, Long, String>>)
+
+    private fun readBuild(dir: File): BuildManifest? {
+        val f = File(dir, BUILD_MANIFEST)
+        if (!f.isFile) return null
+        return try {
+            val m = Json.obj(Json.parse(f.readText()))
+            if (Json.long(m, "format") != 1L) return null
+            BuildManifest(Json.str(m, "hibyos_version"), Json.str(m, "upt"), Json.long(m, "size"), Json.str(m, "md5"), Json.str(m, "sha256"),
+                Json.str(m, "build_id"), Json.arr(m["files"]).map {
+                    val e = Json.obj(it)
+                    Triple(remotePath(Json.str(e, "path")), Json.long(e, "size"), Json.str(e, "sha256"))
+                })
+        } catch (e: JsonException) { null }
+    }
+
+    private fun buildResult(dir: File, m: BuildManifest, cached: Boolean): Map<String, Any?> = linkedMapOf(
+        "out" to dir.path, "upt" to File(dir, m.upt).path, "size" to m.size, "md5" to m.md5, "sha256" to m.sha256,
+        "hibyos_version" to m.hibyosVersion, "build_id" to m.buildId, "files" to m.files.size, "sd_size" to m.files.sumOf { it.second },
+        "cached" to cached)
+
+    private fun cmdBuild(): Map<String, Any?> {
+        val b = openBundle()
+        val dir = buildDir("--out")
+        val fw = a.opt("--firmware")?.let { File(it) } ?: FirmwareCache.ready(firmwareDir(), b.firmware)?.file
+            ?: throw CliError("usage", "there is no official firmware yet: run firmware-fetch first, or give --firmware FILE.upt")
+        if (!fw.isFile) throw CliError("local_io", "${fw.path} does not exist", path = fw.path)
+        // a finished build of the same ByOS files is reused (the patch takes a minute)
+        if (!a.has("--force") && a.opt("--firmware") == null) {
+            val m = readBuild(dir)
+            val rec = ByosBuild.restore(b, dir)
+            if (m != null && rec != null && m.hibyosVersion == b.hibyosVersion && m.sha256 == rec.sha256 &&
+                m.files.all { (p, size, _) -> File(dir, p).length() == size }) return buildResult(dir, m, true)
+        }
+        File(dir, BUILD_MANIFEST).delete()
+        val work = File(dir, ".work")
+        val upt = File(dir, b.outName)
+        val (r, _) = try {
+            ByosBuild.patch(fw, b, dir, work, PatchOptions(cancelled = { cancelled.get() }), PatchListener { stage, fraction ->
+                out.progress("patch", upt.path, (stage.overall(fraction) * 1000).toLong(), 1000, unit = "permille",
+                    extra = mapOf("stage" to stage.name.lowercase()))
+            })
+        } catch (e: PatchException) { throw patchError(e) } finally { work.deleteRecursively() }
+        val files = try {
+            ByosBuild.exportSd(b, dir, { cancelled.get() }) { d, t -> out.progress("export", File(dir, "ByOS").path, d, t) }
+        } catch (e: PatchException) { throw patchError(e) } catch (e: BundleException) { throw CliError("verify", e.message ?: "bad bundle") }
+        val m = BuildManifest(r.hibyosVersion, b.outName, r.size, r.md5, r.sha256, r.buildId, files.map { Triple(it.path, it.size, it.sha256) })
+        writeJson(File(dir, BUILD_MANIFEST), linkedMapOf("format" to 1, "hibyos_version" to m.hibyosVersion, "generated_from" to b.generatedFrom,
+            "firmware_version" to b.firmware.version, "upt" to m.upt, "size" to m.size, "md5" to m.md5, "sha256" to m.sha256,
+            "build_id" to m.buildId, "files" to m.files.map { (p, s, h) -> linkedMapOf("path" to p, "size" to s, "sha256" to h) }))
+        return buildResult(dir, m, false)
+    }
+
+    /**
+     * Copies a build to the HiBy over USB (the ByOS folder, then the firmware at the card root)
+     * and, with --install, starts the HiBy's own reinstall through HiBy's recovery (the command
+     * the HiBy's Software Update page runs) and waits until the HiBy is back with the new ByOS.
+     */
+    private fun cmdBuildSend(): Map<String, Any?> {
+        val dir = buildDir("--dir")
+        val m = readBuild(dir) ?: throw CliError("usage", "there is no build in ${dir.path}: run build first")
+        if (surelyRemote()) throw CliError("usage", "installing a ByOS build needs the USB cable (firmware files never travel over Wi-Fi)")
+        // every file is checked against the build before anything is sent
+        val items = m.files.map { (p, size, sha) -> Triple(p, File(dir, p), size to sha) } +
+            Triple(m.upt, File(dir, m.upt), m.size to m.sha256)
+        for ((p, f, want) in items) {
+            if (!f.isFile || f.length() != want.first || hex(sha256File(f, "hash", p)) != want.second) {
+                throw CliError("verify", "the build in ${dir.path} changed after it was made ($p); build it again", path = p)
+            }
+        }
+        val res = linkedMapOf<String, Any?>("version" to m.hibyosVersion, "upt" to m.upt)
+        val parked = ArrayList<String>()
+        var written = 0; var skipped = 0; var bytes = 0L
+        var serial: String? = null
+        var before: String? = null
+        withConn { c ->
+            if (!c.local) throw CliError("usage", "installing a ByOS build needs the USB cable (firmware files never travel over Wi-Fi)")
+            if (!c.session.sdMounted) throw CliError("remote", "The HiBy's card is not available (no card, or connected as a USB drive)",
+                Btp.E_SD_UNAVAILABLE, Btp.errorName(Btp.E_SD_UNAVAILABLE))
+            serial = c.serial
+            before = c.session.device.byosVersion
+            // the recovery flashes the first .upt it finds at the root (update.upt first): only ours may be there
+            for (e in c.session.list("")) {
+                if (e.kind != 0 || !e.name.lowercase().endsWith(".upt") || e.name == m.upt) continue
+                c.session.mkdir(PARKED, parents = true)
+                c.session.move(e.name, BtpPaths.join(PARKED, e.name), replace = true)
+                parked += e.name
+                out.warn("parked", "moved ${e.name} from the card root to $PARKED so that the recovery installs ByOS", mapOf("path" to e.name))
+            }
+            for (d in m.files.map { it.first.substringBeforeLast('/', "") }.filter { it.isNotEmpty() }.distinct()) c.session.mkdir(d, parents = true)
+            for ((p, f, want) in items) {
+                checkCancel()
+                val t0 = System.currentTimeMillis()
+                out.progress("put", p, 0, f.length())
+                val r = c.session.put(p, f.length(), DeviceRecord.hex(want.second), if (p == m.upt) Btp.MODE_REPLACE else Btp.MODE_SKIP_IDENTICAL,
+                    f.lastModified() / 1000, Btp.NS_SD, { cancelled.get() }, { d, t -> out.progress("put", p, d, t, rate(d, t0)) }) { off ->
+                    FileInputStream(f).also { s -> s.channel.position(off) }
+                }
+                if (r.result == 1) skipped++ else { written++; bytes += r.size }
+            }
+            if (a.has("--install")) {
+                val ok = a.has("--yes") || confirm("Install ByOS ${m.hibyosVersion} on the HiBy now? It restarts into HiBy's recovery, installs the firmware and starts again. Keep the cable connected.",
+                    linkedMapOf("version" to m.hibyosVersion))
+                if (!ok) throw CliError("cancelled", "not installed; the files stay on the card")
+                val st = c.session.status()
+                if (st.battery != 255 && st.battery < MIN_BATTERY && st.charging != 1) {
+                    throw CliError("remote", "the HiBy's battery is at ${st.battery} %: charge it to $MIN_BATTERY % or keep it charging",
+                        Btp.E_BATTERY, Btp.errorName(Btp.E_BATTERY), extra = mapOf("battery" to st.battery))
                 }
             }
-            return linkedMapOf("path" to dest.path, "version" to spec.version, "size" to id.size, "md5" to id.md5, "sha256" to id.sha256)
         }
+        res.putAll(linkedMapOf("files" to items.size, "written" to written, "skipped" to skipped, "bytes" to bytes, "parked" to parked))
+        if (!a.has("--install")) return res.apply { put("state", "sent") }
+
+        // the HiBy's own reinstall: checks its recovery and the .upt, switches to the recovery and restarts
+        val adb = Adb(adbPath() ?: throw CliError("no_device", "adb was not found: install Android platform-tools or pass --adb PATH"), runner)
+        out.progress("reboot", m.hibyosVersion, 0, 0, unit = "none")
+        val (_, text) = adb.shell(serial, "/usr/bin/hibymod reinstall --yes")
+        val refusal = text.lines().firstOrNull { it.startsWith("abortado") || it.startsWith("uso:") || it.contains("not found") }
+        if (refusal != null) throw CliError("remote", "the HiBy did not start the reinstall: ${refusal.trim()}", extra = mapOf("output" to text.take(2000)))
+        if (a.has("--no-wait")) return res.apply { put("state", "rebooting") }
+        // wait for the HiBy to come back with the new ByOS: the recovery, then (when the payload
+        // changed) one more restart while ByOS installs itself
+        val waitMs = a.int("--wait-max", 900) * 1000L
+        val deadline = System.currentTimeMillis() + waitMs
+        var gone = false
+        forceStart = true
+        while (System.currentTimeMillis() < deadline) {
+            checkCancel()
+            out.progress(if (gone) "reconnect" else "reboot", m.hibyosVersion, 0, 0, unit = "none")
+            try {
+                connect(quiet = true).use { c ->
+                    val v = c.session.device.byosVersion
+                    // the same version as before only counts once the HiBy was seen restarting
+                    if (v == m.hibyosVersion && (gone || before != m.hibyosVersion)) {
+                        return res.apply { put("state", "installed"); put("installed", v) }
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CliError && e.code == "cancelled") throw e
+                gone = true // restarting: no adb device, no forward, or hibysync not up yet
+            }
+            Thread.sleep(pollMs * 3)
+        }
+        throw CliError("timeout", "the HiBy did not come back with ByOS ${m.hibyosVersion} within ${waitMs / 1000} s; check its screen",
+            extra = mapOf("state" to "rebooting"))
     }
 
     private fun cmdPatch(): Map<String, Any?> {

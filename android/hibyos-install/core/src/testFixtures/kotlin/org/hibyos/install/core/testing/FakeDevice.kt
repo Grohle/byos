@@ -51,6 +51,7 @@ class FakeDevice(val sd: File, val data: File) {
     @Volatile var byosVersion = "0.8.0"
     @Volatile var firmware = "0.8.0"
     @Volatile var battery = 87
+    @Volatile var charging = true
     var name = "HiBy R3 II"
     var updateKeys: List<String> = emptyList()
     /** Close the connection once after this many PUT data bytes were received (resume tests). */
@@ -397,7 +398,7 @@ class FakeDevice(val sd: File, val data: File) {
                 }
                 Btp.STATUS -> {
                     r.done()
-                    ok(s, Btp.STATUS_R, StatusR(battery, 1, sdState, listOf(Btp.TLV_BYOS_VERSION to byosVersion.toByteArray(),
+                    ok(s, Btp.STATUS_R, StatusR(battery, if (charging) 1 else 0, sdState, listOf(Btp.TLV_BYOS_VERSION to byosVersion.toByteArray(),
                         Btp.TLV_FIRMWARE to firmware.toByteArray())).encode())
                 }
                 else -> err(s, Btp.E_UNKNOWN_TYPE, "unknown type")

@@ -374,3 +374,80 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.25); }
   .sidebar { display: none; }
   .toolbar { grid-template-columns: auto 1fr auto; }
 }
+
+/* ---- updates: build and install ByOS --------------------------------------------------- */
+
+:root { --ok: #34c759; --ok-soft: rgba(52, 199, 89, 0.14); --danger-soft: rgba(255, 59, 48, 0.1); }
+.tab-panel[data-panel="updates"] { max-width: 760px; margin: 0 auto; }
+.upd-hero { display: flex; align-items: center; gap: 16px; }
+.upd-hero h3 { font: 600 17px/1.25 var(--font-display); margin: 0 0 2px; }
+.upd-hero p { margin: 0; }
+.upd-hero-text { flex: 1; }
+/* The ByOS mark: the R3 II screen colours on a rounded tile with a circular arrow. */
+.upd-icon {
+  flex: none; width: 52px; height: 52px; border-radius: 13px; position: relative;
+  background: linear-gradient(160deg, #5ac8fa, #af52de 58%, #ff2d55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 6px 16px rgba(175, 82, 222, 0.28);
+}
+.upd-icon::after {
+  content: ""; position: absolute; inset: 13px; background: #fff;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.5 12a7.5 7.5 0 1 1-2.2-5.3' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M18.5 2.8v4.6h-4.6' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.5 12a7.5 7.5 0 1 1-2.2-5.3' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M18.5 2.8v4.6h-4.6' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.pill {
+  flex: none; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); animation: pop 360ms var(--spring);
+}
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+@keyframes pop { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
+
+.upd-card .upd-head h3 { margin-bottom: 2px; }
+.upd-card .upd-head p { margin: 0 0 6px; }
+.steps { list-style: none; margin: 8px 0 0; padding: 0; }
+.step {
+  display: grid; grid-template-columns: 28px 1fr; gap: 12px; padding: 12px 0;
+  border-top: 1px solid var(--line); position: relative;
+}
+.step:first-child { border-top: 0; }
+.step .mark {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 600; font-size: 12px; color: var(--text-2);
+  background: var(--cap-free); transition: background 260ms var(--ease-out), color 260ms var(--ease-out), transform 260ms var(--spring);
+}
+.step .mark svg { width: 14px; height: 14px; }
+.step.active .mark { background: var(--accent-soft); color: var(--accent); }
+.step.active .mark .spinner { width: 12px; height: 12px; opacity: 1; }
+.step.done .mark { background: var(--ok); color: #fff; animation: pop 380ms var(--spring); }
+.step.failed .mark { background: var(--danger); color: #fff; }
+.step-title { font-weight: 600; }
+.step.todo .step-title { color: var(--text-2); }
+.step-detail { color: var(--text-2); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.step.failed .step-detail { color: var(--danger); }
+.step-bar {
+  height: 5px; border-radius: 3px; background: var(--cap-free); margin-top: 8px; overflow: hidden; position: relative;
+}
+.step-bar > span {
+  display: block; height: 100%; border-radius: 3px; background: var(--accent);
+  transition: width 260ms var(--ease-out);
+}
+/* a wait with no numbers (the HiBy restarting): a sliding highlight */
+.step-bar.wait > span { width: 32%; position: absolute; animation: slide 1.4s var(--ease-out) infinite; }
+@keyframes slide { from { left: -32%; } to { left: 100%; } }
+
+.upd-result {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; margin: 6px 0 4px;
+  border-radius: 10px; animation: rise 300ms var(--ease-out);
+}
+.upd-result.ok { background: var(--ok-soft); }
+.upd-result.ok strong { color: var(--ok); }
+.upd-result.fail { background: var(--danger-soft); }
+.upd-result.fail strong { color: var(--danger); }
+.upd-result .muted { font-size: 12px; word-break: break-all; }
+.upd-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.upd-actions .btn.primary { min-width: 150px; height: 30px; font-weight: 600; }
+.btn.link { border: 0; background: transparent; box-shadow: none; color: var(--accent); padding: 0 4px; }
+.btn.link:hover:not(:disabled) { background: transparent; text-decoration: underline; }
+.upd-foot { text-align: center; margin: 4px 0 0; }
+@media (prefers-reduced-motion: reduce) {
+  .step-bar.wait > span, .pill, .step.done .mark, .upd-result { animation: none; }
+}

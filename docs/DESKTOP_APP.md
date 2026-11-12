@@ -205,9 +205,10 @@ For people who want control. Normal users only see the result of Sync.
 - "ByOS 0.8.0 is installed. ByOS 0.9.0 is available." **Update** runs 5.6. Release notes from
   the signed `hibyos-update.json`.
 - **Install from a file...**: a signed update JSON + tar the user picked (same checks).
-- **Build ByOS for this HiBy** (advanced, 5.7): fetches HiBy's official firmware, patches it
-  locally, and installs it through recovery. Shown with a clear explanation of what happens
-  and how long it takes.
+- **Build and install ByOS** (5.7, working in the scaffold): gets HiBy's official firmware
+  (download, or a file the user picked), builds ByOS on the computer, copies it over the USB
+  cable and installs it through HiBy's recovery with no hands on the player. Four steps with
+  progress, one confirmation sheet, and a clear result.
 - **Install ByOS on a new HiBy** (5.8): the first-install assistant for a stock player.
 
 ### 3.8 Device: Settings
@@ -411,37 +412,72 @@ Each flow lists the CLI commands, then what can go wrong.
    Software Update to install it."; `needs_firmware: true`: the update needs a new firmware
    build, which leads to 5.7.
 
-### 5.7 Build and install ByOS through recovery (advanced)
+### 5.7 Build ByOS on this computer and install it over the cable
 
-1. `firmware-fetch` (HiBy's official file, from HiBy's servers to the user's computer; checks
-   MD5 and SHA-256).
-2. `patch --firmware <upt> --out <cache>/r3ii_2025.upt` (the core patcher, permille
-   progress).
-3. Copy the patched `.upt` and the `ByOS/` folder from the bundle to the SD root (REPLACE,
-   verified): `put --overwrite -- <cache>/r3ii_2025.upt /` and
-   `put --overwrite --recursive -- <bundle>/ByOS /` (a lone `/` is the SD root, BYOS_CLI.md
-   section 2). **USB only.** `.upt` files carry no signature, only MD5 and ISO structure, and
-   the recovery loader flashes whatever `.upt` it finds at the SD root. So a `.upt` at the SD
-   root must never arrive over Wi-Fi: byos-cli refuses it, and hibysync must refuse `.upt`
-   names at the SD root on any remote session (a device-side deny-list, to be added to
-   SYNC_PROTOCOL with Q3). The app records the patched file's SHA-256 (the patcher's output
-   hash) for step 4.
-4. Reboot into recovery. **This step does not exist in BTP/1 yet.** It needs a device-side
-   command that runs the checks of `hibymod reinstall` plus the three missing ones the critic
-   listed (park other `.upt` files, require the mtd5 flag clear before, read it back) and a
-   reboot method proven on the device. Until then, the app stops after step 3 and shows "The
-   ByOS firmware is on the HiBy. On the HiBy, open Settings › About › Reinstall ByOS" (or the
-   recovery key combination, with pictures). See open question Q3. Requirements for that
-   future command:
-   - only on a local USB session, never over Wi-Fi, even when paired;
-   - always confirmed on the device itself (a full-screen *Reinstall ByOS?* with *Cancel*);
-   - the `.upt` must match the expected build: its SHA-256 equals the one in the signed ByOS
-     bundle index (Ed25519, the same key as the OTA), or the one the patcher recorded for this
-     build and sent in the same USB session;
-   - a `.upt` that arrived through a remote session is refused (hibysync tags files it wrote
-     for a Wi-Fi peer, and the deny-list above should make that case impossible anyway).
-5. After the reboot, the app waits up to 15 minutes for the device to come back with the new
-   `byos_version`, and shows the result.
+The app builds ByOS itself, from HiBy's official firmware, with the same code as the Android
+app (the core's `BundleStore`, `FirmwareCache`, `ByosBuild` and `Patcher`, through `byos-cli`),
+then copies it to the HiBy and installs it with no hands on the player. It is the
+*Build and install ByOS* card of the **Updates** tab. The commands are in
+[BYOS_CLI.md](BYOS_CLI.md) ("Build ByOS").
+
+What the user sees: four steps, each with its own state (number, spinner and bar, green
+check, or red cross with the reason), one button **Build and Install**, a **Cancel** button
+while something runs, and **Use a firmware file…** for people who already downloaded HiBy's
+file. The button says **Build and Reinstall** when the HiBy already runs this version (a
+repair), **Build** when the HiBy is on Wi-Fi only, and **Retry** after a failure (the steps
+that finished stay finished).
+
+1. **HiBy's official firmware.** When the tab opens, the app runs `build-info` (no device,
+   no network) to learn the ByOS version it can build, the firmware it needs, and what is
+   already done. On **Build and Install**: `firmware-fetch`. byos-cli downloads the file from
+   HiBy's own servers (progress in bytes), checks size, MD5 and SHA-256, and keeps it in its
+   cache, so a second build never downloads it again. **Use a firmware file…** sends the
+   picked file to the runner (`POST /api/firmware`, into a private temporary folder deleted
+   afterwards), which runs `firmware-fetch --from` on it. A wrong file is refused with "This
+   file is not the official firmware" and nothing is kept. No internet: the error says so and
+   gives HiBy's page.
+2. **Build ByOS.** `build`: the patch (one bar, with the stage shown in words: checking the
+   firmware, reading it, adding ByOS, building and checking the system image, writing and
+   checking the ByOS firmware), then the ByOS folder. A few seconds on a PC. A finished build
+   of the same ByOS files is reused.
+3. **Copy to the HiBy** (USB cable only). After one confirmation sheet ("Install ByOS 0.9.0?
+   The HiBy restarts into HiBy's recovery, installs ByOS and starts again by itself. Keep the
+   USB cable connected…"), the app runs `build-send --install --yes`. byos-cli checks every
+   file of the build again, moves any other `.upt` at the card root to
+   `ByOS/firmware/parked/`, copies the ByOS folder (its version file last) and then
+   `r3ii_2025.upt` to the card root, each one verified with SHA-256. One bar for all bytes.
+4. **Install on the HiBy.** In the same run: battery check (at least 30 % or charging), then
+   the HiBy's own reinstall command over adb (`/usr/bin/hibymod reinstall --yes`, the command
+   its *Software Update › On the SD card* page runs). It checks HiBy's recovery and the
+   `.upt`, switches to the recovery and restarts. The step shows "The HiBy is restarting and
+   installing ByOS", then "Waiting for the HiBy to start ByOS…". byos-cli waits up to 15
+   minutes, restarts `hibysync` over adb when the HiBy is back, and finishes when the HiBy
+   reports the new `byos_version`. The page then shows "ByOS 0.9.0 is installed. Your music,
+   settings and library were kept."
+
+Errors land on the step they belong to, in red, with a summary box and **Retry**: wrong
+firmware file, no internet, a build that fails its own checks, a file of the build that
+changed, the card not available, low battery ("Charge it to 30 % or keep it charging"), the
+HiBy's reinstall refusing (its message is shown), or the HiBy not coming back in time.
+Cancel stops the running job; the step goes back to waiting, not to failed.
+
+Safety rules kept from the design review:
+
+- **USB only.** The page offers the copy and install only for a HiBy on the cable; the
+  runner refuses `build-send` for any other device spec, and byos-cli refuses it for a
+  session that is not local. Firmware files never travel over Wi-Fi.
+- **Only the ByOS firmware at the card root**: other `.upt` files are parked first, because
+  the recovery flashes the first one it finds.
+- **Confirmed by the person at the computer.** The sheet is the confirmation; the CLI gets
+  `--yes`. The HiBy's own checks (recovery intact, valid `.upt`) still run before it restarts.
+- **Nothing half-installed**: the payload's version file is copied last, so an interrupted
+  copy leaves the old version on the card and the HiBy does not install a partial payload.
+
+Demo mode shows every state without a HiBy: `node server.mjs --mock --open` runs the flow
+for real against the fake CLI (scenarios `offline`, `build_fail`, `low_battery`,
+`reinstall_refused`, `slow`), and `?demo=NAME` in the address shows one fixed state for
+screenshots: `downloading`, `ready`, `building`, `sending`, `installing`, `done`, `failed`,
+`wifi`.
 
 ### 5.8 First install on a stock HiBy
 
@@ -575,7 +611,7 @@ CC0-1.0, 0BSD).
 | **M2 Fork** | Museeks fork builds on Windows with the ByOS name, EN/FR/ES, notices generated. | Approval of the npm/crate packages (section 11) |
 | **M3 Devices** | `device_jobs` in Rust, Devices sidebar, Summary, Files (upload/download with drag and drop), Activity, adb manager. | M1, M2 |
 | **M4 Sync** | Music tab, plan and apply, lyrics, covers, audiobooks; DB rebuild (5.5); Library DB tab. | `hibysync` DB_STAGE on the device, the shim apply step |
-| **M5 Updates** | Update ByOS (5.6), install from file; build ByOS (5.7 steps 1 to 3); first-install assistant (5.8). | `hibysync` UPDATE_* |
+| **M5 Updates** | Update ByOS (5.6), install from file; build ByOS and install it over the cable (5.7, in the scaffold); first-install assistant (5.8). | `hibysync` UPDATE_* |
 | **M6 Reskin and polish** | iTunes/iOS look everywhere, animations reviewed frame by frame, accessibility, dark mode, Playwright screenshots. | M3 |
 | **M7 Release** | Signed Windows installer, app updater, notices check, user guide (English, clear steps). | All |
 | Later | Wi-Fi recovery reinstall (5.7 step 4), macOS/Linux, USB bulk transport (FunctionFS) instead of adb. | Device work |
@@ -626,12 +662,13 @@ Packages to approve for the Museeks fork:
 - Q1. Fork location: `desktop/app` in this repository, or a separate repository (simpler
   upstream merges, separate releases)?
 - Q2. Does `hibysync` get a `NAME` set command, so the app can rename the device?
-- Q3. Reinstall through recovery from the app: which BTP command, and which reboot method
-  really comes back on its own (critic correction 11)? Until answered, 5.7 stops after the copy.
-  Whatever the answer, the command must follow the rules in 5.7 step 4 (USB only, confirmed
-  on the device, `.upt` hash checked against the signed bundle index or the patcher's
-  recorded hash, refused for files from a remote session), and SYNC_PROTOCOL must deny `.upt`
-  names at the SD root to remote sessions.
+- Q3. Reinstall through recovery from the app. **Partly answered**: 5.7 now runs the HiBy's
+  own `hibymod reinstall --yes` over adb (USB only; the same command and reboot method as the
+  HiBy's *Software Update › On the SD card* page, which comes back on its own), after a
+  confirmation on the computer. Still open: a BTP/1 command for it (so it no longer needs
+  adb shell), with a confirmation on the HiBy itself and the `.upt` hash checked on the
+  device against the signed bundle index or the hash the build recorded; and SYNC_PROTOCOL
+  must deny `.upt` names at the SD root to remote sessions.
 - Q4. Does the stock player rescan on boot and overwrite a PC-built database? This decides
   whether 5.5 is the default for sync (critic Decision 7 open question).
 - Q5. jlink runtime vs GraalVM native image for `byos-cli` (size, start time, reflection).

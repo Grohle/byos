@@ -26,8 +26,16 @@ const STATIC = {
   '/icon.svg': ['icon.svg', 'image/svg+xml'],
   // The same path rules as the runner, shared with the browser.
   '/btp-path.js': ['../lib/btp-path.mjs', 'text/javascript; charset=utf-8'],
+  // The Updates page's build-and-install steps, shared with the tests.
+  '/build-flow.js': ['../lib/build-flow.mjs', 'text/javascript; charset=utf-8'],
 };
 const MAX_UPLOAD = 4 * 1024 ** 3 - 1; // FAT32 file limit
+const MAX_FIRMWARE = 512 * 1024 ** 2; // HiBy's official firmware is about 47 MB
+// Commands that need no HiBy: they never wait behind a device's queue. "build-info" and
+// "bundle-update --check" answer at once; the long ones (download, build) share one queue.
+const INSTANT = new Set(['devices', 'build-info']);
+const LOCAL_QUEUE = '#local';
+const LOCAL = new Set(['firmware-fetch', 'build', 'bundle-update']);
 const JOB_KEEP_MS = 10 * 60 * 1000;
 const MAX_BODY = 64 * 1024;
 
@@ -136,13 +144,13 @@ export function createApp(options = {}) {
     const args = buildArgs(command, params, globals);
     const job = new Job(resolved, args, jobOptions);
     job.command = command;
-    job.spec = typeof params.device === 'string' ? params.device : '';
+    job.spec = LOCAL.has(command) ? LOCAL_QUEUE : typeof params.device === 'string' ? params.device : '';
     job.state = 'queued';
     if (cleanup) job.once('end', cleanup);
     // Every job, however it ends (run, cancelled while queued, shut down), is forgotten later.
     job.once('end', () => setTimeout(() => jobs.delete(job.id), options.jobKeepMs ?? JOB_KEEP_MS).unref());
     jobs.set(job.id, job);
-    if (command === 'devices') {
+    if (INSTANT.has(command)) {
       job.start();
       return job;
     }
@@ -193,8 +201,12 @@ export function createApp(options = {}) {
     if (req.method === 'GET' && url.pathname === '/') {
       if (url.searchParams.has('t')) {
         if (!safeEqual(url.searchParams.get('t'), token)) return send(res, 403, 'Wrong or old address. Use the one the runner printed.', 'text/plain; charset=utf-8');
+        // Other query parameters (?lang=, ?demo=) are kept; the address fragment is kept by the browser.
+        const rest = new URLSearchParams(url.searchParams);
+        rest.delete('t');
+        const query = rest.toString();
         res.writeHead(303, {
-          Location: '/',
+          Location: query ? `/?${query}` : '/',
           'Set-Cookie': `${cookieName()}=${token}; HttpOnly; SameSite=Strict; Path=/`,
           ...SECURITY_HEADERS,
         });
@@ -229,11 +241,15 @@ export function createApp(options = {}) {
       if (req.method === 'POST' && url.pathname === '/api/jobs') {
         const body = await readJson(req);
         if (body.command === 'put') throw new UsageError('use /api/upload');
+        if (body.command === 'firmware-fetch' && body.params?.from !== undefined) throw new UsageError('use /api/firmware');
         const job = startJob(String(body.command ?? ''), body.params ?? {});
         return send(res, 202, { id: job.id });
       }
       if (req.method === 'POST' && url.pathname === '/api/upload') {
         return await upload(req, res, url);
+      }
+      if (req.method === 'POST' && url.pathname === '/api/firmware') {
+        return await firmwareUpload(req, res);
       }
       if (m) {
         const job = jobs.get(m[1]);
@@ -314,6 +330,27 @@ export function createApp(options = {}) {
       await pipeline(req, createWriteStream(local, { flags: 'wx' }));
       if (mtimeMs !== null) utimesSync(local, new Date(), new Date(mtimeMs));
       job = startJob('put', { local: [local], dir, device, mode }, cleanup);
+    } catch (e) {
+      cleanup();
+      throw e;
+    }
+    return send(res, 202, { id: job.id });
+  }
+
+  // Receives an official firmware file the user picked into a private temporary folder, then
+  // runs "byos-cli firmware-fetch --from" on it: byos-cli checks it (size, MD5, SHA-256) and
+  // keeps its own copy. The temporary copy is deleted when the job ends.
+  async function firmwareUpload(req, res) {
+    const length = Number(req.headers['content-length']);
+    if (!Number.isFinite(length) || length <= 0 || length > MAX_FIRMWARE) throw new UsageError('bad Content-Length');
+    if (resolved.error) throw Object.assign(new Error(resolved.error), { status: 503 });
+    const tmp = mkdtempSync(path.join(os.tmpdir(), `byos-desktop-${process.pid}-`));
+    const cleanup = () => rmSync(tmp, { recursive: true, force: true });
+    const local = path.join(tmp, 'firmware.upt');
+    let job;
+    try {
+      await pipeline(req, createWriteStream(local, { flags: 'wx' }));
+      job = startJob('firmware-fetch', { from: local }, cleanup);
     } catch (e) {
       cleanup();
       throw e;

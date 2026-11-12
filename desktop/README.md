@@ -3,7 +3,9 @@
 This folder is the first, working step of the ByOS desktop app described in
 [docs/DESKTOP_APP.md](../docs/DESKTOP_APP.md) (milestone M0). It is a small web UI in the
 iTunes/iOS style plus a local runner that starts `byos-cli` for it. It lists HiBy players,
-shows a device summary, and browses, creates, renames, deletes and uploads files on the SD card.
+shows a device summary, browses, creates, renames, deletes and uploads files on the SD card,
+and, in the **Updates** tab, builds ByOS from HiBy's official firmware and installs it on the
+HiBy over the USB cable (see "Build and install ByOS" below).
 
 It needs only **Node.js 20 or newer**. There are no npm packages to install.
 
@@ -34,6 +36,12 @@ Demo scenarios, set before starting:
 | `daemon_not_running` | ByOS Sync is not open on the HiBy (the banner offers **Start ByOS Sync**) |
 | `slow` | Slow uploads, to try progress and cancel |
 | `silent_pair` | Pairing waits without heartbeat lines (tests the watchdog) |
+| `offline` | The firmware download fails (no internet) |
+| `build_fail` | The ByOS build fails its own check |
+| `low_battery` | The install stops: the HiBy's battery is too low |
+| `reinstall_refused` | The HiBy's own reinstall checks say no |
+
+`BYOS_MOCK_STEP_MS` sets the pace of the fake build and install (default 60 ms per step).
 
 `BYOS_MOCK_PAIR_WAIT_MS` sets how long the fake user takes to tap *Allow* (default 400 ms).
 
@@ -57,6 +65,26 @@ temporary folder). Delete that file to start again. The pairing code of the fake
    Other options: `--cli PATH` (a `byos-cli.jar`, a native `byos-cli.exe` or a `.mjs` script),
    `--config DIR` (byos-cli's configuration folder), `--port N`, `--adb PATH`. The `BYOS_CLI`
    environment variable can also name the program.
+
+## Build and install ByOS
+
+Open a HiBy, then the **Updates** tab:
+
+1. Press **Build and Install**. The app downloads HiBy's official firmware from HiBy's own
+   servers (or press **Use a firmware file…** first if you already have `r3ii_2025.upt`),
+   checks it, and builds ByOS on this computer. Both are kept, so the next time is instant.
+2. Confirm the sheet. Keep the HiBy on the USB cable and do not press anything on it.
+3. The app copies the ByOS folder and the ByOS firmware to the card, starts the HiBy's own
+   reinstall through HiBy's recovery, and waits until the HiBy is back with the new ByOS
+   (a few minutes). The page ends with "ByOS 0.9.0 is installed."
+
+A HiBy on Wi-Fi can only get the build ready: firmware never travels over Wi-Fi. The details
+are in [docs/DESKTOP_APP.md](../docs/DESKTOP_APP.md) section 5.7 and the commands in
+[docs/BYOS_CLI.md](../docs/BYOS_CLI.md) ("Build ByOS").
+
+In demo mode the whole flow runs against the fake CLI. For a fixed picture of one state, add
+`demo=NAME` to the address the runner prints (`...?t=TOKEN&demo=building#updates`), with
+`downloading`, `ready`, `building`, `sending`, `installing`, `done`, `failed` or `wifi`.
 
 ## How it works
 
@@ -107,6 +135,7 @@ Files:
 | `lib/cli.mjs` | Finds and runs `byos-cli`, builds the arguments, job state machine |
 | `lib/jsonl.mjs` | JSON-lines splitting and checks |
 | `lib/btp-path.mjs` | BTP/1 path rules (also served to the page) |
+| `lib/build-flow.mjs` | The Updates page's build-and-install steps from the CLI lines (also served to the page) |
 | `mock/byos-cli-mock.mjs` | Fake `byos-cli` for demos and tests |
 | `ui/` | The page: `index.html`, `app.css`, `app.js`, `i18n.js` (English, French, Spanish) |
 | `test/` | Tests (`node --test`) |
@@ -122,3 +151,8 @@ npm test
 path rules against `tests/btp/vectors.json`, the JSON-lines reader, the argument builder, every
 mock command with exit codes, prompts, pairing with a right and a wrong code, cancel, a broken
 CLI, the watchdog, and the runner's API (token, Host and Origin checks, streaming, uploads).
+`test/build-flow.test.mjs` checks the build contract: the arguments of the build commands
+(and what the page may never send), the JSON lines of `build-info`, `firmware-fetch`, `build` and
+`build-send` for the whole flow and every failure, how `lib/build-flow.mjs` maps them to the four
+steps, and the runner's firmware upload (temporary copy removed, local jobs not queued behind a
+device).

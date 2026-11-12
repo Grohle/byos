@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // A fake byos-cli for developing and testing the desktop UI without a HiBy and before the
 // real :cli module exists. It prints the JSON-lines output of docs/BYOS_CLI.md for the
-// commands the scaffold uses: devices, status, df, ls, mkdir, mv, rm, connect, put.
+// commands the scaffold uses: devices, status, df, ls, mkdir, mv, rm, connect, put, and the
+// ByOS build flow: build-info, bundle-update, firmware-fetch, build, build-send.
 //
 // It never touches a device or the network. Its "SD card" is a JSON file:
 //   BYOS_MOCK_STATE     path of the state file (default: <tmp>/byos-cli-mock-state.json)
 //   BYOS_MOCK_SCENARIO  ok (default) | usb_storage | no_device | daemon_not_running | slow |
-//                       silent_pair (no heartbeat while waiting for Allow)
+//                       silent_pair (no heartbeat while waiting for Allow) |
+//                       offline (firmware download fails) | build_fail | low_battery |
+//                       reinstall_refused (the HiBy's own checks say no)
+//   BYOS_MOCK_STEP_MS   pace of the build flow's fake progress (default 60; slow: 400)
 //   BYOS_MOCK_DELAY_MS  extra delay before the result line (default 0)
 //   BYOS_MOCK_PAIR_WAIT_MS   time until the fake user taps Allow (default 400)
 //   BYOS_MOCK_HEARTBEAT_MS   progress repeat interval while waiting (default 5000)
@@ -164,10 +168,12 @@ function sdState() {
 }
 
 function usbDevice(extra = {}) {
+  let installed = '0.8.0';
+  try { installed = load().byos?.installed ?? installed; } catch { /* default */ }
   return {
     id: '0123456789abcdef', name: 'HiBy R3 II', transport: 'usb', address: '127.0.0.1:7340',
     serial: 'MOCK0001', paired: false, pairing_open: false, sd_state: sdState(),
-    byos_version: '0.8.0', firmware: '0.8.0', ...extra,
+    byos_version: installed, firmware: installed, ...extra,
   };
 }
 
@@ -195,6 +201,41 @@ function dfFields(state) {
     sd_free: sdState() === 'mounted' ? total - used(state.root) : 0,
     data_total: 150994944, data_free: 25165824,
   };
+}
+
+// ---- the ByOS build flow -----------------------------------------------------------------
+
+const BUILD = {
+  version: '0.9.0', firmwareVersion: '1.3', firmwareFile: 'r3ii_2025.upt', firmwareSize: 46759936,
+  uptSize: 47845376, sdSize: 8063528, files: 209,
+  label: 'HiBy R3 II (2025), official firmware v1.3 of 2 March 2026',
+  md5: '0d16d09c1458dd2f2cdaf38d0047917a',
+  sha256: '764f0c6724675d4c0009c065576fd8a5d21564396f531a1440f261d46dd8b81a',
+  page: 'https://store.hiby.com/apps/help-center',
+};
+const STEP_MS = Number(process.env.BYOS_MOCK_STEP_MS || (SCENARIO === 'slow' ? 400 : 60));
+const STAGES = [['check', 4], ['read', 10], ['apply', 4], ['build', 26], ['verify_rootfs', 26], ['write', 14], ['verify_upt', 16]];
+const CACHE = 'C:\\ByOS\\cli\\cache';
+
+function byos(state) {
+  state.byos ??= { fwReady: false, built: false, installed: '0.8.0' };
+  return state.byos;
+}
+
+function buildFields() {
+  return {
+    out: `${CACHE}\\build`, upt: `${CACHE}\\build\\r3ii_2025.upt`, size: BUILD.uptSize, md5: 'e219fe19d3721f401740a207302e8d95',
+    sha256: 'd4910d1943a91fa1033c19e852ad8c64811fd82707e3afdf2823041780f5da6c', hibyos_version: BUILD.version,
+    build_id: 'cc5e125267494dfc82b8f81c8bf4eca1', files: BUILD.files, sd_size: BUILD.sdSize,
+  };
+}
+
+// A long wait in the real CLI repeats its progress line (heartbeat): so does the mock.
+async function wait(ms, line) {
+  for (let left = ms; left > 0; left -= Math.min(left, HEARTBEAT_MS)) {
+    emit('progress', line);
+    await tick(Math.min(left, HEARTBEAT_MS));
+  }
 }
 
 // ---- commands ---------------------------------------------------------------------------
@@ -351,6 +392,137 @@ const commands = {
     return { id: 'fedcba9876543210', name: 'HiBy R3 II', paired: true, transport: 'wifi', encrypted: true };
   },
 
+  async 'build-info'() {
+    const b = byos(load());
+    return {
+      hibyos_version: BUILD.version, generated_from: 'mock', bundle: 'builtin', bundle_path: `${CACHE}\\bundle\\builtin.zip`,
+      firmware: {
+        label: BUILD.label, version: BUILD.firmwareVersion, file: BUILD.firmwareFile, size: BUILD.firmwareSize,
+        md5: BUILD.md5, sha256: BUILD.sha256, build: 'Mar 2 2026', page: BUILD.page, can_download: true,
+      },
+      firmware_ready: b.fwReady, firmware_path: b.fwReady ? `${CACHE}\\firmware\\r3ii_2025.upt` : null,
+      build: b.built ? { dir: `${CACHE}\\build`, ...buildFields() } : null,
+    };
+  },
+
+  async 'bundle-update'() {
+    await tick(STEP_MS);
+    return { current: BUILD.version, latest: BUILD.version, available: false, updated: false };
+  },
+
+  async 'firmware-fetch'() {
+    const state = load();
+    const b = byos(state);
+    const result = (cached, source) => ({
+      path: `${CACHE}\\firmware\\r3ii_2025.upt`, version: BUILD.firmwareVersion, size: BUILD.firmwareSize,
+      md5: BUILD.md5, sha256: BUILD.sha256, cached, source,
+    });
+    if (opts.from) {
+      let st;
+      try { st = statSync(opts.from); } catch { throw new Fail('local_io', `${opts.from} does not exist`); }
+      for (let i = 1; i <= 10; i++) {
+        await tick(STEP_MS / 2);
+        emit('progress', { op: 'check', path: opts.from, done: i * 100, total: 1000, rate: 0, unit: 'permille' });
+      }
+      // The demo takes any file of at least 1 MB as "the official firmware".
+      if (st.size < 1024 * 1024) {
+        throw new Fail('verify', `this file is not ${BUILD.label} (MD5 00112233445566778899aabbccddeeff)`, undefined,
+          { path: opts.from, page: BUILD.page, size: st.size, md5: '00112233445566778899aabbccddeeff' });
+      }
+      b.fwReady = true;
+      save(state);
+      return result(false, 'file');
+    }
+    if (b.fwReady) return result(true, 'cache');
+    const total = BUILD.firmwareSize;
+    for (let i = 1; i <= 20; i++) {
+      await tick(STEP_MS);
+      if (SCENARIO === 'offline' && i === 4) {
+        throw new Fail('no_device', `cannot reach HiBy's download server. Download it yourself from ${BUILD.page}`, undefined, { page: BUILD.page });
+      }
+      emit('progress', { op: 'download', path: `${CACHE}\\firmware\\r3ii_2025.upt`, done: Math.round((total * i) / 20), total, rate: 6200000, unit: 'bytes' });
+    }
+    for (let i = 1; i <= 5; i++) {
+      await tick(STEP_MS / 2);
+      emit('progress', { op: 'check', path: `${CACHE}\\firmware\\r3ii_2025.upt`, done: i * 200, total: 1000, rate: 0, unit: 'permille' });
+    }
+    b.fwReady = true;
+    save(state);
+    return result(false, 'download');
+  },
+
+  async build() {
+    const state = load();
+    const b = byos(state);
+    if (!b.fwReady) throw new Fail('usage', 'there is no official firmware yet: run firmware-fetch first, or give --firmware FILE.upt');
+    if (b.built && !opts.force) return { ...buildFields(), cached: true };
+    let before = 0;
+    for (const [stage, weight] of STAGES) {
+      for (let i = 1; i <= 4; i++) {
+        await tick(STEP_MS);
+        if (SCENARIO === 'build_fail' && stage === 'verify_rootfs') {
+          throw new Fail('verify', 'the new system image does not match what was built (verify_rootfs)');
+        }
+        emit('progress', { op: 'patch', path: `${CACHE}\\build\\r3ii_2025.upt`, done: Math.round(10 * (before + (weight * i) / 4)), total: 1000, rate: 0, unit: 'permille', stage });
+      }
+      before += weight;
+    }
+    for (let i = 1; i <= 4; i++) {
+      await tick(STEP_MS / 2);
+      emit('progress', { op: 'export', path: `${CACHE}\\build\\ByOS`, done: Math.round((BUILD.sdSize * i) / 4), total: BUILD.sdSize, rate: 0, unit: 'bytes' });
+    }
+    b.built = true;
+    save(state);
+    return { ...buildFields(), cached: false };
+  },
+
+  async 'build-send'() {
+    const state = load();
+    const b = byos(state);
+    if (!b.built) throw new Fail('usage', `there is no build in ${CACHE}\\build: run build first`);
+    if ((opts.device ?? '').startsWith('wifi')) throw new Fail('usage', 'installing a ByOS build needs the USB cable (firmware files never travel over Wi-Fi)');
+    for (let i = 1; i <= 3; i++) {
+      await tick(STEP_MS / 2);
+      emit('progress', { op: 'hash', path: 'ByOS/payload', done: i, total: 3, rate: 0, unit: 'bytes' });
+    }
+    connect();
+    requireSd();
+    const files = [['ByOS/payload/apps/books.bin', 3200000], ['ByOS/payload/theme/home.png', 2400000],
+      ['ByOS/payload/Pictures/Aurora.png', BUILD.sdSize - 3200000 - 2400000 - 2048 - 6],
+      ['ByOS/payload/MANIFEST.md5', 2048], ['ByOS/payload/VERSION', 6], ['r3ii_2025.upt', BUILD.uptSize]];
+    for (const [p, size] of files) {
+      const parts = size > 100000 ? 5 : 1;
+      for (let i = 1; i <= parts; i++) {
+        await tick(STEP_MS);
+        emit('progress', { op: 'put', path: p, done: Math.round((size * i) / parts), total: size, rate: 9800000, unit: 'bytes' });
+      }
+    }
+    const res = {
+      version: BUILD.version, upt: 'r3ii_2025.upt', files: BUILD.files + 1, written: BUILD.files + 1, skipped: 0,
+      bytes: BUILD.uptSize + BUILD.sdSize, parked: [],
+    };
+    if (!opts.install) return { ...res, state: 'sent' };
+    if (!opts.yes) {
+      emit('prompt', { kind: 'confirm', message: `Install ByOS ${BUILD.version} on the HiBy now? It restarts into HiBy's recovery, installs the firmware and starts again. Keep the cable connected.`, version: BUILD.version });
+      const a = await nextAnswer();
+      if (cancelled) throw new Fail('cancelled', 'Cancelled');
+      if (a !== true && a !== 'yes' && a !== 'y') throw new Fail('cancelled', 'not installed; the files stay on the card');
+    }
+    if (SCENARIO === 'low_battery') {
+      throw new Fail('remote', "the HiBy's battery is at 12 %: charge it to 30 % or keep it charging", { code: 67, name: 'E_BATTERY' }, { battery: 12 });
+    }
+    await tick(STEP_MS);
+    if (SCENARIO === 'reinstall_refused') {
+      throw new Fail('remote', 'the HiBy did not start the reinstall: abortado: el recovery no parece valido');
+    }
+    if (opts['no-wait']) return { ...res, state: 'rebooting' };
+    await wait(STEP_MS * 40, { op: 'reboot', path: BUILD.version, done: 0, total: 0, rate: 0, unit: 'none' });
+    await wait(STEP_MS * 20, { op: 'reconnect', path: BUILD.version, done: 0, total: 0, rate: 0, unit: 'none' });
+    b.installed = BUILD.version;
+    save(state);
+    return { ...res, state: 'installed', installed: BUILD.version };
+  },
+
   async put(args) {
     if (args.length < 2) throw new Fail('usage', 'put LOCAL... REMOTE_DIR/');
     const target = args[args.length - 1];
@@ -416,7 +588,8 @@ const commands = {
 
 // ---- argument parsing ---------------------------------------------------------------------
 
-const VALUE_OPTS = new Set(['--device', '--adb', '--local-port', '--config', '--name', '--timeout', '--wait', '--code', '--max-depth']);
+const VALUE_OPTS = new Set(['--device', '--adb', '--local-port', '--config', '--name', '--timeout', '--wait', '--code', '--max-depth',
+  '--from', '--dir', '--out', '--bundle', '--firmware', '--wait-max']);
 const opts = {};
 const positional = [];
 {

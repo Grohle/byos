@@ -133,14 +133,16 @@ class Out(private val stdout: PrintStream, private val stderr: PrintStream, var 
 
     /** At most 5 progress lines per second per operation, but always the last one. */
     @Synchronized
-    fun progress(op: String, path: String?, done: Long, total: Long, rate: Long = 0, unit: String = "bytes") {
+    fun progress(op: String, path: String?, done: Long, total: Long, rate: Long = 0, unit: String = "bytes",
+                 extra: Map<String, Any?> = emptyMap()) {
         val now = System.currentTimeMillis()
         val key = "$op|$path"
         val final = done >= total
         if (!final && key == lastProgressKey && now - lastProgress < 200) return
         lastProgress = now
         lastProgressKey = key
-        event("progress", linkedMapOf("op" to op, "path" to path, "done" to done, "total" to total, "rate" to rate, "unit" to unit))
+        event("progress", linkedMapOf<String, Any?>("op" to op, "path" to path, "done" to done, "total" to total, "rate" to rate, "unit" to unit)
+            .apply { putAll(extra) })
     }
 
     fun warn(code: String, message: String, extra: Map<String, Any?> = emptyMap()) =

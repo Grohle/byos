@@ -125,7 +125,34 @@
 
         <div class="tab-panel" data-panel="music" hidden><div class="card later" data-later="musicLater" data-m="M4"></div></div>
         <div class="tab-panel" data-panel="library" hidden><div class="card later" data-later="libraryLater" data-m="M4"></div></div>
-        <div class="tab-panel" data-panel="updates" hidden><div class="card later" data-later="updatesLater" data-m="M5"></div></div>
+        <div class="tab-panel" data-panel="updates" hidden>
+          <div class="card upd-hero">
+            <div class="upd-icon" aria-hidden="true"></div>
+            <div class="upd-hero-text">
+              <h3 id="upd-title"></h3>
+              <p class="muted" id="upd-sub"></p>
+            </div>
+            <span class="pill" id="upd-pill" hidden></span>
+          </div>
+          <div class="card upd-card">
+            <div class="upd-head">
+              <div>
+                <h3 data-i18n="updBuildTitle"></h3>
+                <p class="muted small-text" data-i18n="updBuildIntro"></p>
+              </div>
+            </div>
+            <ol class="steps" id="upd-steps"></ol>
+            <div class="upd-result" id="upd-result" hidden role="status" aria-live="polite"></div>
+            <div class="upd-actions">
+              <button class="btn link" id="btn-fw-file" data-i18n="updPickFile"></button>
+              <input type="file" id="fw-input" accept=".upt" hidden>
+              <span class="spacer"></span>
+              <button class="btn" id="btn-upd-cancel" data-i18n="cancel" hidden></button>
+              <button class="btn primary" id="btn-upd-go"></button>
+            </div>
+          </div>
+          <p class="muted small-text upd-foot" data-i18n="updFoot"></p>
+        </div>
         <div class="tab-panel" data-panel="settings" hidden><div class="card later" data-later="settingsLater" data-m="M3"></div></div>
       </section>
     </main>

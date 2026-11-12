@@ -185,6 +185,9 @@ cd android/hibyos-install
   `HIBYOS_PYTHON=<python with pycdlib>` it also checks that the app's result is byte for byte the
   one of `tools/hibyos_patcher.py`. `./gradlew :app:testDebugUnitTest` draws every screen into
   `docs/screens`.
+- `byos-cli` (`./gradlew :cli:fatJar`, module `cli/`) carries the same bundle and the same core
+  build code (`core/.../Build.kt`): `firmware-fetch`, `build` and `build-send --install` build ByOS
+  on a computer and install it over USB; the desktop app uses them (docs/BYOS_CLI.md, "Build ByOS").
 
 ### Publishing newer ByOS files for the app
 

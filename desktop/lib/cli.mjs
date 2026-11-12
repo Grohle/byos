@@ -137,6 +137,39 @@ export function buildArgs(command, params = {}, globals = {}) {
       a.push(...withPaths(['put'], flags, [...params.local, `${dir}/`]));
       break;
     }
+    // ---- Build ByOS on this computer (BYOS_CLI.md, "Build ByOS"). No paths come from the
+    // page: byos-cli keeps the firmware and the build in its own cache folder.
+    case 'build-info':
+      a.push('build-info');
+      break;
+    case 'bundle-update':
+      a.push('bundle-update');
+      if (params.check) a.push('--check');
+      break;
+    case 'firmware-fetch':
+      a.push('firmware-fetch');
+      // A firmware file the user picked: only ever the runner's own temporary copy (server.mjs).
+      if (params.from !== undefined) {
+        if (typeof params.from !== 'string' || !path.isAbsolute(params.from)) {
+          throw new UsageError('firmware-fetch: the picked file must be an absolute path');
+        }
+        a.push('--from', params.from);
+      }
+      break;
+    case 'build':
+      a.push('build');
+      if (params.force) a.push('--force');
+      break;
+    case 'build-send':
+      // Firmware files never travel over Wi-Fi (DESKTOP_APP.md 5.7): refused here too.
+      if (typeof params.device === 'string' && !/^usb(:|$)/.test(params.device)) {
+        throw new UsageError('build-send: the HiBy must be connected with the USB cable');
+      }
+      a.push('build-send');
+      if (params.install) a.push('--install');
+      if (params.yes) a.push('--yes');
+      if (params.noWait) a.push('--no-wait');
+      break;
     default:
       throw new UsageError(`command not allowed from the UI: ${command}`);
   }

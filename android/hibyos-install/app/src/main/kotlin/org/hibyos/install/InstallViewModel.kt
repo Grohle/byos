@@ -10,6 +10,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import org.hibyos.install.core.Bundle
+import org.hibyos.install.core.BundleStore
+import org.hibyos.install.core.ByosBuild
+import org.hibyos.install.core.FirmwareCache
 import org.hibyos.install.core.BundleException
 import org.hibyos.install.core.BundleUpdater
 import org.hibyos.install.core.Discovery
@@ -74,6 +77,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     private val firmwareDir = File(files, "firmware")
     private val outDir = File(files, "out")
     private val bundleDir = File(files, "bundle")
+    private val store = BundleStore(bundleDir)
     private val workDir = File(app.cacheDir, "work")
     private val shareDir = File(app.cacheDir, "share")
 
@@ -232,45 +236,20 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
 
     private fun start() {
         try {
-            bundleDir.mkdirs()
             val app = getApplication<Application>()
-            val asset = File(bundleDir, "builtin.zip")
-            val stamp = File(bundleDir, "builtin.stamp")
             val want = try {
                 val pi = app.packageManager.getPackageInfo(app.packageName, 0)
                 "${pi.lastUpdateTime}:${pi.versionName}"
             } catch (e: Exception) {
                 "?"
             }
-            if (!asset.isFile || !stamp.isFile || stamp.readText() != want) {
-                val tmp = File(bundleDir, "builtin.tmp")
-                app.assets.open("hibyos-bundle.zip").use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o, 1 shl 16) } }
-                asset.delete()
-                if (!tmp.renameTo(asset)) throw IOException("the ByOS files could not be unpacked")
-                stamp.writeText(want)
-            }
-            val base = Bundle.open(asset)
+            // the core's store, shared with byos-cli: the shipped copy, or a newer signed one
+            val base = store.builtin(want) { app.assets.open("hibyos-bundle.zip") }
             builtIn = base
-            var use = base
-            var isBuiltIn = true
-            val updated = File(bundleDir, "updated.zip")
-            if (updated.isFile) {
-                try {
-                    val u = Bundle.open(updated)
-                    if (BundleUpdater.isNewer(u.hibyosVersion, base.hibyosVersion)) {
-                        use = u
-                        isBuiltIn = false
-                    } else {
-                        // the app itself now brings the same or a newer version
-                        u.close()
-                        updated.delete()
-                    }
-                } catch (e: BundleException) {
-                    updated.delete()
-                }
-            }
+            val current = store.current(base)
+            val use = current.bundle
             bundle = use
-            val bi = info(use, isBuiltIn)
+            val bi = info(use, current.builtIn)
             val fw = restoreFirmware(use)
             val patch = restorePatch(use)
             val usedNow = used()
@@ -282,22 +261,13 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     }
 
     private fun restoreFirmware(b: Bundle): FirmwareState {
-        val f = File(firmwareDir, b.firmware.fileName)
-        val mark = File(firmwareDir, "firmware.ok")
-        if (!f.isFile || !mark.isFile) return FirmwareState.Idle
-        val lines = mark.readLines()
-        if (lines.size < 2 || lines[0].toLongOrNull() != f.length()) return FirmwareState.Idle
-        if (b.firmware.sha256 != null && lines[1] != b.firmware.sha256) return FirmwareState.Idle
-        return FirmwareState.Ready(f.length(), lines[1])
+        val f = FirmwareCache.ready(firmwareDir, b.firmware) ?: return FirmwareState.Idle
+        return FirmwareState.Ready(f.size, f.sha256)
     }
 
     private fun restorePatch(b: Bundle): PatchState {
-        val f = File(outDir, b.outName)
-        val mark = File(outDir, "result.txt")
-        if (!f.isFile || !mark.isFile) return PatchState.Idle
-        val l = mark.readLines()
-        if (l.size < 6 || l[0] != b.hibyosVersion || l[5] != b.generatedFrom || l[1].toLongOrNull() != f.length()) return PatchState.Idle
-        return PatchState.Done(f.length(), l[2], l[3], l[4].toIntOrNull() ?: 0, l[0])
+        val r = ByosBuild.restore(b, outDir) ?: return PatchState.Idle
+        return PatchState.Done(r.size, r.sha256, r.buildId, r.files, r.hibyosVersion)
     }
 
     // ---- navigation -------------------------------------------------------------------------
@@ -333,7 +303,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     // ---- step 1: the official firmware ------------------------------------------------------
 
     private fun markFirmware(id: FirmwareId) {
-        File(firmwareDir, "firmware.ok").writeText("${id.size}\n${id.sha256}\n")
+        FirmwareCache.mark(firmwareDir, id)
     }
 
     override fun downloadFirmware() {
@@ -351,7 +321,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         worker.execute {
             try {
                 firmwareDir.mkdirs()
-                File(firmwareDir, "firmware.ok").delete()
+                FirmwareCache.unmark(firmwareDir)
                 val pace = Pace()
                 val id = FirmwareFetcher.fetch(b.firmware, dest, cancelled,
                     progress = { done, total ->
@@ -462,8 +432,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         // the file stays until another one replaces it; only the screen goes back to the choices
         state = state.copy(firmware = FirmwareState.Idle)
         worker.execute {
-            File(firmwareDir, "firmware.ok").delete()
-            File(firmwareDir, b.firmware.fileName).delete()
+            FirmwareCache.forget(firmwareDir, b.firmware)
             val usedNow = used()
             ui { it.copy(storageUsed = usedNow) }
         }
@@ -486,18 +455,14 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
             manual = ManualState.Idle)
         worker.execute {
             val input = File(firmwareDir, b.firmware.fileName)
-            val output = File(outDir, b.outName)
-            val mark = File(outDir, "result.txt")
             try {
-                outDir.mkdirs()
-                mark.delete()
                 shareDir.deleteRecursively()
                 val pace = Pace()
-                val r = Patcher.patch(input, b, output, workDir, PatchOptions(cancelled = cancelled),
+                // the core's build step (also byos-cli's "build"): patch, then record the result
+                val (r, _) = ByosBuild.patch(input, b, outDir, workDir, PatchOptions(cancelled = cancelled),
                     PatchListener { stage, f ->
                         if (pace.due(f >= 1.0)) ui { it.copy(patch = PatchState.Running(stage, stage.overall(f).toFloat())) }
                     })
-                mark.writeText("${r.hibyosVersion}\n${r.size}\n${r.sha256}\n${r.buildId}\n${r.files}\n${b.generatedFrom}\n")
                 val usedNow = used()
                 ui { it.copy(patch = PatchState.Done(r.size, r.sha256, r.buildId, r.files, r.hibyosVersion), storageUsed = usedNow) }
             } catch (e: PatchException) {
@@ -505,8 +470,7 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
                     PatchException.Reason.CANCELLED -> ui { it.copy(patch = PatchState.Idle) }
                     PatchException.Reason.WRONG_FIRMWARE -> {
                         // the kept file is no longer the one that was checked: ask for it again
-                        File(firmwareDir, "firmware.ok").delete()
-                        input.delete()
+                        FirmwareCache.forget(firmwareDir, b.firmware)
                         ui { it.copy(patch = PatchState.Failed(error(e)), firmware = FirmwareState.Idle) }
                     }
                     else -> ui { it.copy(patch = PatchState.Failed(error(e))) }
@@ -521,18 +485,10 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
 
     // ---- step 3: sending --------------------------------------------------------------------
 
-    private fun items(b: Bundle, firmware: Boolean): List<SendItem> {
-        // the ByOS folder first and the firmware last: a transfer that stops half way never
-        // leaves an update file on the card without the files it needs
-        val list = ArrayList<SendItem>()
-        for (f in b.sd) list += SendItem(f.path, f.size, f.sha256) { b.open(f.entry) }
-        if (firmware) {
-            val out = File(outDir, b.outName)
-            val sha = (state.patch as? PatchState.Done)?.sha256
-            list += SendItem(b.outName, out.length(), sha) { FileInputStream(out) }
-        }
-        return list
-    }
+    // the order (ByOS folder first, payload version last, firmware at the very end) is the
+    // core's, shared with byos-cli's build-send
+    private fun items(b: Bundle, firmware: Boolean): List<SendItem> =
+        ByosBuild.items(b, if (firmware) File(outDir, b.outName) else null, (state.patch as? PatchState.Done)?.sha256)
 
     override fun setAddress(text: String) {
         val s = state
@@ -751,16 +707,12 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         worker.execute {
             try {
                 val pace = Pace()
-                val staged = File(bundleDir, "staged.zip")
-                BundleUpdater.download(r, staged, cancelled) { done, total ->
+                val b = store.install(r, cancelled, { done, total ->
                     if (pace.due(done == total)) ui { it.copy(update = UpdateState.Downloading(r.version, done, if (total > 0) total else r.size)) }
+                }) {
+                    val old = bundle
+                    if (old != null && old !== builtIn) old.close()
                 }
-                val old = bundle
-                if (old != null && old !== builtIn) old.close()
-                val dest = File(bundleDir, "updated.zip")
-                dest.delete()
-                if (!staged.renameTo(dest)) throw IOException("the ByOS files could not be saved")
-                val b = Bundle.open(dest)
                 bundle = b
                 remote = null
                 val bi = info(b, false)
