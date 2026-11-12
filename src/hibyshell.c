@@ -1867,7 +1867,9 @@ static void maybe_rejuvenate(int avail_kb)
 {
     double t = now_ms();
     if (t - shell_t0 < 120000 || !launcher_on || V.edit || V.drag_app >= 0 || hud_active || cur_down) return;
-    if (SY.sas_sid || SY.pair_ui || SY.up_phase != UP_NONE) return;   /* ByOS Sync pairing or installing: later (a transfer goes on: sync_handover) */
+    /* ByOS Sync pairing, installing, or a RESCAN/UPDATE request read but not handled yet (its
+     * alert waits for the screen): later. A transfer goes on: sync_handover. */
+    if (SY.sas_sid || SY.pair_ui || SY.up_phase != UP_NONE || SY.rescan_req || SY.up_req) return;
     int req = !access("/tmp/hibymod/rejuv_req", F_OK);
     int rss = self_rss_kb();
     if (rss < 0 || (rss < REJUV_RSS_KB && !req)) return;

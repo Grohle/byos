@@ -24,8 +24,10 @@
  *       that must not time out the other sessions (separate run with 3 s timeouts). Daemon
  *       survival: oom_score_adj stays -700 with a session after transfers, RESYNC, WIFI off/on
  *       at run time with a USB session open, exit code 75 for a second instance, control-pipe
- *       EOF with a session open (served until it closes), AUTH with the stored keys after a
- *       restart, and a silent session giving its slot to a new client. */
+ *       EOF with a session open (served until it closes, or BYE after the orphan grace when it
+ *       runs nothing), RESYNC repeating a pending RESCAN, AUTH with the stored keys after a
+ *       restart, and a silent session giving its slot to a new USB client but not to a Wi-Fi
+ *       client from another address. */
 #define BTP_TEST 1
 #define BTP_NO_MAIN 1
 #include "../../src/hibysync.c"
@@ -654,6 +656,7 @@ static void ctl_write(const char *l) { if (write(ctl_fd, l, strlen(l)) < 0) {} }
 
 static int short_idle;   /* next start_daemon(): idle and PUT-idle timeouts of 3 s */
 static int no_ready;     /* next start_daemon(): do not wait for READY (a second instance) */
+static int short_orphan; /* next start_daemon(): orphan grace (no work without the shell) of 2 s */
 static pid_t start_daemon(const char *bin, const char *W, int wifi)
 {
     int sv[2]; socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
@@ -675,6 +678,7 @@ static pid_t start_daemon(const char *bin, const char *W, int wifi)
         setenv("HIBYSYNC_WIFI_ADDR", "127.0.0.2", 1);
         setenv("HIBYSYNC_SECURE_S", "3", 1);   /* unauthenticated Wi-Fi deadline, short for the test */
         if (short_idle) { setenv("HIBYSYNC_IDLE_S", "3", 1); setenv("HIBYSYNC_PUT_IDLE_S", "3", 1); }
+        if (short_orphan) setenv("HIBYSYNC_ORPHAN_S", "2", 1);
         snprintf(e, sizeof e, "%s/daemon.log", W); int lf = open(e, O_WRONLY | O_CREAT | O_APPEND, 0644); if (lf >= 0) { dup2(lf, 2); close(lf); }
         if (wifi) execl(bin, "hibysync", "serve", "--control", "3", "--wifi", "--name", "Test%20R3", (char *)0);
         else execl(bin, "hibysync", "serve", "--control", "3", "--name", "Test%20R3", (char *)0);
@@ -941,6 +945,18 @@ static void daemon_tests(const char *bin, const char *W)
         CHECK(!ctl_wait("RESCAN", line, sizeof line), "full rescan asked to the shell");
         ctl_write("RESCAN_RESULT unsupported\n");
         int tt, f; uint32_t s, l; uint8_t *pp; CHECK(!cli_recv(&c, &tt, &f, &s, &pp, &l) && s == 147 && tt == T_ERROR && rd16(pp) == E_UNSUPPORTED, "shell answer -> E_UNSUPPORTED");
+        /* the shell restarted (exec) after reading RESCAN, before answering: RESYNC asks again */
+        cli_send(&c, T_LIB_RESCAN, 0, 148, q, w.n);
+        CHECK(!ctl_wait("RESCAN", line, sizeof line), "full rescan asked to the shell (before RESYNC)");
+        ctl_write("RESYNC\n");
+        CHECK(!ctl_wait("READY ", line, sizeof line), "RESYNC with a rescan pending -> READY");
+        CHECK(!ctl_wait("RESCAN", line, sizeof line) && !strcmp(line, "RESCAN again"), "RESYNC repeats the pending rescan: %s", line);
+        ctl_write("RESCAN_RESULT ok\n");
+        CHECK(!cli_recv(&c, &tt, &f, &s, &pp, &l) && s == 148 && tt == T_OK, "the adopted shell's answer reaches the client");
+        ctl_write("RESYNC\n");
+        CHECK(!ctl_wait("READY ", line, sizeof line), "RESYNC with nothing pending -> READY");
+        { int again = 0; while (!ctl_read_line(line, sizeof line, 300)) if (strstr(line, "again")) again = 1;
+          CHECK(!again, "nothing repeated when no request is pending"); }
     }
     CHECK(rpc(&c, T_STATUS, 149, 0, 0, &err, buf, &on) == T_STATUS_R && buf[0] == 87 && buf[1] == 1 && buf[2] == 0, "STATUS battery 87, charging, SD mounted");
 
@@ -1190,6 +1206,28 @@ static void daemon_tests(const char *bin, const char *W)
     pid = start_daemon(bin, W, 0);
     close(ctl_fd);
     CHECK(!wait_exit(pid, 3000), "daemon exits when the control pipe closes (no session)");
+    /* control EOF with a client that keeps asking small things but runs no transfer: it does not
+     * hold the lock forever; after the orphan grace (2 s here) it gets BYE and the daemon exits */
+    short_orphan = 1; pid = start_daemon(bin, W, 0); short_orphan = 0;
+    CHECK(!cli_connect("127.0.0.1", 17340, &z) && !hello(&z, 0), "orphan run: connect");
+    usleep(100000); close(ctl_fd);
+    {
+        long long t0 = now_ms(); int served = 0, bye = 0;
+        while (now_ms() - t0 < 6000 && !bye) {
+            if (cli_send(&z, T_DF, 0, 9, 0, 0)) break;
+            for (;;) {
+                int tt, f; uint32_t s, l; uint8_t *pp;
+                if (cli_recv(&z, &tt, &f, &s, &pp, &l)) { bye = 1; break; }
+                if (tt == T_BYE) { bye = 1; break; }
+                if (tt == T_DF_R) { served++; break; }
+            }
+            if (!bye) usleep(300000);
+        }
+        CHECK(served >= 3 && bye, "orphan: small requests served, then BYE after the grace (%d served, %lld ms)", served, now_ms() - t0);
+        CHECK(now_ms() - t0 >= 1500, "orphan: not before the grace");
+    }
+    close(z.fd);
+    CHECK(!wait_exit(pid, 3000), "orphan: exits after the grace although a client was connected");
     /* SIGTERM with an open PUT: part kept */
     pid = start_daemon(bin, W, 0);
     CHECK(!cli_connect("127.0.0.1", 17340, &z) && !hello(&z, 0), "third run");
@@ -1236,11 +1274,25 @@ static void daemon_tests(const char *bin, const char *W)
 
     /* both slots held by silent sessions (a phone that slept or lost Wi-Fi): a new client gets
      * the slot of the one silent the longest instead of E_BUSY (idle limit 3 s here: silent = 2 s) */
-    short_idle = 1; pid = start_daemon(bin, W, 0); short_idle = 0;
+    short_idle = 1; pid = start_daemon(bin, W, 1); short_idle = 0;
     {
         struct cli a, b, n3; int dfl = 0;
         CHECK(!cli_connect("127.0.0.1", 17340, &a) && !hello(&a, 0) && !cli_connect("127.0.0.1", 17340, &b) && !hello(&b, 0), "silent run: two sessions");
         usleep(2300000);
+        /* a Wi-Fi client (another LAN host, no keys) must not close silent USB sessions just by
+         * connecting: it gets E_BUSY and both sessions stay */
+        {
+            int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+            struct sockaddr_in me = { 0 }; me.sin_family = AF_INET; me.sin_addr.s_addr = inet_addr("127.0.0.3");
+            struct sockaddr_in to = { 0 }; to.sin_family = AF_INET; to.sin_port = htons(17340); to.sin_addr.s_addr = inet_addr("127.0.0.2");
+            struct timeval tv = { 2, 0 }; setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+            int ok = !bind(fd, (struct sockaddr *)&me, sizeof me) && !connect(fd, (struct sockaddr *)&to, sizeof to);
+            struct cli wc = { 0 }; wc.fd = fd; int t, f; uint32_t s, l; uint8_t *q;
+            CHECK(ok && !cli_recv(&wc, &t, &f, &s, &q, &l) && t == T_ERROR && l >= 2 && rd16(q) == E_BUSY, "silent run: a Wi-Fi client from another address gets E_BUSY");
+            close(fd);
+            struct pollfd pf[2] = { { a.fd, POLLIN, 0 }, { b.fd, POLLIN, 0 } };
+            CHECK(poll(pf, 2, 100) == 0, "silent run: the silent USB sessions were not closed for it");
+        }
         CHECK(!cli_connect("127.0.0.1", 17340, &n3) && !hello(&n3, &dfl), "silent run: a third client gets a slot");
         CHECK(rpc(&n3, T_DF, 1, 0, 0, &err, 0, 0) == T_DF_R, "silent run: and is served");
         int t, f; uint32_t s, l; uint8_t *q;

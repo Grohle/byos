@@ -47,6 +47,7 @@ static struct {
     int dbstaged, page, modal, in_tick;
     double lowmem_t;
     int was_ready, skip_line, resync; double busy_t, last_act;   /* READY seen since the start; adopted, RESYNC not answered yet; lock held by another daemon */
+    int ad_rescan, ad_up;                             /* adopted: RESCAN / UPDATE read before the RESYNC answer */
 } SY = { .fd = -1 };
 static volatile pid_t sy_pid_v;                       /* for mem_watch (another thread) */
 static volatile int sy_busy_v, sy_crit;
@@ -161,6 +162,10 @@ static void sy_reap(void)
             lg("sync: hibysync exited (%d%s%s)%s", code, sig ? ", signal " : "", sig ? strsignal(sig) : "", SY.was_ready ? "" : " before READY");
             if (code == 75) SY.busy_t = now_ms();
             else if (!SY.was_ready || (sig && sig != SIGKILL && sig != SIGTERM && now_ms() - SY.t_start < 10000)) { SY.failed++; SY.fail_t = now_ms(); }
+            /* cut from outside (hibyguard, the kernel) while nothing needed it: memory is short,
+             * so the low-memory back-off applies (1 min with Wi-Fi sync on, else 5 min) instead
+             * of a spawn and cut loop every ~20 s. sy_busy_v is still the last tick's value. */
+            if (SY.was_ready && (sig == SIGKILL || sig == SIGTERM) && !sy_busy_v) { SY.lowmem_t = now_ms(); lg("sync: cut for memory, next start after the back-off"); }
             if (SY.fd >= 0) { close(SY.fd); SY.fd = -1; }
             SY.pid = 0; sy_pid_v = 0; sy_busy_v = 0; SY.resync = 0;
             sy_session_reset();
@@ -257,11 +262,18 @@ static void sy_line(char *l)
         char pth[400]; sy_unpct(tk[5], pth, sizeof pth);
         const char *b = strrchr(pth, '/'); snprintf(SY.xname, sizeof SY.xname, "%s", b ? b + 1 : pth);
     } else if (!strcmp(c, "UPDATE") && n >= 3) {
+        /* "again": the answer to RESYNC repeats a request the shell before the exec had not
+         * acted on; skipped when this shell already got the first one (still in the pipe) */
+        int again = tk[3] && !strcmp(tk[3], "again");
+        if (again && (SY.ad_up || SY.up_req || SY.up_phase != UP_NONE)) return;
+        if (SY.resync) SY.ad_up = 1;
         snprintf(SY.up_ver, sizeof SY.up_ver, "%s", tk[1]); SY.up_noconfirm = !strcmp(tk[2], "noconfirm");
         if (SY.up_phase != UP_NONE) { sy_send("UPDATE_STATE 5 0 8"); return; }   /* E_BUSY */
         SY.up_req = 1;
-        lg("sync: install of ByOS %s requested (%s)", SY.up_ver, tk[2]);
+        lg("sync: install of ByOS %s requested (%s)%s", SY.up_ver, tk[2], again ? " again after the restart" : "");
     } else if (!strcmp(c, "RESCAN")) {
+        if (tk[1] && !strcmp(tk[1], "again") && SY.ad_rescan) return;
+        if (SY.resync) SY.ad_rescan = 1;
         SY.rescan_req = 1;
     } else if (!strcmp(c, "DBSTAGED")) {
         SY.dbstaged = 1;
@@ -606,6 +618,7 @@ static void sync_adopt(void)
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     SY.pid = pid; sy_pid_v = pid; SY.fd = fd; SY.wifi = wifi != 0; SY.t_start = now_ms();
     SY.ready = SY.was_ready = 1; SY.skip_line = skip != 0; SY.rxn = 0; SY.resync = 1;   /* no Wi-Fi decision before its answer */
+    SY.ad_rescan = SY.ad_up = 0;
     SY.last_act = now_ms();                                          /* sessions may be open: CONN lines follow */
     { static int reg; if (!reg) { reg = 1; atexit(sync_atexit); } }
     sy_send("RESYNC");                                               /* READY and the open sessions again */

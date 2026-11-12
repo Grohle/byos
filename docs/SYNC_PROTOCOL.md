@@ -894,7 +894,7 @@ Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packe
 |---|---|
 | `max_payload` | 65544 (BTP/1, both sides) |
 | DATA data length | 1 to 65536 |
-| Concurrent sessions | 2 (`E_BUSY`). When both are taken, a new client (USB or Wi-Fi) gets the slot of an open session that has received nothing for 45 s (3/8 of the idle limit) and runs nothing; that session gets `BYE` |
+| Concurrent sessions | 2 (`E_BUSY`). When both are taken, a new client gets the slot of an open session that has received nothing for 45 s (3/8 of the idle limit) and runs nothing; that session gets `BYE`. A USB client may take any such session; a Wi-Fi client only a Wi-Fi session from its own address (the same phone reconnecting), never a USB session or another host's |
 | HELLO deadline after connect | 5 s |
 | Pairing: from PAIR_REVEAL to Allow/Deny | 120 s |
 | Idle session (no frame received) | 120 s; clients send PING every 30 s while idle. The clock restarts when a job (GET, LIST, ...) ends |
@@ -961,12 +961,17 @@ Clients on Android need a `WifiManager.MulticastLock` to receive broadcast packe
 - Control pipe EOF (the shell exited or was killed): with no session open the daemon exits at
   once. With sessions open it keeps serving them, without the shell (no pairing, RESCAN or
   UPDATE_INSTALL; an install waiting for the shell reports state 5 `E_CANCELLED`), closes its
-  listeners so it takes no new connection, and exits when the last session closes.
+  listeners so it takes no new connection, and exits when the last session closes or when no
+  session has had work running (a PUT, a GET or another job, queued requests, unsent data) for
+  30 s, whichever comes first; the sessions get `BYE` and the clients reconnect to the daemon of
+  the new shell. A client that only sends PING does not keep it alive.
 - A second instance (the lock is held) exits with code 75; the shell starts it again 10 s later
   without counting a failed start.
 - Shell rejuvenation (the shell replaces itself with `exec`, same process): the daemon is not
   stopped. The control socket is kept across the exec (environment `HIBYSYNC_ADOPT`), the new
-  shell takes it over and sends `RESYNC`. Sessions and transfers do not notice.
+  shell takes it over and sends `RESYNC`. Sessions and transfers do not notice. The shell does
+  not rejuvenate while a pairing, an install, or a `RESCAN`/`UPDATE` it has read but not handled
+  yet is pending.
 - On SIGTERM: close the listeners, send `ERROR E_CANCELLED` on running streams and `BYE`, fsync
   open parts, and exit within 1 s.
 
@@ -987,8 +992,8 @@ Daemon to shell:
 | `PAIRED <sid> <key_id hex> <client-name>` | Pairing finished. The shell closes the alert and shows a toast. |
 | `PAIRFAIL <sid> <reason>` | `rejected`, `timeout`, `commit`, `mismatch` (the client sent BYE after a wrong code), `closed`. The alert closes. |
 | `XFER <sid> put\|get <done> <total> <path>` | Progress, at most 4 lines per second. The page shows a progress row. The shell keeps the screen-off timer and power management as they are. |
-| `UPDATE <version> confirm\|noconfirm` | Install the staged update (14.3). |
-| `RESCAN` | Trigger a full library rescan (13.3). |
+| `UPDATE <version> confirm\|noconfirm [again]` | Install the staged update (14.3). `again`: repeated in the answer to `RESYNC` because no answer came yet; the shell ignores it when it already has this request. |
+| `RESCAN [again]` | Trigger a full library rescan (13.3). `again` as for `UPDATE`. |
 | `DBSTAGED <size>` | The page shows "Library ready: restart to apply". |
 | `ERR <text>` | Logged in the shell's log. |
 | `BYE` | Daemon exits. |
@@ -1000,7 +1005,7 @@ Shell to daemon:
 | `ALLOW <sid>` / `DENY <sid>` | Answer to SAS |
 | `PAIRING on\|off` | Open or close the pairing window (closes by itself after 5 minutes or 3 failures) |
 | `WIFI on\|off [<idle-exit s>]` | Turn the Wi-Fi listener and discovery on or off without a restart (off closes Wi-Fi sessions with BYE and the pairing window; USB sessions stay). The optional number replaces `--idle-exit` (0 = never). Answered with `READY`. The shell turns Wi-Fi off only when no Wi-Fi client is connected or pairing. |
-| `RESYNC` | Answered with `READY`, then one `CONN` line per open session (used by a shell that took the daemon over after an `exec`) |
+| `RESYNC` | Answered with `READY`, then one `CONN` line per open session, then `RESCAN again` if a rescan waits for the shell and `UPDATE <version> confirm\|noconfirm again` if an install request waits for it (used by a shell that took the daemon over after an `exec`) |
 | `FORGET <key_id hex>` | Remove a peer (open sessions of that peer are closed) |
 | `PEERS` | The daemon answers with lines `PEER <key_id hex> <paired time> <name>` and then `PEERS END` |
 | `UPDATE_STATE <state> <permille> <error>` | Install progress for UPDATE_STATUS (state numbers as in 14.3) |

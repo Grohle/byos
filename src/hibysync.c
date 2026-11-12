@@ -56,6 +56,7 @@ static void lg(const char *fmt, ...)
 #define T_IDLE_S 120
 #define T_PUT_IDLE_S 30
 #define T_SECURE_S 15      /* a Wi-Fi session must finish AUTH or reach PAIR_REVEAL within this */
+#define T_ORPHAN_S 30      /* shell gone: sessions kept this long after their last running work */
 #define T_PAIR_S 120
 #define HASH_STEP (2u << 20)   /* bytes hashed per poll turn by the incremental hash jobs */
 #define HOLD_MAX 4             /* pipelined requests kept aside while a job runs */
@@ -69,7 +70,7 @@ struct sync_paths {
     char sd[256], data[256], hm[256], sync[300], dbdir[320], ota[300], mounts[256], hibytag[256], cli[256],
          batt[256], usb[256], lock[256], resconf[256], wifi_if[IFNAMSIZ];
     int port; uint32_t wifi_fixed;   /* test: fixed "Wi-Fi" address instead of the interface */
-    int t_idle, t_put_idle, t_secure;   /* timeouts (s); only test builds change them */
+    int t_idle, t_put_idle, t_secure, t_orphan;   /* timeouts (s); only test builds change them */
 };
 static struct sync_paths SP;
 static void paths_init(void)
@@ -86,7 +87,7 @@ static void paths_init(void)
     snprintf(SP.resconf, sizeof SP.resconf, "/usr/resource/config.json");
     snprintf(SP.wifi_if, sizeof SP.wifi_if, "wlan0");
     SP.port = BTP_PORT;
-    SP.t_idle = T_IDLE_S; SP.t_put_idle = T_PUT_IDLE_S; SP.t_secure = T_SECURE_S;
+    SP.t_idle = T_IDLE_S; SP.t_put_idle = T_PUT_IDLE_S; SP.t_secure = T_SECURE_S; SP.t_orphan = T_ORPHAN_S;
 #ifdef BTP_TEST
     const char *e;
 #define SENV(k, f) if ((e = getenv(k)) && *e) snprintf(SP.f, sizeof SP.f, "%s", e)
@@ -99,6 +100,7 @@ static void paths_init(void)
     if ((e = getenv("HIBYSYNC_IDLE_S")) && atoi(e) > 0) SP.t_idle = atoi(e);
     if ((e = getenv("HIBYSYNC_PUT_IDLE_S")) && atoi(e) > 0) SP.t_put_idle = atoi(e);
     if ((e = getenv("HIBYSYNC_SECURE_S")) && atoi(e) > 0) SP.t_secure = atoi(e);
+    if ((e = getenv("HIBYSYNC_ORPHAN_S")) && atoi(e) > 0) SP.t_orphan = atoi(e);
 #endif
     snprintf(SP.sync, sizeof SP.sync, "%s/sync", SP.hm);
     snprintf(SP.dbdir, sizeof SP.dbdir, "%s/db", SP.sync);
@@ -126,6 +128,8 @@ static struct {
     time_t probe_sec; int probe_n;
     int oom_val; time_t oom_t;   /* last oom_score_adj written (1 = none yet) */
     int orphan;               /* the shell went away with sessions open: serve them, then exit */
+    time_t orphan_work;       /* orphan: last time a session had work running */
+    int udp_err;              /* errno of the last failed discovery socket (0 = none), logged once */
     char byos_version[32], firmware[32];
 } G = { .ctl = -1, .lst_lo = -1, .lst_wifi = -1, .udp = -1, .sd_shell = -1, .oom_val = 1 };
 
@@ -1716,12 +1720,17 @@ static void announce(const uint8_t *nonce, const struct sockaddr_in *to)
  * and unicast probes all arrive; answers leave from wlan0 (the only route to the subnet) */
 static int udp_open(void)
 {
-    int u = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    int u = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0), e = u < 0 ? errno : 0;
     if (u >= 0) {
         int one = 1; setsockopt(u, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one); setsockopt(u, SOL_SOCKET, SO_BROADCAST, &one, sizeof one);
         struct sockaddr_in b = { 0 }; b.sin_family = AF_INET; b.sin_port = htons((uint16_t)SP.port); b.sin_addr.s_addr = htonl(INADDR_ANY);
-        if (bind(u, (struct sockaddr *)&b, sizeof b)) { lg("discovery socket: %s", strerror(errno)); close(u); u = -1; }
+        if (bind(u, (struct sockaddr *)&b, sizeof b)) { e = errno; close(u); u = -1; }
     }
+    /* retried every 5 s while it fails: the log (tmpfs, so RAM) gets the first failure of a run
+     * and each change of error only, then one line when it works again */
+    if (u < 0 && e != G.udp_err) lg("discovery socket: %s", strerror(e));
+    else if (u >= 0 && G.udp_err) lg("discovery socket: ok again");
+    G.udp_err = u < 0 ? e : 0;
     return u;
 }
 static void wifi_close(void)
@@ -1789,11 +1798,16 @@ static void accept_on(int lfd, int local)
         /* A dead session must not hold a slot until the 120 s idle timeout: a phone that lost
          * Wi-Fi, slept or was killed leaves its TCP connection open on our side, and two of them
          * made every reconnect fail with E_BUSY. Clients PING every 30 s, so an open session that
-         * sent nothing for 45 s (3/8 of the idle limit) and has no work running is gone. */
+         * sent nothing for 45 s (3/8 of the idle limit) and has no work running is gone.
+         * This runs before any authentication, so a Wi-Fi client may only take the slot of a
+         * silent Wi-Fi session from its own address (the same phone reconnecting): another LAN
+         * host cannot close a phone or a USB session just by connecting. A USB client (local)
+         * may take any silent session. */
         struct sess *v = 0; time_t t = mono(), stale = SP.t_idle * 3 / 8;
         for (int i = 0; i < MAX_SESS; i++) {
             struct sess *o = &S[i];
             if (o->st != SS_OPEN || o->job || o->put.active || o->hq_n || o->ps != PS_NONE || o->tx_len > o->tx_off || o->sf_left || t - o->last_rx <= stale) continue;
+            if (!local && (o->local || o->peer_addr != a.sin_addr.s_addr)) continue;
             if (!v || o->last_rx < v->last_rx) v = o;
         }
         if (v) {
@@ -1886,6 +1900,12 @@ static void ctl_line(char *l)
             const char *n = s->local ? s->cname : s->pname; char nm[200]; pct(n, strlen(n), nm, sizeof nm);
             ctl_send("CONN %d %s %s", s->sid, s->local ? "usb" : "wifi", nm[0] ? nm : "-");
         }
+        /* a request the old shell may have read (or half read) without acting on it: sent again,
+         * marked "again" so a shell that did get the first one does not run it twice. Without
+         * this, the client waited forever (RESCAN) or got E_BUSY on everything (UPDATE). */
+        struct sess *rs = sess_by_sid(G.rescan_sid);
+        if (rs && rs->job == JOB_RESCAN) ctl_send("RESCAN again");
+        if (G.up_state == 2 || G.up_state == 3) ctl_send("UPDATE %s %s again", G.up_version, G.up_state == 3 ? "noconfirm" : "confirm");
     } else if (!strcmp(cmd, "FORGET")) {
         uint8_t id[16]; if (strlen(a1) != 32 || ota_unhex(a1, id, 16)) return;
         int i = peer_find(id); if (i < 0) return;
@@ -1989,7 +2009,7 @@ static int ctl_gone(void)
     int n = 0; for (int i = 0; i < MAX_SESS; i++) if (S[i].st) n++;
     if (!n) { lg("control pipe closed: exiting"); return 1; }
     lg("control pipe closed: serving the %d open session(s), then exiting", n);
-    G.orphan = 1; G.pairing_open = 0; G.wifi = 0; wifi_close();
+    G.orphan = 1; G.orphan_work = mono(); G.pairing_open = 0; G.wifi = 0; wifi_close();
     if (G.lst_lo >= 0) { close(G.lst_lo); G.lst_lo = -1; }
     if (G.up_state == 2 || G.up_state == 3) { G.up_state = 5; G.up_error = E_CANCELLED; }
     for (int i = 0; i < MAX_SESS; i++) {
@@ -2028,8 +2048,19 @@ static int serve(void)
         timers();
         for (int i = 0; i < MAX_SESS; i++) if (S[i].st && (S[i].tx_len > S[i].tx_off || S[i].close_after_tx)) sess_service(&S[i], 0);
         wifi_refresh();
-        int any = 0; for (int i = 0; i < MAX_SESS; i++) if (S[i].st) any = 1;
+        int any = 0, work = 0;
+        for (int i = 0; i < MAX_SESS; i++) {
+            struct sess *s = &S[i]; if (!s->st) continue;
+            any = 1;
+            if (s->job || s->put.active || s->hq_n || s->sf_left || s->tx_len > s->tx_off) work = 1;
+        }
         if (!any && G.orphan) { lg("the last session closed: exiting"); break; }
+        /* orphan: a client that only PINGs (every 30 s) would keep this daemon, and so the lock,
+         * forever, while the new shell's daemon exits with 75 every 10 s and nobody else can
+         * connect or pair. Once nothing has run for T_ORPHAN_S the sessions get BYE
+         * (shutdown_all) and the clients reconnect to the new shell's daemon. */
+        if (G.orphan && work) G.orphan_work = mono();
+        if (G.orphan && mono() - G.orphan_work >= SP.t_orphan) { lg("no work for %d s without the shell: exiting", SP.t_orphan); break; }
         if (!any && G.idle_exit > 0 && mono() - G.idle_since >= G.idle_exit) { lg("idle for %d s: exiting", G.idle_exit); break; }
     }
     shutdown_all(1);
