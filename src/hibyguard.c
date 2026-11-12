@@ -68,6 +68,7 @@
 #define CALM_KB     6000
 #define PRESS_KB    5000
 #define SEV_KB      3000
+#define L3_HARD     150     /* s of severe pressure after which even a busy shell is restarted */
 #define CRIT_KB     2048    /* below this a busy shell is restarted anyway (the kernel OOM killer is next) */
 #define PRESS_RR    600
 #define SEV_RR      1500
@@ -306,7 +307,10 @@ static int run(void)
              * makes the player grow 3 MB). Step 2 already asked it to restart itself at a safe
              * point; kill only near OOM or when it no longer beats. */
             int beating = hs && t - beat_t < 5;
-            if (sh && rss > SHELL_BIG_KB && beating && s.avail >= CRIT_KB) {
+            /* ...but not forever: with Bluetooth on (player +3 MB) and the BT page open the device
+             * thrashed for 10+ min (3.5 MB free, ~5000 refaults/s, adb could not even fork) while
+             * the shell kept beating inside the app and never reached its safe restart point. */
+            if (sh && rss > SHELL_BIG_KB && beating && s.avail >= CRIT_KB && sev_s < L3_HARD) {
                 if (t - last_l3 > 60) { last_l3 = t - 60; logl(0, "severe for %d s: %ld KB free, %ld refaults/s -> shell in use, not restarted (asked to restart itself)", sev_s, s.avail, rr); }
                 int f = open(REJUV_REQ, O_WRONLY | O_CREAT | O_CLOEXEC, 0644); if (f >= 0) close(f);
             } else if (sh && rss > SHELL_BIG_KB) {
