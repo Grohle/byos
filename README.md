@@ -690,6 +690,15 @@ official HiBy firmware is not part of it and is never redistributed.
 
 - **The community**, for everything shared about the R3 II's firmware and, above all, about
   how to reach ADB on it: those findings are what made this project possible.
+- **[CompasOS](https://github.com/Starnished66/compas-player)** by Starnished66, for the
+  knowledge in its open player, desktop tools and phone app: how it handles Bluetooth, the
+  status bar and the screen on these players, and its ideas for exchanging files with a
+  computer or phone and building the music library on the PC inspired ByOS's sync protocol and
+  companion apps. (ByOS reuses ideas, not code: CompasOS is GPL-3.0.)
+- **[hiby-mods](https://github.com/hiby-modding/hiby-mods)** by noisetta and contributors, for
+  the knowledge of HiBy's music database and its database manager, whose logic the ByOS
+  companion apps follow to build the library on the PC (MIT, see `LICENSES/`), and for their
+  other mods and notes.
 - **HiBy**, for not closing the door to custom firmware.
 - **[stb](https://github.com/nothings/stb)** by Sean Barrett, **SQLite**, **Mbed TLS** and
   the **Independent JPEG Group**, used inside ByOS.
