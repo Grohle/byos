@@ -164,6 +164,162 @@
     <string name="sync_err_none_found">Aucun baladeur trouvé</string>
     <string name="sync_hint_none_found">Vérifiez que Wi-Fi sync est activé dans Settings › ByOS Sync, ou saisissez l\'adresse affichée là.</string>
     <string name="sync_err_generic">Un problème est survenu</string>
+
+    <!-- Signed ByOS update (install from the phone) -->
+    <string name="sync_install_title">Installer une mise à jour</string>
+    <string name="sync_install_sub">Une mise à jour signée, téléchargée sur ce téléphone</string>
+    <string name="sync_ota_files_h">Fichiers de mise à jour</string>
+    <string name="sync_ota_json">Description</string>
+    <string name="sync_ota_payload">Contenu</string>
+    <string name="sync_ota_not_chosen">Non choisi</string>
+    <string name="sync_ota_choose">Choisir les fichiers de mise à jour</string>
+    <string name="sync_ota_choose_other">Choisir l\'autre fichier</string>
+    <string name="sync_ota_files_footer">Téléchargez **hibyos-update.json** et **hibyos-payload-&lt;version&gt;.tar** depuis les versions de ByOS, puis choisissez les deux (ou l\'un, puis l\'autre). La signature est vérifiée sur ce téléphone, puis à nouveau sur le baladeur.</string>
+    <string name="sync_ota_signed">Signée par ByOS</string>
+    <string name="sync_ota_tar_wrong">Ce n\'est pas le contenu de cette version</string>
+    <string name="sync_ota_version_h">ByOS %1$s</string>
+    <string name="sync_ota_installed">Sur le baladeur</string>
+    <string name="sync_ota_size">Taille</string>
+    <string name="sync_ota_after">Ensuite</string>
+    <string name="sync_ota_restart_none">Rien à redémarrer</string>
+    <string name="sync_ota_restart_shell">L\'écran ByOS redémarre</string>
+    <string name="sync_ota_restart_reboot">Le baladeur redémarre</string>
+    <string name="sync_ota_needs_fw">Demande le firmware ByOS le plus récent</string>
+    <string name="sync_ota_needs_fw_sub">Réinstallez d\'abord ByOS depuis cette app si le baladeur la refuse.</string>
+    <string name="sync_ota_send_install">Envoyer et installer (%1$s)</string>
+    <string name="sync_ota_install_footer" formatted="false">Le baladeur vous demande de confirmer avant d\'installer quoi que ce soit. Gardez-le chargé (30 % au moins, ou sur le chargeur).</string>
+    <string name="sync_ota_unsupported">La version de ByOS de ce baladeur ne peut pas installer de mises à jour par ByOS Sync</string>
+    <string name="sync_ota_unsupported_sub">Copiez les deux fichiers dans le dossier ByOS/ota de la carte, ou mettez ByOS à jour depuis la page Mise à jour logicielle du baladeur.</string>
+    <string name="sync_ota_sending">Envoi de ByOS %1$s</string>
+    <string name="sync_ota_sending_note">Gardez l\'app ouverte et le baladeur allumé. Si la connexion coupe, réessayez : ce qui est déjà sur le baladeur n\'est pas renvoyé.</string>
+    <string name="sync_ota_checking">Vérification sur le baladeur</string>
+    <string name="sync_ota_checking_sub">Le baladeur vérifie la signature et le contenu. Cela prend quelques secondes.</string>
+    <string name="sync_ota_confirm_title">Confirmez sur le baladeur</string>
+    <string name="sync_ota_confirm_text">Le baladeur demande s\'il faut installer ByOS %1$s. Touchez **Installer** sur le baladeur.</string>
+    <string name="sync_ota_confirm_wait">En attente du baladeur</string>
+    <string name="sync_ota_stop_waiting">Ne plus attendre</string>
+    <string name="sync_ota_installing">Installation de ByOS %1$s</string>
+    <string name="sync_ota_installing_note">N\'éteignez pas le baladeur. En cas d\'échec, il remet de lui-même la version précédente de ByOS.</string>
+    <string name="sync_ota_done_title">ByOS %1$s installé</string>
+    <string name="sync_ota_done_none">Tout est prêt sur le baladeur.</string>
+    <string name="sync_ota_done_shell">L\'écran ByOS redémarre sur le baladeur. Pour vous reconnecter, ouvrez **Réglages › ByOS Sync** sur le baladeur.</string>
+    <string name="sync_ota_done_reboot">Touchez **Redémarrer maintenant** sur le baladeur pour terminer. Ouvrez ensuite ByOS Sync sur le baladeur pour vous reconnecter.</string>
+    <string name="sync_ota_refused_title">Non installée</string>
+    <string name="sync_ota_refused_text">La mise à jour a été annulée sur le baladeur. ByOS %1$s reste prête sur la carte : installez-la quand vous voulez.</string>
+    <string name="sync_ota_staged_title">Prête sur le baladeur</string>
+    <string name="sync_ota_staged_text">ByOS %1$s est vérifiée et attend sur la carte. Pour l\'installer, ouvrez **Réglages › Mise à jour logicielle** sur le baladeur.</string>
+    <string name="sync_ota_downgrade_anyway">Installer quand même ByOS %1$s</string>
+    <string name="sync_ota_install_again">Installer à nouveau</string>
+    <string name="sync_err_signature">Cette mise à jour n\'est pas signée par ByOS</string>
+    <string name="sync_hint_signature">Téléchargez à nouveau hibyos-update.json depuis les versions officielles de ByOS. Un fichier modifié ou non officiel n\'est jamais installé.</string>
+    <string name="sync_err_update_invalid">Les fichiers de mise à jour ne correspondent pas</string>
+    <string name="sync_hint_update_invalid">Téléchargez à nouveau les deux fichiers de la même version et choisissez-les.</string>
+    <string name="sync_err_update_payload">Ce contenu n\'est pas celui que nomme la mise à jour</string>
+    <string name="sync_hint_update_payload">Choisissez le fichier hibyos-payload .tar de la même version que hibyos-update.json. Si c\'est bien lui, téléchargez-le à nouveau : il est peut-être abîmé.</string>
+    <string name="sync_err_update_kind">Pas un fichier de mise à jour</string>
+    <string name="sync_hint_update_kind">Choisissez hibyos-update.json et hibyos-payload-&lt;version&gt;.tar. Pour envoyer d\'autres fichiers, utilisez Envoyer des fichiers.</string>
+    <string name="sync_err_downgrade">Le baladeur a déjà cette version ou une plus récente</string>
+    <string name="sync_hint_downgrade">Rien à faire. Pour revenir volontairement à une version plus ancienne de ByOS, installez-la quand même.</string>
+    <string name="sync_err_battery">La batterie du baladeur est trop faible</string>
+    <string name="sync_hint_battery" formatted="false">Chargez-le à 30 % au moins, ou branchez-le, puis réessayez.</string>
+    <string name="sync_err_needs_firmware">Cette mise à jour demande un firmware ByOS plus récent</string>
+    <string name="sync_hint_needs_firmware">Réinstallez ByOS avec cette app (Réinstaller ByOS), puis installez cette mise à jour.</string>
+    <string name="sync_err_not_staged">La mise à jour n\'est pas sur le baladeur</string>
+    <string name="sync_hint_not_staged">Envoyez-la à nouveau : les fichiers ont peut-être été retirés de la carte.</string>
+    <string name="sync_err_update_slow">L\'installation prend trop de temps</string>
+    <string name="sync_hint_update_slow">Regardez l\'écran du baladeur. Puis reconnectez-vous : Réglages › À propos sur le baladeur indique la version de ByOS.</string>
+    <string name="sync_byos_h">ByOS</string>
+
+    <!-- Library rescan -->
+    <string name="sync_rescan">Mettre à jour la bibliothèque</string>
+    <string name="sync_rescan_short">Actualiser</string>
+    <string name="sync_rescan_footer">Le baladeur cherche les morceaux nouveaux, modifiés ou supprimés sur la carte, puis la bibliothèque est relue. Avec une grande bibliothèque, cela prend une minute.</string>
+    <string name="sync_rescan_new">%1$s ajoutés à la carte. Ils apparaissent dans Artistes, Albums et Morceaux après une mise à jour de la bibliothèque.</string>
+    <string name="sync_rescan_running">Mise à jour de la bibliothèque…</string>
+    <string name="sync_rescan_running_footer">Gardez le baladeur allumé. La bibliothèque s\'affiche à nouveau quand le baladeur a fini.</string>
+    <string name="sync_rescan_done">Bibliothèque à jour</string>
+    <string name="sync_rescan_unsupported">Ce baladeur ne peut pas mettre à jour sa bibliothèque à la demande</string>
+    <string name="sync_rescan_unsupported_text">Lancez une mise à jour de la bibliothèque depuis les réglages musique du baladeur, puis relisez la bibliothèque ici. Les morceaux seulement remplacés sont déjà à jour.</string>
+
+    <!-- Library management -->
+    <string name="sync_lib_show">Afficher dans Fichiers</string>
+    <string name="sync_lib_delete_album_text">%1$s sont supprimés de la carte, avec le dossier de l\'album s\'il ne contient rien d\'autre (pochette, paroles). C\'est irréversible.</string>
+    <string name="sync_lib_delete_artist_text">Tous les morceaux de cet artiste (%1$s) sont supprimés de la carte, avec les dossiers d\'album qui ne contiennent rien d\'autre. C\'est irréversible.</string>
+    <string name="sync_lib_changed">Des fichiers ont été déplacés, renommés ou supprimés sur la carte. Mettez à jour la bibliothèque pour que le baladeur en tienne compte.</string>
+    <string name="sync_library_empty_title">Aucun morceau</string>
+    <string name="sync_library_empty_text">Envoyez de la musique avec Envoyer des fichiers, puis mettez à jour la bibliothèque. Les morceaux déjà sur la carte apparaissent une fois analysés par le baladeur.</string>
+
+    <!-- Automatic destination -->
+    <string name="sync_dest_auto">Automatique</string>
+    <string name="sync_dest_auto_sub">Morceaux dans Music, images dans Pictures, livres dans Books, firmware en haut de la carte</string>
+    <string name="sync_route_music">Musique</string>
+    <string name="sync_route_pictures">Images</string>
+    <string name="sync_route_books">Livres</string>
+    <string name="sync_route_playlists">Listes de lecture</string>
+    <string name="sync_route_apps">Apps ByOS</string>
+    <string name="sync_route_firmware">Mise à jour du firmware</string>
+    <string name="sync_route_other">Autres fichiers</string>
+    <string name="sync_route_update">Mise à jour ByOS</string>
+    <string name="sync_route_folder">Dossier sur la carte</string>
+    <string name="sync_route_sheet">Où mettre %1$s ?</string>
+    <string name="sync_route_update_open">Installer avec Installer une mise à jour</string>
+    <string name="sync_route_update_footer">Ce sont les fichiers d\'une mise à jour ByOS signée. Ils ne sont pas copiés sur la carte : Installer une mise à jour les vérifie et les installe.</string>
+    <string name="sync_job_update_file">Pour Installer une mise à jour</string>
+    <string name="sync_top_of_card">Haut de la carte</string>
+    <string name="sync_space_short">Pas assez de place sur la carte</string>
+    <string name="sync_space_short_sub">%1$s à envoyer, %2$s libres. Supprimez quelque chose dans Fichiers ou choisissez moins de fichiers.</string>
+
+    <!-- Share, background transfers, reconnection -->
+    <string name="sync_share_label">Envoyer au baladeur</string>
+    <string name="sync_share_nothing">Rien à envoyer : seuls des fichiers peuvent être partagés vers le baladeur.</string>
+    <string name="sync_note_channel">Envois vers le baladeur</string>
+    <string name="sync_note_channel_text">Progression des fichiers et des mises à jour ByOS envoyés au baladeur</string>
+    <string name="sync_note_sending">Envoi vers le baladeur</string>
+    <string name="sync_note_update">Envoi d\'une mise à jour ByOS</string>
+    <string name="sync_note_install">Installation de ByOS sur le baladeur</string>
+    <string name="sync_note_reconnecting">Connexion perdue, reconnexion…</string>
+    <string name="sync_reconnecting">Connexion perdue. Reconnexion (%1$d sur %2$d)…</string>
+    <string name="sync_sending_note_bg">Vous pouvez quitter l\'app : l\'envoi continue et sa progression est dans les notifications. Si la connexion coupe, elle se rétablit d\'elle-même et l\'envoi reprend là où il s\'est arrêté.</string>
+    <string name="sync_shared_waiting">Fichiers partagés en attente</string>
+    <string name="sync_shared_waiting_sub">Ils sont ajoutés à la liste à la fin de cet envoi.</string>
+
+    <!-- Search, artwork, save to phone -->
+    <string name="sync_search_hint">Artistes, albums et morceaux</string>
+    <string name="sync_search_clear">Effacer la recherche</string>
+    <string name="sync_search_none">Aucun résultat pour « %1$s »</string>
+    <string name="sync_search_none_text">Vérifiez l\'orthographe, ou cherchez moins de mots.</string>
+    <string name="sync_save_phone">Enregistrer sur le téléphone</string>
+    <string name="sync_saving_phone">Enregistrement de %1$s</string>
+    <string name="sync_saved_phone">%1$s enregistré sur le téléphone</string>
+    <string name="sync_dismiss">OK</string>
+
+    <!-- Accessibility and states -->
+    <string name="sync_more">Plus d\'actions</string>
+    <string name="sync_code_a11y">Code affiché sur le baladeur, %1$d chiffres sur 6 saisis</string>
+    <string name="sync_card_none">Pas de carte dans le baladeur</string>
+    <string name="sync_card_usb">Utilisée par un ordinateur en USB : éjectez-la d\'abord</string>
+    <string name="sync_card_read_only">En lecture seule : rien ne peut être écrit</string>
+    <string name="sync_card_unknown">Le baladeur n\'en donne pas la raison</string>
+    <string name="sync_hint_too_big">La carte est en FAT32, qui limite les fichiers à 4 Go. Découpez le fichier, ou formatez la carte en exFAT sur un ordinateur.</string>
+    <string name="sync_err_kind">Un fichier et un dossier ont été confondus</string>
+    <string name="sync_empty_card">La carte est vide</string>
+    <string name="sync_empty_card_text">Envoyez musique, livres ou images depuis ce téléphone avec Envoyer des fichiers.</string>
+
+    <!-- Playlists -->
+    <string name="sync_playlists">Listes</string>
+    <string name="sync_pl_add">Ajouter à une liste de lecture</string>
+    <string name="sync_pl_add_q">Ajouter %1$s à</string>
+    <string name="sync_pl_new">Nouvelle liste de lecture</string>
+    <string name="sync_pl_new_dots">Nouvelle liste de lecture…</string>
+    <string name="sync_pl_new_text">Elle est enregistrée en fichier .m3u8 dans le dossier Playlists de la carte.</string>
+    <string name="sync_pl_added">Ajouté à %1$s</string>
+    <string name="sync_pl_remove">Retirer de la liste</string>
+    <string name="sync_pl_none_title">Aucune liste de lecture</string>
+    <string name="sync_pl_none_text">Utilisez ••• › Ajouter à une liste de lecture sur un morceau ou un album, ou créez-en une ci-dessous.</string>
+    <string name="sync_pl_empty_title">Cette liste est vide</string>
+    <string name="sync_pl_empty_songs">Utilisez ••• › Ajouter à une liste de lecture sur des morceaux et des albums.</string>
+    <string name="sync_pl_not_in_library">Absent de la bibliothèque</string>
+    <string name="sync_pl_footer">Les listes de lecture sont des fichiers .m3u8 du dossier Playlists de la carte : le baladeur et les ordinateurs savent les ouvrir.</string>
     <plurals name="sync_files">
         <item quantity="one">%d fichier</item>
         <item quantity="other">%d fichiers</item>

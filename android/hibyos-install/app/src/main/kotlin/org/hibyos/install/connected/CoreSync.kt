@@ -311,10 +311,20 @@ private class CoreSession(private val s: BtpSession, cleartext: Boolean) : SyncS
             PutResult(r.result == 1, r.size)
         }
 
+    override fun get(path: String, offset: Long, out: OutputStream, cancelled: () -> Boolean, progress: (done: Long, total: Long) -> Unit): GetResult =
+        CoreSync.wrap {
+            val r = s.get(path, offset, sha = true, cancelled = cancelled, progress = Progress { d, t -> progress(d, t) }) {
+                DataSink { b, off, len -> out.write(b, off, len) }
+            }
+            GetResult(r.info.size, r.sha256)
+        }
+
     override fun dbSnapshot(out: OutputStream, cancelled: () -> Boolean, progress: (done: Long, total: Long) -> Unit): ByteArray =
         CoreSync.wrap {
             s.dbSnapshot(cancelled, Progress { d, t -> progress(d, t) }) { DataSink { b, off, len -> out.write(b, off, len) } }.sha256
         }
+
+    override fun libRescan(paths: List<String>?) = CoreSync.wrap { s.libRescan(paths) }
 
     override fun updateStage(allowDowngrade: Boolean): StagedUpdate = CoreSync.wrap {
         val r = s.updateStage(allowDowngrade)

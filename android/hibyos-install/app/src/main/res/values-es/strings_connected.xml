@@ -164,6 +164,162 @@
     <string name="sync_err_none_found">No se encontró ningún reproductor</string>
     <string name="sync_hint_none_found">Comprueba que Wi-Fi sync está activado en Settings › ByOS Sync, o escribe la dirección que aparece allí.</string>
     <string name="sync_err_generic">Algo salió mal</string>
+
+    <!-- Signed ByOS update (install from the phone) -->
+    <string name="sync_install_title">Instalar actualización</string>
+    <string name="sync_install_sub">Una actualización firmada descargada en este teléfono</string>
+    <string name="sync_ota_files_h">Archivos de actualización</string>
+    <string name="sync_ota_json">Descripción</string>
+    <string name="sync_ota_payload">Contenido</string>
+    <string name="sync_ota_not_chosen">Sin elegir</string>
+    <string name="sync_ota_choose">Elegir archivos de actualización</string>
+    <string name="sync_ota_choose_other">Elegir el otro archivo</string>
+    <string name="sync_ota_files_footer">Descarga **hibyos-update.json** y **hibyos-payload-&lt;versión&gt;.tar** de las versiones de ByOS y elige los dos (o uno y luego el otro). La firma se comprueba en este teléfono y otra vez en el reproductor.</string>
+    <string name="sync_ota_signed">Firmada por ByOS</string>
+    <string name="sync_ota_tar_wrong">No es el contenido de esta versión</string>
+    <string name="sync_ota_version_h">ByOS %1$s</string>
+    <string name="sync_ota_installed">En el reproductor</string>
+    <string name="sync_ota_size">Tamaño</string>
+    <string name="sync_ota_after">Después</string>
+    <string name="sync_ota_restart_none">No hace falta reiniciar</string>
+    <string name="sync_ota_restart_shell">La pantalla de ByOS se reinicia</string>
+    <string name="sync_ota_restart_reboot">El reproductor se reinicia</string>
+    <string name="sync_ota_needs_fw">Necesita el firmware ByOS más reciente</string>
+    <string name="sync_ota_needs_fw_sub">Si el reproductor la rechaza, reinstala antes ByOS desde esta app.</string>
+    <string name="sync_ota_send_install">Enviar e instalar (%1$s)</string>
+    <string name="sync_ota_install_footer" formatted="false">El reproductor te pide confirmación antes de instalar nada. Mantenlo cargado (30 % o más, o enchufado).</string>
+    <string name="sync_ota_unsupported">El ByOS de este reproductor no puede instalar actualizaciones por ByOS Sync</string>
+    <string name="sync_ota_unsupported_sub">Copia los dos archivos a la carpeta ByOS/ota de la tarjeta, o actualiza ByOS desde la página Actualización de software del reproductor.</string>
+    <string name="sync_ota_sending">Enviando ByOS %1$s</string>
+    <string name="sync_ota_sending_note">Deja la app abierta y el reproductor encendido. Si se corta la conexión, vuelve a intentarlo: lo que ya está en el reproductor no se envía dos veces.</string>
+    <string name="sync_ota_checking">Comprobando en el reproductor</string>
+    <string name="sync_ota_checking_sub">El reproductor comprueba la firma y el contenido. Tarda unos segundos.</string>
+    <string name="sync_ota_confirm_title">Confirma en el reproductor</string>
+    <string name="sync_ota_confirm_text">El reproductor pregunta si quieres instalar ByOS %1$s. Toca **Instalar** en el reproductor.</string>
+    <string name="sync_ota_confirm_wait">Esperando al reproductor</string>
+    <string name="sync_ota_stop_waiting">Dejar de esperar</string>
+    <string name="sync_ota_installing">Instalando ByOS %1$s</string>
+    <string name="sync_ota_installing_note">No apagues el reproductor. Si algo falla, el reproductor vuelve solo a la versión anterior de ByOS.</string>
+    <string name="sync_ota_done_title">ByOS %1$s instalado</string>
+    <string name="sync_ota_done_none">Todo está listo en el reproductor.</string>
+    <string name="sync_ota_done_shell">La pantalla de ByOS se reinicia en el reproductor. Para volver a conectar, abre **Ajustes › ByOS Sync** en el reproductor.</string>
+    <string name="sync_ota_done_reboot">Toca **Reiniciar ahora** en el reproductor para terminar. Después abre ByOS Sync en el reproductor para volver a conectar.</string>
+    <string name="sync_ota_refused_title">No instalada</string>
+    <string name="sync_ota_refused_text">La actualización se canceló en el reproductor. ByOS %1$s sigue lista en la tarjeta: instálala cuando quieras.</string>
+    <string name="sync_ota_staged_title">Lista en el reproductor</string>
+    <string name="sync_ota_staged_text">ByOS %1$s está comprobada y espera en la tarjeta. Para instalarla, abre **Ajustes › Actualización de software** en el reproductor.</string>
+    <string name="sync_ota_downgrade_anyway">Instalar igualmente ByOS %1$s</string>
+    <string name="sync_ota_install_again">Volver a instalar</string>
+    <string name="sync_err_signature">Esta actualización no está firmada por ByOS</string>
+    <string name="sync_hint_signature">Vuelve a descargar hibyos-update.json de las versiones oficiales de ByOS. Nunca se instala un archivo modificado o no oficial.</string>
+    <string name="sync_err_update_invalid">Los archivos de actualización no coinciden</string>
+    <string name="sync_hint_update_invalid">Vuelve a descargar los dos archivos de la misma versión y elígelos.</string>
+    <string name="sync_err_update_payload">Este contenido no es el que indica la actualización</string>
+    <string name="sync_hint_update_payload">Elige el tar hibyos-payload de la misma versión que hibyos-update.json. Si ya lo es, vuelve a descargarlo: puede estar dañado.</string>
+    <string name="sync_err_update_kind">No es un archivo de actualización</string>
+    <string name="sync_hint_update_kind">Elige hibyos-update.json y hibyos-payload-&lt;versión&gt;.tar. Para enviar otros archivos, usa Enviar archivos.</string>
+    <string name="sync_err_downgrade">El reproductor ya tiene esta versión o una más reciente</string>
+    <string name="sync_hint_downgrade">No hace falta nada. Para volver a propósito a una versión anterior de ByOS, instálala igualmente.</string>
+    <string name="sync_err_battery">La batería del reproductor está demasiado baja</string>
+    <string name="sync_hint_battery" formatted="false">Cárgalo al 30 % o más, o enchúfalo, y vuelve a intentarlo.</string>
+    <string name="sync_err_needs_firmware">Esta actualización necesita un firmware ByOS más reciente</string>
+    <string name="sync_hint_needs_firmware">Reinstala ByOS con esta app (Reinstalar ByOS) y después instala esta actualización.</string>
+    <string name="sync_err_not_staged">La actualización no está en el reproductor</string>
+    <string name="sync_hint_not_staged">Envíala otra vez: puede que los archivos se hayan borrado de la tarjeta.</string>
+    <string name="sync_err_update_slow">La instalación tarda demasiado</string>
+    <string name="sync_hint_update_slow">Mira la pantalla del reproductor. Después vuelve a conectar: Ajustes › Acerca de en el reproductor muestra la versión de ByOS.</string>
+    <string name="sync_byos_h">ByOS</string>
+
+    <!-- Library rescan -->
+    <string name="sync_rescan">Actualizar la biblioteca</string>
+    <string name="sync_rescan_short">Actualizar</string>
+    <string name="sync_rescan_footer">El reproductor busca canciones nuevas, cambiadas o borradas en la tarjeta y después se vuelve a leer la biblioteca. Con una biblioteca grande tarda un minuto.</string>
+    <string name="sync_rescan_new">%1$s añadidas a la tarjeta. Aparecen en Artistas, Álbumes y Canciones después de actualizar la biblioteca.</string>
+    <string name="sync_rescan_running">Actualizando la biblioteca…</string>
+    <string name="sync_rescan_running_footer">Deja el reproductor encendido. La biblioteca se muestra otra vez cuando el reproductor termine.</string>
+    <string name="sync_rescan_done">Biblioteca actualizada</string>
+    <string name="sync_rescan_unsupported">Este reproductor no puede actualizar su biblioteca a petición</string>
+    <string name="sync_rescan_unsupported_text">Inicia una actualización de la biblioteca desde los ajustes de música del reproductor y vuelve a leer la biblioteca aquí. Las canciones que solo se reemplazaron ya están al día.</string>
+
+    <!-- Library management -->
+    <string name="sync_lib_show">Mostrar en Archivos</string>
+    <string name="sync_lib_delete_album_text">Se borran %1$s de la tarjeta, con la carpeta del álbum si no contiene nada más (portada, letras). No se puede deshacer.</string>
+    <string name="sync_lib_delete_artist_text">Se borran de la tarjeta todas las canciones de este artista (%1$s), con las carpetas de álbum que no contienen nada más. No se puede deshacer.</string>
+    <string name="sync_lib_changed">Se han movido, renombrado o borrado archivos en la tarjeta. Actualiza la biblioteca para que el reproductor lo refleje.</string>
+    <string name="sync_library_empty_title">Todavía no hay canciones</string>
+    <string name="sync_library_empty_text">Envía música con Enviar archivos y después actualiza la biblioteca. Las canciones que ya están en la tarjeta aparecen cuando el reproductor las escanea.</string>
+
+    <!-- Automatic destination -->
+    <string name="sync_dest_auto">Automático</string>
+    <string name="sync_dest_auto_sub">Canciones a Music, imágenes a Pictures, libros a Books, el firmware arriba de la tarjeta</string>
+    <string name="sync_route_music">Música</string>
+    <string name="sync_route_pictures">Imágenes</string>
+    <string name="sync_route_books">Libros</string>
+    <string name="sync_route_playlists">Listas de reproducción</string>
+    <string name="sync_route_apps">Apps de ByOS</string>
+    <string name="sync_route_firmware">Actualización de firmware</string>
+    <string name="sync_route_other">Otros archivos</string>
+    <string name="sync_route_update">Actualización de ByOS</string>
+    <string name="sync_route_folder">Carpeta en la tarjeta</string>
+    <string name="sync_route_sheet">¿Dónde va %1$s?</string>
+    <string name="sync_route_update_open">Instalar con Instalar actualización</string>
+    <string name="sync_route_update_footer">Son los archivos de una actualización firmada de ByOS. No se copian a la tarjeta: Instalar actualización los comprueba y los instala.</string>
+    <string name="sync_job_update_file">Para Instalar actualización</string>
+    <string name="sync_top_of_card">Raíz de la tarjeta</string>
+    <string name="sync_space_short">No hay espacio suficiente en la tarjeta</string>
+    <string name="sync_space_short_sub">%1$s por enviar, %2$s libres. Borra algo en Archivos o elige menos archivos.</string>
+
+    <!-- Share, background transfers, reconnection -->
+    <string name="sync_share_label">Enviar al reproductor</string>
+    <string name="sync_share_nothing">Nada que enviar: solo se pueden compartir archivos con el reproductor.</string>
+    <string name="sync_note_channel">Envíos al reproductor</string>
+    <string name="sync_note_channel_text">Progreso de los archivos y actualizaciones de ByOS enviados al reproductor</string>
+    <string name="sync_note_sending">Enviando al reproductor</string>
+    <string name="sync_note_update">Enviando una actualización de ByOS</string>
+    <string name="sync_note_install">Instalando ByOS en el reproductor</string>
+    <string name="sync_note_reconnecting">Conexión perdida, volviendo a conectar…</string>
+    <string name="sync_reconnecting">Conexión perdida. Volviendo a conectar (%1$d de %2$d)…</string>
+    <string name="sync_sending_note_bg">Puedes salir de la app: el envío continúa y su progreso aparece en las notificaciones. Si se corta la conexión, se vuelve a conectar sola y sigue donde se quedó.</string>
+    <string name="sync_shared_waiting">Archivos compartidos en espera</string>
+    <string name="sync_shared_waiting_sub">Se añaden a la lista cuando termine este envío.</string>
+
+    <!-- Search, artwork, save to phone -->
+    <string name="sync_search_hint">Artistas, álbumes y canciones</string>
+    <string name="sync_search_clear">Borrar la búsqueda</string>
+    <string name="sync_search_none">Sin resultados para «%1$s»</string>
+    <string name="sync_search_none_text">Revisa la ortografía o busca menos palabras.</string>
+    <string name="sync_save_phone">Guardar en el teléfono</string>
+    <string name="sync_saving_phone">Guardando %1$s</string>
+    <string name="sync_saved_phone">%1$s guardado en el teléfono</string>
+    <string name="sync_dismiss">OK</string>
+
+    <!-- Accessibility and states -->
+    <string name="sync_more">Más acciones</string>
+    <string name="sync_code_a11y">Código que muestra el reproductor, %1$d de 6 cifras escritas</string>
+    <string name="sync_card_none">No hay tarjeta en el reproductor</string>
+    <string name="sync_card_usb">En uso por un ordenador por USB: expúlsala allí primero</string>
+    <string name="sync_card_read_only">Solo lectura: no se puede escribir nada</string>
+    <string name="sync_card_unknown">El reproductor no dice por qué</string>
+    <string name="sync_hint_too_big">La tarjeta está en FAT32, que limita los archivos a 4 GB. Divide el archivo o formatea la tarjeta en exFAT en un ordenador.</string>
+    <string name="sync_err_kind">Se confundieron un archivo y una carpeta</string>
+    <string name="sync_empty_card">La tarjeta está vacía</string>
+    <string name="sync_empty_card_text">Envía música, libros o imágenes desde este teléfono con Enviar archivos.</string>
+
+    <!-- Playlists -->
+    <string name="sync_playlists">Listas</string>
+    <string name="sync_pl_add">Añadir a una lista</string>
+    <string name="sync_pl_add_q">Añadir %1$s a</string>
+    <string name="sync_pl_new">Nueva lista</string>
+    <string name="sync_pl_new_dots">Nueva lista…</string>
+    <string name="sync_pl_new_text">Se guarda como archivo .m3u8 en la carpeta Playlists de la tarjeta.</string>
+    <string name="sync_pl_added">Añadido a %1$s</string>
+    <string name="sync_pl_remove">Quitar de la lista</string>
+    <string name="sync_pl_none_title">Todavía no hay listas</string>
+    <string name="sync_pl_none_text">Usa ••• › Añadir a una lista en una canción o un álbum, o crea una nueva abajo.</string>
+    <string name="sync_pl_empty_title">Esta lista está vacía</string>
+    <string name="sync_pl_empty_songs">Usa ••• › Añadir a una lista en canciones y álbumes.</string>
+    <string name="sync_pl_not_in_library">No está en la biblioteca</string>
+    <string name="sync_pl_footer">Las listas son archivos .m3u8 de la carpeta Playlists de la tarjeta: el reproductor y los ordenadores pueden abrirlas.</string>
     <plurals name="sync_files">
         <item quantity="one">%d archivo</item>
         <item quantity="other">%d archivos</item>

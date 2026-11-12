@@ -51,6 +51,15 @@ interface Host {
     /** ByOS connected: files and a folder to send to the player. */
     fun pickSyncFiles()
     fun pickSyncFolder()
+
+    /** ByOS connected: hibyos-update.json and its payload tar. */
+    fun pickSyncUpdate()
+
+    /** Android 13+: asks once whether the transfer notification may be shown. */
+    fun askNotifications()
+
+    /** ByOS connected: "save as" for a file copied from the player. */
+    fun createSyncDocument(name: String)
     fun open(url: String): Boolean
     fun share(files: List<File>)
 }
@@ -116,6 +125,19 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         override fun pickFolder() {
             host?.pickSyncFolder()
         }
+        override fun pickUpdateFiles() {
+            host?.pickSyncUpdate()
+        }
+        override fun createDocument(name: String) {
+            host?.createSyncDocument(name)
+        }
+        override fun work(note: org.hibyos.install.connected.WorkNote?) {
+            if (note != null && !askedNotifications) {
+                askedNotifications = true
+                host?.askNotifications()
+            }
+            org.hibyos.install.connected.TransferService.update(app, note, android.os.SystemClock.elapsedRealtime())
+        }
         override fun byosFiles(): List<SendItem>? {
             val b = bundle ?: return null
             if (state.patch !is PatchState.Done) return null
@@ -126,6 +148,34 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     fun syncFilesPicked(uris: List<Uri>) {
         val app = getApplication<Application>()
         connected.addPicked { Picked.files(app, uris) }
+    }
+
+    private var askedNotifications = false
+
+    /**
+     * Files shared from another app: they are added to Send Files, which opens (over the
+     * connection screen when no player is connected yet). ByOS update files among them are
+     * handed to Install Update by the automatic destination. During a transfer they wait for
+     * its end (the send screen, which stays open while it runs, says so).
+     */
+    fun syncShared(uris: List<Uri>) {
+        val app = getApplication<Application>()
+        connected.addPicked { Picked.files(app, uris) }
+        if (state.busy || connected.state.busy) return
+        state = state.copy(stack = listOf(Screen.HOME, Screen.SYNC, Screen.SYNC_SEND))
+    }
+
+    /** The document created for "Save to phone": the card file is copied into it. */
+    fun syncSaveTo(uri: Uri) {
+        val app = getApplication<Application>()
+        connected.downloadTo(discard = { android.provider.DocumentsContract.deleteDocument(app.contentResolver, uri) }) {
+            app.contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("the file cannot be written")
+        }
+    }
+
+    fun syncUpdatePicked(uris: List<Uri>) {
+        val app = getApplication<Application>()
+        connected.addUpdateFiles { Picked.files(app, uris) }
     }
 
     fun syncFolderPicked(tree: Uri) {

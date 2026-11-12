@@ -10,13 +10,21 @@ import com.github.takahirom.roborazzi.RoborazziTaskType
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.hibyos.install.connected.Browser
 import org.hibyos.install.connected.Destination
+import org.hibyos.install.connected.Download
 import org.hibyos.install.connected.JobStatus
 import org.hibyos.install.connected.Library
 import org.hibyos.install.connected.LibraryNav
 import org.hibyos.install.connected.LibraryPhase
 import org.hibyos.install.connected.Link
+import org.hibyos.install.connected.OtaPhase
+import org.hibyos.install.connected.OtaPick
 import org.hibyos.install.connected.PairedDevice
+import org.hibyos.install.connected.LibTarget
+import org.hibyos.install.connected.Playlist
+import org.hibyos.install.connected.Playlists
 import org.hibyos.install.connected.Prompt
+import org.hibyos.install.connected.Rescan
+import org.hibyos.install.connected.Route
 import org.hibyos.install.connected.SendJob
 import org.hibyos.install.connected.SyncDevice
 import org.hibyos.install.connected.SyncDeviceInfo
@@ -27,6 +35,7 @@ import org.hibyos.install.connected.Track
 import org.hibyos.install.connected.Transfer
 import org.hibyos.install.connected.UpdatePhase
 import org.hibyos.install.ui.C
+import org.hibyos.install.ui.LocalStill
 import org.hibyos.install.ui.LocalSync
 import org.hibyos.install.ui.NoSync
 import org.hibyos.install.ui.ScreenContent
@@ -85,11 +94,12 @@ class ConnectedScreensTest {
     private val space = SyncSpace(0, 1, 63_864_569_856, 21_474_836_480, 1L shl 30, 300L shl 20)
     private val on = SyncState(available = true, link = Link.Connected(dev.copy(paired = true), info, space))
 
-    private fun shot(name: String, screen: Screen, sync: SyncState, state: UiState = base) {
+    /** [tall]: a page tall enough to show everything, for the long lists. */
+    private fun shot(name: String, screen: Screen, sync: SyncState, state: UiState = base, tall: Boolean = false) {
         val s = state.copy(stack = listOf(Screen.HOME, Screen.SYNC, screen).distinct())
-        RuntimeEnvironment.setQualifiers("w412dp-h892dp-xhdpi")
+        RuntimeEnvironment.setQualifiers(if (tall) "w412dp-h1700dp-xhdpi" else "w412dp-h892dp-xhdpi")
         captureRoboImage(File(dir, "$name.png").path, options) {
-            CompositionLocalProvider(LocalSync provides SyncUi(sync, NoSync)) {
+            CompositionLocalProvider(LocalSync provides SyncUi(sync, NoSync), LocalStill provides true) {
                 Box(Modifier.fillMaxSize().background(C.bg)) { ScreenContent(screen, s, nothing) }
             }
         }
@@ -122,6 +132,23 @@ class ConnectedScreensTest {
         shot("send_3_running", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs, running = true, done = 99_000_000, total = 118_840_000,
             current = "Music/Album/02 Song.flac")))
         shot("send_4_done", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs.map { if (it.id == 4) it else it.copy(status = JobStatus.SENT, done = it.size) })))
+        val mixed = listOf(
+            SendJob(1, "Abba Gold/01 Dancing Queen.flac", "Music/Abba Gold/01 Dancing Queen.flac", 31_000_000, route = Route.MUSIC),
+            SendJob(2, "Abba Gold/cover.jpg", "Music/Abba Gold/cover.jpg", 420_000, route = Route.MUSIC),
+            SendJob(3, "Holiday/beach.jpg", "Pictures/Holiday/beach.jpg", 2_400_000, route = Route.PICTURES),
+            SendJob(4, "novel.epub", "Books/novel.epub", 800_000, route = Route.BOOKS),
+            SendJob(5, "r3ii_2025.upt", "r3ii_2025.upt", 46_759_936, route = Route.FIRMWARE),
+            SendJob(6, "hibyos-update.json", "", 2_100, JobStatus.UPDATE_FILE, route = Route.BYOS_UPDATE),
+        )
+        shot("send_10_shared_waiting", Screen.SYNC_SEND, on.copy(sharedWaiting = true, transfer = Transfer(jobs, running = true, done = 99_000_000,
+            total = 118_840_000, current = "Music/Album/02 Song.flac")))
+        shot("send_9_reconnecting", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs, running = true, done = 60_000_000, total = 118_840_000,
+            current = "Music/Album/02 Song.flac", reconnecting = 2)))
+        shot("send_7_auto_groups", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs = mixed), routes = mapOf(Route.PICTURES to "Music")), tall = true)
+        shot("send_8_no_space", Screen.SYNC_SEND, on.copy(link = Link.Connected(dev.copy(paired = true), info, space.copy(sdFree = 30_000_000)),
+            transfer = Transfer(jobs = mixed)))
+        shot("send_6_done_music", Screen.SYNC_SEND, on.copy(transfer = Transfer(jobs.map { if (it.id == 4) it else it.copy(status = JobStatus.SENT, done = it.size) },
+            newMusic = 2)))
         shot("send_5_lost", Screen.SYNC_SEND, SyncState(available = true, transfer = Transfer(jobs.map { if (it.id == 2) it.copy(status = JobStatus.FAILED) else it },
             error = ErrorInfo(org.hibyos.install.R.string.sync_err_lost, "dropped", org.hibyos.install.R.string.sync_hint_lost))))
     }
@@ -132,9 +159,13 @@ class ConnectedScreensTest {
             SyncEntry("notes.txt", 0, 1200, 0))
         shot("files_1_list", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries)))
         shot("files_2_moving", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, moving = "Books/Old")))
+        shot("files_10_moving_songs", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, moving = "Music/Singles",
+            movingFiles = listOf("Music/Singles/Hey Jude.flac"), movingLabel = "Hey Jude")))
         shot("files_3_new_folder", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, prompt = Prompt.NewFolder("Live"))))
         shot("files_4_delete", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, prompt = Prompt.Delete(entries[0]))))
         shot("files_5_empty", Screen.SYNC_FILES, on.copy(browser = Browser("Books", emptyList())))
+        shot("files_6_saving", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, download = Download("01 Waterloo.flac", 9_000_000, 24_000_000))))
+        shot("files_7_saved", Screen.SYNC_FILES, on.copy(browser = Browser("Music", entries, download = Download("01 Waterloo.flac", 24_000_000, 24_000_000, true))))
     }
 
     @Test
@@ -150,6 +181,46 @@ class ConnectedScreensTest {
         shot("library_3_artists", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib)))
         shot("library_4_albums", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1)))
         shot("library_5_album", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(artist = "ABBA", album = "ABBA" to "Gold")))
+        shot("library_6_rescanning", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), rescan = Rescan.Running))
+        shot("library_7_rescan_unsupported", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), rescan = Rescan.Unsupported))
+        shot("library_8_new_music", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), transfer = Transfer(newMusic = 12)))
+        shot("library_9_idle_rescan_done", Screen.SYNC_LIBRARY, on.copy(rescan = Rescan.Done))
+        val gold = lib.albums.first { it.title == "Gold" }
+        // artwork: two pictures made here, as the cache would hold them
+        fun art(name: String, a: Int, b: Int): String {
+            val bmp = android.graphics.Bitmap.createBitmap(300, 300, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            c.drawColor(a)
+            val p = android.graphics.Paint().apply { color = b; isAntiAlias = true }
+            c.drawCircle(150f, 150f, 110f, p)
+            p.color = a
+            c.drawCircle(150f, 150f, 30f, p)
+            val f = File.createTempFile(name, ".png")
+            f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            return f.path
+        }
+        val covers = mapOf("ABBA/Gold" to art("gold", 0xFF1C1C1E.toInt(), 0xFFFFC107.toInt()),
+            "The Beatles/Abbey Road" to art("road", 0xFF0A84FF.toInt(), 0xFFF2F2F7.toInt()))
+        shot("library_14_albums_artwork", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1), covers = covers))
+        shot("library_15_album_artwork", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(artist = "ABBA", album = "ABBA" to "Gold"),
+            covers = covers))
+        shot("library_16_search", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryQuery = "ab", covers = covers))
+        shot("library_17_search_none", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryQuery = "zappa"))
+        val withPl = on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 3))
+        shot("library_18_playlists", Screen.SYNC_LIBRARY, withPl.copy(playlists = Playlists(files = listOf("Playlists/Road trip.m3u8", "Playlists/Sunday.m3u8"))))
+        shot("library_19_playlists_none", Screen.SYNC_LIBRARY, withPl.copy(playlists = Playlists(files = emptyList())))
+        shot("library_20_playlist", Screen.SYNC_LIBRARY, withPl.copy(libraryNav = LibraryNav(tab = 3, playlist = "Playlists/Road trip.m3u8"),
+            playlists = Playlists(files = listOf("Playlists/Road trip.m3u8"), open = Playlist("Playlists/Road trip.m3u8",
+                listOf("ABBA/Gold/01 Dancing Queen.flac", "The Beatles/Abbey Road/01 Come Together.flac", "Other/missing.mp3")), added = "Road trip")))
+        shot("library_21_add_to", Screen.SYNC_LIBRARY, withPl.copy(libraryNav = LibraryNav(tab = 1),
+            playlists = Playlists(files = listOf("Playlists/Road trip.m3u8", "Playlists/Sunday.m3u8"), adding = LibTarget.AlbumOf(lib.albums.first { it.title == "Gold" }))))
+        shot("library_22_new_playlist", Screen.SYNC_LIBRARY, withPl.copy(playlists = Playlists(files = emptyList(), newName = "Road trip")))
+        shot("library_10_delete_album", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1),
+            libDelete = LibTarget.AlbumOf(gold)))
+        shot("library_11_delete_song", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 2),
+            libDelete = LibTarget.Song(lib.tracks[0])))
+        shot("library_12_empty", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(Library.build(emptyList()))))
+        shot("library_13_changed", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 2), libraryChanged = true))
     }
 
     @Test
@@ -167,5 +238,55 @@ class ConnectedScreensTest {
         shot("update_2_ready", Screen.SYNC_UPDATE, on, patched)
         shot("update_3_sending", Screen.SYNC_UPDATE, on.copy(update = UpdatePhase.Sending(20_000_000, 55_073_362, "r3ii_2025.upt")), patched)
         shot("update_4_sent", Screen.SYNC_UPDATE, on.copy(update = UpdatePhase.Sent(207, 180)), patched)
+    }
+
+    @Test
+    fun largeText() {
+        // the largest font size of the system settings, on the screens with the longest rows
+        RuntimeEnvironment.setFontScale(1.5f)
+        try {
+            val lib = Library.build(listOf(Track("a:\\ABBA\\Gold\\01 Dancing Queen.flac", "Dancing Queen", "ABBA", "", "Gold", year = 1992)))
+            shot("large_1_connected", Screen.SYNC, on)
+            shot("large_2_send", Screen.SYNC_SEND, on)
+            shot("large_3_install", Screen.SYNC_INSTALL, on.copy(otaPick = OtaPick("0.9.1", "hibyos-payload-0.9.1.tar", 9_437_184, false, "shell",
+                "hibyos-payload-0.9.1.tar", 9_437_184)))
+            shot("large_4_library", Screen.SYNC_LIBRARY, on.copy(library = LibraryPhase.Ready(lib), libraryNav = LibraryNav(tab = 1)))
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+        }
+    }
+
+    @Test
+    fun cardStates() {
+        for ((i, name) in listOf(1 to "none", 2 to "usb", 3 to "read_only")) {
+            shot("sync_8_card_$name", Screen.SYNC, on.copy(link = Link.Connected(dev.copy(paired = true), info, space.copy(sdState = i, sdFree = 0, sdTotal = 0))))
+        }
+        shot("files_8_card_empty", Screen.SYNC_FILES, on.copy(browser = Browser("", emptyList())))
+        shot("files_9_sd_unavailable", Screen.SYNC_FILES, on.copy(browser = Browser("", null, error = ErrorInfo(org.hibyos.install.R.string.sync_err_sd, null,
+            org.hibyos.install.R.string.sync_hint_sd))))
+    }
+
+    @Test
+    fun install() {
+        val pick = OtaPick("0.9.1", "hibyos-payload-0.9.1.tar", 9_437_184, false, "shell", "hibyos-payload-0.9.1.tar", 9_437_184)
+        shot("install_1_empty", Screen.SYNC_INSTALL, on)
+        shot("install_2_json_only", Screen.SYNC_INSTALL, on.copy(otaPick = pick.copy(tarName = null, tarSize = 0)))
+        shot("install_3_ready", Screen.SYNC_INSTALL, on.copy(otaPick = pick))
+        shot("install_4_tar_wrong", Screen.SYNC_INSTALL, on.copy(otaPick = pick.copy(tarName = "hibyos-payload-0.8.0.tar", tarSize = 8_000_000, needsFirmware = true)))
+        shot("install_5_signature", Screen.SYNC_INSTALL, on.copy(otaPick = OtaPick(error = ErrorInfo(org.hibyos.install.R.string.sync_err_signature,
+            "the update is not signed by a ByOS release key", org.hibyos.install.R.string.sync_hint_signature))))
+        shot("install_6_sending", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.Sending(6_000_000, 18_900_000, "hibyos-payload-0.9.1.tar")))
+        shot("install_7_checking", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.Checking))
+        shot("install_8_confirm", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.WaitingUser("0.9.1")))
+        shot("install_9_installing", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.Installing("0.9.1", 640)))
+        shot("install_10_done", Screen.SYNC_INSTALL, SyncState(available = true, otaPick = pick, ota = OtaPhase.Done("0.9.1", 1)))
+        shot("install_11_downgrade", Screen.SYNC_INSTALL, on.copy(otaPick = pick.copy(version = "0.8.0"), ota = OtaPhase.Failed(
+            ErrorInfo(org.hibyos.install.R.string.sync_err_downgrade, null, org.hibyos.install.R.string.sync_hint_downgrade), downgrade = true)))
+        shot("install_12_battery", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.Failed(
+            ErrorInfo(org.hibyos.install.R.string.sync_err_battery, null, org.hibyos.install.R.string.sync_hint_battery))))
+        shot("install_13_refused", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.Refused("0.9.1")))
+        shot("install_14_staged", Screen.SYNC_INSTALL, on.copy(otaPick = pick, ota = OtaPhase.StagedOnly("0.9.1")))
+        shot("install_15_unsupported", Screen.SYNC_INSTALL, SyncState(available = true,
+            link = Link.Connected(dev.copy(paired = true), info.copy(caps = 0x1df), space)))
     }
 }

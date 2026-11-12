@@ -7,7 +7,7 @@ enum class Screen {
     HOME, CHECK, FIRMWARE, PATCH, SEND, WIFI, MANUAL, INSTALL, ABOUT, LICENSES, LICENSE_TEXT,
 
     // ByOS connected: a player that already runs ByOS, over BTP/1
-    SYNC, SYNC_SEND, SYNC_FILES, SYNC_LIBRARY, SYNC_UPDATE,
+    SYNC, SYNC_SEND, SYNC_FILES, SYNC_LIBRARY, SYNC_UPDATE, SYNC_INSTALL,
 }
 
 /** An error ready to show: a headline and an advice from the resources, and the technical detail. */

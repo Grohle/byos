@@ -1,6 +1,10 @@
 package org.hibyos.install
 
+import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.IntentCompat
 import android.content.ClipData
 import android.content.Intent
 import android.graphics.Color
@@ -42,10 +46,31 @@ class MainActivity : ComponentActivity(), Host {
         if (uri != null) vm.syncFolderPicked(uri)
     }
 
+    private val openSyncUpdate = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.syncUpdatePicked(uris)
+    }
+
+    private val saveSyncFile = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri != null) vm.syncSaveTo(uri)
+    }
+
+    override fun createSyncDocument(name: String) {
+        try {
+            saveSyncFile.launch(name)
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        // either way the transfer goes on; without the permission its notification is not shown
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         vm.host = this
+        if (savedInstanceState == null) shared(intent)
         setContent {
             val s = vm.state
             val sync = vm.connected.state
@@ -57,6 +82,42 @@ class MainActivity : ComponentActivity(), Host {
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
             CompositionLocalProvider(LocalSync provides SyncUi(sync, vm.connected)) { App(s, vm) }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        shared(intent)
+    }
+
+    /** Files shared from another app ("Share" › ByOS Install): they go to Send Files. */
+    private fun shared(intent: Intent?) {
+        if (intent == null) return
+        val uris = ArrayList<Uri>()
+        when (intent.action) {
+            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let { uris += it }
+            Intent.ACTION_SEND_MULTIPLE -> IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let { uris += it }
+            else -> return
+        }
+        if (uris.isEmpty()) {
+            val clip = intent.clipData
+            if (clip != null) for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris += it }
+        }
+        if (uris.isEmpty()) {
+            Toast.makeText(this, R.string.sync_share_nothing, Toast.LENGTH_LONG).show()
+            return
+        }
+        vm.syncShared(uris.distinct())
+    }
+
+    override fun askNotifications() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        try {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } catch (e: Exception) {
+            // no way to ask: the transfer goes on without its notification
         }
     }
 
@@ -96,6 +157,14 @@ class MainActivity : ComponentActivity(), Host {
     override fun pickSyncFolder() {
         try {
             openSyncFolder.launch(null)
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
+    override fun pickSyncUpdate() {
+        try {
+            openSyncUpdate.launch(arrayOf("*/*"))
         } catch (e: ActivityNotFoundException) {
             noApp()
         }

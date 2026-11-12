@@ -476,8 +476,9 @@ class BtpSession private constructor(
     fun dbStatus(): DbStatusR = DbStatusR.decode(call(Btp.DB_STATUS, ByteArray(0), Btp.DB_STATUS_R))
     fun dbUnstage(): DbStatusR = DbStatusR.decode(call(Btp.DB_UNSTAGE, ByteArray(0), Btp.DB_STATUS_R))
 
+    /** The device answers when the rescan (or `hibytag dbupdate` for each path) is over: it can take a while. */
     fun libRescan(paths: List<String>?) {
-        call(Btp.LIB_RESCAN, Payloads.libRescan(if (paths == null) 0 else 1, paths ?: emptyList()), Btp.OK)
+        slow { call(Btp.LIB_RESCAN, Payloads.libRescan(if (paths == null) 0 else 1, paths ?: emptyList()), Btp.OK) }
     }
 
     fun updateStage(allowDowngrade: Boolean): UpdateStageR = slow {

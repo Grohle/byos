@@ -6,6 +6,8 @@ import androidx.compose.runtime.setValue
 import org.hibyos.install.ErrorInfo
 import org.hibyos.install.R
 import org.hibyos.install.core.SendItem
+import org.hibyos.install.core.btp.UpdateException
+import org.hibyos.install.core.btp.UpdatePackage
 import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
@@ -40,6 +42,21 @@ interface SyncEnv {
 
     /** Monotonic milliseconds (tests move it by hand). */
     fun now(): Long = System.nanoTime() / 1_000_000
+
+    /** Opens the system picker for a signed update (hibyos-update.json and its tar). */
+    fun pickUpdateFiles() {}
+
+    /** The keys a signed update must be signed with (docs/OTA.md). */
+    val releaseKeys: List<String> get() = UpdatePackage.RELEASE_KEYS
+
+    /** Opens the system's "save as" for a file named [name]; the answer comes back through ConnectedModel.downloadTo. */
+    fun createDocument(name: String) {}
+
+    /** Waits on the worker, between two UPDATE_STATUS requests (tests do not wait). */
+    fun sleep(ms: Long) = Thread.sleep(ms)
+
+    /** On the UI thread after each change: what runs now (null: nothing), for a foreground notification. */
+    fun work(note: WorkNote?) {}
 }
 
 /**
@@ -114,7 +131,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         emptyList()
     }
 
-    private fun ui(f: (SyncState) -> SyncState) = env.post { state = f(state) }
+    private fun ui(f: (SyncState) -> SyncState) = env.post {
+        state = f(state)
+        env.work(workOf(state))
+    }
 
     private fun begin(): Boolean {
         if (state.busy) return false
@@ -154,12 +174,19 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             SyncException.E_SD_UNAVAILABLE -> ErrorInfo(R.string.sync_err_sd, d, R.string.sync_hint_sd)
             SyncException.E_EXISTS -> ErrorInfo(R.string.sync_err_exists, d)
             SyncException.E_BAD_PATH -> ErrorInfo(R.string.sync_err_bad_name, d)
-            SyncException.E_FILE_TOO_BIG -> ErrorInfo(R.string.sync_err_too_big, d)
+            SyncException.E_FILE_TOO_BIG -> ErrorInfo(R.string.sync_err_too_big, d, R.string.sync_hint_too_big)
+            SyncException.E_NOT_DIR, SyncException.E_IS_DIR -> ErrorInfo(R.string.sync_err_kind, d, R.string.sync_hint_refresh)
             SyncException.E_NOT_FOUND -> ErrorInfo(R.string.sync_err_not_found, d, R.string.sync_hint_refresh)
             SyncException.E_NOT_EMPTY -> ErrorInfo(R.string.sync_err_not_empty, d)
             SyncException.E_UNSUPPORTED, SyncException.E_VERSION, SyncException.E_NOT_ALLOWED ->
                 ErrorInfo(R.string.sync_err_unsupported, d, R.string.sync_hint_unsupported)
             SyncException.E_IO, SyncException.E_HASH_MISMATCH -> ErrorInfo(R.string.sync_err_io, d, R.string.sync_hint_io)
+            SyncException.E_SIGNATURE -> ErrorInfo(R.string.sync_err_signature, d, R.string.sync_hint_signature)
+            SyncException.E_UPDATE_INVALID -> ErrorInfo(R.string.sync_err_update_invalid, d, R.string.sync_hint_update_invalid)
+            SyncException.E_DOWNGRADE -> ErrorInfo(R.string.sync_err_downgrade, d, R.string.sync_hint_downgrade)
+            SyncException.E_BATTERY -> ErrorInfo(R.string.sync_err_battery, d, R.string.sync_hint_battery)
+            SyncException.E_NEEDS_FIRMWARE -> ErrorInfo(R.string.sync_err_needs_firmware, d, R.string.sync_hint_needs_firmware)
+            SyncException.E_NOT_STAGED -> ErrorInfo(R.string.sync_err_not_staged, d, R.string.sync_hint_not_staged)
             else -> ErrorInfo(R.string.sync_err_generic, d ?: "BTP error ${e.code}")
         }
     }
@@ -174,7 +201,12 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         session = null
     }
 
-    private fun lost(e: Throwable): Boolean = e is SyncException && e.fatal
+    /**
+     * The error ended the session: a fatal one, or any error after the session was already
+     * dropped (a reconnection the player refused with NOT_PAIRED or FORGOTTEN), so the screens
+     * never show Connected without a session.
+     */
+    private fun lost(e: Throwable): Boolean = (e is SyncException && e.fatal) || session == null
 
     // ---- connection -----------------------------------------------------------------------
 
@@ -258,10 +290,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         }
         val paired = safePaired()
         val d = device.copy(name = s.info.name.ifEmpty { device.name }, deviceId = s.info.deviceId, paired = true)
+        val samePlayer = d.deviceId.isNotEmpty() && d.deviceId == libraryOf
+        libraryOf = d.deviceId
         current = d
         lastDevice = d
-        ui { it.copy(link = Link.Connected(d, s.info, space), paired = paired, error = null, browser = Browser()) }
+        coverAsked.clear()
+        ui {
+            val base = it.copy(link = Link.Connected(d, s.info, space), paired = paired, error = null, browser = Browser())
+            // what was read from another player (its library, playlists, artwork) must never act on this one's card
+            if (samePlayer) base else base.copy(library = LibraryPhase.Idle, libraryNav = LibraryNav(), playlists = Playlists(), covers = emptyMap(),
+                rescan = Rescan.Idle, libDelete = null, libError = null, libraryChanged = false, libraryQuery = "")
+        }
     }
+
+    /** The player whose library, playlists and artwork the state holds (its device id). */
+    private var libraryOf: String? = null
 
     override fun setCode(text: String) {
         val l = state.link as? Link.Pairing ?: return
@@ -334,7 +377,8 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         if (state.busy) return
         val s = session
         session = null
-        state = state.copy(link = Link.Idle, browser = Browser(), library = LibraryPhase.Idle, libraryNav = LibraryNav())
+        state = state.copy(link = Link.Idle, browser = Browser(), library = LibraryPhase.Idle, libraryNav = LibraryNav(), playlists = Playlists(),
+            covers = emptyMap(), libDelete = null, libError = null, libraryChanged = false, rescan = Rescan.Idle)
         env.execute {
             try {
                 s?.close()
@@ -383,12 +427,62 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         return s
     }
 
+    /**
+     * A transfer lost its connection: waits a little longer each time (RECONNECT_DELAYS), then
+     * opens a new session with the same player, without a code (AUTH). When the player is no
+     * longer at its address (a new DHCP lease), it is looked for again by its device id. Returns
+     * the attempts used; throws [lostWith] when every attempt failed.
+     */
+    private fun reconnectDuringTransfer(from: Int, lostWith: SyncException): Int {
+        dropSession()
+        var attempt = from
+        try {
+            while (attempt < RECONNECT_DELAYS.size) {
+                val n = attempt + 1
+                ui { it.copy(transfer = it.transfer.copy(reconnecting = n)) }
+                env.sleep(RECONNECT_DELAYS[attempt])
+                attempt++
+                if (stop) throw SyncException(SyncException.E_CANCELLED)
+                try {
+                    reconnectCurrent()
+                    return attempt
+                } catch (e: SyncException) {
+                    // the player refused this phone: trying again changes nothing
+                    if (e.code == SyncException.NOT_PAIRED || e.code == SyncException.FORGOTTEN || e.code == SyncException.IDENTITY_CHANGED) throw e
+                }
+            }
+            throw lostWith
+        } finally {
+            ui { it.copy(transfer = it.transfer.copy(reconnecting = 0)) }
+        }
+    }
+
+    private fun reconnectCurrent() {
+        val d = current ?: throw SyncException(SyncException.CONNECTION_LOST)
+        val c = connector ?: throw SyncException(SyncException.NO_CLIENT)
+        val s = try {
+            c.connect(d.host, d.port, d.deviceId.ifEmpty { null })
+        } catch (e: SyncException) {
+            if (e.code != SyncException.UNREACHABLE || d.deviceId.isEmpty()) throw e
+            val found = c.discover(2000, cancelled) {}.firstOrNull { it.deviceId == d.deviceId } ?: throw e
+            val moved = d.copy(host = found.host, port = found.port)
+            current = moved
+            lastDevice = moved
+            c.connect(moved.host, moved.port, d.deviceId).also {
+                ui { st -> st.connected?.let { st.copy(link = it.copy(device = moved)) } ?: st }
+            }
+        }
+        session = s
+        lastPing = env.now()
+    }
+
     /** [putSmart] on the open session; a read error of the phone's file replaces the session, then is rethrown. */
     private fun putLocal(ns: Int, path: String, size: Long, sha: ByteArray, mtime: Long, replace: Boolean,
-                         open: (Long) -> InputStream, progress: (Long) -> Unit): PutResult {
+                         open: (Long) -> InputStream, exact: PutMode? = null, progress: (Long) -> Unit): PutResult {
         val s = session ?: throw SyncException(SyncException.CONNECTION_LOST)
         try {
-            return putSmart(s, ns, path, size, sha, mtime, replace, open, progress)
+            return if (exact != null) s.put(ns, path, size, sha, mtime, exact, open, cancelled, progress)
+            else putSmart(s, ns, path, size, sha, mtime, replace, open, progress)
         } catch (e: IOException) {
             reopen()
             throw e
@@ -401,6 +495,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         if (state.transfer.running) return
         state = state.copy(dest = d, destPath = null)
         replan()
+    }
+
+    override fun setRoute(route: Route, folder: String) {
+        if (state.transfer.running) return
+        state = state.copy(routes = if (folder == route.folder) state.routes - route else state.routes + (route to folder))
+        replan()
+    }
+
+    override fun useUpdateFiles() {
+        if (state.transfer.running) return
+        val upd = picked.filter { FileKinds.of(it.parts.last()) == FileKind.BYOS_UPDATE }
+        if (upd.isEmpty()) return
+        picked = picked - upd.toSet()
+        replan()
+        addUpdateFiles { upd }
     }
 
     override fun setReplace(on: Boolean) {
@@ -416,20 +525,30 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         if (!state.transfer.running) env.pickFolder()
     }
 
-    /** Adds what the user picked (read on the worker by [load], which may walk a folder). */
+    /**
+     * Adds what the user picked (read on the worker by [load], which may walk a folder). Files
+     * shared from another app while a transfer runs are not dropped: the worker reads them once
+     * the transfer is over, and the send screen says they are waiting meanwhile.
+     */
     fun addPicked(load: () -> List<LocalItem>) {
-        if (state.transfer.running) return
+        if (state.transfer.running) state = state.copy(sharedWaiting = true)
         env.execute {
             try {
                 val items = load()
                 env.post {
+                    if (state.transfer.running) {
+                        // a transfer started meanwhile: they wait behind it on the worker
+                        addPicked { items }
+                        return@post
+                    }
                     // a finished transfer is replaced by the new choice
                     if (state.transfer.finished) clearPlan()
                     picked = picked + items
                     replan()
+                    state = state.copy(sharedWaiting = false)
                 }
             } catch (e: Exception) {
-                ui { it.copy(transfer = it.transfer.copy(error = errorOf(e))) }
+                ui { it.copy(sharedWaiting = false, transfer = it.transfer.copy(error = errorOf(e))) }
             }
         }
     }
@@ -442,14 +561,25 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         state = state.copy(transfer = Transfer())
     }
 
+    /**
+     * Plans the picked files for the chosen destination. After a transfer that stopped half way
+     * (cancelled, connection lost), the files already on the card stay as they are and only the
+     * others (and anything picked since) follow the new choice.
+     */
     private fun replan() {
-        if (state.transfer.jobs.any { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME && it.status != JobStatus.TOO_BIG }) return
+        val old = state.transfer
+        val kept = old.jobs.filter { it.finished }
+        val keptItems = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<LocalItem, Boolean>())
+        for (j in kept) sources[j.id]?.let { keptItems += it }
+        val rest = picked.filter { it !in keptItems }
         val max = state.connected?.space?.maxFile ?: Long.MAX_VALUE
-        val plan = SendPlan.build(picked, state.target, max)
-        sources = plan.sources
+        val firstId = (kept.maxOfOrNull { it.id } ?: 0) + 1
+        val plan = if (state.destPath == null && state.dest == Destination.AUTO) SendPlan.auto(rest, state.routes, max, firstId)
+        else SendPlan.build(rest, state.target, max, firstId)
+        sources = kept.mapNotNull { j -> sources[j.id]?.let { j.id to it } }.toMap() + plan.sources
         folders = plan.folders
         hashes.clear()
-        state = state.copy(transfer = Transfer(jobs = plan.jobs))
+        state = state.copy(transfer = Transfer(jobs = kept + plan.jobs, newMusic = old.newMusic))
     }
 
     override fun clearSend() {
@@ -471,69 +601,93 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         env.execute {
             var done = 0L
             val pace = Pace()
+            var newMusic = 0
+            val changedMusic = ArrayList<String>()
             fun mark(id: Int, f: (SendJob) -> SendJob) = ui { st ->
                 st.copy(transfer = st.transfer.copy(jobs = st.transfer.jobs.map { if (it.id == id) f(it) else it }))
             }
+            val settled = HashSet<Int>()
+            var attempt = 0
             try {
-                if (target.isNotEmpty()) s.mkdir(target, true)
-                for (f in folders) s.mkdir(f, true)
-                for (job in todo) {
-                    if (stop) throw SyncException(SyncException.E_CANCELLED)
-                    val src = sources[job.id] ?: continue
+                while (true) {
                     try {
-                        val sha = hashes[job.id] ?: run {
-                            mark(job.id) { it.copy(status = JobStatus.HASHING) }
-                            val base = done
-                            val h = hash(src.open) { n ->
-                                if (pace.due()) ui { st -> st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = true)) }
+                        val cur = session ?: throw SyncException(SyncException.CONNECTION_LOST)
+                        if (target.isNotEmpty()) cur.mkdir(target, true)
+                        for (f in folders) cur.mkdir(f, true)
+                        for (job in todo) {
+                            if (job.id in settled) continue
+                            if (stop) throw SyncException(SyncException.E_CANCELLED)
+                            val src = sources[job.id] ?: continue
+                            try {
+                                val sha = hashes[job.id] ?: run {
+                                    mark(job.id) { it.copy(status = JobStatus.HASHING) }
+                                    val base = done
+                                    val h = hash(src.open) { n ->
+                                        if (pace.due()) ui { st -> st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = true)) }
+                                    }
+                                    if (h.second != job.size) throw IOException("${job.local}: the file changed while it was read")
+                                    hashes[job.id] = h.first
+                                    done += job.size
+                                    h.first
+                                }
+                                mark(job.id) { it.copy(status = JobStatus.SENDING) }
+                                val base = done
+                                val r = putLocal(Ns.SD, job.remote, job.size, sha, src.mtime, replace, { off -> openAt(src.open, off) }) { n ->
+                                    if (pace.due()) ui { st ->
+                                        st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = false,
+                                            jobs = st.transfer.jobs.map { if (it.id == job.id) it.copy(done = n) else it }))
+                                    }
+                                }
+                                done = base + job.size
+                                mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
+                                if (!r.skipped && FileKinds.isAudio(job.remote)) {
+                                    if (r.replaced) changedMusic += job.remote else newMusic++
+                                }
+                            } catch (e: SyncException) {
+                                when {
+                                    e.code == SyncException.E_CANCELLED -> throw e
+                                    e.fatal || e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE ||
+                                        e.code == SyncException.CONNECTION_LOST -> {
+                                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
+                                        throw e
+                                    }
+                                    e.code == SyncException.E_EXISTS -> mark(job.id) { it.copy(status = JobStatus.EXISTS, error = e.code) }
+                                    e.code == SyncException.E_FILE_TOO_BIG -> mark(job.id) { it.copy(status = JobStatus.TOO_BIG, error = e.code) }
+                                    e.code == SyncException.E_BAD_PATH -> mark(job.id) { it.copy(status = JobStatus.BAD_NAME, error = e.code) }
+                                    else -> {
+                                        // the file changed after it was hashed: the next try hashes it again
+                                        if (e.code == SyncException.E_HASH_MISMATCH) hashes.remove(job.id)
+                                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
+                                    }
+                                }
+                            } catch (e: IOException) {
+                                // this file could not be read on the phone (putLocal already opened a new
+                                // session if a PUT was under way): the others go on
+                                hashes.remove(job.id)
+                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
                             }
-                            if (h.second != job.size) throw IOException("${job.local}: the file changed while it was read")
-                            hashes[job.id] = h.first
-                            done += job.size
-                            h.first
+                            settled += job.id
                         }
-                        mark(job.id) { it.copy(status = JobStatus.SENDING) }
-                        val base = done
-                        val r = putLocal(Ns.SD, job.remote, job.size, sha, src.mtime, replace, { off -> openAt(src.open, off) }) { n ->
-                            if (pace.due()) ui { st ->
-                                st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = false,
-                                    jobs = st.transfer.jobs.map { if (it.id == job.id) it.copy(done = n) else it }))
-                            }
-                        }
-                        done = base + job.size
-                        mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
+                        break
                     } catch (e: SyncException) {
-                        when {
-                            e.code == SyncException.E_CANCELLED -> throw e
-                            e.fatal || e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE ||
-                                e.code == SyncException.CONNECTION_LOST -> {
-                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
-                                throw e
-                            }
-                            e.code == SyncException.E_EXISTS -> mark(job.id) { it.copy(status = JobStatus.EXISTS, error = e.code) }
-                            e.code == SyncException.E_FILE_TOO_BIG -> mark(job.id) { it.copy(status = JobStatus.TOO_BIG, error = e.code) }
-                            e.code == SyncException.E_BAD_PATH -> mark(job.id) { it.copy(status = JobStatus.BAD_NAME, error = e.code) }
-                            else -> {
-                                // the file changed after it was hashed: the next try hashes it again
-                                if (e.code == SyncException.E_HASH_MISMATCH) hashes.remove(job.id)
-                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
-                            }
-                        }
-                    } catch (e: IOException) {
-                        // this file could not be read on the phone (putLocal already opened a new
-                        // session if a PUT was under way): the others go on
-                        hashes.remove(job.id)
-                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
+                        // the connection dropped (Wi-Fi, the player asleep): connect again and go on where it stopped
+                        if (!lost(e) || stop || current == null || attempt >= RECONNECT_DELAYS.size) throw e
+                        attempt = reconnectDuringTransfer(attempt, e)
                     }
                 }
-                ui { it.copy(transfer = it.transfer.copy(running = false, done = it.transfer.total, current = "")) }
+                session?.let { refreshTags(it, changedMusic) }
+                val added = newMusic
+                ui { it.copy(transfer = it.transfer.copy(running = false, done = it.transfer.total, current = "", newMusic = it.transfer.newMusic + added),
+                    rescan = if (added > 0) Rescan.Idle else it.rescan) }
                 session?.let { refreshAfterWrite(it) }
             } catch (e: Exception) {
                 val cancel = e is SyncException && e.code == SyncException.E_CANCELLED
                 val err = if (cancel) null else errorOf(e)
-                if (lost(e)) dropSession()
+                // also a reconnection the player refused (NOT_PAIRED, FORGOTTEN): the session is gone
+                val gone = lost(e)
+                if (gone) dropSession()
                 ui {
-                    it.copy(link = if (lost(e)) Link.Idle else it.link, transfer = it.transfer.copy(running = false, current = "", error = err,
+                    it.copy(link = if (gone) Link.Idle else it.link, transfer = it.transfer.copy(running = false, current = "", error = err,
                         jobs = it.transfer.jobs.map { j ->
                             if (j.status == JobStatus.HASHING || j.status == JobStatus.SENDING) j.copy(status = if (cancel) JobStatus.CANCELLED else JobStatus.FAILED)
                             else j
@@ -549,7 +703,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         s.put(ns, path, size, sha, mtime, PutMode.SKIP_IDENTICAL, open, cancelled, progress)
     } catch (e: SyncException) {
         if (e.code != SyncException.E_EXISTS || !replace) throw e
-        s.put(ns, path, size, sha, mtime, PutMode.REPLACE, open, cancelled, progress)
+        s.put(ns, path, size, sha, mtime, PutMode.REPLACE, open, cancelled, progress).copy(replaced = true)
     }
 
     private fun openAt(open: () -> InputStream, offset: Long): InputStream {
@@ -587,6 +741,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             }
         }
         return md.digest() to n
+    }
+
+    /**
+     * Songs replaced on the card keep their library rows: LIB_RESCAN mode 1 refreshes their tags,
+     * cover and lyrics at once (section 13.3). Best effort: an older ByOS without it is fine.
+     */
+    private fun refreshTags(s: SyncSession, paths: List<String>) {
+        for (chunk in paths.chunked(256)) {
+            try {
+                s.libRescan(chunk)
+            } catch (e: SyncException) {
+                if (e.fatal) throw e
+                return
+            }
+        }
     }
 
     private fun refreshAfterWrite(s: SyncSession) {
@@ -676,7 +845,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 op()
                 val path = state.browser.path
                 val list = sortEntries(s.list(path))
-                ui { it.copy(browser = it.browser.copy(working = false, prompt = null, moving = null, entries = list)) }
+                ui {
+                    it.copy(browser = it.browser.copy(working = false, prompt = null, moving = null, movingFiles = emptyList(), movingLabel = null, entries = list),
+                        libraryChanged = it.libraryChanged || it.library is LibraryPhase.Ready)
+                }
                 refreshAfterWrite(s)
             } catch (e: Exception) {
                 val err = errorOf(e)
@@ -691,16 +863,39 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     override fun startMove(entry: SyncEntry) {
         if (state.busy) return
-        state = state.copy(browser = state.browser.copy(moving = SyncPaths.join(state.browser.path, entry.name), prompt = null))
+        state = state.copy(browser = state.browser.copy(moving = SyncPaths.join(state.browser.path, entry.name), movingFiles = emptyList(), movingLabel = null, prompt = null))
     }
 
     override fun moveHere() {
         val s = session ?: return
         val b = state.browser
         val src = b.moving ?: return
+        if (b.movingFiles.isNotEmpty()) {
+            // an album's songs out of a shared folder: each file goes here, the folder stays
+            val files = b.movingFiles
+            if (files.all { SyncPaths.parent(it) == b.path }) {
+                cancelMove()
+                return
+            }
+            if (!begin()) return
+            state = state.copy(browser = b.copy(working = true, error = null))
+            browserOp(s) {
+                for (f in files) {
+                    if (stop) throw SyncException(SyncException.E_CANCELLED)
+                    if (SyncPaths.parent(f) == b.path) continue
+                    try {
+                        s.move(f, SyncPaths.join(b.path, SyncPaths.name(f)), false)
+                    } catch (e: SyncException) {
+                        // moved by an earlier try that stopped half way
+                        if (e.code != SyncException.E_NOT_FOUND) throw e
+                    }
+                }
+            }
+            return
+        }
         val dst = SyncPaths.join(b.path, SyncPaths.name(src))
         if (dst == src) {
-            state = state.copy(browser = b.copy(moving = null))
+            cancelMove()
             return
         }
         if (b.path == src || b.path.startsWith("$src/")) {
@@ -713,33 +908,41 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     }
 
     override fun cancelMove() {
-        state = state.copy(browser = state.browser.copy(moving = null))
+        state = state.copy(browser = state.browser.copy(moving = null, movingFiles = emptyList(), movingLabel = null))
     }
 
     // ---- library --------------------------------------------------------------------------------
+
+    /** DB_SNAPSHOT into the app's cache, read with Android's SQLite. */
+    private fun readSnapshot(s: SyncSession, progress: ((Long, Long) -> Unit)?): Library {
+        val dir = File(env.cacheDir, "sync")
+        val tmp = File(dir, "library.tmp")
+        val db = File(dir, "library.db")
+        try {
+            dir.mkdirs()
+            val pace = Pace()
+            FileOutputStream(tmp).use { o ->
+                s.dbSnapshot(o, cancelled) { done, total ->
+                    if (progress != null && pace.due(done == total)) progress(done, total)
+                }
+            }
+            db.delete()
+            if (!tmp.renameTo(db)) throw IOException("the library copy could not be kept")
+            return Library.build(env.readLibrary(db))
+        } finally {
+            tmp.delete()
+        }
+    }
 
     override fun loadLibrary() {
         val s = session ?: return
         if (!begin()) return
         state = state.copy(library = LibraryPhase.Loading(0, 0), libraryNav = LibraryNav())
         env.execute {
-            val dir = File(env.cacheDir, "sync")
-            val tmp = File(dir, "library.tmp")
-            val db = File(dir, "library.db")
             try {
-                dir.mkdirs()
-                val pace = Pace()
-                FileOutputStream(tmp).use { o ->
-                    s.dbSnapshot(o, cancelled) { done, total ->
-                        if (pace.due(done == total)) ui { it.copy(library = LibraryPhase.Loading(done, total)) }
-                    }
-                }
-                db.delete()
-                if (!tmp.renameTo(db)) throw IOException("the library copy could not be kept")
-                val lib = Library.build(env.readLibrary(db))
+                val lib = readSnapshot(s) { done, total -> ui { it.copy(library = LibraryPhase.Loading(done, total)) } }
                 ui { it.copy(library = LibraryPhase.Ready(lib)) }
             } catch (e: Exception) {
-                tmp.delete()
                 if (e is SyncException && e.code == SyncException.E_CANCELLED) {
                     ui { it.copy(library = LibraryPhase.Idle) }
                 } else {
@@ -755,10 +958,445 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         state = state.copy(libraryNav = nav)
     }
 
+    override fun libraryDelete(target: LibTarget?) {
+        if (state.libWorking) return
+        state = state.copy(libDelete = target, libError = null)
+    }
+
+    /**
+     * Opens Files ready to move [target]. An album moves with its folder only when that folder is
+     * its own (the rule of Delete, [ownsFolder]); in a folder shared with other songs or files
+     * (Music/Singles, a flat "Música"), only the album's songs and their lyrics move.
+     */
+    override fun libraryMove(target: LibTarget) {
+        val p = target.cardPath ?: return
+        if (state.busy) return
+        if (target !is LibTarget.AlbumOf) {
+            state = state.copy(browser = Browser(path = SyncPaths.parent(p), moving = p))
+            openFolder(SyncPaths.parent(p))
+            return
+        }
+        val s = session ?: return
+        if (!begin()) return
+        val songs = target.album.tracks.mapNotNull { Library.cardPath(it.path) }
+        val parent = SyncPaths.parent(p)
+        state = state.copy(browser = Browser(path = parent, loading = true, working = true))
+        env.execute {
+            try {
+                val files = if (ownsFolder(s, p, songs)) emptyList() else {
+                    // each song with the lyrics of the same name beside it
+                    val stems = songs.map { SyncPaths.name(it).substringBeforeLast('.').lowercase() }.toSet()
+                    val lyrics = try {
+                        s.list(p).filter { !it.isFolder && FileKinds.of(it.name) == FileKind.LYRICS && it.name.substringBeforeLast('.').lowercase() in stems }
+                            .map { SyncPaths.join(p, it.name) }
+                    } catch (e: SyncException) {
+                        if (e.fatal) throw e
+                        emptyList()
+                    }
+                    songs + lyrics
+                }
+                val list = sortEntries(s.list(parent))
+                ui {
+                    it.copy(browser = Browser(path = parent, entries = list, moving = p, movingFiles = files,
+                        movingLabel = if (files.isEmpty()) null else target.album.title.ifEmpty { SyncPaths.name(songs.first()) }))
+                }
+            } catch (e: Exception) {
+                val err = errorOf(e)
+                if (lost(e)) dropSession()
+                ui {
+                    it.copy(link = if (lost(e)) Link.Idle else it.link, error = if (lost(e)) err else it.error,
+                        browser = Browser(path = parent, error = err))
+                }
+            }
+        }
+    }
+
+    override fun revealInFiles(target: LibTarget) {
+        val p = target.cardPath ?: target.tracks.firstNotNullOfOrNull { Library.cardPath(it.path) } ?: return
+        if (state.busy) return
+        val dir = if (target is LibTarget.Song) SyncPaths.parent(p) else p
+        state = state.copy(browser = Browser(path = dir))
+        openFolder(dir)
+    }
+
+    /**
+     * Deletes the songs of the target from the card. An album that has a folder of its own (no
+     * other songs, no subfolders) goes with its folder, so its cover and lyrics go too; otherwise
+     * only its songs are deleted. Then the player updates its library; where it cannot, the
+     * songs are only taken out of the list shown here.
+     */
+    override fun confirmLibraryDelete() {
+        val s = session ?: return
+        val t = state.libDelete ?: return
+        val lib = (state.library as? LibraryPhase.Ready)?.library ?: return
+        if (!begin()) return
+        state = state.copy(libWorking = true, libError = null)
+        env.execute {
+            try {
+                val files = HashSet<String>()
+                val dirs = HashSet<String>()
+                val albums = when (t) {
+                    is LibTarget.Song -> emptyList()
+                    is LibTarget.AlbumOf -> listOf(t.album)
+                    is LibTarget.ArtistOf -> t.artist.albums
+                }
+                if (t is LibTarget.Song) {
+                    val p = Library.cardPath(t.track.path) ?: throw SyncException(SyncException.E_NOT_FOUND, t.track.path)
+                    deleteIfThere(s, p)
+                    files += p
+                }
+                for (al in albums) {
+                    if (stop) throw SyncException(SyncException.E_CANCELLED)
+                    val paths = al.tracks.mapNotNull { Library.cardPath(it.path) }
+                    val folder = Library.folderOf(al.tracks)
+                    if (folder != null && ownsFolder(s, folder, paths)) {
+                        s.delete(folder, true)
+                        dirs += folder
+                    } else {
+                        for (p in paths) deleteIfThere(s, p)
+                    }
+                    files += paths
+                }
+                val (next, rescan) = try {
+                    s.libRescan(null)
+                    readSnapshot(s, null) to Rescan.Done
+                } catch (e: SyncException) {
+                    if (e.code != SyncException.E_UNSUPPORTED) throw e
+                    lib.without(files, dirs) to Rescan.Unsupported
+                }
+                ui {
+                    val n = it.libraryNav
+                    val nav = when (t) {
+                        is LibTarget.ArtistOf -> n.copy(artist = null, album = null)
+                        is LibTarget.AlbumOf -> n.copy(album = null)
+                        else -> n
+                    }
+                    it.copy(libWorking = false, libDelete = null, library = LibraryPhase.Ready(next), rescan = rescan, libraryNav = nav,
+                        libraryChanged = false)
+                }
+                refreshAfterWrite(s)
+            } catch (e: Exception) {
+                val err = errorOf(e)
+                if (lost(e)) dropSession()
+                ui { it.copy(link = if (lost(e)) Link.Idle else it.link, libWorking = false, libDelete = null, libError = err) }
+            }
+        }
+    }
+
+    private fun deleteIfThere(s: SyncSession, path: String) {
+        try {
+            s.delete(path, false)
+        } catch (e: SyncException) {
+            if (e.code != SyncException.E_NOT_FOUND) throw e
+        }
+    }
+
+    /**
+     * True when [folder] is the album's own folder: no subfolder, and nothing but [songs] and the
+     * files that come with an album (artwork, lyrics, cue sheets, rip logs, hidden files). Any
+     * other file (a booklet PDF, a video, notes, another song) keeps the folder: only the songs go.
+     */
+    private fun ownsFolder(s: SyncSession, folder: String, songs: List<String>): Boolean {
+        val mine = songs.map { SyncPaths.name(it).lowercase() }.toSet()
+        val list = try {
+            s.list(folder)
+        } catch (e: SyncException) {
+            if (e.fatal) throw e
+            return false
+        }
+        return list.all { !it.isFolder && (it.name.lowercase() in mine || albumCompanion(it.name)) }
+    }
+
+    /** Files that belong to an album's folder and go with it. */
+    private fun albumCompanion(name: String): Boolean {
+        val n = name.lowercase()
+        if (n.startsWith(".") || n == "thumbs.db" || n == "desktop.ini") return true
+        return FileKinds.of(n) == FileKind.IMAGE || FileKinds.ext(n) in companionExts
+    }
+
+    private val companionExts = setOf("lrc", "cue", "log", "accurip", "m3u", "m3u8", "sfv", "md5", "ffp")
+
+    // ---- playlists (.m3u8 files in Playlists) ---------------------------------------------------
+
+    private fun pl(f: (Playlists) -> Playlists) = ui { it.copy(playlists = f(it.playlists)) }
+
+    /** Runs a playlist job on the worker: errors are shown on the playlists, a lost connection ends the session. */
+    private fun playlistJob(f: (SyncSession) -> Unit) {
+        val s = session ?: return
+        if (!begin()) return
+        state = state.copy(playlists = state.playlists.copy(working = true, error = null, added = null))
+        env.execute {
+            try {
+                f(s)
+                pl { it.copy(working = false) }
+            } catch (e: Exception) {
+                val err = errorOf(e)
+                if (lost(e)) dropSession()
+                ui { it.copy(link = if (lost(e)) Link.Idle else it.link, playlists = it.playlists.copy(working = false, error = err, newName = null)) }
+            }
+        }
+    }
+
+    private fun listPlaylists(s: SyncSession): List<String> = try {
+        s.list(M3u.FOLDER).filter { !it.isFolder && M3u.isPlaylist(it.name) }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }).map { SyncPaths.join(M3u.FOLDER, it.name) }
+    } catch (e: SyncException) {
+        if (e.code != SyncException.E_NOT_FOUND) throw e
+        emptyList()
+    }
+
+    /** The playlist file as it is on the card, line for line (its other lines are kept when it is changed). */
+    private fun readPlaylistFile(s: SyncSession, file: String): M3uFile {
+        val out = java.io.ByteArrayOutputStream()
+        s.get(file, 0, out, cancelled) { _, _ -> }
+        return M3u.parse(SyncPaths.parent(file), out.toByteArray())
+    }
+
+    /** Card path -> "Artist - Title" for the #EXTINF lines of songs added to a playlist. */
+    private fun titled(songs: List<String>): List<Pair<String, String>> {
+        val titles = ((state.library as? LibraryPhase.Ready)?.library?.tracks ?: emptyList())
+            .associate { (Library.cardPath(it.path) ?: "").lowercase() to listOf(it.artist, it.title).filter { t -> t.isNotEmpty() }.joinToString(" - ") }
+        return songs.map { it to (titles[it.lowercase()] ?: "") }
+    }
+
+    private fun writePlaylist(s: SyncSession, file: String, f: M3uFile, create: Boolean) {
+        val data = f.bytes()
+        s.mkdir(SyncPaths.parent(file), true)
+        s.put(Ns.SD, file, data.size.toLong(), MessageDigest.getInstance("SHA-256").digest(data), 0,
+            if (create) PutMode.CREATE else PutMode.REPLACE, { off -> openAt({ data.inputStream() }, off) }, cancelled) {}
+    }
+
+    override fun loadPlaylists() = playlistJob { s ->
+        val files = listPlaylists(s)
+        pl { it.copy(files = files) }
+    }
+
+    override fun openPlaylist(file: String) {
+        // refused while other work runs: the list stays as it is (no endless "Loading")
+        if (session == null || state.busy) return
+        state = state.copy(libraryNav = state.libraryNav.copy(playlist = file), playlists = state.playlists.copy(open = null))
+        playlistJob { s ->
+            val p = Playlist(file, readPlaylistFile(s, file).songs)
+            pl { it.copy(open = p) }
+        }
+    }
+
+    override fun addToPlaylist(target: LibTarget?) {
+        if (state.playlists.working) return
+        state = state.copy(playlists = state.playlists.copy(adding = target, error = null, added = null))
+        if (target != null && state.playlists.files == null) loadPlaylists()
+    }
+
+    private fun songsOf(t: LibTarget): List<String> = t.tracks.mapNotNull { Library.cardPath(it.path) }
+
+    override fun addToPlaylistFile(file: String) {
+        val t = state.playlists.adding ?: return
+        playlistJob { s ->
+            val f = readPlaylistFile(s, file).adding(titled(songsOf(t)))
+            writePlaylist(s, file, f, false)
+            pl { it.copy(adding = null, added = M3u.title(file), open = if (it.open?.file == file) Playlist(file, f.songs) else it.open) }
+        }
+    }
+
+    override fun newPlaylistName(text: String?) {
+        if (state.playlists.working) return
+        state = state.copy(playlists = state.playlists.copy(newName = text?.take(80)))
+    }
+
+    override fun createPlaylist() {
+        val name = SyncPaths.cleanName(state.playlists.newName ?: return)
+        if (name == null) {
+            state = state.copy(playlists = state.playlists.copy(error = ErrorInfo(R.string.sync_err_bad_name, null)))
+            return
+        }
+        val file = SyncPaths.join(M3u.FOLDER, "$name.m3u8")
+        val songs = state.playlists.adding?.let { songsOf(it) } ?: emptyList()
+        playlistJob { s ->
+            writePlaylist(s, file, M3u.empty(SyncPaths.parent(file)).adding(titled(songs)), true)
+            val files = listPlaylists(s)
+            pl { it.copy(files = files, newName = null, adding = null, added = if (songs.isEmpty()) null else M3u.title(file)) }
+        }
+    }
+
+    /**
+     * Takes one song out of the open playlist. The file is read again first and only that song's
+     * lines go; when the file changed meanwhile, the same song is looked for by its path.
+     */
+    override fun removeFromPlaylist(index: Int) {
+        val p = state.playlists.open ?: return
+        if (index !in p.songs.indices) return
+        val song = p.songs[index]
+        playlistJob { s ->
+            val f = readPlaylistFile(s, p.file)
+            val at = if (f.songs.getOrNull(index) == song) index else f.songs.indexOfFirst { it.equals(song, ignoreCase = true) }
+            val next = if (at >= 0) f.removing(at).also { writePlaylist(s, p.file, it, false) } else f
+            pl { it.copy(open = Playlist(p.file, next.songs)) }
+        }
+    }
+
+    override fun deletePlaylist(file: String) = playlistJob { s ->
+        s.delete(file, false)
+        val files = listPlaylists(s)
+        ui { it.copy(playlists = it.playlists.copy(files = files, open = null), libraryNav = it.libraryNav.copy(playlist = null)) }
+    }
+
+    override fun searchLibrary(text: String) {
+        state = state.copy(libraryQuery = text.take(100))
+    }
+
+    private val coverAsked: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+
+    private fun shortHash(s: String): String =
+        MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
+
+    private val coverDir: File get() = File(env.cacheDir, "sync/covers")
+
+    /** The cache file of one version of a folder's artwork: the player and folder, then the picture's name, size and date. */
+    private fun coverFile(folder: String, pic: SyncEntry): File {
+        val prefix = shortHash((current?.deviceId ?: "") + "/" + folder.lowercase())
+        return File(coverDir, prefix + "-" + shortHash(pic.name + "|" + pic.size + "|" + pic.mtime) + ".img")
+    }
+
+    /**
+     * The album's artwork, from its folder on the card (cover.jpg, folder.jpg..., else any
+     * picture): LIST, then GET into the app's cache. The cached copy is used again only while
+     * the picture on the card keeps its name, size and date, so replaced artwork shows at the
+     * next connection. Asked once per folder and per connection, when the album shows on screen.
+     */
+    override fun loadCover(folder: String) {
+        val s = session ?: return
+        if (folder.isEmpty() || !coverAsked.add(folder)) return
+        env.execute {
+            if (session !== s) {
+                coverAsked.remove(folder)
+                return@execute
+            }
+            try {
+                val pic = Library.coverIn(s.list(folder))
+                if (pic == null) {
+                    ui { it.copy(covers = it.covers + (folder to null)) }
+                    return@execute
+                }
+                val f = coverFile(folder, pic)
+                if (f.isFile && f.length() > 0) {
+                    ui { it.copy(covers = it.covers + (folder to f.path)) }
+                    return@execute
+                }
+                // older versions of this folder's artwork go
+                val prefix = f.name.substringBefore('-') + "-"
+                coverDir.listFiles()?.forEach { if (it.name.startsWith(prefix)) it.delete() }
+                f.parentFile?.mkdirs()
+                val tmp = File(f.path + ".tmp")
+                FileOutputStream(tmp).use { o -> s.get(SyncPaths.join(folder, pic.name), 0, o, { false }) { _, _ -> } }
+                f.delete()
+                if (!tmp.renameTo(f)) throw IOException("the artwork could not be kept")
+                ui { it.copy(covers = it.covers + (folder to f.path)) }
+            } catch (e: Exception) {
+                if (lost(e)) {
+                    coverAsked.remove(folder)
+                    failed(e)
+                } else {
+                    // no artwork is shown: the album keeps its music note
+                    ui { it.copy(covers = it.covers + (folder to null)) }
+                }
+            }
+        }
+    }
+
+    private var pendingDownload: String? = null
+
+    override fun saveToPhone(entry: SyncEntry) {
+        if (entry.isFolder || session == null || state.busy) return
+        pendingDownload = SyncPaths.join(state.browser.path, entry.name)
+        env.createDocument(entry.name)
+    }
+
+    override fun clearDownload() {
+        if (state.browser.download?.running == true) return
+        state = state.copy(browser = state.browser.copy(download = null))
+    }
+
+    /**
+     * Copies the card file chosen with [saveToPhone] into what the user created on the phone
+     * ([open] gives its stream), checking the whole file against the SHA-256 of GET_END. When
+     * the copy does not finish whole (cancelled, connection lost, SHA-256 differs) or cannot
+     * start, [discard] deletes that document: no partial file is left looking like a good one.
+     */
+    fun downloadTo(discard: () -> Unit = {}, open: () -> java.io.OutputStream) {
+        fun drop() = try {
+            discard()
+        } catch (e: Exception) {
+            // nothing more can be done about it
+        }
+        val s = session
+        val path = pendingDownload
+        pendingDownload = null
+        if (s == null || path == null || !begin()) {
+            env.execute { drop() }
+            return
+        }
+        val name = SyncPaths.name(path)
+        state = state.copy(browser = state.browser.copy(download = Download(name)))
+        env.execute {
+            var whole = false
+            try {
+                val pace = Pace()
+                val md = MessageDigest.getInstance("SHA-256")
+                val r = open().use { o ->
+                    java.security.DigestOutputStream(o, md).use { d ->
+                        s.get(path, 0, d, cancelled) { done, total ->
+                            if (pace.due(done == total)) ui { it.copy(browser = it.browser.copy(download = Download(name, done, total))) }
+                        }
+                    }
+                }
+                if (!md.digest().contentEquals(r.sha256)) throw SyncException(SyncException.E_HASH_MISMATCH, "$name: the copy differs from the card")
+                whole = true
+                ui { it.copy(browser = it.browser.copy(download = Download(name, r.size, r.size, finished = true))) }
+            } catch (e: Exception) {
+                if (!whole) drop()
+                if (e is SyncException && e.code == SyncException.E_CANCELLED) {
+                    ui { it.copy(browser = it.browser.copy(download = null)) }
+                } else {
+                    val err = errorOf(e)
+                    if (lost(e)) dropSession()
+                    ui { it.copy(link = if (lost(e)) Link.Idle else it.link, browser = it.browser.copy(download = Download(name, error = err))) }
+                }
+            }
+        }
+    }
+
+    override fun rescanLibrary() {
+        val s = session ?: return
+        if (!begin()) return
+        state = state.copy(rescan = Rescan.Running)
+        env.execute {
+            try {
+                s.libRescan(null)
+                // the player answers when its scan is over: the new library is read at once
+                val lib = readSnapshot(s, null)
+                ui { it.copy(rescan = Rescan.Done, library = LibraryPhase.Ready(lib), transfer = it.transfer.copy(newMusic = 0), libraryChanged = false) }
+            } catch (e: Exception) {
+                when {
+                    e is SyncException && e.code == SyncException.E_UNSUPPORTED -> ui { it.copy(rescan = Rescan.Unsupported) }
+                    e is SyncException && e.code == SyncException.E_CANCELLED -> ui { it.copy(rescan = Rescan.Idle) }
+                    else -> {
+                        val err = errorOf(e)
+                        if (lost(e)) dropSession()
+                        ui { it.copy(link = if (lost(e)) Link.Idle else it.link, rescan = Rescan.Failed(err)) }
+                    }
+                }
+            }
+        }
+    }
+
     /** Back in the library: album -> artist -> list. False at the list. */
     fun libraryBack(): Boolean {
         val n = state.libraryNav
         return when {
+            n.playlist != null -> {
+                state = state.copy(libraryNav = n.copy(playlist = null), playlists = state.playlists.copy(open = null))
+                true
+            }
             n.album != null -> {
                 state = state.copy(libraryNav = n.copy(album = null))
                 true
@@ -815,6 +1453,233 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         }
     }
 
+    // ---- signed ByOS update (sections 14.1 to 14.3) --------------------------------------------
+
+    private var otaPkg: UpdatePackage? = null
+    private var otaTar: LocalItem? = null
+    private var otaTarSha: ByteArray? = null
+
+    /** The update files were sent to the player of the open session (a downgrade retry skips sending). */
+    private var otaSentTo: SyncSession? = null
+
+    override fun pickUpdateFiles() {
+        if (!state.ota.running) env.pickUpdateFiles()
+    }
+
+    override fun clearUpdateFiles() {
+        if (state.ota.running) return
+        otaPkg = null
+        otaTar = null
+        otaTarSha = null
+        otaSentTo = null
+        state = state.copy(otaPick = OtaPick(), ota = OtaPhase.Idle)
+    }
+
+    private fun updateError(e: UpdateException): ErrorInfo = when (e.kind) {
+        UpdateException.Kind.SIGNATURE -> ErrorInfo(R.string.sync_err_signature, e.message, R.string.sync_hint_signature)
+        UpdateException.Kind.PAYLOAD -> ErrorInfo(R.string.sync_err_update_payload, e.message, R.string.sync_hint_update_payload)
+        else -> ErrorInfo(R.string.sync_err_update_invalid, e.message, R.string.sync_hint_update_invalid)
+    }
+
+    /**
+     * Adds what the user picked for a signed update: a `.json` is read and its signature checked
+     * at once (nothing in it is used before that), a `.tar` is kept as the payload. Picking one
+     * file replaces the earlier file of the same kind.
+     */
+    fun addUpdateFiles(load: () -> List<LocalItem>) {
+        if (state.ota.running) return
+        env.execute {
+            try {
+                var pkg: UpdatePackage? = null
+                var tar: LocalItem? = null
+                var err: ErrorInfo? = null
+                for (it in load()) {
+                    val name = it.parts.last()
+                    val lower = name.lowercase()
+                    when {
+                        lower.endsWith(".json") -> try {
+                            pkg = UpdatePackage.parse(readSmall(it, UpdatePackage.JSON_MAX), env.releaseKeys)
+                        } catch (e: UpdateException) {
+                            err = updateError(e)
+                        }
+                        lower.endsWith(".tar") -> tar = it
+                        else -> err = ErrorInfo(R.string.sync_err_update_kind, name, R.string.sync_hint_update_kind)
+                    }
+                }
+                env.post {
+                    if (pkg != null) otaPkg = pkg
+                    if (tar != null) {
+                        otaTar = tar
+                        otaTarSha = null
+                    }
+                    if (pkg != null || tar != null) otaSentTo = null
+                    val p = otaPkg
+                    val t = otaTar
+                    state = state.copy(ota = if (state.ota.running) state.ota else OtaPhase.Idle, otaPick = OtaPick(
+                        version = p?.version, payloadName = p?.payloadName, payloadSize = p?.payloadSize ?: 0,
+                        needsFirmware = p?.needsFirmware ?: false, restart = p?.restart,
+                        tarName = t?.parts?.last(), tarSize = t?.size ?: 0, error = err))
+                }
+            } catch (e: Exception) {
+                ui { it.copy(otaPick = it.otaPick.copy(error = errorOf(e))) }
+            }
+        }
+    }
+
+    private fun readSmall(item: LocalItem, max: Int): ByteArray {
+        if (item.size > max) throw UpdateException(UpdateException.Kind.INVALID, "the update description is too large")
+        val out = java.io.ByteArrayOutputStream()
+        item.open().use { i ->
+            val b = ByteArray(8192)
+            while (true) {
+                val n = i.read(b)
+                if (n < 0) break
+                out.write(b, 0, n)
+                if (out.size() > max) throw UpdateException(UpdateException.Kind.INVALID, "the update description is too large")
+            }
+        }
+        return out.toByteArray()
+    }
+
+    override fun installUpdate(allowDowngrade: Boolean) {
+        val s = session ?: return
+        val pkg = otaPkg ?: return
+        val tar = otaTar ?: return
+        if (!state.otaPick.ready) return
+        if (!begin()) return
+        val skipSend = allowDowngrade && otaSentTo === s
+        val total = if (skipSend) 0L else pkg.json.size + tar.size * (if (otaTarSha == null) 2 else 1)
+        state = state.copy(ota = if (skipSend) OtaPhase.Checking else OtaPhase.Sending(0, total, UPDATE_JSON))
+        env.execute {
+            var staged: StagedUpdate? = null
+            try {
+                fun send() {
+                    val pace = Pace()
+                    var done = 0L
+                    // the payload is hashed first: a tar that is not the signed one is refused before anything is sent
+                    val sha = otaTarSha ?: run {
+                        val h = hash(tar.open) { n -> if (pace.due()) ui { it.copy(ota = OtaPhase.Sending(n, total, pkg.payloadName)) } }
+                        val hex = h.first.joinToString("") { "%02x".format(it) }
+                        if (h.second != pkg.payloadSize || hex != pkg.payloadSha256) {
+                            throw UpdateException(UpdateException.Kind.PAYLOAD, "${tar.parts.last()} is not the payload of ByOS ${pkg.version}")
+                        }
+                        otaTarSha = h.first
+                        h.first
+                    }
+                    done += if (total > pkg.json.size + tar.size) tar.size else 0
+                    val js = pkg.json
+                    putLocal(Ns.UPDATE, UPDATE_JSON, js.size.toLong(), MessageDigest.getInstance("SHA-256").digest(js), 0, true, { off -> openAt({ js.inputStream() }, off) },
+                        exact = PutMode.REPLACE) {}
+                    done += js.size
+                    val base = done
+                    putLocal(Ns.UPDATE, pkg.payloadName, tar.size, sha, tar.mtime, true, { off -> openAt(tar.open, off) },
+                        exact = PutMode.REPLACE) { n ->
+                        if (pace.due()) ui { it.copy(ota = OtaPhase.Sending(base + n, total, pkg.payloadName)) }
+                    }
+                    otaSentTo = session
+                    ui { it.copy(ota = OtaPhase.Checking) }
+                }
+                if (!skipSend) send()
+                val st = session ?: throw SyncException(SyncException.CONNECTION_LOST)
+                staged = try {
+                    st.updateStage(allowDowngrade)
+                } catch (e: SyncException) {
+                    // the description was already moved by an earlier check: send everything again
+                    if (!skipSend || e.code != SyncException.E_NOT_STAGED) throw e
+                    send()
+                    st.updateStage(allowDowngrade)
+                }
+                val version = staged.version.ifEmpty { pkg.version }
+                try {
+                    // over Wi-Fi the player always asks the user first (NO_CONFIRM is for USB only)
+                    st.updateInstall(allowDowngrade)
+                } catch (e: SyncException) {
+                    if (e.code != SyncException.E_UNSUPPORTED) throw e
+                    ui { it.copy(ota = OtaPhase.StagedOnly(version)) }
+                    return@execute
+                }
+                ui { it.copy(ota = OtaPhase.WaitingUser(version)) }
+                watchInstall(st, version, staged.restart)
+            } catch (e: Exception) {
+                when {
+                    e is SyncException && e.code == SyncException.E_CANCELLED -> ui { it.copy(ota = OtaPhase.Idle) }
+                    e is UpdateException -> ui { it.copy(ota = OtaPhase.Failed(updateError(e))) }
+                    else -> {
+                        val err = errorOf(e)
+                        if (lost(e)) dropSession()
+                        ui {
+                            it.copy(link = if (lost(e)) Link.Idle else it.link,
+                                ota = OtaPhase.Failed(err, downgrade = e is SyncException && e.code == SyncException.E_DOWNGRADE))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Polls UPDATE_STATUS about once a second until the install ends. When ByOS restarts its
+     * interface the connection drops after "installing": that is the expected end.
+     */
+    private fun watchInstall(s: SyncSession, version: String, restart: Int) {
+        var last = -1
+        val deadline = env.now() + INSTALL_WATCH_MS
+        while (true) {
+            if (stop) {
+                // the install goes on (or still waits) on the player: only the watching stops
+                ui { it.copy(ota = OtaPhase.Idle) }
+                return
+            }
+            val u = try {
+                s.updateStatus()
+            } catch (e: SyncException) {
+                if (lost(e) && last >= UpdateProgress.INSTALLING) {
+                    finishInstall(version, maxOf(restart, 1))
+                    return
+                }
+                throw e
+            }
+            val v = u.version.ifEmpty { version }
+            when (u.state) {
+                UpdateProgress.WAITING_USER -> ui { it.copy(ota = OtaPhase.WaitingUser(v)) }
+                UpdateProgress.INSTALLING -> ui { it.copy(ota = OtaPhase.Installing(v, u.permille.coerceIn(0, 1000))) }
+                UpdateProgress.DONE -> {
+                    finishInstall(v, restart)
+                    return
+                }
+                UpdateProgress.FAILED -> {
+                    ui { it.copy(ota = OtaPhase.Failed(errorOf(SyncException(u.error, "update status: failed")))) }
+                    return
+                }
+                UpdateProgress.REFUSED -> {
+                    ui { it.copy(ota = OtaPhase.Refused(v)) }
+                    return
+                }
+                else -> if (last >= UpdateProgress.INSTALLING) {
+                    finishInstall(v, restart)
+                    return
+                }
+            }
+            last = u.state
+            if (env.now() > deadline) {
+                ui { it.copy(ota = OtaPhase.Failed(ErrorInfo(R.string.sync_err_update_slow, null, R.string.sync_hint_update_slow))) }
+                return
+            }
+            env.sleep(1000)
+        }
+    }
+
+    /** The install is over: when ByOS restarts, the session is gone and the user connects again later. */
+    private fun finishInstall(version: String, restart: Int) {
+        if (restart != 0) {
+            dropSession()
+            ui { it.copy(ota = OtaPhase.Done(version, restart), link = Link.Idle, browser = Browser(), library = LibraryPhase.Idle) }
+        } else {
+            ui { it.copy(ota = OtaPhase.Done(version, restart)) }
+            session?.let { refreshAfterWrite(it) }
+        }
+    }
+
     override fun cancelWork() {
         stop = true
     }
@@ -851,6 +1716,30 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     companion object {
         /** Section 17: clients PING every 30 s while idle (the device drops a session quiet for 120 s). */
         const val PING_MS = 30_000L
+
+        /** Waits before each new connection when a transfer lost its own (about a minute in all). */
+        val RECONNECT_DELAYS = longArrayOf(2_000, 4_000, 8_000, 15_000, 30_000)
+
+        /** What runs in the background, for the notification of the transfer service. */
+        fun workOf(s: SyncState): WorkNote? {
+            val t = s.transfer
+            val o = s.ota
+            val u = s.update
+            return when {
+                t.running -> WorkNote(WorkNote.Kind.SEND, t.done, t.total, t.current, t.reconnecting)
+                o is OtaPhase.Sending -> WorkNote(WorkNote.Kind.UPDATE, o.done, o.total, o.path)
+                o is OtaPhase.Installing -> WorkNote(WorkNote.Kind.INSTALL, o.permille.toLong(), 1000, o.version)
+                o.running -> WorkNote(WorkNote.Kind.INSTALL, 0, 0, "")
+                u is UpdatePhase.Sending -> WorkNote(WorkNote.Kind.UPDATE, u.done, u.total, u.path)
+                else -> null
+            }
+        }
+
+        /** The name of the update description in NS_UPDATE (section 14.1). */
+        const val UPDATE_JSON = "hibyos-update.json"
+
+        /** How long the app watches an install (the player's own limits end it much sooner). */
+        const val INSTALL_WATCH_MS = 30 * 60_000L
 
         fun sortEntries(list: List<SyncEntry>): List<SyncEntry> =
             list.sortedWith(compareBy<SyncEntry> { if (it.isFolder) 0 else 1 }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
