@@ -205,6 +205,12 @@ static void behaviour(void)
     CHK(!strcmp(buf, "한까"), "ko: \"%s\"", buf);
     tap_code(K_BACK); CHK(!strcmp(buf, "한ㄲ"), "ko backspace: \"%s\"", buf);
     frame(); save(fr0, "ko_composing"); kb_end();
+    /* Shift does not end the syllable: tense finals (ㅆ ㄲ) and ㅒ ㅖ only come through Shift */
+    session(LANG_KO, "한국어", ""); tap_str("ㅇㅣ"); tap_code(K_SHIFT); tap_code(0x3146); tap_str("ㄷㅏ");
+    CHK(!strcmp(buf, "있다"), "ko shift final ㅆ: \"%s\"", buf); kb_end();
+    session(LANG_KO, "한국어", ""); tap_str("ㅂㅏ"); tap_code(K_SHIFT); tap_code(0x3132);
+    CHK(!strcmp(buf, "밖"), "ko shift final ㄲ: \"%s\"", buf);
+    tap_str("ㄱ"); tap_code(K_SHIFT); tap_code(0x3156); CHK(!strcmp(buf, "밖계"), "ko shift ㅖ: \"%s\"", buf); kb_end();
     /* Thai: shift layer gives Thai digits; marks */
     session(LANG_TH, "ไทย", ""); tap_str("ท"); tap_code(0xE35); tap_code(0xE48); tap_code(K_SHIFT); tap_code(0xE51);
     CHK(!strcmp(buf, "ที่๑"), "th: \"%s\"", buf); kb_end();

@@ -215,6 +215,7 @@ static void test_pinyin(void)
         { "zhongguo", 5, "中" }, { "guo", 3, "国" }, { "xian", 4, 0 }, { "xi'an", 2, 0 }, { "nihao", 2, "你" }, { "hao", 3, "好" },
         { "zh", 2, 0 }, { "x", 1, 0 }, { "n", 1, 0 }, { "women", 2, "我" }, { "men", 3, "们" }, { "shi", 3, "是" }, { "de", 2, "的" },
         { "lv", 2, 0 }, { "nve", 3, "虐" }, { "yinyue", 3, "因" }, { "yue", 3, 0 }, { "zhe", 3, "这" }, { "le", 2, "了" },
+        { "lue", 3, "略" }, { "nue", 3, "虐" }, { "lve", 3, "略" },
     };
     for (unsigned i = 0; i < sizeof C / sizeof C[0]; i++) {
         ime_reset(); snprintf(ime_pre, sizeof ime_pre, "%s", C[i].in); ime_dirty(); ime_build(Z);
@@ -224,6 +225,7 @@ static void test_pinyin(void)
     }
     clear(); type(Z, "zhongguo"); CHK(E.len == 0, "zh preedit entered the text");
     type(Z, "  "); CHK(!strcmp(buf, "中国"), "zh two spaces -> \"%s\"", buf);
+    clear(); type(Z, "celue  "); CHK(!strcmp(buf, "策略"), "zh celue -> \"%s\"", buf);
     clear(); type(T, "zhongguo  "); CHK(!strcmp(buf, "中國"), "zh-Hant -> \"%s\"", buf);
     clear(); type(T, "women  "); CHK(!strcmp(buf, "我們"), "zh-Hant women -> \"%s\"", buf);
     clear(); type(T, "zhe "); CHK(!strcmp(buf, "這"), "zh-Hant zhe -> \"%s\"", buf);

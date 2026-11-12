@@ -53,7 +53,8 @@ Letters join into syllables as you type, inside the text itself. Backspace remov
 press at a time: 닭 then ㅏ gives 달가, and backspace brings back 닭.
 
 The syllable is committed when you type a space, a sign, switch pages or keyboards, move the
-cursor, or tap somewhere else in the field.
+cursor, or tap somewhere else in the field. Shift does not commit it, so 있다 and 밖 can be
+typed with the shifted ㅆ and ㄲ.
 
 ## Japanese
 
@@ -76,7 +77,7 @@ There is no kanji conversion yet.
 
 ## Chinese (simplified and traditional)
 
-Type pinyin without tones; use v for ü (lv, nve). Candidates for the first syllable appear in
+Type pinyin without tones; use v for ü (lv, nve); lue and nue also work for lüe and nüe. Candidates for the first syllable appear in
 the candidate bar:
 
 - **Tap** a candidate to type it. The rest of the pinyin stays, so nihao gives 你, then 好.

@@ -180,6 +180,11 @@ def main():
         for k, py in enumerate(reads):
             rk = rank[c] if k == 0 else rank[c] + 200   # second readings: after the common characters
             table.setdefault(py, []).append((rk, c))
+    # lue/nue: the spelling Sogou, Microsoft Pinyin and iOS also accept for lve/nve (lu+e and
+    # nu+e are not syllables), so "celue" gives 策略 instead of splitting it as lu + e
+    for alias, real in (("lue", "lve"), ("nue", "nve")):
+        if real in table:
+            table[alias] = list(table[real])
     syls = sorted(table)
     for s in syls:
         table[s].sort()

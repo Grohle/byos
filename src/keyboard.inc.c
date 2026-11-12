@@ -1543,8 +1543,8 @@ static int kb_touch(struct pkt *p, struct ebuf *e, uint16_t *dst, void (*redraw)
         } else kb_cand_x = 0;
     } else if (code == K_SHIFT) {
         static double last_shift;
-        hg_commit();
-        if (kb_layer) { kb_layer = kb_layer == 1 ? 2 : 1; kb_relayout(); }
+        /* en las letras Shift no cierra la silaba hangul: ㅆ ㄲ ㄸ ㅃ ㅉ ㅒ ㅖ solo salen con Shift (있다, 했다) */
+        if (kb_layer) { hg_commit(); kb_layer = kb_layer == 1 ? 2 : 1; kb_relayout(); }
         else if (tc - last_shift < 350 && !kb_caps) { kb_caps = 1; kb_shift = 1; last_shift = 0; }
         else if (kb_caps) { kb_caps = 0; kb_shift = 0; last_shift = 0; }
         else { kb_shift = !kb_shift; last_shift = tc; }
