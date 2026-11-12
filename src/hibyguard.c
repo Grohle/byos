@@ -68,6 +68,7 @@
 #define CALM_KB     6000
 #define PRESS_KB    5000
 #define SEV_KB      3000
+#define CRIT_KB     2048    /* below this a busy shell is restarted anyway (the kernel OOM killer is next) */
 #define PRESS_RR    600
 #define SEV_RR      1500
 #define L1_AFTER    3       /* s of pressure */
@@ -300,7 +301,15 @@ static int run(void)
         if (sev_s >= L3_AFTER && t - last_l3 > 120) {
             int sh = 0; for_procs(find_shell, &sh);
             int rss = sh ? rss_kb_of(sh) : -1;
-            if (sh && rss > SHELL_BIG_KB) {
+            /* A shell that still beats is in use (the user may be inside an app): killing it was a
+             * "sudden close" (measured: Settings vanished 48 s after turning Bluetooth on, which
+             * makes the player grow 3 MB). Step 2 already asked it to restart itself at a safe
+             * point; kill only near OOM or when it no longer beats. */
+            int beating = hs && t - beat_t < 5;
+            if (sh && rss > SHELL_BIG_KB && beating && s.avail >= CRIT_KB) {
+                if (t - last_l3 > 60) { last_l3 = t - 60; logl(0, "severe for %d s: %ld KB free, %ld refaults/s -> shell in use, not restarted (asked to restart itself)", sev_s, s.avail, rr); }
+                int f = open(REJUV_REQ, O_WRONLY | O_CREAT | O_CLOEXEC, 0644); if (f >= 0) close(f);
+            } else if (sh && rss > SHELL_BIG_KB) {
                 last_l3 = t;
                 kill(sh, SIGKILL);
                 logl(1, "severe for %d s: %ld KB free, %ld refaults/s -> step 3: shell (%d KB) restarted", sev_s, s.avail, rr, rss);

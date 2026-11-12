@@ -15,7 +15,7 @@ Diseno (iOS 17, docs/UI_GUIDE_FOR_AGENTS.md):
 - iconos de 11-12 px de alto con el mismo grosor de trazo (1,6 px) y el mismo peso visual
   que las cifras; huecos: 6 px entre grupos, 4 px dentro de un grupo; margen lateral 14 px;
 - pila horizontal como la de iOS (cuerpo 23 x 11,5, esquinas 3,5, borne 1,5 x 4);
-- sin Wi-Fi/Bluetooth: sin icono (iOS).
+- sin Wi-Fi: sin icono (iOS); Bluetooth encendido: runa atenuada (HiBy no ve las conexiones de ByOS).
 
 Tambien genera src/digits.h (plantillas del OCR de volumen) a partir de las cifras.
 Uso: python topbar.py [--deploy]
@@ -244,7 +244,11 @@ done("am", blank(1)); done("pm", blank(1))              # como iOS: sin AM/PM en
 done("play", play()); done("pause", pause())
 for i in range(4): done(f"wifi_connect_{i}", wifi(i if i else 1))
 done("wifi_unconnect", blank(17))                       # como iOS: sin Wi-Fi no hay icono
-done("bluetooth", bluetooth()); done("bluetooth_unconnect", blank(10))
+done("bluetooth", bluetooth())
+# Bluetooth encendido sin conexion que HiBy conozca: runa atenuada (como el firmware de serie).
+# Antes vacia (iOS), pero HiBy no se entera de las conexiones que hace ByOS por BlueZ, asi que el
+# icono no salia NUNCA, ni con los auriculares conectados.
+_bu = bluetooth(); _bu.putalpha(_bu.getchannel("A").point(lambda v: v * 45 // 100)); done("bluetooth_unconnect", _bu)
 done("hl_connect", link()); done("hl_disconnect", blank(15))
 done("chage_lock", lock())
 done("battery_bg", battery_bg(WHITE, 140)); done("battery_charge_bg", battery_charge_bg())

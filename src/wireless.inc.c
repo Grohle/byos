@@ -469,8 +469,8 @@ static int wl_bt_call(char *out, int cap, int timeout_ms, const char *path, cons
     if (rc != 0 || wlp_dbus_error(out, en, sizeof en)) { lg("bt: %s %s -> %d %s", method, path, rc, out[0] ? strtok(out, "\n") : ""); return -1; }
     return 0;
 }
-/* bluetoothd vivo (aunque tarde en contestar) */
-static int wl_bluetoothd_alive(void)
+/* un proceso con ese nombre (comm) vivo */
+static int wl_proc_alive(const char *name)
 {
     DIR *d = opendir("/proc"); if (!d) return 1;
     struct dirent *e; int found = 0; char p[64], c[32];
@@ -480,11 +480,14 @@ static int wl_bluetoothd_alive(void)
         int f = open(p, O_RDONLY | O_CLOEXEC); if (f < 0) continue;
         ssize_t k = read(f, c, sizeof c - 1); close(f); if (k <= 0) continue;
         c[k] = 0; if (c[k - 1] == '\n') c[k - 1] = 0;
-        found = !strcmp(c, "bluetoothd");
+        found = !strcmp(c, name);
     }
     closedir(d);
     return found;
 }
+static int wl_bluetoothd_alive(void) { return wl_proc_alive("bluetoothd"); }   /* aunque tarde en contestar */
+static double wl_bt_ok_t;                  /* ultima respuesta buena de bluetoothd */
+static int wl_disc_restarts;               /* reintentos de busqueda en esta visita a la pagina */
 static void wl_bt_refresh(void)
 {
     static struct wl_dev dv[WL_MAXDEV];
@@ -497,7 +500,7 @@ static void wl_bt_refresh(void)
      * exista se mantiene lo ultimo que se supo (hasta ~1 min de fallos seguidos); si no existe,
      * tras 3 fallos se da por caido. */
     static int fails;
-    if (!rc) { fails = 0; n = wlp_bluez_objects(wl_dbus_out, &ad, dv, WL_MAXDEV); }
+    if (!rc) { fails = 0; wl_bt_ok_t = now_ms(); n = wlp_bluez_objects(wl_dbus_out, &ad, dv, WL_MAXDEV); }
     free(wl_dbus_out);
     if (!rc) {}
     else if (++fails < (wl_bluetoothd_alive() ? 6 : 3)) { lg("bt: estado sin respuesta (%d), se mantiene el anterior", fails); return; }
@@ -582,12 +585,12 @@ static void *wl_bt_thread(void *arg)
                 if (wl_hs_set("bt", j.iv) < 0) wl_msg("No se pudo cambiar el ajuste", 0);
                 else {
                     pthread_mutex_lock(&wl_mu); WS.bset = j.iv; pthread_mutex_unlock(&wl_mu);
-                    for (double t0 = now_ms(); now_ms() - t0 < 15000; ) {     /* bt_resume tarda ~8 s */
+                    for (double t0 = now_ms(); now_ms() - t0 < 30000; ) {     /* bt_resume ~8 s; con poca memoria >20 s (medido) */
                         msleep(700); wl_bt_refresh();
                         pthread_mutex_lock(&wl_mu); int p = WS.ad.powered; pthread_mutex_unlock(&wl_mu);
                         if (p == j.iv) break;
                     }
-                    if (j.iv) wl_disc_until = now_ms() + 45000;
+                    if (j.iv) { wl_disc_until = now_ms() + 180000; wl_disc_restarts = 0; }
                 }
                 pthread_mutex_lock(&wl_mu); WS.bpend = 0; WS.gen++; pthread_mutex_unlock(&wl_mu);
                 last = now_ms();
@@ -600,6 +603,23 @@ static void *wl_bt_thread(void *arg)
                 wl_dev_path(j.a, path, sizeof path);
                 int ok = 1;
                 if (!j.iv) {
+                    /* el agente de HiBy (bt-agent) contesta a la peticion de emparejar: sin el, Pair
+                     * falla con AuthenticationFailed. Si no esta, se arranca como lo hace el sistema. */
+                    if (!wl_proc_alive("bt-agent") && !access("/usr/bin/bt-agent", X_OK)) {
+                        lg("bt: bt-agent no estaba; arrancandolo");
+                        if (system("start-stop-daemon -S -b -x /usr/bin/bt-agent -- -c NoInputNoOutput -p /usr/data/pin.conf")) {}
+                        msleep(600);
+                    }
+                    /* BlueZ olvida los dispositivos no emparejados poco despues de parar la busqueda:
+                     * comprobar que sigue y, si no, buscar hasta 12 s a que vuelva a aparecer */
+                    if (wl_bt_call(out, sizeof out, 3000, path, "org.freedesktop.DBus.Properties.Get", "string:org.bluez.Device1", "string:Address", 0)) {
+                        lg("bt: %s ya no esta; buscandolo otra vez", j.a);
+                        wl_disc_start();
+                        int back = 0;
+                        for (double t0 = now_ms(); !back && now_ms() - t0 < 12000; ) { msleep(1000); back = !wl_bt_call(out, sizeof out, 3000, path, "org.freedesktop.DBus.Properties.Get", "string:org.bluez.Device1", "string:Address", 0); }
+                        wl_disc_stop();
+                        if (!back) lg("bt: %s no ha vuelto a aparecer", j.a);
+                    }
                     if (wl_bt_call(out, sizeof out, 40000, path, "org.bluez.Device1.Pair", 0, 0, 0)) {
                         char en[96]; wlp_dbus_error(out, en, sizeof en);
                         if (!strstr(en, "AlreadyExists")) ok = 0;
@@ -612,7 +632,7 @@ static void *wl_bt_thread(void *arg)
                 else wl_msg(j.iv ? "No se pudo conectar a «%s»" : "No se pudo emparejar con «%s»", j.b);
                 wl_bt_refresh();
                 wl_bt_busy(0);
-                if (was_disc && wl_vis == 3) wl_disc_until = now_ms() + 20000;
+                if (was_disc && wl_vis == 3) wl_disc_until = now_ms() + 60000;
                 last = now_ms();
                 break;
             }
@@ -640,9 +660,12 @@ static void *wl_bt_thread(void *arg)
         /* "scan on" sent while the radio was still coming up (switched on from the Control
          * Center or Settings) fails and bluetoothctl just waits: the search never started
          * until a reboot. If the adapter is not discovering 6 s later, start it again. */
-        if (want && wl_disc_pid > 0 && now_ms() - wl_disc_t0 > 6000) {
+        /* Solo si una respuesta BUENA posterior al arranque dice que no busca (una lenta o fallida
+         * deja el estado de antes, sin busqueda, y antes se reiniciaba cada pocos segundos: cada
+         * parada cortaba la busqueda de BR/EDR a medias). Como mucho 3 veces por visita. */
+        if (want && wl_disc_pid > 0 && now_ms() - wl_disc_t0 > 6000 && wl_bt_ok_t > wl_disc_t0 + 1500 && wl_disc_restarts < 3) {
             pthread_mutex_lock(&wl_mu); int disc = WS.ad.discovering; pthread_mutex_unlock(&wl_mu);
-            if (!disc) { lg("bt: la busqueda no arranco; reintentando"); wl_disc_stop(); wl_disc_start(); }
+            if (!disc) { wl_disc_restarts++; lg("bt: la busqueda no arranco; reintentando (%d)", wl_disc_restarts); wl_disc_stop(); wl_disc_start(); }
         }
         double t = now_ms();
         if (vis && t - last > (vis == 3 ? (wl_disc_pid > 0 ? 2000 : 4000) : 8000)) { wl_bt_refresh(); last = now_ms(); }
@@ -981,7 +1004,9 @@ static void wl_build(struct wpage *pg, int kind, const char *param)
         }
         struct wsec *s = wp_sec(pg, "OTROS DISPOSITIVOS"); s->spin = wv.ad.discovering || wl_disc_pid > 0;
         int idx[WL_MAXDEV], n = 0;
-        for (int i = 0; i < wv.ndevs; i++) if (!wv.devs[i].paired && wv.devs[i].name[0]) idx[n++] = i;
+        /* sin clase de dispositivo = solo Bluetooth LE (balizas, "Update-XXXX", la identidad LE de
+         * auriculares duales): no se pueden emparejar como audio. Fuera, como en CompasOS. */
+        for (int i = 0; i < wv.ndevs; i++) if (!wv.devs[i].paired && wv.devs[i].name[0] && (wv.devs[i].cls || wv.devs[i].audio)) idx[n++] = i;
         for (int i = 1; i < n; i++) {                /* por senal (sin RSSI al final) */
             int t = idx[i], j = i - 1;
             #define WL_RS(k) (wv.devs[k].has_rssi ? wv.devs[k].rssi : -200)
@@ -1384,7 +1409,7 @@ static int wl_host = -1;
 static uint16_t *wl_host_under;
 static void wl_pull_refresh(int kind)
 {
-    if (kind == P_BT) { wl_disc_until = now_ms() + 45000; wl_push(&wl_qb, J_REFRESH, 0, 0, 0); }
+    if (kind == P_BT) { wl_disc_until = now_ms() + 180000; wl_disc_restarts = 0; wl_push(&wl_qb, J_REFRESH, 0, 0, 0); }
     else { wl_push(&wl_qw, J_WSCAN, 0, 0, 0); if (kind == P_ROOT) wl_push(&wl_qb, J_REFRESH, 0, 0, 0); }
 }
 static void wl_page(int kind, const char *param, const char *back)
@@ -1393,7 +1418,7 @@ static void wl_page(int kind, const char *param, const char *back)
     struct wpage *pg = &wl_pages[wl_depth++];
     int vis0 = wl_vis;
     wl_vis = kind == P_ROOT ? 1 : kind == P_BT || kind == P_DEV ? 3 : 2;
-    if (kind == P_BT) { wl_disc_until = now_ms() + 45000; wl_push(&wl_qb, J_REFRESH, 0, 0, 0); }
+    if (kind == P_BT) { wl_disc_until = now_ms() + 180000; wl_disc_restarts = 0; wl_push(&wl_qb, J_REFRESH, 0, 0, 0); }
     if (kind == P_WIFI) wl_push(&wl_qw, J_WSCAN, 0, 0, 0);
     float scroll0 = wl_scroll; wl_scroll = 0; wl_pull = 0;
     wl_snap();
