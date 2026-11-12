@@ -45,6 +45,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -641,6 +642,32 @@ static void *watchdog(void *arg)
 }
 
 /* ---------------------------------------------------------------- inicio */
+/* Base de datos de la biblioteca construida en el PC o el movil (SYNC_PROTOCOL 13.2 paso 5):
+ * si hibysync dejo una preparada (staged.json), hibytag apply-staged la comprueba y la pone en su
+ * sitio antes de que el reproductor la abra. Con un limite de 10 s: si no acaba, se mata y el
+ * reproductor arranca con la de siempre (nunca se queda sin base de datos). */
+static void db_log(const char *m, int v)
+{
+    int f = r_open("/usr/data/hibymod/disp.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (f >= 0) { char b[128]; int n = snprintf(b, sizeof b, "db: %s %d\n", m, v); if (write(f, b, n) < 0) {} close(f); }
+}
+static void db_apply_staged(void)
+{
+    static const char *tag = "/usr/data/hibymod/shell/hibytag";
+    if (access("/usr/data/hibymod/sync/db/staged.json", F_OK)) return;
+    if (access(tag, X_OK)) { db_log("hibytag no ejecutable", errno); return; }
+    pid_t pid = fork();
+    if (pid < 0) { db_log("fork", errno); return; }
+    if (pid == 0) { unsetenv("LD_PRELOAD"); execl(tag, tag, "apply-staged", (char *)0); _exit(127); }
+    for (int i = 0; i < 200; i++) {                 /* 200 x 50 ms */
+        int stt = 0; pid_t r = waitpid(pid, &stt, WNOHANG);
+        if (r == pid) { db_log("apply-staged termino, estado", stt); return; }
+        if (r < 0) { db_log("waitpid", errno); return; }
+        usleep(50000);
+    }
+    kill(pid, SIGKILL); waitpid(pid, 0, 0);
+    db_log("apply-staged: mas de 10 s, cortado", 0);
+}
 __attribute__((constructor)) static void init(void)
 {
     resolve();
@@ -649,6 +676,7 @@ __attribute__((constructor)) static void init(void)
     int f = r_open("/proc/self/comm", O_RDONLY);
     if (f >= 0) { read(f, name, sizeof name - 1); close(f); }
     if (strncmp(name, "hiby_player", 11)) return;
+    db_apply_staged();                       /* biblioteca construida en el PC: antes de que main() abra la base de datos */
     int s = r_open(HM_STATE, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (s < 0) return;
     if (ftruncate(s, HM_STATE_SIZE)) { close(s); return; }

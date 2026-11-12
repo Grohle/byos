@@ -2730,10 +2730,15 @@ static void htm_dbupdate(const char *const *paths, int n)
 }
 #endif
 
+#include <time.h>
+#include "hibytag_db.inc.c"
 int main(int argc, char **argv)
 {
     const char *fa = getenv("HIBYTAG_FAILAT");
     if (fa) ht_test_fail_at = strtoull(fa, 0, 10);
+    if (argc >= 2 && !strcmp(argv[1], "apply-staged")) return htdb_apply_staged();
+    if (argc >= 4 && !strcmp(argv[1], "dbsnapshot")) return htdb_snapshot(argv[2], argv[3]);
+    if (argc >= 3 && !strcmp(argv[1], "dbcheck")) { char why[160] = ""; int ok = htdb_check(argv[2], 1, why, sizeof why); puts(ok ? "ok" : why); return !ok; }
     if (argc < 3) {
         fprintf(stderr, "uso: hibytag get FICHERO... | set FICHERO campo=valor... | batch LISTA campo=valor...\n"
                         "              | suggest CAMPO PREFIJO [N] | dbupdate FICHERO... | setcover IMG.jpg FICHERO...\n"

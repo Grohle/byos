@@ -1766,6 +1766,13 @@ static void guard_tick(void)
  * podria estar usandolos). */
 #define MEM_CRIT_KB 4500
 static int memw_kills;
+static int oom_adj_pid(int pid)            /* oom_score_adj de otro proceso (0 si no se lee) */
+{
+    char p[48], b[16] = ""; snprintf(p, sizeof p, "/proc/%d/oom_score_adj", pid);
+    int f = open(p, O_RDONLY | O_CLOEXEC); if (f < 0) return 0;
+    ssize_t n = read(f, b, sizeof b - 1); close(f); if (n <= 0) return 0; b[n] = 0;
+    return atoi(b);
+}
 static void *mem_watch(void *arg)
 {
     (void)arg; thread_nice(-5);
@@ -1781,7 +1788,8 @@ static void *mem_watch(void *arg)
             int f = open(pth, O_RDONLY | O_CLOEXEC); if (f < 0) continue;
             ssize_t n = read(f, comm, sizeof comm - 1); close(f); if (n <= 0) continue;
             comm[n] = 0; if (comm[n - 1] == '\n') comm[n - 1] = 0;
-            int victim = !strcmp(comm, "hibywall") || !strcmp(comm, "hibytag") || !strcmp(comm, "hibymix")
+            int victim = !strcmp(comm, "hibywall") || !strcmp(comm, "hibymix")
+                      || (!strcmp(comm, "hibytag") && oom_adj_pid(atoi(e->d_name)) > -500)   /* -700: base de datos en curso */
                       || (!strcmp(comm, "hibynet") && !ra_active());
             if (victim && kill(atoi(e->d_name), SIGKILL) == 0) killed++;
         }

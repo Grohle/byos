@@ -1049,6 +1049,17 @@ static void do_db_snapshot(struct sess *s, uint32_t st_, struct brd *r)
     char *av[] = { SP.hibytag, (char *)"dbsnapshot", live, tmp, 0 };
     int rc = run_wait(av);
     if (rc) { unlink(tmp); tx_err(s, st_, rc == 127 ? E_UNSUPPORTED : E_IO); return; }
+    /* la copia de la API de copia en linea no es igual byte a byte que el fichero vivo: se apunta
+     * la pareja (copia, viva) y DB_STAGE acepta como base la copia si la viva no cambio desde
+     * entonces (antes DB_STAGE comparaba con el fichero vivo y siempre daba E_DB_STALE) */
+    {
+        uint8_t ssha[32], lsha[32]; char h1[65], h2[65], pp[400], line[160];
+        if (!sha256_path(tmp, ssha, 0) && !sha256_path(live, lsha, 0)) {
+            hexs(ssha, 32, h1); hexs(lsha, 32, h2);
+            int n = snprintf(line, sizeof line, "%s %s\n", h1, h2);
+            snprintf(pp, sizeof pp, "%s/snap.pair", SP.dbdir); write_atomic(pp, line, (size_t)n, 0600);
+        }
+    }
     int fd = open(tmp, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) { tx_err(s, st_, E_IO); return; }
     int e = get_open(s, st_, fd, 0, 1, tmp, "usrlocal_media.db");
@@ -1102,7 +1113,16 @@ static void do_db_stage(struct sess *s, uint32_t st_, struct brd *r)
     if (rc) { tx_err(s, st_, E_DB_INVALID); return; }
     live_db_path(live, sizeof live);
     uint8_t lsha[32]; uint64_t lsize = 0; int have_live = !sha256_path(live, lsha, &lsize);
-    if (!(fl & 1) && (!have_live || !btp_ct_eq(lsha, base, 32))) { tx_err(s, st_, E_DB_STALE); return; }
+    if (!(fl & 1) && (!have_live || !btp_ct_eq(lsha, base, 32))) {
+        /* la base es la copia de DB_SNAPSHOT: vale si la viva sigue siendo la de entonces */
+        char pp[400], line[160], h1[65], h2[65]; int fresh = 0;
+        snprintf(pp, sizeof pp, "%s/snap.pair", SP.dbdir);
+        if (have_live && read_small(pp, line, sizeof line) > 0 && sscanf(line, "%64s %64s", h1, h2) == 2) {
+            uint8_t ps[32], pl[32];
+            if (strlen(h1) == 64 && strlen(h2) == 64) { ota_unhex(h1, ps, 32); ota_unhex(h2, pl, 32); fresh = btp_ct_eq(ps, base, 32) && btp_ct_eq(pl, lsha, 32); }
+        }
+        if (!fresh) { tx_err(s, st_, E_DB_STALE); return; }
+    }
     uint64_t mx = lsize > size ? lsize : size;
     if (free_bytes(SP.data) < (long long)(2 * mx + (1 << 20))) { tx_err(s, st_, E_NO_SPACE); return; }
     uint8_t ssha[32]; if (sha256_path(inc, ssha, 0)) { tx_err(s, st_, E_IO); return; }

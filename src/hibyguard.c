@@ -188,7 +188,9 @@ static const char *const HELPERS2[] = { "hibybudsd", "dbus-monitor", 0 };
 static int kill_helpers(int pid, const char *comm, void *ctx)
 {
     int lvl = *(int *)ctx;
-    int victim = is_in(comm, HELPERS) || (lvl >= 2 && is_in(comm, HELPERS2))
+    /* hibytag con -700: esta copiando o cambiando la base de datos de la biblioteca (dbsnapshot,
+     * apply-staged): cortarlo a medias dejaba una copia rota y la sincronizacion caia */
+    int victim = (is_in(comm, HELPERS) && !(!strcmp(comm, "hibytag") && oom_adj_of(pid) <= -500)) || (lvl >= 2 && is_in(comm, HELPERS2))
               || (!strcmp(comm, "hibynet") && oom_adj_of(pid) > -500)    /* radio: the shell gives it -700 */
               || (!strcmp(comm, "hibysync") && oom_adj_of(pid) > -500);  /* ByOS Sync: -700 while it transfers */
     return victim && kill(pid, SIGKILL) == 0;
