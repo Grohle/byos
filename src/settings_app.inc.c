@@ -274,6 +274,7 @@ static int sp_content_h(const struct spage *pg)
     }
     return h;
 }
+static int ss_sel_y = -1;    /* y de la fila pulsada en el ultimo dibujo (su accesorio puede llevar un indicador) */
 static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *back)
 {
     for (int i = 0; i < W * H; i++) d[i] = 0;
@@ -303,6 +304,7 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
             int ry = top + r * ROWH;
             if (ry > H || ry + ROWH < NAVH + 30) { if (rw->type == R_TOGGLE && rw->ival) sw_pos(rw->ival); continue; }   /* fuera de la vista */
             int tx = rw->icon ? 70 : 32;
+            if (gi == sel) ss_sel_y = ry;
             if (gi == sel && rw->type != R_SLIDER) fill_rrect(d, 16, ry, W - 32, ROWH, (r == 0 || r == sc->n - 1) ? 10 : 0, rgb(58, 58, 60), 255);
             if (r) for (int x = tx; x < W - 16; x++) if (ry >= NAVH + 30 && ry < H) d[ry * W + x] = rgb(56, 56, 58);
             if (rw->icon) sp_icon(d, 28, ry + 7, rw->icon);

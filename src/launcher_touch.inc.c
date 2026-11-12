@@ -71,20 +71,37 @@ static int is_hiby_list_page(const uint16_t *img)
     for (int i = 0; i < 2; i++) if (lum(img[gap[i] * W + 10]) > 8) return 0;
     return has_statusbar(img);
 }
+/* espera (hilo de navegacion) a que fr1 muestre lo pedido (1 el engranaje de Musica, 2 la lista
+ * Play) y lleve quiet ms sin cambiar; 1 si llego */
+static int nav_still_until(int what, int max_ms, int quiet_ms)
+{
+    double t = now_ms(), q = t; uint32_t last = st->cap_frames;
+    while (now_ms() - t < max_ms) {
+        msleep(10); st->shell_beat++;
+        if (st->cap_frames != last) { last = st->cap_frames; q = now_ms(); continue; }
+        int ok = what == 1 ? fr1_bright(284, 36, 308, 60) >= 120 : is_hiby_list_page(fr1);
+        if (ok && now_ms() - q >= quiet_ms) return 1;
+    }
+    return 0;
+}
 static int open_stock_play_nav(void)
 {
+    double n0 = now_ms();
     inj_tap(116, 425);                                      /* la app Musica de HiBy */
     if (!wait_left_home(6000)) { lg("nav: la app Musica de HiBy no se abrio (inicio %d)", is_home(fr1)); return 0; }
-    { uint32_t c = st->cap_frames; settle(c, 1500, 200); }
+    double n1 = now_ms();
+    /* lista cuando su engranaje esta y la pantalla lleva 150 ms quieta (antes: 1,5 s fijos) */
+    nav_still_until(1, 2500, 150);
+    double n2 = now_ms();
     /* puede abrirse donde se dejo: atras hasta su pagina principal (la del engranaje) */
     for (int i = 0; i < 4 && fr1_bright(284, 36, 308, 60) < 120; i++) { uint32_t c = st->cap_frames; inj_tap(22, 48); settle(c, 1200, 200); }
     if (fr1_bright(284, 36, 308, 60) < 120) { lg("nav: la app Musica de HiBy no muestra su engranaje"); return 0; }
-    msleep(250);
-    uint32_t c = st->cap_frames; inj_tap(296, 48); settle(c, 2000, 300);
+    inj_tap(296, 48);
+    nav_still_until(2, 2500, 150);
     if (!is_hiby_list_page(fr1)) { lg("nav: el engranaje no abrio Play"); return 0; }
+    double n3 = now_ms();
     /* su lista entra deslizandose: un toque a mitad de la animacion se pierde. Quieta, tocar, y
      * si en 1,5 s la pantalla sigue siendo la lista, otro toque */
-    msleep(350);
     for (int k = 0; k < 2; k++) {
         inj_tap(160, nav_stock_row);
         /* el editor tarda en cargar (MSEB ~1 s): esperar a que la lista se vaya antes de
@@ -97,7 +114,9 @@ static int open_stock_play_nav(void)
              * fundido mostraba Play a medias y un fotograma partido (revisor, 12-11) */
             double tw2 = now_ms();
             while (fr1_bright(284, 36, 308, 60) < 20 && now_ms() - tw2 < 4000) { msleep(20); st->shell_beat++; }
-            uint32_t c2 = st->cap_frames; settle(c2, 300, 400);
+            double n4 = now_ms();
+            uint32_t c2 = st->cap_frames; settle(c2, 150, 220);
+            lg("nav musica: abrir %.0f, quieta %.0f, Play %.0f, editor %.0f, quieto %.0f ms", n1 - n0, n2 - n1, n3 - n2, n4 - n3, now_ms() - n4);
             return 1;
         }
         lg("nav: la fila %d de Play no respondio (intento %d)", nav_stock_row, k + 1);

@@ -597,12 +597,23 @@ static void ss_open_hiby_editor(int row)
     memcpy(img_under, fr0, HM_FRAME_BYTES);
     nav_stock_row = row; nav_start(NAV_STOCKPLAY);
     double t0 = now_ms();
+    /* como iOS: el indicador va en la fila pulsada, en lugar del chevron (antes, una caja en el
+     * centro de la pantalla durante los segundos que tarda la app de HiBy: revisor r2) */
+    int ry = ss_sel_y, inrow = ry >= NAVH + 30 && ry + ROWH <= H;
     while (!nav_done && now_ms() - t0 < 9000) {
         memcpy(fr0, img_under, HM_FRAME_BYTES);
-        fill_rrect(fr0, W / 2 - 36, H / 2 - 36, 72, 72, 16, rgb(28, 28, 30), 230);
-        mu_spinner(fr0, W / 2, H / 2);
+        if (inrow) {
+            uint16_t bg = img_under[(ry + ROWH / 2) * W + W - 60];
+            fill_rrect(fr0, W - 58, ry + 4, 38, ROWH - 8, 0, bg, 255);
+            mu_spinner(fr0, W - 36, ry + ROWH / 2);
+        } else {
+            fill_rrect(fr0, W / 2 - 36, H / 2 - 36, 72, 72, 16, rgb(28, 28, 30), 230);
+            mu_spinner(fr0, W / 2, H / 2);
+        }
+        dirty_y0 = inrow ? ry : 0; dirty_y1 = inrow ? ry + ROWH : H;
         present(); msleep(30);
     }
+    ss_sel_y = -1;
     int ok = nav_wait(1000);
     if (ok != 1) { memcpy(fr0, img_under, HM_FRAME_BYTES); present(); toast(tr("No se pudo abrir")); lg("ajustes: editor de HiBy (fila %d): no se pudo abrir", row); return; }
     /* fundido contra una copia fija del editor (fr1 cambia mientras se lee: fotograma partido) */
