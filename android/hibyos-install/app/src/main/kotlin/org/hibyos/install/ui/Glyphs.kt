@@ -186,4 +186,49 @@ object Glyphs {
             moveTo(10.5f, 18.5f); lineTo(13.5f, 18.5f)
         }
     }
+
+    val Music: GlyphDraw = { c ->
+        line(c) {
+            moveTo(9f, 17.5f); lineTo(9f, 5f); lineTo(19.5f, 3f); lineTo(19.5f, 15.5f)
+            moveTo(9f, 9f); lineTo(19.5f, 7f)
+        }
+        solid(c) {
+            dot(6.5f, 17.5f, 2.6f)
+            dot(17f, 15.5f, 2.6f)
+        }
+    }
+
+    val Picture: GlyphDraw = { c ->
+        line(c) {
+            box(3f, 5f, 21f, 19f, 2.4f)
+            moveTo(3.5f, 16.5f); lineTo(9f, 11f); lineTo(13f, 15f); lineTo(15.5f, 12.5f); lineTo(20.5f, 17.5f)
+        }
+        solid(c) { dot(15.5f, 8.8f, 1.6f) }
+    }
+
+    val Grid: GlyphDraw = { c ->
+        line(c) {
+            box(4f, 4f, 10.5f, 10.5f, 1.8f)
+            box(13.5f, 4f, 20f, 10.5f, 1.8f)
+            box(4f, 13.5f, 10.5f, 20f, 1.8f)
+            box(13.5f, 13.5f, 20f, 20f, 1.8f)
+        }
+    }
+
+    val Plus: GlyphDraw = { c -> line(c, 2.4f) { moveTo(12f, 5f); lineTo(12f, 19f); moveTo(5f, 12f); lineTo(19f, 12f) } }
+
+    val Upload: GlyphDraw = { c ->
+        line(c) {
+            moveTo(12f, 15f); lineTo(12f, 3.5f)
+            moveTo(7.5f, 8f); lineTo(12f, 3.5f); lineTo(16.5f, 8f)
+            moveTo(4.5f, 16.5f); lineTo(4.5f, 20f); lineTo(19.5f, 20f); lineTo(19.5f, 16.5f)
+        }
+    }
+
+    val Link: GlyphDraw = { c ->
+        line(c, 2.2f) {
+            box(2.5f, 8.5f, 13.5f, 15.5f, 3.5f)
+            box(10.5f, 8.5f, 21.5f, 15.5f, 3.5f)
+        }
+    }
 }

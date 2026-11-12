@@ -1,5 +1,7 @@
 plugins {
     id("org.jetbrains.kotlin.jvm")
+    // Gradle's own plugin: test helpers (synthetic audio, a fake BTP/1 device) shared with :cli tests
+    `java-test-fixtures`
 }
 
 kotlin {

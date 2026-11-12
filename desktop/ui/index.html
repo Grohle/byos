@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="byos-token" content="__BYOS_TOKEN__">
+  <title>ByOS</title>
+  <link rel="icon" href="/icon.svg">
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="window">
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <button class="tool-btn" id="btn-refresh-devices" data-i18n-title="refresh" aria-label="Refresh">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 6.5A6 6 0 1 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M16 3v4h-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <button class="lcd" id="lcd" aria-haspopup="dialog" aria-controls="activity">
+        <span class="lcd-title" id="lcd-title">ByOS</span>
+        <span class="lcd-sub" id="lcd-sub"></span>
+        <span class="lcd-bar" id="lcd-bar" hidden><span id="lcd-fill"></span></span>
+      </button>
+      <div class="toolbar-right">
+        <span class="badge" id="mode-badge" hidden></span>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="Sidebar">
+      <nav>
+        <h2 data-i18n="library"></h2>
+        <ul class="side-list">
+          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-clock"></span><span data-i18n="recentlyAdded"></span></li>
+          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-mic"></span><span data-i18n="artists"></span></li>
+          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-album"></span><span data-i18n="albums"></span></li>
+          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-note"></span><span data-i18n="songs"></span></li>
+          <li class="side-item disabled" data-i18n-title="comingWithFork"><span class="ico ico-book"></span><span data-i18n="audiobooks"></span></li>
+        </ul>
+        <h2 data-i18n="devices"></h2>
+        <ul class="side-list" id="device-list"></ul>
+        <button class="side-item side-action" id="btn-pair"><span class="ico ico-plus"></span><span data-i18n="pairDevice"></span></button>
+      </nav>
+      <footer class="side-footer">
+        <label><span class="sr" data-i18n="language"></span>
+          <select id="lang-select"></select>
+        </label>
+      </footer>
+    </aside>
+
+    <main class="content" id="content">
+      <section class="empty-state" id="empty-state">
+        <div class="hero-device" aria-hidden="true"></div>
+        <h1 data-i18n="connectTitle"></h1>
+        <p data-i18n="connectBody"></p>
+        <p class="muted" id="empty-status"></p>
+      </section>
+
+      <section class="device-view" id="device-view" hidden>
+        <div class="device-header">
+          <div class="device-thumb" aria-hidden="true"></div>
+          <div class="device-title">
+            <h1 id="dev-name"></h1>
+            <p class="muted" id="dev-sub"></p>
+          </div>
+          <div class="segmented" role="tablist" id="tabs">
+            <button role="tab" data-tab="summary" data-i18n="tabSummary"></button>
+            <button role="tab" data-tab="music" data-i18n="tabMusic"></button>
+            <button role="tab" data-tab="files" data-i18n="tabFiles"></button>
+            <button role="tab" data-tab="library" data-i18n="tabLibrary"></button>
+            <button role="tab" data-tab="updates" data-i18n="tabUpdates"></button>
+            <button role="tab" data-tab="settings" data-i18n="tabSettings"></button>
+          </div>
+        </div>
+
+        <div class="banner" id="banner" hidden>
+          <span id="banner-text"></span>
+          <button class="btn" id="banner-action" hidden></button>
+        </div>
+
+        <div class="tab-panel" data-panel="summary">
+          <div class="card">
+            <h3 data-i18n="capacity"></h3>
+            <div class="capacity" id="capacity"></div>
+            <div class="legend" id="capacity-legend"></div>
+          </div>
+          <div class="card">
+            <h3 data-i18n="internal"></h3>
+            <div class="capacity small" id="internal"></div>
+            <div class="legend" id="internal-legend"></div>
+            <p class="muted small-text" data-i18n="internalNote"></p>
+          </div>
+          <div class="card">
+            <dl class="facts" id="facts"></dl>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-panel="files" hidden>
+          <div class="files-toolbar">
+            <button class="tool-btn" id="btn-up" data-i18n-title="back" aria-label="Back">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <nav class="crumbs" id="crumbs" aria-label="Path"></nav>
+            <span class="spacer"></span>
+            <label class="check"><input type="checkbox" id="chk-hidden"> <span data-i18n="showHidden"></span></label>
+            <button class="btn" id="btn-newfolder" data-i18n="newFolder"></button>
+            <button class="btn" id="btn-upload" data-i18n="upload"></button>
+            <input type="file" id="file-input" multiple hidden>
+            <button class="btn" id="btn-rename" data-i18n="rename" disabled></button>
+            <button class="btn danger" id="btn-delete" data-i18n="del" disabled></button>
+          </div>
+          <div class="file-table-wrap" id="drop-zone">
+            <table class="file-table">
+              <thead><tr>
+                <th data-i18n="name"></th><th class="num" data-i18n="size"></th>
+                <th data-i18n="kind"></th><th data-i18n="modified"></th>
+              </tr></thead>
+              <tbody id="file-rows"></tbody>
+            </table>
+            <p class="muted center" id="files-empty" hidden></p>
+            <div class="drop-hint" data-i18n="dropHere"></div>
+          </div>
+          <p class="muted small-text status-line" id="files-status"></p>
+        </div>
+
+        <div class="tab-panel" data-panel="music" hidden><div class="card later" data-later="musicLater" data-m="M4"></div></div>
+        <div class="tab-panel" data-panel="library" hidden><div class="card later" data-later="libraryLater" data-m="M4"></div></div>
+        <div class="tab-panel" data-panel="updates" hidden><div class="card later" data-later="updatesLater" data-m="M5"></div></div>
+        <div class="tab-panel" data-panel="settings" hidden><div class="card later" data-later="settingsLater" data-m="M3"></div></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="sheet" id="sheet">
+    <form method="dialog" id="sheet-form">
+      <h2 id="sheet-title"></h2>
+      <p id="sheet-body"></p>
+      <div id="sheet-extra"></div>
+      <p class="sheet-error" id="sheet-error" role="alert"></p>
+      <div class="sheet-buttons">
+        <button class="btn" value="cancel" id="sheet-cancel"></button>
+        <button class="btn primary" value="ok" id="sheet-ok"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="popover" id="activity">
+    <h2 data-i18n="activity"></h2>
+    <ul id="activity-list"></ul>
+  </dialog>
+</body>
+</html>

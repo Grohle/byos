@@ -26,6 +26,13 @@ import org.hibyos.install.core.SendItem
 import org.hibyos.install.core.SendListener
 import org.hibyos.install.core.Sender
 import org.hibyos.install.core.TransferException
+import org.hibyos.install.connected.ConnectedModel
+import org.hibyos.install.connected.LibraryDb
+import org.hibyos.install.connected.Picked
+import org.hibyos.install.connected.SyncBackend
+import org.hibyos.install.connected.SyncConnector
+import org.hibyos.install.connected.SyncEnv
+import org.hibyos.install.connected.Track
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -37,6 +44,10 @@ import java.util.concurrent.Executors
 interface Host {
     fun pickFirmware()
     fun pickFolder()
+
+    /** ByOS connected: files and a folder to send to the player. */
+    fun pickSyncFiles()
+    fun pickSyncFolder()
     fun open(url: String): Boolean
     fun share(files: List<File>)
 }
@@ -69,6 +80,54 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     private var bundle: Bundle? = null
     private var builtIn: Bundle? = null
     private var remote: RemoteBundle? = null
+
+    /** ByOS connected: its own worker, so that a transfer never waits for a patch and the other way round. */
+    private val syncWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "hibyos-sync") }
+    val connected = ConnectedModel(object : SyncEnv {
+        override fun connector(): SyncConnector? =
+            SyncBackend.connector(app, File(app.filesDir, "sync"), BuildConfig.VERSION_NAME)
+        override val clientName: String = (android.os.Build.MODEL ?: "Android").take(64)
+        override val cacheDir: File = app.cacheDir
+        override fun post(f: () -> Unit) {
+            main.post(f)
+        }
+        override fun execute(f: () -> Unit) {
+            try {
+                syncWorker.execute(f)
+            } catch (e: java.util.concurrent.RejectedExecutionException) {
+                // the view model is gone
+            }
+        }
+        override fun every(periodMs: Long, f: () -> Unit): java.io.Closeable {
+            val t = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+                Thread(r, "hibyos-sync-ping").apply { isDaemon = true }
+            }
+            t.scheduleWithFixedDelay({ try { f() } catch (e: Exception) {} }, periodMs, periodMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            return java.io.Closeable { t.shutdownNow() }
+        }
+        override fun readLibrary(file: File): List<Track> = LibraryDb.read(file)
+        override fun pickFiles() {
+            host?.pickSyncFiles()
+        }
+        override fun pickFolder() {
+            host?.pickSyncFolder()
+        }
+        override fun byosFiles(): List<SendItem>? {
+            val b = bundle ?: return null
+            if (state.patch !is PatchState.Done) return null
+            return items(b, true)
+        }
+    })
+
+    fun syncFilesPicked(uris: List<Uri>) {
+        val app = getApplication<Application>()
+        connected.addPicked { Picked.files(app, uris) }
+    }
+
+    fun syncFolderPicked(tree: Uri) {
+        val app = getApplication<Application>()
+        connected.addPicked { Picked.tree(app, tree) }
+    }
 
     init {
         val version = try {
@@ -245,18 +304,21 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
 
     override fun go(screen: Screen) {
         val s = state
-        if (s.busy && screen != s.screen) return
+        if ((s.busy || connected.state.busy) && screen != s.screen) return
         val at = s.stack.indexOf(screen)
         val stack = if (at >= 0) s.stack.subList(0, at + 1).toList() else s.stack + screen
         state = s.copy(stack = stack, delivered = s.delivered || screen == Screen.INSTALL)
     }
 
     /** False when there is nowhere to go back to (the activity then closes). */
-    fun canGoBack(): Boolean = state.stack.size > 1 || state.busy
+    fun canGoBack(): Boolean = state.stack.size > 1 || state.busy || connected.state.busy
 
     override fun back() {
         val s = state
-        if (s.busy || s.stack.size <= 1) return
+        if (s.busy || connected.state.busy || s.stack.size <= 1) return
+        // inside the connected screens "back" first walks up their own levels
+        if (s.screen == Screen.SYNC_FILES && connected.state.browser.moving == null && connected.up()) return
+        if (s.screen == Screen.SYNC_LIBRARY && connected.libraryBack()) return
         state = s.copy(stack = s.stack.dropLast(1))
     }
 
@@ -754,6 +816,8 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
 
     override fun onCleared() {
         stop = true
+        connected.close()
+        syncWorker.shutdown()
         worker.shutdown()
         host = null
     }

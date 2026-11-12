@@ -82,6 +82,7 @@ BINS = {  # payload/bin/<name>: source
     "cacert.pem": "bin/cacert.pem",    # Mozilla TLS roots for hibynet
     "hibybudsd": "out/agent_buds/hibybudsd",   # headphones daemon (tools/wsl/zbuild_buds.sh); the Headphones app needs it
     "hibyguard": "bin/hibyguard",      # stability guard: memory pressure + hardware watchdog (tools/wsl/zbuild_guard.sh)
+    "hibysync": "bin/hibysync",        # BTP/1 sync daemon for the companion apps (tools/wsl/zbuild_sync.sh, docs/SYNC_PROTOCOL.md)
 }
 # sources of each binary (only to warn when the binary is older than its code)
 SRCS = {
@@ -93,6 +94,7 @@ SRCS = {
     "hibynet": ["src/hibynet.c"],
     "hibybudsd": ["src/hibybudsd.c"],
     "hibyguard": ["src/hibyguard.c", "src/hm_shared.h"],
+    "hibysync": ["src/hibysync.c", "src/btp.h", "src/btp_*.inc.c", "src/ota_net.inc.c"],
 }
 THEME_SUBS = ("layout/theme3", "litegui/theme3")
 # Replacements of root filesystem scripts (docs/OTA.md): name in sys/ -> marker. A script is

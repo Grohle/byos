@@ -1,0 +1,16 @@
+{
+  "name": "byos-desktop-scaffold",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ByOS desktop app scaffold: a dependency-free web UI and local runner over byos-cli.",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs --open",
+    "demo": "node server.mjs --mock --open",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

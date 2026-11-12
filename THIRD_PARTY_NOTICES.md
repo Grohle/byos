@@ -29,6 +29,7 @@ marked **Uncertain**.
 | `patcher-windows` | `ByOS-Patcher.exe` (and the zip that contains it): the same patcher frozen with PyInstaller, with a Python runtime inside, and a copy of the `firmware` files. |
 | `hpk:org.hibymod.navegador` | The "Browser" app package: `bin/nsfb` (NetSurf), `bin/navegador` (launcher), `res/` (NetSurf resources), `ca.pem`. |
 | `hpk:org.hibymod.hola` | The "Hello" sample app package: `bin/hola`. |
+| `byos-cli` | `byos-cli.jar`: the command-line client for computers (section 7). Not yet handled by `tools/notices.py`; the jar carries its own copy of the notices. |
 
 ## 2. Which component is in which file set
 
@@ -477,7 +478,66 @@ and 3.10 apply).
 - **Uncertain**: the Universal C Runtime files were taken by PyInstaller from another
   program installed on the build computer, not from a Microsoft redistributable package.
 
-## 7. Not included in any file set
+## 7. Components in the companion client (`byos-cli.jar` and the Kotlin client core)
+
+`byos-cli.jar` is built from `android/hibyos-install/cli` and contains the client core
+(`android/hibyos-install/core`), which the Android installer app also uses. The fat jar
+carries a copy of this document and of the licence texts named below in
+`META-INF/byos-licenses/`.
+
+| Component | In `byos-cli.jar` | In the Android app (core) |
+| --- | :-: | :-: |
+| hiby-mods database rules, re-implemented (7.1) | yes | yes |
+| TweetNaCl X25519 algorithm, re-implemented (7.2) | yes | yes |
+| Kotlin standard library (7.3) | yes | (part of every Kotlin app; not covered by this table) |
+| JetBrains annotations (7.4) | yes | |
+
+### 7.1 hiby-mods (database updater rules)
+
+- Upstream: https://github.com/hiby-modding/hiby-mods (`tools/Update_Database.py`),
+  read at commit a5103f7c.
+- Licence: MIT, scoped by its authors to the project's own tooling (SPDX `MIT`); the
+  firmware binaries in that repository are not covered and nothing of them is used.
+- Copyright: `Copyright (c) 2026 noisetta and contributors`
+- Where: no code was copied. The library builder of the client core
+  (`core/.../library/LibraryBuilder.kt`) re-implements, in Kotlin, rules learned from that
+  script: rebuilding the stock `usrlocal_media.db` on a computer from a copy of the device's
+  database, the `a:\` path form with NFC text and a trailing NUL, the stock format codes
+  (`FORMAT_CODES`), the cover file names and the list of rebuilt tables. The notice is kept
+  because the work is derived from those ideas.
+- Licence text: `LICENSES/hiby-mods-LICENSE.txt`
+
+### 7.2 TweetNaCl (X25519 algorithm)
+
+- Upstream: https://tweetnacl.cr.yp.to
+- Licence: public domain (see 3.9).
+- Where: `core/.../btp/Crypto.kt` implements X25519 with the TweetNaCl field arithmetic,
+  rewritten in Kotlin. Salsa20, HSalsa20 and Poly1305 there were written from their
+  published specifications.
+- Licence text: `LICENSES/TweetNaCl-public-domain.txt`
+
+### 7.3 Kotlin standard library
+
+- Version: 2.2.20 (`org.jetbrains.kotlin:kotlin-stdlib`).
+- Upstream: https://github.com/JetBrains/kotlin
+- Licence: Apache License 2.0 (SPDX `Apache-2.0`).
+- Copyright: `Copyright 2010-2025 JetBrains s.r.o. and Kotlin Programming Language contributors.`
+- Where: unmodified classes inside `byos-cli.jar` (`kotlin/`).
+- **Uncertain**: the copyright line is the one in the upstream source headers; the jar itself
+  carries no notice file to compare with.
+- Licence text: `LICENSES/Apache-2.0.txt`
+
+### 7.4 JetBrains annotations
+
+- Version: 13.0 (`org.jetbrains:annotations`, a dependency of the Kotlin standard library).
+- Upstream: https://github.com/JetBrains/java-annotations
+- Licence: Apache License 2.0 (SPDX `Apache-2.0`).
+- Copyright: `Copyright 2000-2013 JetBrains s.r.o.`
+- Where: unmodified classes inside `byos-cli.jar` (`org/intellij/`, `org/jetbrains/annotations/`).
+- **Uncertain**: the copyright line is the one in the upstream source headers, as for 7.3.
+- Licence text: `LICENSES/Apache-2.0.txt`
+
+## 8. Not included in any file set
 
 - HiBy's firmware and applications: never distributed by ByOS.
 - Tools used only to build (Zig/clang, Python packages such as Pillow, the NetSurf build

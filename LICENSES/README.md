@@ -21,7 +21,7 @@ column (line endings normalised to LF).
 
 | File | Applies to | Copied from |
 | --- | --- | --- |
-| `Apache-2.0.txt` | Mbed TLS, OpenSSL, PyInstaller run-time hooks | `/usr/share/common-licenses/Apache-2.0` (Ubuntu `base-files`) |
+| `Apache-2.0.txt` | Mbed TLS, OpenSSL, PyInstaller run-time hooks, Kotlin standard library and JetBrains annotations (inside `byos-cli.jar`) | `/usr/share/common-licenses/Apache-2.0` (Ubuntu `base-files`) |
 | `GPL-2.0.txt` | NetSurf, Mbed TLS (when linked into NetSurf), PyInstaller bootloader | `/usr/share/common-licenses/GPL-2` |
 | `LGPL-2.0.txt` | talloc | `/usr/share/common-licenses/LGPL-2` |
 | `LGPL-2.1.txt` | talloc, glibc pieces | `/usr/share/common-licenses/LGPL-2.1` |
@@ -35,7 +35,7 @@ column (line endings normalised to LF).
 | `LLVM-LICENSE.txt` | parts of the Zig runtime ported from LLVM compiler-rt | `lib/libcxx/LICENSE.TXT` of Zig 0.17.1 (the LLVM project licence) |
 | `glibc-nonshared-NOTICE.txt` | glibc pieces linked into `hibymod_disp.so` | assembled: header of `lib/libc/glibc/io/stat-2.32.c` of Zig 0.17.1 |
 | `glibc-LICENSES.txt` | glibc pieces linked into `hibymod_disp.so` | `lib/libc/glibc/LICENSES` of Zig 0.17.1 |
-| `TweetNaCl-public-domain.txt` | Ed25519 code derived from TweetNaCl | assembled: statement on https://tweetnacl.cr.yp.to |
+| `TweetNaCl-public-domain.txt` | Ed25519 code derived from TweetNaCl; the X25519 code of the Kotlin client core | assembled: statement on https://tweetnacl.cr.yp.to |
 | `OFL-1.1-Inter.txt` | Inter typeface (rendered glyphs) | `theme/fonts/Inter-LICENSE.txt` (Inter 4.000) |
 | `OFL-1.1-Terminus.txt` | Terminus Font (Hello app) | assembled: Terminus section of `copyright.fonts` in Ubuntu `console-setup-linux` 1.226ubuntu1 |
 | `NetSurf-COPYING.txt` | NetSurf 3.11 | `netsurf/COPYING` of `netsurf-all-3.11` |
@@ -51,6 +51,7 @@ column (line endings normalised to LF).
 | `Python-LICENSE.txt` | Python 3.14.7 runtime and the libraries bundled with its Windows build | `LICENSE.txt` of the Python 3.14.7 Windows installation |
 | `Python-incorporated-software.rst` | software incorporated in Python 3.14.7 | `Doc/license.rst` of CPython, tag `v3.14.7` |
 | `PyInstaller-COPYING.txt` | PyInstaller 6.22.3 bootloader and run-time files | `COPYING.txt` in the `pyinstaller` 6.22.3 package |
+| `hiby-mods-LICENSE.txt` | hiby-mods database-updater rules re-implemented in the client core's library builder | `LICENSE` of hiby-modding/hiby-mods, commit a5103f7c |
 
 "Assembled" files start with a few lines that say where their content was taken from; the
 quoted text itself is unchanged.

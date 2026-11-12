@@ -64,6 +64,11 @@ android {
         resources.excludes += setOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin")
     }
 
+    lint {
+        // only the "ByOS connected" texts are translated (values-es, values-fr); the rest stays English
+        warning += "MissingTranslation"
+    }
+
     dependenciesInfo {
         // no encrypted dependency list for an app store in the APK: the file must be reproducible and readable
         includeInApk = false

@@ -86,6 +86,11 @@ fun ScreenContent(screen: Screen, s: UiState, a: Actions) {
         Screen.ABOUT -> About(s, a)
         Screen.LICENSES -> Licenses(s, a)
         Screen.LICENSE_TEXT -> LicenseText(s, a)
+        Screen.SYNC -> SyncHome(s, a)
+        Screen.SYNC_SEND -> SyncSend(s, a)
+        Screen.SYNC_FILES -> SyncFiles(s, a)
+        Screen.SYNC_LIBRARY -> SyncLibrary(s, a)
+        Screen.SYNC_UPDATE -> SyncUpdate(s, a)
     }
 }
 
@@ -101,6 +106,7 @@ private fun titleRes(screen: Screen): Int = when (screen) {
     Screen.ABOUT -> R.string.about_title
     Screen.LICENSES -> R.string.licenses_title
     Screen.LICENSE_TEXT -> R.string.licenses_title
+    Screen.SYNC, Screen.SYNC_SEND, Screen.SYNC_FILES, Screen.SYNC_LIBRARY, Screen.SYNC_UPDATE -> syncTitleRes(screen)
 }
 
 private fun stepScreen(n: Int): Screen = when (n) {
@@ -201,6 +207,12 @@ private fun Home(s: UiState, a: Actions) {
                     StepRow(4, stringResource(R.string.step4_title), stringResource(R.string.step4_sub),
                         if (next == 4) 1 else 0, null) { a.go(Screen.INSTALL) }
                 }
+            }
+        }
+        Section(header = stringResource(R.string.sync_home_h), footer = stringResource(R.string.sync_home_footer)) {
+            row {
+                Item(title = stringResource(R.string.sync_title), subtitle = stringResource(R.string.sync_home_sub),
+                    icon = { IconTile(Glyphs.Link, C.cyan) }, chevron = true) { a.go(Screen.SYNC) }
             }
         }
     }

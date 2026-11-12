@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "hibyos-install"
-include(":core", ":app")
+include(":core", ":app", ":cli")

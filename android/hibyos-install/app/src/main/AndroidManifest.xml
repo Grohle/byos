@@ -5,6 +5,8 @@
          player's own Wi-Fi transfer on the local network. Nothing else. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- ByOS connected: to receive the UDP answers of players on the Wi-Fi network (discovery). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application
         android:allowBackup="false"

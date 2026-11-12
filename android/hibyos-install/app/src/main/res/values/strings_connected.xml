@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ByOS connected: a player that already runs ByOS, over the ByOS sync protocol (BTP/1).
+     Text between ** and ** is shown in bold. Translations: values-es, values-fr. -->
+<resources>
+    <string name="sync_title">ByOS Connected</string>
+    <string name="sync_back">Connected</string>
+    <string name="sync_home_h">Already on ByOS</string>
+    <string name="sync_home_sub">Send music, books and pictures, browse the card and update ByOS</string>
+    <string name="sync_home_footer">For a player that already runs ByOS, over Wi-Fi. The steps above are only for the first install.</string>
+
+    <string name="sync_unavailable_title">Not in this version of the app</string>
+    <string name="sync_unavailable_text">This build of ByOS Install cannot talk to ByOS Sync yet. Look for a newer version of the app.</string>
+
+    <string name="sync_player_h">On the player</string>
+    <string name="sync_p1">Join the same Wi-Fi network as this phone.</string>
+    <string name="sync_p2">Open **Settings › ByOS Sync** and turn on **Wi-Fi sync**.</string>
+    <string name="sync_p3">The first time only: open **Pair new device** and leave that screen open.</string>
+    <string name="sync_found_h">Players</string>
+    <string name="sync_found_footer">The app looks for players on this Wi-Fi network. Nothing leaves your network.</string>
+    <string name="sync_find">Find my player</string>
+    <string name="sync_searching">Looking for players…</string>
+    <string name="sync_connecting">Connecting to %1$s…</string>
+    <string name="sync_dev_paired">Paired</string>
+    <string name="sync_dev_pairing_open">Ready to pair</string>
+    <string name="sync_dev_pairing_closed">Open Pair new device on the player</string>
+    <string name="sync_address_h">Or type its address</string>
+    <string name="sync_address_hint">192.168.1.20</string>
+    <string name="sync_address_footer">The address is on the player, in **Settings › ByOS Sync**.</string>
+    <string name="sync_connect">Connect</string>
+    <string name="sync_paired_h">Paired with this phone</string>
+    <string name="sync_paired_footer">Forget a player to pair with it again.</string>
+    <string name="sync_forget">Forget</string>
+
+    <string name="sync_pair_title">Pair with %1$s</string>
+    <string name="sync_pair_text">Type the 6-digit code shown on the player.</string>
+    <string name="sync_pair">Pair</string>
+    <string name="sync_pair_wrong">That code did not match. The player now shows a new code: type that one.</string>
+    <string name="sync_pair_waiting">Tap Allow on the player</string>
+    <string name="sync_pair_waiting_sub">The player asks whether this phone may connect.</string>
+    <string name="sync_pair_footer">The code proves that the phone talks to your player and not to another device. After pairing, everything sent over Wi-Fi is encrypted.</string>
+
+    <string name="sync_link_wifi">Wi-Fi, encrypted</string>
+    <string name="sync_link_usb">USB</string>
+    <string name="sync_disconnect">Disconnect</string>
+    <string name="sync_reconnect">Connect again</string>
+    <string name="sync_card_h">Micro SD card</string>
+    <string name="sync_card">SD card</string>
+    <string name="sync_card_free">%1$s free of %2$s</string>
+    <string name="sync_card_unavailable">Not available</string>
+    <string name="sync_not_connected">Not connected</string>
+    <string name="sync_not_connected_footer">Connect to the player again to go on. What you chose is kept.</string>
+
+    <!-- Send -->
+    <string name="sync_send_title">Send Files</string>
+    <string name="sync_send_sub">Any file or folder from this phone</string>
+    <string name="sync_dest_h">Send to</string>
+    <string name="sync_dest_footer">The folder is made on the card if it is not there. To choose another folder, open it in Files and tap Send files here.</string>
+    <string name="sync_dest_music">Music</string>
+    <string name="sync_dest_books">Books</string>
+    <string name="sync_dest_pictures">Pictures</string>
+    <string name="sync_dest_apps">Apps</string>
+    <string name="sync_dest_update">Firmware update</string>
+    <string name="sync_dest_update_sub">Top of the card, where the player looks for r3ii_2025.upt</string>
+    <string name="sync_choose_h">What to send</string>
+    <string name="sync_choose_footer">A folder is sent with everything in it. Hidden files are left out. Names the card does not accept are changed (for example ? becomes _).</string>
+    <string name="sync_choose_files">Choose files</string>
+    <string name="sync_choose_folder">Choose a folder</string>
+    <string name="sync_replace">Replace files already there</string>
+    <string name="sync_replace_sub">Off: a different file with the same name is kept and reported</string>
+    <string name="sync_jobs_more">And %1$d more.</string>
+    <string name="sync_send_n">Send %1$s (%2$s)</string>
+    <string name="sync_resume">Resume (%1$d left)</string>
+    <string name="sync_clear">Clear the list</string>
+    <string name="sync_done">Done</string>
+    <string name="sync_sending">Sending to the player</string>
+    <string name="sync_sending_note">Keep the app open and the player on. If the connection breaks, connect again: the transfer goes on where it stopped.</string>
+    <string name="sync_sent_title">Sent</string>
+    <string name="sync_sent_some_title">Some files were not sent</string>
+    <string name="sync_sent_text">%1$d sent, %2$d already there, %3$d with a problem.</string>
+    <string name="sync_job_waiting">Waiting</string>
+    <string name="sync_job_hashing">Checking</string>
+    <string name="sync_job_sending">Sending</string>
+    <string name="sync_job_sent">Sent</string>
+    <string name="sync_job_skipped">Already there</string>
+    <string name="sync_job_exists">A different file has this name</string>
+    <string name="sync_job_too_big">Too big for the card (4 GB limit)</string>
+    <string name="sync_job_bad_name">Name not allowed, not sent</string>
+    <string name="sync_job_failed">Not sent</string>
+    <string name="sync_job_cancelled">Stopped</string>
+
+    <!-- Files -->
+    <string name="sync_files_title">Files</string>
+    <string name="sync_files_sub">Browse, rename, move and delete on the card</string>
+    <string name="sync_new_folder">New folder</string>
+    <string name="sync_create">Create</string>
+    <string name="sync_rename">Rename</string>
+    <string name="sync_move">Move</string>
+    <string name="sync_move_here">Move here</string>
+    <string name="sync_moving">Moving %1$s</string>
+    <string name="sync_moving_sub">Open the folder where it goes, then tap Move here.</string>
+    <string name="sync_delete">Delete</string>
+    <string name="sync_delete_q">Delete %1$s?</string>
+    <string name="sync_delete_text">The file is deleted from the card. This cannot be undone.</string>
+    <string name="sync_delete_folder_text">The folder and everything in it are deleted from the card. This cannot be undone.</string>
+    <string name="sync_send_here">Send files here</string>
+    <string name="sync_loading">Loading…</string>
+    <string name="sync_empty_folder">This folder is empty.</string>
+
+    <!-- Library -->
+    <string name="sync_library_title">Library</string>
+    <string name="sync_library_sub">Artists, albums and songs on the player</string>
+    <string name="sync_library_text">The app reads a copy of the player\'s music library. Nothing is changed on the player.</string>
+    <string name="sync_library_footer">The library shows what the player has found on the card. New files appear after the player scans them.</string>
+    <string name="sync_library_load">Read the library</string>
+    <string name="sync_library_loading">Reading the library</string>
+    <string name="sync_artists">Artists</string>
+    <string name="sync_albums">Albums</string>
+    <string name="sync_songs">Songs</string>
+    <string name="sync_unknown">Unknown</string>
+
+    <!-- ByOS update -->
+    <string name="sync_update_title">Reinstall ByOS</string>
+    <string name="sync_update_sub">Full reflash with a ByOS built on this phone</string>
+    <string name="sync_update_h">Reinstall</string>
+    <string name="sync_update_text">Builds ByOS %1$s on this phone from the official firmware, exactly as for the first install, and sends it to the player over this connection. Then you start the install from the player\'s menu. This is the full reflash path, not a signed over-the-air update.</string>
+    <string name="sync_update_footer">Files already on the card with the same content are not sent again.</string>
+    <string name="sync_update_need_build">Build ByOS first (steps 1 and 2)</string>
+    <string name="sync_update_build">Build ByOS %1$s first</string>
+    <string name="sync_update_sending">Sending ByOS %1$s</string>
+    <string name="sync_update_sent_title">On the player</string>
+    <string name="sync_update_sent_text">%1$d files on the card (%2$d were already there), with **%3$s** at the top. Now start the update on the player.</string>
+
+    <!-- Errors -->
+    <string name="sync_err_unreachable">The player does not answer</string>
+    <string name="sync_hint_unreachable">Check that the player is on, on the same Wi-Fi, and that Wi-Fi sync is turned on in Settings › ByOS Sync.</string>
+    <string name="sync_err_lost">The connection was lost</string>
+    <string name="sync_hint_lost">Connect again. A transfer goes on where it stopped.</string>
+    <string name="sync_err_identity">The player is not the one paired with this phone</string>
+    <string name="sync_hint_identity">If the player was reset, forget it here and pair again. Otherwise another device may be answering in its place.</string>
+    <string name="sync_hint_forgotten">Open Settings › ByOS Sync › Pair new device on the player, then connect again to pair. Your old pairing is kept until the new one succeeds.</string>
+    <string name="sync_err_forgotten">The player does not know this phone any more</string>
+    <string name="sync_err_no_client">This build cannot connect</string>
+    <string name="sync_hint_no_client">Look for a newer version of the app.</string>
+    <string name="sync_err_pair_closed">Pairing is not open on the player</string>
+    <string name="sync_hint_pair_closed">On the player, open Settings › ByOS Sync › Pair new device and try again.</string>
+    <string name="sync_err_pair_rejected">The player did not allow this phone</string>
+    <string name="sync_hint_pair_rejected">Try again and tap Allow on the player within two minutes.</string>
+    <string name="sync_err_busy">The player is busy</string>
+    <string name="sync_hint_busy">Another device is connected, or an update is being installed. Try again in a moment.</string>
+    <string name="sync_err_rate">Too many attempts</string>
+    <string name="sync_hint_rate">Wait a minute before trying again.</string>
+    <string name="sync_err_no_space">The card is full</string>
+    <string name="sync_hint_no_space">Delete something in Files, or send fewer files.</string>
+    <string name="sync_err_sd">The SD card is not available</string>
+    <string name="sync_hint_sd">Check that the card is in the player and that the player is not connected to a computer as a USB drive.</string>
+    <string name="sync_err_exists">Something with this name is already there</string>
+    <string name="sync_err_bad_name">This name is not allowed on the card</string>
+    <string name="sync_err_too_big">The file is too big for the card</string>
+    <string name="sync_err_not_found">It is no longer there</string>
+    <string name="sync_hint_refresh">The card changed. Go back and open the folder again.</string>
+    <string name="sync_err_not_empty">The folder is not empty</string>
+    <string name="sync_err_move_inside">A folder cannot be moved into itself</string>
+    <string name="sync_err_unsupported">The player\'s ByOS cannot do this</string>
+    <string name="sync_hint_unsupported">Update ByOS on the player first.</string>
+    <string name="sync_err_io">The card could not be read or written</string>
+    <string name="sync_hint_io">Try again. If it happens again, check the card in a computer.</string>
+    <string name="sync_err_local">A file on this phone could not be read</string>
+    <string name="sync_hint_local">It may have been moved or deleted. Choose it again.</string>
+    <string name="sync_err_bad_address">That is not an address</string>
+    <string name="sync_err_none_found">No player found</string>
+    <string name="sync_hint_none_found">Check that Wi-Fi sync is on in Settings › ByOS Sync, or type the address shown there.</string>
+    <string name="sync_err_generic">Something went wrong</string>
+    <plurals name="sync_files">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+    <plurals name="sync_songs">
+        <item quantity="one">%d song</item>
+        <item quantity="other">%d songs</item>
+    </plurals>
+    <plurals name="sync_albums">
+        <item quantity="one">%d album</item>
+        <item quantity="other">%d albums</item>
+    </plurals>
+</resources>

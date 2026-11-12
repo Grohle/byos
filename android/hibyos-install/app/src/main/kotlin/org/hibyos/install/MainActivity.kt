@@ -15,9 +15,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.core.content.FileProvider
 import org.hibyos.install.ui.App
+import org.hibyos.install.ui.LocalSync
+import org.hibyos.install.ui.SyncUi
 import java.io.File
 
 class MainActivity : ComponentActivity(), Host {
@@ -31,19 +34,29 @@ class MainActivity : ComponentActivity(), Host {
         if (uri != null) vm.saveTo(uri)
     }
 
+    private val openSyncFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.syncFilesPicked(uris)
+    }
+
+    private val openSyncFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) vm.syncFolderPicked(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         vm.host = this
         setContent {
             val s = vm.state
+            val sync = vm.connected.state
+            val busy = s.busy || sync.busy
             // while work is running "back" is held: the screen offers Cancel instead
-            BackHandler(enabled = s.stack.size > 1 || s.busy) { vm.back() }
-            LaunchedEffect(s.busy) {
-                if (s.busy) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            BackHandler(enabled = s.stack.size > 1 || busy) { vm.back() }
+            LaunchedEffect(busy) {
+                if (busy) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
-            App(s, vm)
+            CompositionLocalProvider(LocalSync provides SyncUi(sync, vm.connected)) { App(s, vm) }
         }
     }
 
@@ -67,6 +80,22 @@ class MainActivity : ComponentActivity(), Host {
     override fun pickFolder() {
         try {
             openFolder.launch(null)
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
+    override fun pickSyncFiles() {
+        try {
+            openSyncFiles.launch(arrayOf("*/*"))
+        } catch (e: ActivityNotFoundException) {
+            noApp()
+        }
+    }
+
+    override fun pickSyncFolder() {
+        try {
+            openSyncFolder.launch(null)
         } catch (e: ActivityNotFoundException) {
             noApp()
         }
