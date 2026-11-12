@@ -2011,7 +2011,7 @@ int main(int argc, char **argv)
         if (perf_on && pf.n && t - pf.last_end > 300) perf_flush();
         pw_tick();
         struct pollfd pf[2] = { { ts, POLLIN, 0 }, { keys, POLLIN, 0 } };
-        int pr = poll(pf, keys >= 0 ? 2 : 1, hud_active ? 0 : sp_on ? 16 : launcher_on ? (V.edit ? 0 : now_ms() < toast_until ? 30 : 250) : 60);
+        int pr = poll(pf, keys >= 0 ? 2 : 1, hud_active || (pend_kind && !fake_home_req) ? 0 : sp_on ? 16 : launcher_on ? (V.edit ? 0 : now_ms() < toast_until ? 30 : 250) : 60);
         if (keys >= 0 && pr > 0 && (pf[1].revents & POLLIN)) {
             struct input_event ke[16];
             ssize_t n = read(keys, ke, sizeof ke);
