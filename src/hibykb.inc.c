@@ -92,6 +92,10 @@ static char hk_plain(unsigned char c0, unsigned char c1)
 {
     static const char lat[65] = "AAAAAAACEEEEIIIIDNOOOOO-OUUUUYTs" "aaaaaaaceeeeiiiidnooooo-ouuuuyty";
     if (c0 == 0xC3 && c1 >= 0x80 && c1 <= 0xBF) return lat[c1 - 0x80];
+    /* Latin extendido A (U+0100..017F: polaco, checo, rumano...): la letra base */
+    static const char ext[129] = "AaAaAaCcCcCcCcDd" "DdEeEeEeEeEeGgGg" "GgGgHhHhIiIiIiIi" "IiIiJjKkkLlLlLlL"
+                                 "lLlNnNnNnnNnOoOo" "OoOoRrRrRrSsSsSs" "SsTtTtTtUuUuUuUu" "UuUuWwYyYZzZzZzs";
+    if ((c0 == 0xC4 || c0 == 0xC5) && (c1 & 0xC0) == 0x80) { int cp = ((c0 & 0x1F) << 6) | (c1 & 0x3F); if (cp >= 0x100 && cp < 0x180) return ext[cp - 0x100]; }
     return 0;
 }
 static void hk_type(char c)
@@ -172,6 +176,8 @@ static int hk_session(void)
     hk_mode = HM_UNKNOWN; hk_lx = -1; hk_push(HK_RESET, 0);
     static char buf[256]; buf[0] = 0;
     struct ebuf e = { buf, 0, sizeof buf, 0 };
+    /* el T9 de HiBy solo escribe latin: aqui solo los teclados latinos (kb_end lo quita) */
+    kb_latin_only = 1;
     kb_layer = 0; kb_shift = 0; kb_layout(tr("Intro"));
     kb_begin(&e, fr0, hk_redraw);
     uint32_t last_cap = st->cap_frames; int gone = 0, home = 0, typed = 0;
