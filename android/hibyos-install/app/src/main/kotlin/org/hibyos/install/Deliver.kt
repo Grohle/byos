@@ -8,10 +8,13 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import org.hibyos.install.core.Discovery
 import org.hibyos.install.core.SendItem
+import org.hibyos.install.core.btp.BtpDiscovery
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.DatagramSocket
 import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.Socket
 import java.security.MessageDigest
@@ -45,6 +48,41 @@ object Net {
     fun socketFactory(context: Context): () -> Socket {
         val n = wifi(context)?.second ?: return { Socket() }
         return { n.socketFactory.createSocket() }
+    }
+
+    /**
+     * UDP sockets for discovery, tied to the Wi-Fi network like [socketFactory]: without that,
+     * a phone that prefers mobile data (or a Wi-Fi without internet) may send the probe out of
+     * the wrong interface, and no player ever answers.
+     */
+    fun datagramFactory(context: Context): () -> DatagramSocket {
+        val n = wifi(context)?.second ?: return { DatagramSocket() }
+        return {
+            val s = DatagramSocket()
+            try {
+                n.bindSocket(s)
+            } catch (e: Exception) {
+                // the network went away meanwhile: the system chooses the route
+            }
+            s
+        }
+    }
+
+    /**
+     * Where the discovery probe goes: the directed broadcast address of the Wi-Fi link (from the
+     * system, which is reliable on every Android version), the ones Java sees on the interfaces,
+     * and the limited broadcast.
+     */
+    fun broadcasts(context: Context): List<InetAddress> {
+        val out = LinkedHashSet<InetAddress>()
+        wifi(context)?.let { (cm, n) ->
+            cm.getLinkProperties(n)?.linkAddresses?.forEach { la ->
+                val a = la.address
+                if (a is Inet4Address && !a.isLoopbackAddress) BtpDiscovery.subnetBroadcast(a.address, la.prefixLength)?.let { out += it }
+            }
+        }
+        out += BtpDiscovery.broadcastAddresses()
+        return out.toList()
     }
 
     /** The addresses of the phone's own local network to ask in "Find my player". */

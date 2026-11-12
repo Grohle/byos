@@ -7,7 +7,16 @@ import java.net.InetSocketAddress
 import java.net.Socket
 
 /** Pairing or AUTH could not be completed; [reason] is stable for programs. */
-class BtpAuthException(val reason: Reason, message: String) : Exception(message) {
+class BtpAuthException(
+    val reason: Reason,
+    message: String,
+    /**
+     * IDENTITY_CHANGED only: the device closed the connection after AUTH_FINISH instead of
+     * answering with a record that does not open. A daemon that stops at that moment looks the
+     * same, so a client may try once more before it reports a changed identity.
+     */
+    val closedEarly: Boolean = false,
+) : Exception(message) {
     enum class Reason {
         /** The code the user typed is not the one shown on the HiBy. */
         CODE_MISMATCH,
@@ -284,7 +293,7 @@ class BtpSession private constructor(
             } catch (e: BtpConnectionException) {
                 // a clean close right after AUTH_FINISH: the device could not open it. Timeouts
                 // and resets stay connection errors (a Wi-Fi drop is not an impostor).
-                if (e.cause is java.io.EOFException) throw identityChanged()
+                if (e.cause is java.io.EOFException) throw identityChanged(closedEarly = true)
                 throw e
             }
             secured = true
@@ -293,8 +302,8 @@ class BtpSession private constructor(
         }
     }
 
-    private fun identityChanged() = BtpAuthException(BtpAuthException.Reason.IDENTITY_CHANGED,
-        "the HiBy could not prove its identity (it was reset, or this is not the paired device)")
+    private fun identityChanged(closedEarly: Boolean = false) = BtpAuthException(BtpAuthException.Reason.IDENTITY_CHANGED,
+        "the HiBy could not prove its identity (it was reset, or this is not the paired device)", closedEarly)
 
     // ------------------------------------------------------------------ requests
 
@@ -551,10 +560,18 @@ class BtpSession private constructor(
             }
         }
 
-        /** Connects over TCP and exchanges HELLO. */
+        /**
+         * Connects over TCP and exchanges HELLO. [socketFactory] makes the unconnected socket
+         * (Android ties it to the Wi-Fi network, so a phone that prefers mobile data still
+         * reaches the player).
+         */
         fun connect(host: String, port: Int, hello: Hello, timeoutMs: Int = 15000,
-                    random: (Int) -> ByteArray = BtpCrypto::random): BtpSession {
-            val s = Socket()
+                    socketFactory: () -> Socket = { Socket() }, random: (Int) -> ByteArray = BtpCrypto::random): BtpSession {
+            val s = try {
+                socketFactory()
+            } catch (e: IOException) {
+                throw BtpConnectionException("cannot connect to $host:$port: ${e.message}", e)
+            }
             try {
                 s.tcpNoDelay = true
                 s.connect(InetSocketAddress(host, port), timeoutMs)

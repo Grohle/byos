@@ -165,6 +165,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             SyncException.CONNECTION_LOST, SyncException.E_TIMEOUT -> ErrorInfo(R.string.sync_err_lost, d, R.string.sync_hint_lost)
             SyncException.IDENTITY_CHANGED, SyncException.E_AUTH_FAILED -> ErrorInfo(R.string.sync_err_identity, d, R.string.sync_hint_identity)
             SyncException.FORGOTTEN -> ErrorInfo(R.string.sync_err_forgotten, d, R.string.sync_hint_forgotten)
+            SyncException.RECONNECTED -> ErrorInfo(R.string.sync_err_reconnected, d, R.string.sync_hint_reconnected)
             SyncException.NO_CLIENT -> ErrorInfo(R.string.sync_err_no_client, d, R.string.sync_hint_no_client)
             SyncException.E_PAIR_CLOSED -> ErrorInfo(R.string.sync_err_pair_closed, d, R.string.sync_hint_pair_closed)
             SyncException.E_PAIR_REJECTED -> ErrorInfo(R.string.sync_err_pair_rejected, d, R.string.sync_hint_pair_rejected)
@@ -250,11 +251,24 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         state = state.copy(link = Link.Connecting(device), error = null)
         env.execute {
             try {
-                // the device the user chose: another one answering at that address is refused
+                // the device the user chose: another one answering at that address is refused. A
+                // paired player is waited for and looked for by its id (it may have restarted its
+                // sync service or moved to another address), so this can take a few seconds
                 val s = try {
-                    c.connect(device.host, device.port, device.deviceId.ifEmpty { null })
+                    c.connect(device.host, device.port, device.deviceId.ifEmpty { null }, cancelled)
                 } catch (e: SyncException) {
                     when (e.code) {
+                        SyncException.E_CANCELLED -> {
+                            ui { it.copy(link = Link.Idle) }
+                            return@execute
+                        }
+                        // still paired: say that the player was not found, not that it must be paired again
+                        SyncException.UNREACHABLE, SyncException.CONNECTION_LOST, SyncException.E_TIMEOUT ->
+                            if (device.paired && device.deviceId.isNotEmpty()) {
+                                ui { it.copy(link = Link.Idle, error = ErrorInfo(R.string.sync_err_paired_gone, device.name,
+                                    R.string.sync_hint_paired_gone)) }
+                                return@execute
+                            } else throw e
                         SyncException.NOT_PAIRED -> null
                         // the player refused this phone's keys: pairing again is offered; the keys stay
                         // until a new pairing succeeds (the refusal is not authenticated)
@@ -280,8 +294,37 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         ui { it.copy(link = Link.Pairing(device, wrong = wrong)) }
     }
 
+    /**
+     * The session comes back by itself when its connection drops (see SyncSession): while it does,
+     * the running transfer or update says "connecting again" instead of looking stuck.
+     */
+    private fun watch(s: SyncSession) {
+        s.onReconnect { n ->
+            ui {
+                it.copy(
+                    transfer = if (it.transfer.running) it.transfer.copy(reconnecting = n) else it.transfer,
+                    update = (it.update as? UpdatePhase.Sending)?.copy(reconnecting = n) ?: it.update,
+                    ota = (it.ota as? OtaPhase.Sending)?.copy(reconnecting = n) ?: it.ota,
+                )
+            }
+            // the player may have a new address now
+            if (n == 0) s.host?.let { h -> moved(h) }
+        }
+    }
+
+    /** The open session reached the player at [host]: kept for the next connection. */
+    private fun moved(host: String) {
+        val d = current ?: return
+        if (d.host == host) return
+        val m = d.copy(host = host)
+        current = m
+        lastDevice = m
+        ui { st -> st.connected?.let { st.copy(link = it.copy(device = m)) } ?: st }
+    }
+
     private fun opened(device: SyncDevice, s: SyncSession) {
         session = s
+        watch(s)
         lastPing = env.now()
         val space = try {
             s.df()
@@ -289,7 +332,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             null
         }
         val paired = safePaired()
-        val d = device.copy(name = s.info.name.ifEmpty { device.name }, deviceId = s.info.deviceId, paired = true)
+        val d = device.copy(host = s.host ?: device.host, name = s.info.name.ifEmpty { device.name }, deviceId = s.info.deviceId, paired = true)
         val samePlayer = d.deviceId.isNotEmpty() && d.deviceId == libraryOf
         libraryOf = d.deviceId
         current = d
@@ -421,8 +464,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         dropSession()
         val d = current ?: throw SyncException(SyncException.CONNECTION_LOST)
         val c = connector ?: throw SyncException(SyncException.NO_CLIENT)
-        val s = c.connect(d.host, d.port, d.deviceId.ifEmpty { null })
+        val s = c.connect(d.host, d.port, d.deviceId.ifEmpty { null }, cancelled)
         session = s
+        watch(s)
+        s.host?.let { moved(it) }
         lastPing = env.now()
         return s
     }
@@ -433,13 +478,14 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
      * longer at its address (a new DHCP lease), it is looked for again by its device id. Returns
      * the attempts used; throws [lostWith] when every attempt failed.
      */
-    private fun reconnectDuringTransfer(from: Int, lostWith: SyncException): Int {
+    private fun reconnectDuringTransfer(from: Int, lostWith: SyncException,
+                                        show: (Int) -> Unit = { n -> ui { it.copy(transfer = it.transfer.copy(reconnecting = n)) } }): Int {
         dropSession()
         var attempt = from
         try {
             while (attempt < RECONNECT_DELAYS.size) {
                 val n = attempt + 1
-                ui { it.copy(transfer = it.transfer.copy(reconnecting = n)) }
+                show(n)
                 env.sleep(RECONNECT_DELAYS[attempt])
                 attempt++
                 if (stop) throw SyncException(SyncException.E_CANCELLED)
@@ -448,12 +494,13 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                     return attempt
                 } catch (e: SyncException) {
                     // the player refused this phone: trying again changes nothing
-                    if (e.code == SyncException.NOT_PAIRED || e.code == SyncException.FORGOTTEN || e.code == SyncException.IDENTITY_CHANGED) throw e
+                    if (e.code == SyncException.NOT_PAIRED || e.code == SyncException.FORGOTTEN || e.code == SyncException.IDENTITY_CHANGED ||
+                        e.code == SyncException.E_CANCELLED) throw e
                 }
             }
             throw lostWith
         } finally {
-            ui { it.copy(transfer = it.transfer.copy(reconnecting = 0)) }
+            show(0)
         }
     }
 
@@ -461,18 +508,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         val d = current ?: throw SyncException(SyncException.CONNECTION_LOST)
         val c = connector ?: throw SyncException(SyncException.NO_CLIENT)
         val s = try {
-            c.connect(d.host, d.port, d.deviceId.ifEmpty { null })
+            // for a paired player the connector itself waits for it and looks for it by its id
+            c.connect(d.host, d.port, d.deviceId.ifEmpty { null }, cancelled)
         } catch (e: SyncException) {
             if (e.code != SyncException.UNREACHABLE || d.deviceId.isEmpty()) throw e
             val found = c.discover(2000, cancelled) {}.firstOrNull { it.deviceId == d.deviceId } ?: throw e
-            val moved = d.copy(host = found.host, port = found.port)
-            current = moved
-            lastDevice = moved
-            c.connect(moved.host, moved.port, d.deviceId).also {
-                ui { st -> st.connected?.let { st.copy(link = it.copy(device = moved)) } ?: st }
+            val m = d.copy(host = found.host, port = found.port)
+            current = m
+            lastDevice = m
+            c.connect(m.host, m.port, d.deviceId, cancelled).also {
+                ui { st -> st.connected?.let { st.copy(link = it.copy(device = m)) } ?: st }
             }
         }
         session = s
+        watch(s)
+        s.host?.let { moved(it) }
         lastPing = env.now()
     }
 
@@ -646,8 +696,14 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                             } catch (e: SyncException) {
                                 when {
                                     e.code == SyncException.E_CANCELLED -> throw e
-                                    e.fatal || e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE ||
-                                        e.code == SyncException.CONNECTION_LOST -> {
+                                    // the connection dropped: the file is not marked "not sent" while the
+                                    // session comes back and the PUT resumes (it would read as a failure
+                                    // that then turns into "sent"); the end marks it if it never comes back
+                                    e.fatal || e.code == SyncException.CONNECTION_LOST || e.code == SyncException.RECONNECTED -> {
+                                        mark(job.id) { it.copy(status = JobStatus.WAITING, done = 0) }
+                                        throw e
+                                    }
+                                    e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE -> {
                                         mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
                                         throw e
                                     }
@@ -670,6 +726,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                         }
                         break
                     } catch (e: SyncException) {
+                        // the session already came back by itself: go on where it stopped
+                        if (e.code == SyncException.RECONNECTED && !stop && session != null && attempt < RECONNECT_DELAYS.size) {
+                            attempt++
+                            continue
+                        }
                         // the connection dropped (Wi-Fi, the player asleep): connect again and go on where it stopped
                         if (!lost(e) || stop || current == null || attempt >= RECONNECT_DELAYS.size) throw e
                         attempt = reconnectDuringTransfer(attempt, e)
@@ -1411,33 +1472,67 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     // ---- ByOS update (the files of the patch flow) ---------------------------------------------
 
+    /**
+     * Sends the ByOS folder and the firmware file made by the patch flow to the card (several
+     * hundred files). The player's sync service may restart during it (the shell stops it under
+     * memory pressure): the session comes back by itself, and when it cannot, the transfer
+     * connects again like Send Files does and goes on with the file it stopped at (the device
+     * resumes that one from its part). A file that is already on the card is skipped.
+     */
     override fun sendByosUpdate() {
-        val s = session ?: return
+        if (session == null) return
         val files = env.byosFiles() ?: return
         if (!begin()) return
         val total = files.sumOf { it.size * (if (it.sha256 == null) 2 else 1) }
         state = state.copy(update = UpdatePhase.Sending(0, total, ""))
         env.execute {
+            var atPath = ""
             try {
                 val pace = Pace()
                 var done = 0L
                 var skipped = 0
-                val dirs = files.map { SyncPaths.parent(it.path) }.filter { it.isNotEmpty() }.distinct().sortedBy { it.count { c -> c == '/' } }
-                for (d in dirs) s.mkdir(d, true)
-                for (f in files) {
-                    if (stop) throw SyncException(SyncException.E_CANCELLED)
-                    val sha = f.sha256?.let { unhex(it) } ?: run {
-                        val base = done
-                        val h = hash(f.open) { n -> if (pace.due()) ui { it.copy(update = UpdatePhase.Sending(base + n, total, f.path)) } }
-                        done += f.size
-                        h.first
+                var next = 0
+                val hashed = HashMap<Int, ByteArray>()
+                var attempt = 0
+                fun sending(d: Long, path: String) = ui { st ->
+                    val r = (st.update as? UpdatePhase.Sending)?.reconnecting ?: 0
+                    st.copy(update = UpdatePhase.Sending(d, total, path, r))
+                }
+                while (true) {
+                    try {
+                        val s = session ?: throw SyncException(SyncException.CONNECTION_LOST)
+                        if (next == 0) {
+                            val dirs = files.map { SyncPaths.parent(it.path) }.filter { it.isNotEmpty() }.distinct().sortedBy { it.count { c -> c == '/' } }
+                            for (d in dirs) s.mkdir(d, true)
+                        }
+                        while (next < files.size) {
+                            val f = files[next]
+                            atPath = f.path
+                            if (stop) throw SyncException(SyncException.E_CANCELLED)
+                            val sha = f.sha256?.let { unhex(it) } ?: hashed[next] ?: run {
+                                val base = done
+                                val h = hash(f.open) { n -> if (pace.due()) sending(base + n, f.path) }
+                                done += f.size
+                                hashed[next] = h.first
+                                h.first
+                            }
+                            val base = done
+                            val r = putLocal(Ns.SD, f.path, f.size, sha, 0, true, { off -> openAt(f.open, off) }) { n ->
+                                if (pace.due()) sending(base + n, f.path)
+                            }
+                            if (r.skipped) skipped++
+                            done = base + f.size
+                            next++
+                        }
+                        break
+                    } catch (e: SyncException) {
+                        if (e.code == SyncException.RECONNECTED && !stop && session != null && attempt < RECONNECT_DELAYS.size) {
+                            attempt++
+                            continue
+                        }
+                        if (!lost(e) || stop || current == null || attempt >= RECONNECT_DELAYS.size) throw e
+                        attempt = reconnectDuringUpdate(attempt, e)
                     }
-                    val base = done
-                    val r = putLocal(Ns.SD, f.path, f.size, sha, 0, true, { off -> openAt(f.open, off) }) { n ->
-                        if (pace.due()) ui { it.copy(update = UpdatePhase.Sending(base + n, total, f.path)) }
-                    }
-                    if (r.skipped) skipped++
-                    done = base + f.size
                 }
                 ui { it.copy(update = UpdatePhase.Sent(files.size, skipped)) }
                 session?.let { refreshAfterWrite(it) }
@@ -1445,12 +1540,23 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 if (e is SyncException && e.code == SyncException.E_CANCELLED) {
                     ui { it.copy(update = UpdatePhase.Idle) }
                 } else {
-                    val err = errorOf(e)
-                    if (lost(e)) dropSession()
-                    ui { it.copy(link = if (lost(e)) Link.Idle else it.link, update = UpdatePhase.Failed(err)) }
+                    // say which file it stopped at: the next try goes on from there
+                    val err = errorOf(e).let { if (atPath.isNotEmpty() && it.detail.isNullOrEmpty()) it.copy(detail = atPath) else it }
+                    val gone = lost(e)
+                    if (gone) dropSession()
+                    ui { it.copy(link = if (gone) Link.Idle else it.link, update = UpdatePhase.Failed(err)) }
                 }
             }
         }
+    }
+
+    /** [reconnectDuringTransfer] for the update screens: their progress says "connecting again". */
+    private fun reconnectDuringUpdate(from: Int, lostWith: SyncException): Int {
+        fun show(n: Int) = ui {
+            it.copy(update = (it.update as? UpdatePhase.Sending)?.copy(reconnecting = n) ?: it.update,
+                ota = (it.ota as? OtaPhase.Sending)?.copy(reconnecting = n) ?: it.ota)
+        }
+        return reconnectDuringTransfer(from, lostWith, ::show)
     }
 
     // ---- signed ByOS update (sections 14.1 to 14.3) --------------------------------------------
@@ -1579,16 +1685,36 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                     otaSentTo = session
                     ui { it.copy(ota = OtaPhase.Checking) }
                 }
-                if (!skipSend) send()
-                val st = session ?: throw SyncException(SyncException.CONNECTION_LOST)
-                staged = try {
-                    st.updateStage(allowDowngrade)
-                } catch (e: SyncException) {
-                    // the description was already moved by an earlier check: send everything again
-                    if (!skipSend || e.code != SyncException.E_NOT_STAGED) throw e
-                    send()
-                    st.updateStage(allowDowngrade)
+                // the player's sync service may restart while the payload goes over: the session
+                // comes back by itself, or the sending connects again and goes on (the device resumes
+                // the tar from its part)
+                var attempt = 0
+                fun sendSurely() {
+                    while (true) {
+                        try {
+                            send()
+                            return
+                        } catch (e: SyncException) {
+                            if (e.code == SyncException.RECONNECTED && !stop && session != null && attempt < RECONNECT_DELAYS.size) {
+                                attempt++
+                                continue
+                            }
+                            if (!lost(e) || stop || current == null || attempt >= RECONNECT_DELAYS.size) throw e
+                            attempt = reconnectDuringUpdate(attempt, e)
+                        }
+                    }
                 }
+                if (!skipSend) sendSurely()
+                staged = try {
+                    (session ?: throw SyncException(SyncException.CONNECTION_LOST)).updateStage(allowDowngrade)
+                } catch (e: SyncException) {
+                    // the description was already moved by an earlier check, or the connection dropped
+                    // during the check (it may or may not have run): send everything again, then check
+                    if (!(skipSend && e.code == SyncException.E_NOT_STAGED) && e.code != SyncException.RECONNECTED) throw e
+                    sendSurely()
+                    (session ?: throw SyncException(SyncException.CONNECTION_LOST)).updateStage(allowDowngrade)
+                }
+                val st = session ?: throw SyncException(SyncException.CONNECTION_LOST)
                 val version = staged.version.ifEmpty { pkg.version }
                 try {
                     // over Wi-Fi the player always asks the user first (NO_CONFIRM is for USB only)

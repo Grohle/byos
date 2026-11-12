@@ -347,7 +347,7 @@ class FakeConnector(val card: FakeCard = FakeCard(), val code: String = "815365"
     /** The player is out of reach (Wi-Fi off): connections and discovery find nothing. */
     var down = false
 
-    override fun connect(host: String, port: Int, expectedId: String?): SyncSession {
+    override fun connect(host: String, port: Int, expectedId: String?, cancelled: () -> Boolean): SyncSession {
         if (down || host != device.host) throw SyncException(SyncException.UNREACHABLE, "$host: no answer")
         connects++
         val id = answeringId ?: device.deviceId

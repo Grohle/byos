@@ -332,4 +332,9 @@
         <item quantity="one">%d album</item>
         <item quantity="other">%d albums</item>
     </plurals>
+    <string name="sync_err_paired_gone">Le baladeur est introuvable sur ce Wi-Fi</string>
+    <string name="sync_hint_paired_gone">Il est toujours associé à ce téléphone : inutile de l\'associer à nouveau. Vérifiez que le baladeur est allumé, sur le même Wi-Fi, et que la synchronisation Wi-Fi est activée dans Settings › ByOS Sync, puis touchez-le à nouveau.</string>
+    <string name="sync_err_reconnected">La connexion a été coupée un instant</string>
+    <string name="sync_hint_reconnected">Le baladeur est de nouveau connecté. Réessayez.</string>
+    <string name="sync_paired_no_address">Touchez pour le chercher sur ce Wi-Fi</string>
 </resources>

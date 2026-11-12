@@ -62,7 +62,10 @@ fun SyncInstall(s: UiState, a: Actions) {
         when (ota) {
             is OtaPhase.Sending -> {
                 ProgressCard(title = stringResource(R.string.sync_ota_sending, pick.version ?: ""),
-                    fraction = if (ota.total > 0) ota.done.toFloat() / ota.total else 0f, detail2 = ota.path.ifEmpty { " " },
+                    fraction = if (ota.total > 0) ota.done.toFloat() / ota.total else 0f,
+                    detail = if (ota.reconnecting > 0) stringResource(R.string.sync_reconnecting, ota.reconnecting,
+                        org.hibyos.install.connected.ConnectedModel.RECONNECT_DELAYS.size) else null,
+                    detail2 = ota.path.ifEmpty { " " },
                     note = stringResource(R.string.sync_ota_sending_note))
                 return@SyncPage
             }

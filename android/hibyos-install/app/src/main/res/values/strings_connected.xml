@@ -338,4 +338,9 @@
         <item quantity="one">%d album</item>
         <item quantity="other">%d albums</item>
     </plurals>
+    <string name="sync_err_paired_gone">The player was not found on this Wi-Fi</string>
+    <string name="sync_hint_paired_gone">It is still paired with this phone: no need to pair again. Check that the player is on, on the same Wi-Fi, and that Wi-Fi sync is on in Settings › ByOS Sync, then tap it again.</string>
+    <string name="sync_err_reconnected">The connection dropped for a moment</string>
+    <string name="sync_hint_reconnected">The player is connected again. Try again.</string>
+    <string name="sync_paired_no_address">Tap to look for it on this Wi-Fi</string>
 </resources>

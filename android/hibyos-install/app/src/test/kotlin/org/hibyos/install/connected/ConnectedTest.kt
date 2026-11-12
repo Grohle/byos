@@ -319,7 +319,9 @@ class ConnectedTest {
         assertFalse(t.running)
         assertEquals(R.string.sync_err_lost, t.error?.title)
         assertTrue(m.state.link is Link.Idle)
-        assertEquals(JobStatus.FAILED, t.jobs[0].status)
+        // the file whose connection dropped is not shown as "not sent": it waits for the next try
+        assertEquals(JobStatus.WAITING, t.jobs[0].status)
+        assertEquals(0, t.problems)
         assertEquals(2, t.left)
         // connect again and go on: the device resumes from the 64 KiB boundary of what it kept
         m.connectTo(env.c.device.copy(paired = true))
@@ -628,6 +630,46 @@ class ConnectedTest {
         m.sendByosUpdate()
         assertEquals(UpdatePhase.Sent(2, 1), m.state.update)
         assertEquals("firmware", String(card.files["r3ii_2025.upt"]!!))
+    }
+
+    @Test
+    fun byosUpdateGoesOnAfterALostConnection() {
+        // the player's sync service restarts in the middle of the firmware file (as the shell
+        // does under memory pressure): the app connects again and resumes that file
+        val fw = ByteArray(300_000) { (it * 13).toByte() }
+        val small = "shell".toByteArray()
+        val items = listOf(
+            SendItem("ByOS/payload/bin/hibyshell", small.size.toLong(), null) { ByteArrayInputStream(small) },
+            SendItem("r3ii_2025.upt", fw.size.toLong(), null) { ByteArrayInputStream(fw) },
+        )
+        val env = Env(FakeConnector(), items)
+        val card = env.c.card
+        val m = paired(env)
+        card.dropAfter = 200_000
+        m.sendByosUpdate()
+        assertEquals(UpdatePhase.Sent(2, 0), m.state.update)
+        assertTrue(card.files["r3ii_2025.upt"]!!.contentEquals(fw))
+        assertEquals("shell", String(card.files["ByOS/payload/bin/hibyshell"]!!))
+        // resumed from what the device kept, not sent again from the start
+        assertEquals(1, card.resumedAt.size)
+        assertTrue(m.state.link is Link.Connected)
+    }
+
+    @Test
+    fun aRememberedPlayerThatIsNotFoundIsStillPaired() {
+        val env = Env(FakeConnector())
+        val m = paired(env)
+        m.disconnect()
+        env.c.down = true
+        val p = m.state.paired.single()
+        m.connectTo(SyncDevice(p.lastHost ?: "", 7340, p.deviceId, p.name, false, true, true))
+        assertTrue(m.state.link is Link.Idle)
+        // not "pair again", not "search for a new device": the pairing is kept
+        assertEquals(R.string.sync_err_paired_gone, m.state.error?.title)
+        assertEquals(1, m.state.paired.size)
+        env.c.down = false
+        m.connectTo(SyncDevice(p.lastHost ?: "", 7340, p.deviceId, p.name, false, true, true))
+        assertTrue(m.state.link is Link.Connected)
     }
 
     // ---- library rescan (section 13.3) ------------------------------------------------------

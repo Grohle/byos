@@ -113,8 +113,11 @@ interface SyncConnector {
      * (null or empty for a typed address): another DEVICE_ID in HELLO throws IDENTITY_CHANGED.
      * Throws NOT_PAIRED when the phone has no keys for the device, FORGOTTEN when the device
      * refused AUTH (the keys are kept until a new pairing or an explicit forget).
+     * For a paired device the call is patient: a player that is not at [host] any more is looked
+     * for by its id, and one whose sync service is restarting is waited for (about 20 s) before
+     * UNREACHABLE. [host] may be empty when no address was ever stored. [cancelled] stops it.
      */
-    fun connect(host: String, port: Int, expectedId: String? = null): SyncSession
+    fun connect(host: String, port: Int, expectedId: String? = null, cancelled: () -> Boolean = { false }): SyncSession
 
     /**
      * HELLO, PAIR_COMMIT, PAIR_DEVICE and PAIR_REVEAL (section 8.2). Returns when the player shows
@@ -133,9 +136,22 @@ interface Pairing : Closeable {
     fun confirm(code: String, cancelled: () -> Boolean): SyncSession
 }
 
-/** An open, secured session. */
+/**
+ * An open, secured session. A session of the real client comes back by itself when the
+ * connection drops (hibysync restarted, Wi-Fi blinked, the phone slept): requests that can run
+ * twice are repeated on the new session, the others throw RECONNECTED.
+ */
 interface SyncSession : Closeable {
     val info: SyncDeviceInfo
+
+    /** Where the player was last reached (it may change when the session comes back). */
+    val host: String? get() = null
+
+    /**
+     * [listener] is told while the session connects again: the attempt (from 1), then 0 once
+     * it is back or has given up.
+     */
+    fun onReconnect(listener: (attempt: Int) -> Unit) {}
 
     fun df(): SyncSpace
     fun list(path: String): List<SyncEntry>
@@ -198,6 +214,11 @@ class SyncException(val code: Int, message: String? = null, cause: Throwable? = 
         const val NO_CLIENT = -6
         /** AUTH was refused: the player does not know this phone (any more). */
         const val FORGOTTEN = -7
+        /**
+         * The connection dropped during a request that must not run twice (move, delete, an
+         * update step); a new session is already open, so the user can simply try again.
+         */
+        const val RECONNECTED = -8
 
         // device side (section 6)
         const val E_PROTO = 1

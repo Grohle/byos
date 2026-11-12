@@ -209,6 +209,8 @@ fun SyncHome(s: UiState, a: Actions) {
         }
         link is Link.Connected -> { { LinkButton(stringResource(R.string.sync_disconnect)) { x.disconnect() } } }
         link is Link.Searching -> { { GreyButton(stringResource(R.string.cancel)) { x.cancelWork() } } }
+        // a remembered player is waited for and looked for: that can take a few seconds
+        link is Link.Connecting -> { { GreyButton(stringResource(R.string.cancel)) { x.cancelWork() } } }
         else -> null
     }
     SyncPage(s, a, Screen.SYNC, st.busy, bottom = bottom) {
@@ -312,10 +314,13 @@ fun SyncHome(s: UiState, a: Actions) {
                     Section(header = stringResource(R.string.sync_paired_h), footer = stringResource(R.string.sync_paired_footer)) {
                         pairedOnly.forEachIndexed { i, p ->
                             row(if (i == 0) 16.dp else iconInset) {
-                                Item(title = p.name, subtitle = p.lastHost, icon = { IconTile(Glyphs.Player, C.grey) },
+                                // tapping it connects with the stored keys: the player is looked for on
+                                // this Wi-Fi by its id when it is not at its last address
+                                Item(title = p.name, subtitle = p.lastHost ?: stringResource(R.string.sync_paired_no_address),
+                                    icon = { IconTile(Glyphs.Player, C.grey) },
                                     trailing = { NavAction(stringResource(R.string.sync_forget)) { x.forget(p.deviceId) } },
-                                    enabled = !st.busy, onClick = p.lastHost?.let { h ->
-                                        { x.connectTo(SyncDevice(h, 7340, p.deviceId, p.name, false, true, true)) }
+                                    enabled = !st.busy, onClick = {
+                                        x.connectTo(SyncDevice(p.lastHost ?: "", 7340, p.deviceId, p.name, false, true, true))
                                     })
                             }
                         }
@@ -1218,7 +1223,9 @@ fun SyncUpdate(s: UiState, a: Actions) {
         when (u) {
             is UpdatePhase.Sending -> {
                 ProgressCard(title = stringResource(R.string.sync_update_sending, b.hibyosVersion),
-                    fraction = if (u.total > 0) u.done.toFloat() / u.total else 0f, detail2 = u.path.ifEmpty { " " },
+                    fraction = if (u.total > 0) u.done.toFloat() / u.total else 0f,
+                    detail = if (u.reconnecting > 0) stringResource(R.string.sync_reconnecting, u.reconnecting, ConnectedModel.RECONNECT_DELAYS.size) else null,
+                    detail2 = u.path.ifEmpty { " " },
                     note = stringResource(R.string.sync_sending_note))
                 return@SyncPage
             }
