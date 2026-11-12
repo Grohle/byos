@@ -370,6 +370,14 @@ static void ssa_usb(void)                    /* R_CHECK: ps_v ya tiene el modo e
     if (!ss_alert(tr("¿Cambiar el modo USB?"), tr("USB_CONFIRM"), tr("Cambiar"), 0)) return;
     ps_v[PS_USB] = to; ps_apply_f(PS_USB, HS_FORCE);
 }
+/* limite de volumen de la UE (vollimit.inc.c): quitarlo pide confirmacion */
+static int ui_vlim = 1;
+static int vl_on; static void vl_set_on(int on);
+static void ssa_vlim(void)
+{
+    if (!ui_vlim && !ss_alert(tr("¿Quitar el límite de volumen?"), tr("VLIM_CONFIRM"), tr("Quitar límite"), 1)) { ui_vlim = 1; return; }
+    vl_set_on(ui_vlim);
+}
 static void ssa_volwarn(void)
 {
     if (!au_volwarn && !ss_alert(tr("¿Quitar el aviso de volumen?"), tr("VOLWARN_CONFIRM"), tr("Quitar aviso"), 1)) { au_volwarn = 1; return; }
@@ -583,8 +591,9 @@ static void page_sound(struct spage *p)
                                                            ROWT("MSEB", &ps_v[PS_MSEB], ssa_mseb, mseb_off) }, 2 };
     p->secs[3] = (struct ssec){ "DAC ES9219", au_filt_max >= 7 ? "FILT_HELP" : "FILT_HELP_OLD", {
         ROW("Filtro digital", R_CHOICE, &au_filt_i, n == 7 ? O_FILT8 : O_FILT2, n, apply_filter, 0, 0) }, 1 };
-    p->secs[4] = (struct ssec){ "VOLUMEN", "VOLUI_HELP", { ROWC("Indicador de volumen", &vol_ui, O_VOLUI, 2, ssa_volui, 0),
-                                                         ROWT("Aviso de volumen alto (UE)", &au_volwarn, ssa_volwarn, 0),
+    ui_vlim = vl_on;
+    p->secs[4] = (struct ssec){ "VOLUMEN", "VLIM_HELP", { ROWC("Indicador de volumen", &vol_ui, O_VOLUI, 2, ssa_volui, 0),
+                                                         ROWT("Limitar el volumen (UE)", &ui_vlim, ssa_vlim, ps_dis(PS_VOLMAX)),
                                                          ROWI("Volumen al encender", nav_bootvol, 0, 0) }, 3 };
     if (au_reboot) { p->secs[4].rows[3] = ROW("Reiniciar para aplicar", R_ACTION, 0, 0, 0, act_reboot, 0, 0); p->secs[4].n = 4; }
     p->nsec = 5;

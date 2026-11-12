@@ -83,6 +83,7 @@ static uint16_t *fb_shown(void)
 
 static int dirty_y0, dirty_y1;
 static void lib_popup_force(void);   /* libpop.inc.c */
+static int vl_in_effect(void); static void vl_key_up(void), vl_tick(void), vl_init(void);   /* vollimit.inc.c */
 static int sp_on;                  /* aviso del sistema en pantalla (syspop.inc.c) */   /* presentacion parcial: solo estas filas cambiaron */
 static void present(void);
 static void syspop_tick(void);
@@ -969,6 +970,7 @@ static int read_volume(void)
         /* la cifra de la barra va de 0 a volmax (50 o 100 niveles segun el reproductor): la
          * pildora es la fraccion, asi cada paso de la rueda mueve lo mismo en las dos escalas */
         int mx = st->vol_max > 1 ? (int)st->vol_max - 1 : 100, v = (int)st->vol_now - 1;
+        if (vl_in_effect()) mx = 100;                /* limite de la UE (volmax 50): la pildora mide sobre 100 */
         if (v > mx) v = mx;
         return (v * 100 + mx / 2) / mx;
     }
@@ -1233,6 +1235,8 @@ static int hiby_modal;                      /* un dialogo de HiBy en pantalla: t
 static void hud_key(int code)
 {
     double t = now_ms(); vol_key_t = t;
+    if (code == KEY_RIGHT) vl_key_up();            /* limite de volumen: la tarjeta al pasar de 50 */
+    if (sp_on) { lcd_boost(); return; }           /* un aviso del sistema en pantalla: sin pildora encima */
     if (hiby_modal) { lcd_boost(); lg("volumen: tecla %d (dialogo de HiBy en pantalla)", code); return; }
     /* indicador de HiBy: en sus pantallas lo dibuja el reproductor; nada que hacer aqui */
     if (!vol_ui && !st->capture) { lcd_boost(); lg("volumen: tecla %d (indicador de HiBy)", code); return; }
@@ -1353,6 +1357,7 @@ static void mem_trim(const char *why);
 #include "ccbt.inc.c"                  /* modulo de Bluetooth del centro de control */
 #include "ccair.inc.c"                 /* modo avion y control de ruido del centro de control */
 #include "libpop.inc.c"                /* aviso "Actualizando la biblioteca" (lo presenta syspop) */
+#include "vollimit.inc.c"              /* limite de volumen seguro de la UE y su aviso */
 #include "syspop.inc.c"                /* avisos del sistema sobre cualquier pantalla */
 #include "sync.inc.c"                  /* ByOS Sync: demonio hibysync, pagina de Ajustes y avisos de emparejamiento */
 
@@ -1707,6 +1712,7 @@ static void guard_tick(void)
     next = t + 10000;
     memmap_dump();                                /* diagnostico bajo demanda (fichero disparador) */
     lib_auto_tick();                              /* biblioteca tras descargas (sysset.inc.c) */
+    vl_tick();                                    /* limite de volumen (vollimit.inc.c) */
     cache_to_sd();                                /* la SD pudo montarse (o volver del PC) */
     DIR *d = opendir("/proc"); if (!d) return;
     struct dirent *e; int changed = 0;
@@ -1984,7 +1990,7 @@ int main(int argc, char **argv)
         if (perf_on && pf.n && t - pf.last_end > 300) perf_flush();
         pw_tick();
         struct pollfd pf[2] = { { ts, POLLIN, 0 }, { keys, POLLIN, 0 } };
-        int pr = poll(pf, keys >= 0 ? 2 : 1, hud_active ? 0 : launcher_on ? (V.edit ? 0 : now_ms() < toast_until ? 30 : 250) : 60);
+        int pr = poll(pf, keys >= 0 ? 2 : 1, hud_active ? 0 : sp_on ? 16 : launcher_on ? (V.edit ? 0 : now_ms() < toast_until ? 30 : 250) : 60);
         if (keys >= 0 && pr > 0 && (pf[1].revents & POLLIN)) {
             struct input_event ke[16];
             ssize_t n = read(keys, ke, sizeof ke);
@@ -2001,6 +2007,13 @@ int main(int argc, char **argv)
             continue;
         }
         if (hud_active) { hud_main = 1; hud_step(); hud_main = 0; }
+        /* avisos del sistema (auriculares, biblioteca, volumen alto) tambien en el inicio en reposo y
+         * sobre las pantallas de HiBy: antes solo se movian dentro de las apps (read_pkt) */
+        syspop_tick();
+        if (sp_on) {
+            if (pr > 0 && (pf[0].revents & POLLIN)) { struct pkt sp; read_pkt(&sp, 0); }   /* el toque lo atiende syspop_touch */
+            continue;
+        }
         if (launcher_on) {
             /* el reproductor dibujo algo: barra de estado nueva, o cambio de pantalla por su cuenta */
             if (st->cap_frames != last_cap) {

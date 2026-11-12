@@ -318,7 +318,7 @@ static void lconf_load(void)
 {
     /* sin launcher.conf (apartado por la auto-reparacion o un guardado cortado): la copia buena anterior */
     if (access(LCONF, F_OK) && !access(LCONF ".bak", F_OK) && !link(LCONF ".bak", LCONF)) lg("launcher.conf recuperado de la copia anterior");
-    lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); hiby_dlgs_quiet(); }
+    lconf_load0(); lconf_strip_removed(); corners_push(); vol_ui_apply(); hiby_dlgs_quiet(); vl_init(); }
 
 /* ------------------------------------------------------------------ geometria */
 static int per_page(void)

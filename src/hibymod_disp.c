@@ -1500,7 +1500,7 @@ static const struct st_opt {
     { "sleepmin",  0x0a,   5, 120, 0,           0,     0,     0x42a98c, 0x42c6e8 },
     { "playmode",  0x1a,   0,   3, 0,           0,     0,     0x42a914, 0x42c2f8 },
     { "volume",    0x11,   0, 255, SF_VOLUME,   0,     0,     0x42a954, 0x42c0c0 },
-    { "volmax",    0x10,   0, 255, SF_RO,       0,     0,     0x42a95c, 0 },
+    { "volmax",    0x10,   1, 100, SF_OPT,      0,     0,     0x42a95c, 0x42c14c },   /* v9: escribible (limite de la UE del shell) */
     { "speed",     0x65,   0, 255, SF_RO,       0,     0,     0x42a698, 0 },   /* % (MSEB necesita 100) */
     /* v8 (docs/research_settings_api.md §9): pantalla y apagado por inactividad. Mismo camino
      * con cerrojo (system_lister) que sleep/sleepmin. bkltime sin control de rango dentro del
@@ -2136,11 +2136,14 @@ static void qc_kick(void)
  * (volume 0x23c, volmax 0x238; docs/research_settings_api.md). La comprobacion de que la
  * estructura esta mapeada se hace una vez (leer /proc/self/maps en cada fotograma es caro). */
 static uint32_t vol_base;
-static void vol_publish(void)
+static void vol_publish_ex(int now);
+static void vol_publish(void) { vol_publish_ex(0); }
+static void vol_publish_now(void) { vol_publish_ex(1); }   /* hilo de lu_monitor, cada 0,7 s */
+static void vol_publish_ex(int now)
 {
     if (!vol_base) {
-        static int tries; if (tries > 400) return;
-        if (++tries % 25) return;                                     /* unos 2 intentos por segundo */
+        static int tries; if (!now && tries > 400) return;
+        if (!now && ++tries % 25) return;                             /* unos 2 intentos por segundo */
         if (!pl_mapped(HP_SETTINGS, 4, 0)) return;
         uint32_t s = *(const uint32_t *)(uintptr_t)HP_SETTINGS;
         if (!s || !pl_mapped(s, 0xad0, 0)) return;
@@ -2214,6 +2217,7 @@ static void *lu_monitor(void *a)
     for (;;) {
         uint32_t scanning = *idle == 0;
         if (scanning != st->lib_scan) { st->lib_scan = scanning; st->lib_scan_seq++; }
+        vol_publish_now();                 /* el volumen tambien sin fotogramas de HiBy (inicio en reposo) */
         usleep(700000);
     }
     return 0;
