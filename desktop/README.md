@@ -107,7 +107,16 @@ DeleteGuard trips (the folder is missing, on another drive, unreadable, or many 
 nothing is ticked and deleting needs the count typed. Then the progress (current album, rate,
 time left, Pause, Cancel), the HiBy's library update, and the result. A sync that stopped
 (cable, Wi-Fi, USB storage mode, battery, Pause) is resumed with **Resume**; nothing is copied
-twice. A HiBy that another computer is syncing shows **Take Over**. The page never names a file
+twice. **Cancel** really stops the sync, and an earlier sync that did not finish can be
+**Discarded** (what it copied stays on the HiBy and is known to the next sync). A HiBy that
+another computer is syncing shows **Take Over**; when the other sync runs on this same computer
+(another window, or byos-cli in a terminal), the page only offers to wait and try again.
+Deleting files that are not on this computer (added or downloaded on the HiBy, or synced from
+another computer) is said to be permanent, and those groups offer **Copy All to Computer**. With
+"Selected artists, albums and genres" and nothing ticked, that folder cannot sync until
+something is chosen. The quiet "changes on this computer" check writes its own plan file, and
+`sync-apply` runs only on the plan the preview showed (the page sends its `run_id`; another one
+is refused with `plan_changed`). The page never names a file
 on this computer: a folder is chosen in Windows' own dialog and the page only gets a token for
 it (`/api/links/pick`); the plan and the choices stay in byos-cli's cache. The Music tab's
 folders and selection become music links the first time the Sync tab opens.
@@ -124,16 +133,17 @@ Every state can be reached in demo mode. Scenarios (`BYOS_MOCK_SCENARIO`, set be
 | `sync_unavailable` | The music folder is missing: "Your music folder isn't available. Nothing will be deleted." |
 | `sync_mass_delete` | 240 files deleted here: nothing ticked; deleting them needs the count typed |
 | `sync_locked` | Another computer (ANA-LAPTOP) is syncing the HiBy: Take Over |
+| `sync_locked_here` | Another sync of the HiBy runs on this computer: wait, then Try Again (no Take Over) |
 | `sync_pause` | The HiBy stops answering after 40 % of the copies: paused, then Resume |
 | `sync_usb_pause` | The card becomes a USB drive during the copies |
 | `sync_battery` | The HiBy's battery is too low to start |
-| `sync_partial` | Three files fail: Retry Failed Songs |
+| `sync_partial` | Three files fail: Retry Failed Songs (Books, Videos… for the other kinds) |
 | `sync_db_pending` | The files are copied but the HiBy's library is not updated |
 | `card_full` | Not enough space on the card |
 | `ask_policy` | New links ask about each file that is only on the HiBy |
 
 `BYOS_MOCK_SYNC_STEP_MS` sets the pace of the fake scan and copies (default 6 ms). Fixed
-pictures: `demo=sync-empty`, `sync-migrate`, `sync-idle` (add `&options=music`, `&off=video`,
+pictures: `demo=sync-empty`, `sync-migrate`, `sync-idle` (add `&options=music`, `&off=video`, `&nochoice=1`,
 `&chosen=artist:NAME|genre:NAME`), `sync-planning`, `sync-preview&kind=music` (or `all`; add
 `&only=add,move` for the open sections, `&choose=deleted_on_computer:delete` for choices,
 `&typed=24&submit=1` for the typed confirmation, `&wifi=1` for the "faster over USB" hint),

@@ -12,6 +12,12 @@ export const REASONS = ['deleted_on_computer', 'excluded_on_computer', 'from_oth
 // The preview's sections, in order. "quiet" items (adopt, record) are only counted.
 export const SECTIONS = ['add', 'update', 'move', 'player_only', 'conflict', 'blocked'];
 export const QUIET = new Set(['adopt', 'record']);
+// Player-only reasons whose files are not on this computer: deleting them from the HiBy cannot
+// be undone (the HiBy's copy may be the only one).
+export const NOT_ON_COMPUTER = new Set(['from_other_device', 'added_on_player', 'downloaded_on_player']);
+// DeleteGuard reasons that mean the folder could not be read at all: ByOS cannot tell whether a
+// file was deleted, so "Deleted on this computer" would be wrong and Delete All is not offered.
+export const FOLDER_UNREAD = new Set(['source_unavailable', 'volume_changed']);
 
 // The links of one kind, in the order they were added.
 export function linksOf(links, kind) {
@@ -64,6 +70,24 @@ export function migrationPlan(sources, sel, opts, links) {
     out.push(req);
   }
   return out;
+}
+
+// ---- the chooser ----------------------------------------------------------------------------------
+
+// The link-set request for a chooser selection ({ all, artists, albums, genres } as Sets of
+// names; album keys are "ARTIST\0TITLE"): { selectAll: true }, { select: [...] }, or null when
+// nothing is chosen. byos-cli cannot hold an empty chosen selection, so an empty one is never
+// sent: the link keeps its last selection and the Sync tab blocks syncing it (selectionEmpty).
+export function selectionRequest(sel) {
+  if (!sel || sel.all !== false) return { selectAll: true };
+  const select = [...(sel.artists ?? [])].map((a) => `artist:${a}`)
+    .concat([...(sel.albums ?? [])].map((k) => { const [artist, title] = String(k).split('\u0000'); return `album:${artist}::${title}`; }))
+    .concat([...(sel.genres ?? [])].map((g) => `genre:${g}`));
+  return select.length ? { select } : null;
+}
+
+export function selectionEmpty(sel) {
+  return !!sel && sel.all === false && selectionRequest(sel) === null;
 }
 
 // ---- the preview ----------------------------------------------------------------------------------
@@ -120,12 +144,13 @@ export function setGroup(choices, items, choice) {
   return n;
 }
 
-// The group's choice as the group control shows it: "delete", "keep", or "mixed".
+// The group's choice as the group control shows it: "delete", "keep", "pull" (Copy All to
+// Computer), or "mixed".
 export function groupChoice(choices, items) {
   let seen = null;
   for (const it of items) {
     const c = choices.get(it.id) ?? 'keep';
-    const v = c === 'delete' ? 'delete' : 'keep';
+    const v = c === 'delete' || c === 'pull' ? c : 'keep';
     if (seen === null) seen = v;
     else if (seen !== v) return 'mixed';
   }
@@ -144,15 +169,17 @@ export function decisionsFor(plan, choices) {
   return out;
 }
 
-// What will be deleted from the HiBy: count, bytes, per reason, and the deletions DeleteGuard
-// protects (the folder looks unavailable or many files would go). Those need the typed count.
+// What will be deleted from the HiBy: count, bytes, per reason, the deletions DeleteGuard
+// protects (the folder looks unavailable or many files would go; those need the typed count),
+// and the deletions of files that are not on this computer ("lost": they cannot be recovered).
 export function deletionSummary(plan, choices) {
-  const s = { count: 0, bytes: 0, reasons: {}, guarded: 0, guardedBytes: 0 };
+  const s = { count: 0, bytes: 0, reasons: {}, guarded: 0, guardedBytes: 0, lost: 0, lostBytes: 0 };
   for (const it of plan?.items ?? []) {
     if (it.parent || it.action !== 'player_only' || choices.get(it.id) !== 'delete') continue;
     s.count++;
     s.bytes += it.size ?? 0;
     s.reasons[it.reason] = (s.reasons[it.reason] ?? 0) + 1;
+    if (NOT_ON_COMPUTER.has(it.reason)) { s.lost++; s.lostBytes += it.size ?? 0; }
     if (it.guard === true) { s.guarded++; s.guardedBytes += it.size ?? 0; }
   }
   return s;
@@ -211,6 +238,29 @@ export function guards(plan) {
   return (plan?.links ?? []).filter((l) => l.guard?.tripped).map((l) => ({ link: l.id, kind: l.kind, label: l.label, reason: l.guard.reason }));
 }
 
+// The DeleteGuard that holds a group of player-only items (their link's guard reason), or null.
+export function groupGuard(plan, items) {
+  if (!items.some((i) => i.guard === true)) return null;
+  const links = new Set(items.map((i) => i.link));
+  const g = guards(plan).find((x) => links.has(x.link));
+  return g?.reason ?? 'mass_delete';
+}
+
+// How the preview shows a player-only group: its title and hint keys, whether "Delete All" and
+// "Copy All to Computer" are offered, and whether its hint warns that deleting is for good.
+export function groupView(plan, reason, items) {
+  const guard = groupGuard(plan, items);
+  const unread = guard !== null && FOLDER_UNREAD.has(guard);
+  const notFound = unread && reason === 'deleted_on_computer';
+  return {
+    title: notFound ? 'pvReason_not_found' : `pvReason_${reason}`,
+    hint: notFound ? `pvReasonHint_not_found_${guard}` : `pvReasonHint_${reason}`,
+    lost: NOT_ON_COMPUTER.has(reason),
+    deleteAll: !unread,
+    pullAll: items.some((i) => i.choices?.includes('pull')),
+  };
+}
+
 // The preview's header line: "Add 312 songs (2.1 GB) · Update 4 · Move 18 · Remove 12 · 1.2 GB free after".
 export function headline(plan, choices, t, fmt) {
   const tot = planTotals(plan, choices);
@@ -218,10 +268,10 @@ export function headline(plan, choices, t, fmt) {
   const kinds = plan?.kinds ?? [];
   const noun = kinds.length === 1 ? kinds[0] : 'all';
   const parts = [];
-  if (tot.add) parts.push(t(`pvHeadAdd_${noun}`, { n: fmt.count(tot.add), size: fmt.bytes(tot.bytesNew) }));
-  if (tot.update) parts.push(t('pvHeadUpdate', { n: fmt.count(tot.update) }));
-  if (tot.move) parts.push(t('pvHeadMove', { n: fmt.count(tot.move) }));
-  if (del.count) parts.push(t('pvHeadRemove', { n: fmt.count(del.count) }));
+  if (tot.add) parts.push(t(`pvHeadAdd_${noun}`, { n: fmt.count(tot.add), count: tot.add, size: fmt.bytes(tot.bytesNew) }));
+  if (tot.update) parts.push(t('pvHeadUpdate', { n: fmt.count(tot.update), count: tot.update }));
+  if (tot.move) parts.push(t('pvHeadMove', { n: fmt.count(tot.move), count: tot.move }));
+  if (del.count) parts.push(t('pvHeadRemove', { n: fmt.count(del.count), count: del.count }));
   if (!parts.length) parts.push(t('pvHeadNothing'));
   parts.push(t('pvHeadFree', { size: fmt.bytes(freeAfter(plan, choices)) }));
   return parts.join(' · ');
@@ -230,7 +280,7 @@ export function headline(plan, choices, t, fmt) {
 // The Apply button says what it deletes in plain words.
 export function applyLabel(plan, choices, t, fmt) {
   const del = deletionSummary(plan, choices);
-  if (del.count) return t('pvApplyDelete', { n: fmt.count(del.count) });
+  if (del.count) return t('pvApplyDelete', { n: fmt.count(del.count), count: del.count });
   return t('pvApply');
 }
 
@@ -238,12 +288,13 @@ export function applyLabel(plan, choices, t, fmt) {
 
 // The Sync tab's state after sync-apply or sync-resume: done, done_with_problems, paused (with a
 // reason: link, usb_storage, battery, user), locked, blocked_db (copied, the HiBy's library is
-// not updated), or error.
+// not updated), cancelled, or error. Pause and Stop both cancel the job (byos-cli always says a
+// cancelled run is resumable): only Pause makes it a paused run; Stop really stops.
 export function outcome(final, { userPaused = false } = {}) {
   if (!final) return { state: 'error' };
   if (!final.ok) {
     if (final.code === 'locked') return { state: 'locked', by: final.locked_by ?? null };
-    if (final.code === 'cancelled') return userPaused || final.resumable ? { state: 'paused', reason: 'user' } : { state: 'cancelled' };
+    if (final.code === 'cancelled') return userPaused ? { state: 'paused', reason: 'user' } : { state: 'cancelled', run: final.run_id ?? null };
     if (final.btp?.name === 'E_BATTERY') return { state: 'paused', reason: 'battery' };
     if (final.btp?.name === 'E_SD_UNAVAILABLE') return { state: 'paused', reason: 'usb_storage' };
     if (final.code === 'no_device' || final.code === 'timeout') return { state: 'paused', reason: 'link' };
@@ -256,6 +307,21 @@ export function outcome(final, { userPaused = false } = {}) {
   const lib = final.library;
   if (lib && lib.action && lib.action !== 'none' && !lib.ok) return { state: 'blocked_db' };
   return { state: 'done', restart: !!lib?.restart };
+}
+
+// The unfinished run the Sync tab offers to resume (sync-status runs), or null. byos-cli resumes
+// the last resumable run, so only that one is offered, and not when the user stopped or
+// discarded it (its journal stays, so what it copied is still known; the next sync goes on).
+export function pendingRun(runs, discarded = new Set()) {
+  const run = (runs ?? []).filter((r) => r?.resumable).at(-1);
+  return run && !discarded.has(run.run_id) ? run : null;
+}
+
+// The locked card: another computer (Take Over when its sync stopped), or another sync on this
+// very computer (another ByOS window or byos-cli in a terminal: only waiting helps).
+export function lockView(by) {
+  if (by?.same_computer) return { title: 'syLockedHere', body: 'syLockedHereBody', takeOver: false };
+  return { title: 'syLocked', body: by?.heartbeat ? 'syLockedBody' : 'syLockedBodyNoAge', takeOver: true };
 }
 
 // Totals of a sync-apply result over its kinds.

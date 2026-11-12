@@ -10,8 +10,9 @@
 import { fold, fmtLeft, matches, secondsLeft, virtualWindow } from '/media-format.js';
 import {
   KINDS, REASONS, applyLabel, applyProgress, currentAlbum, decisionsFor, deletionSummary, emptyProgress, fasterOverUsb,
-  fits, folderName, groupChoice, groupPlan, guards, headline, initialChoices, kindChanges, linkPath, linksOf, migrationPlan,
-  needsTypedConfirm, nothingToDo, outcome, planEta, planIsEmpty, planTotals, playerOnlyCount, resultTotals, setChoice, setGroup, typedCountOk,
+  fits, folderName, groupChoice, groupPlan, groupView, guards, headline, initialChoices, kindChanges, linkPath, linksOf, lockView, migrationPlan,
+  needsTypedConfirm, nothingToDo, outcome, pendingRun, planEta, planIsEmpty, planTotals, playerOnlyCount, resultTotals, selectionEmpty,
+  selectionRequest, setChoice, setGroup, typedCountOk,
 } from '/sync-flow.js';
 
 let C; // the app's helpers (initSync)
@@ -23,7 +24,7 @@ const sy = {
   summary: {}, guards: [], checking: false, checkedAt: 0,
   state: 'idle', kinds: null, plan: null, choices: new Map(), open: new Set(), progress: emptyProgress(), final: null,
   job: null, userPaused: false, pause: null, lockedBy: null, error: null, lastApply: null, expanded: new Set(), filter: '',
-  pendingSel: new Map(), selTimer: null, demo: null,
+  pendingSel: new Map(), selTimer: null, selLinks: new Map(), linkJobs: new Set(), recheck: null, demo: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -33,6 +34,8 @@ const lang = () => C.getLang();
 const fmtBytes = (n) => C.fmtBytes(n);
 const fmtCount = (n) => new Intl.NumberFormat(lang()).format(n ?? 0);
 const fmt = { count: fmtCount, bytes: (n) => fmtBytes(n) };
+// A text with a count: the number formatted for the language, and the singular form when it applies.
+const tc = (key, n, vars = {}) => t(key, { n: fmtCount(n), count: Number(n) || 0, ...vars });
 const device = () => C.selectedDevice();
 const spec = () => C.deviceSpec(device());
 const reachable = () => !!device() && device().reachable !== false;
@@ -42,6 +45,35 @@ const busy = () => ['scanning', 'planning', 'syncing', 'building'].includes(sy.s
 
 function storage(key) {
   try { return JSON.parse(localStorage.getItem(key) ?? 'null'); } catch { return null; }
+}
+
+// Runs the user stopped or discarded, per HiBy: not offered as "An earlier sync didn't finish"
+// again. byos-cli keeps their journals, so what they copied is still known to the next sync.
+const DISCARDED = 'byos.sync.discarded';
+const discardedHere = new Set(); // also this session's, when the browser keeps no storage
+function discardedRuns() {
+  const all = storage(DISCARDED);
+  return new Set([...(Array.isArray(all?.[sy.deviceId]) ? all[sy.deviceId] : []), ...discardedHere]);
+}
+function discardRun(runId) {
+  if (!runId || !sy.deviceId) return;
+  discardedHere.add(runId);
+  try {
+    const all = storage(DISCARDED) ?? {};
+    const list = (Array.isArray(all[sy.deviceId]) ? all[sy.deviceId] : []).filter((x) => x !== runId);
+    list.push(runId);
+    all[sy.deviceId] = list.slice(-50);
+    localStorage.setItem(DISCARDED, JSON.stringify(all));
+  } catch { /* the run may be offered again; resuming it is still safe */ }
+}
+
+// A music link whose chooser has nothing ticked cannot sync: byos-cli would still use the link's
+// last selection, which the checkboxes no longer show.
+function selectionBlocked(l) {
+  return l.kind === 'music' && l.enabled && selectionEmpty(sy.pendingSel.get(l.id));
+}
+function syncBlocked(kind) {
+  return (sy.links ?? []).some((l) => (kind === 'all' || l.kind === kind) && selectionBlocked(l));
 }
 
 // ---- loading the links -------------------------------------------------------------------------
@@ -106,8 +138,8 @@ async function loadStatus() {
   const final = await C.runCli('sync-status', { deviceId: d.id }, { quiet: true });
   if (sy.deviceId !== d.id || !final.ok) return;
   sy.status = final;
-  // an unfinished run: offered as paused, so it can be resumed
-  const run = (final.runs ?? []).find((r) => r.resumable);
+  // an unfinished run: offered as paused, so it can be resumed (not one the user stopped or discarded)
+  const run = pendingRun(final.runs, discardedRuns());
   if (run && sy.state === 'idle') {
     sy.state = 'paused';
     sy.pause = { reason: run.status === 'paused_usb_storage' ? 'usb_storage' : run.status === 'paused' ? 'link' : 'interrupted', run };
@@ -115,20 +147,31 @@ async function loadStatus() {
   render();
 }
 
-// The idle line of each kind: a quiet plan of everything, nothing changes on the HiBy.
+// The idle line of each kind: a quiet plan of everything, nothing changes on the HiBy. It writes
+// its own plan file (check: true), and never runs while a plan is open, paused or locked: the
+// preview's choices name items of the plan that sync-apply reads.
+function checkAllowed() {
+  return !sy.checking && !busy() && !sy.plan && !['preview', 'paused', 'locked'].includes(sy.state)
+    && reachable() && (sy.links ?? []).some((l) => l.enabled);
+}
+
 async function checkChanges() {
-  if (sy.checking || busy() || !reachable() || !(sy.links ?? []).some((l) => l.enabled)) return;
+  if (!checkAllowed()) return;
   sy.checking = true;
   render();
-  const warns = [];
-  const final = await C.runCli('sync-plan', { device: spec(), kind: 'all' }, { quiet: true, onEvent: (ev) => { if (ev.event === 'warn') warns.push(ev); } });
+  const final = await C.runCli('sync-plan', { device: spec(), kind: 'all', check: true }, { quiet: true });
   sy.checking = false;
   sy.checkedAt = Date.now();
   if (final.ok) {
     sy.summary = final.summary ?? {};
-    try { sy.guards = guards(await C.api('/api/plan')); } catch { sy.guards = []; }
+    try { sy.guards = guards(await C.api('/api/plan?check=1')); } catch { sy.guards = []; }
   }
   render();
+}
+
+function scheduleCheck(ms = 1200) {
+  clearTimeout(sy.recheck);
+  sy.recheck = setTimeout(() => { sy.recheck = null; checkChanges(); }, ms);
 }
 
 // ---- link changes --------------------------------------------------------------------------------
@@ -167,42 +210,62 @@ async function unlink(link) {
 }
 
 // One option of a link: shown at once, saved by link-set, then the kind's changes are counted again.
+// Returns a promise of the saved link; startSync waits for the ones still on their way.
 function setLink(link, params) {
   Object.assign(link, params.__local ?? {});
   delete params.__local;
-  C.runCli('link-set', { deviceId: sy.deviceId, id: link.id, ...params }, { quiet: true }).then((final) => {
-    if (!final.ok) { M.toast(C.errorMessage(final), 'fail'); loadLinks({ force: true }); return; }
+  const job = C.runCli('link-set', { deviceId: sy.deviceId, id: link.id, ...params }, { quiet: true }).then((final) => {
+    sy.linkJobs.delete(job);
+    if (!final.ok) { M.toast(C.errorMessage(final), 'fail'); loadLinks({ force: true }); return final; }
     if (final.link) Object.assign(link, final.link);
     if (params.select || params.selectAll) sy.pendingSel.delete(link.id);
     sy.checkedAt = 0;
-    clearTimeout(sy.recheck);
-    sy.recheck = setTimeout(() => checkChanges(), 1200);
+    scheduleCheck();
+    return final;
   });
+  sy.linkJobs.add(job);
+  return job;
 }
 
 // The chooser: names are sent to byos-cli after a short pause (one link-set per burst of clicks).
 function selectionChanged(link) {
   clearTimeout(sy.selTimer);
-  sy.selTimer = setTimeout(() => {
+  sy.selLinks.set(link.id, link);
+  sy.selTimer = setTimeout(() => flushSelection(), 700);
+}
+
+// Sends the chooser's pending selections now (also before a sync, so the plan uses what the
+// checkboxes show). An empty selection is not sent: that link cannot sync until something is
+// chosen (selectionBlocked).
+function flushSelection() {
+  clearTimeout(sy.selTimer);
+  sy.selTimer = null;
+  const jobs = [];
+  for (const link of sy.selLinks.values()) {
     const s = sy.pendingSel.get(link.id);
-    if (!s) return;
-    const select = [...s.artists].map((a) => `artist:${a}`)
-      .concat([...s.albums].map((k) => { const [artist, title] = k.split('\u0000'); return `album:${artist}::${title}`; }))
-      .concat([...s.genres].map((g) => `genre:${g}`));
-    if (s.all) setLink(link, { selectAll: true });
-    else if (select.length) setLink(link, { select });
-  }, 700);
+    const req = s ? selectionRequest(s) : null;
+    if (req) jobs.push(setLink(link, req));
+  }
+  sy.selLinks.clear();
+  return Promise.all(jobs);
 }
 
 // ---- sync: plan, preview, apply ------------------------------------------------------------------
 
 async function startSync(kind) {
   if (busy() || !reachable()) return;
+  if (syncBlocked(kind)) { M.toast(t('syChooseSome'), 'fail'); return; }
   sy.kinds = kind;
   sy.state = 'planning';
   sy.progress = emptyProgress();
   sy.error = null;
+  sy.plan = null;
   render();
+  // the options and the chooser's clicks reach byos-cli before the plan is made
+  clearTimeout(sy.recheck);
+  await flushSelection();
+  await Promise.all([...sy.linkJobs]);
+  clearTimeout(sy.recheck);
   const warns = [];
   const final = await C.runCli('sync-plan', { device: spec(), kind }, {
     title: t('syJobPlan'),
@@ -231,22 +294,24 @@ async function apply() {
   let allowMassDelete = false;
   if (needsTypedConfirm(del)) {
     const r = await C.sheet({
-      title: t('pvMassTitle', { n: fmtCount(del.count) }),
-      body: t('pvMassBody', { n: del.count, size: fmtBytes(del.bytes) }),
-      okText: t('pvDeleteN', { n: fmtCount(del.count) }), danger: true, input: '',
+      title: tc('pvMassTitle', del.count),
+      body: t('pvMassBody', { n: del.count, count: del.count, size: fmtBytes(del.bytes) }),
+      okText: tc('pvDeleteN', del.count), danger: true, input: '',
       validate: (v) => (typedCountOk(v, del.count) ? null : t('pvTypeWrong', { n: del.count })),
     });
     if (!r.ok) return;
     allowMassDelete = true;
   }
   closePreview();
-  const params = { device: spec(), then: 'rescan', yes: true, decisions: decisionsFor(plan, sy.choices) };
+  // runId: the runner refuses the choices if the plan file is no longer this plan
+  const params = { device: spec(), then: 'rescan', yes: true, decisions: decisionsFor(plan, sy.choices), runId: plan.run_id };
   if (allowMassDelete) params.allowMassDelete = true;
   sy.lastApply = params;
   await run('sync-apply', params);
 }
 
 async function run(command, params) {
+  sy.lastRun = { command, params };
   sy.state = 'syncing';
   sy.userPaused = false;
   sy.final = null;
@@ -270,10 +335,17 @@ async function run(command, params) {
   sy.final = final;
   const o = outcome(final, { userPaused: sy.userPaused });
   sy.state = o.state;
-  if (o.state === 'paused') sy.pause = { reason: o.reason };
+  if (o.state === 'paused') sy.pause = { reason: o.reason, runId: final.run_id ?? null };
   if (o.state === 'locked') sy.lockedBy = o.by;
   if (o.state === 'error') sy.error = final;
-  if (o.state === 'cancelled') { sy.state = 'idle'; M.toast(t('syStopped')); }
+  if (o.state === 'cancelled') {
+    // Stop: the run is not offered again (its journal stays, so the next sync goes on from it)
+    discardRun(o.run);
+    sy.state = 'idle';
+    sy.plan = null;
+    sy.final = null;
+    M.toast(t('syStopped'));
+  }
   if (['done', 'done_with_problems', 'blocked_db'].includes(o.state)) { sy.plan = null; sy.summary = {}; sy.checkedAt = 0; C.libraryChanged?.(); }
   render();
   if (o.state !== 'paused') loadStatus();
@@ -289,6 +361,7 @@ async function stop() {
   if (!sy.job?.id) return;
   const r = await C.sheet({ title: t('syStopTitle'), body: t('syStopBody'), okText: t('syStop'), danger: true });
   if (!r.ok || !sy.job?.id) return;
+  sy.userPaused = false;
   C.api(`/api/jobs/${sy.job.id}/cancel`, { method: 'POST', body: {} }).catch(() => {});
 }
 
@@ -306,10 +379,26 @@ async function takeOver() {
   else await resume(true);
 }
 
+// The same run again after "another sync is running on this computer".
+function tryAgain() {
+  const last = sy.lastRun;
+  return last ? run(last.command, last.params) : resume();
+}
+
+async function discard() {
+  const id = sy.pause?.run?.run_id ?? sy.pause?.runId;
+  const r = await C.sheet({ title: t('syDiscardTitle'), body: t('syDiscardBody'), okText: t('syDiscard'), danger: true });
+  if (!r.ok) return;
+  discardRun(id);
+  backToIdle();
+}
+
 function backToIdle() {
   sy.state = 'idle';
   sy.final = null;
   sy.error = null;
+  sy.pause = null;
+  sy.plan = null;
   render();
   checkChanges();
 }
@@ -368,7 +457,8 @@ function heroCard() {
   if (sy.checking) sub.push(t('syChecking'));
   const all = el('button', {
     class: 'btn primary sy-all', text: t('sySyncAll'),
-    disabled: busy() || !reachable() || !enabled.length || sy.state === 'preview',
+    disabled: busy() || !reachable() || !enabled.length || sy.state === 'preview' || syncBlocked('all'),
+    title: syncBlocked('all') ? t('syChooseSome') : null,
     onclick: () => startSync('all'),
   });
   const cap = el('div', { class: 'capacity sy-cap' });
@@ -395,6 +485,7 @@ function kindTitle(k) { return t(`syKind_${k}`); }
 function kindStatus(k, links) {
   if (!links.length) return { text: t('syNotLinked'), cls: '' };
   if (!links.some((l) => l.enabled)) return { text: t('syOff'), cls: '' };
+  if (syncBlocked(k)) return { text: t('syChooseSomeShort'), cls: 'danger' };
   const g = sy.guards.find((x) => x.kind === k);
   if (g && g.reason !== 'mass_delete') return { text: t(`syGuard_${k}`), cls: 'danger' };
   if (g) return { text: t('syGuardMass'), cls: 'danger' };
@@ -402,7 +493,7 @@ function kindStatus(k, links) {
   if (!s) return { text: sy.checking ? t('syChecking') : reachable() ? '' : t('syOfflineShort'), cls: '' };
   const n = kindChanges(s);
   if (!n) return { text: t('syUpToDate'), cls: 'ok' };
-  return { text: t('syChanges', { n: fmtCount(n) }), cls: 'accent' };
+  return { text: tc('syChanges', n), cls: 'accent' };
 }
 
 function kindCard(k) {
@@ -416,7 +507,7 @@ function kindCard(k) {
       el('p', { class: `sy-status ${st.cls}`, text: st.text })),
     links.length ? toggle(enabled, (on) => { for (const l of links) setLink(l, { enabled: on, __local: { enabled: on } }); render(); }, t('syEnable', { kind: kindTitle(k) })) : null,
     el('button', {
-      class: 'btn', text: t(`sySync_${k}`), disabled: busy() || !reachable() || !enabled || sy.state === 'preview',
+      class: 'btn', text: t(`sySync_${k}`), disabled: busy() || !reachable() || !enabled || sy.state === 'preview' || syncBlocked(k),
       onclick: () => startSync(k),
     }));
   const card = el('div', { class: `card sy-kind${enabled ? '' : ' off'}`, 'data-kind': k }, head);
@@ -474,7 +565,7 @@ function optionsPanel(k, l) {
           const s = currentSel(l);
           s.all = all;
           sy.pendingSel.set(l.id, s);
-          if (all) selectionChanged(l);
+          selectionChanged(l);
           render();
         },
       }), el('span', { text: label }));
@@ -494,9 +585,18 @@ function optionsPanel(k, l) {
   }
   right.append(el('div', { class: 'field' }, el('span', { text: t('syPlayerOnly') }), pol, el('span', { class: 'opt-hint', text: t(`syPolicyHint_${l.player_only ?? 'keep'}`) })));
   if (k === 'music') {
-    const cb = el('input', { type: 'checkbox', checked: !!l.remove_unselected, disabled: busy() });
-    cb.addEventListener('change', () => setLink(l, { removeUnselected: cb.checked, __local: { remove_unselected: cb.checked } }));
-    left.append(el('label', { class: 'opt' }, cb, el('span', {}, el('span', { text: t('optRemove') }), el('span', { class: 'opt-hint', text: t('optRemoveHint') }))));
+    // only means something with chosen artists, albums and genres; turning it on asks first (design 3.3.2)
+    const chosen = sy.pendingSel.get(l.id)?.all === false || (sy.pendingSel.get(l.id)?.all !== true && l.selection?.mode === 'chosen');
+    const cb = el('input', { type: 'checkbox', checked: !!l.remove_unselected, disabled: busy() || !chosen });
+    cb.addEventListener('change', async () => {
+      if (cb.checked) {
+        const r = await C.sheet({ title: t('syRemoveTitle'), body: t('syRemoveBody'), okText: t('syRemoveOk'), danger: true });
+        if (!r.ok) { cb.checked = false; return; }
+      }
+      setLink(l, { removeUnselected: cb.checked, __local: { remove_unselected: cb.checked } });
+    });
+    left.append(el('label', { class: `opt${chosen ? '' : ' off'}` }, cb, el('span', {}, el('span', { text: t('optRemove') }),
+      el('span', { class: 'opt-hint', text: chosen ? t('optRemoveHint') : t('syRemoveNeedsChosen') }))));
   }
   left.append(el('button', { class: 'btn link danger sy-unlink', text: t('syUnlinkFolder'), disabled: busy(), onclick: () => unlink(l) }));
   panel.append(el('div', { class: 'sy-opt-grid' }, left, right));
@@ -535,11 +635,18 @@ function chooser(l) {
   const box = (title, items, set) => {
     const shown = items.filter((i) => matches(sy.filter, i.label, i.sub ?? ''));
     const count = () => items.filter((i) => has(set, i.key)).length;
-    const head = el('span', { class: 'pick-count', text: count() ? t('selCount', { n: count() }) : '' });
+    const head = el('span', { class: 'pick-count', text: count() ? tc('selCount', count()) : '' });
     const list = el('ul', { class: 'pick-list' });
     for (const it of shown.slice(0, 2000)) {
       const cb = el('input', { type: 'checkbox', checked: has(set, it.key) });
-      cb.addEventListener('change', () => { toggleIn(set, it.key, cb.checked); head.textContent = count() ? t('selCount', { n: count() }) : ''; selectionChanged(l); });
+      cb.addEventListener('change', () => {
+        const wasEmpty = selectionEmpty(s);
+        toggleIn(set, it.key, cb.checked);
+        head.textContent = count() ? tc('selCount', count()) : '';
+        selectionChanged(l);
+        // nothing chosen any more, or something again: the Sync buttons and the message follow
+        if (selectionEmpty(s) !== wasEmpty) render();
+      });
       list.append(el('li', {}, el('label', { class: 'pick' }, cb,
         el('span', { class: 'pick-t' }, el('span', { text: it.label }), it.sub ? el('span', { class: 'pick-sub', text: it.sub }) : null),
         el('span', { class: 'pick-n', text: String(it.count) }))));
@@ -552,7 +659,8 @@ function chooser(l) {
     box(t('genres'), cat.genres.map((g) => ({ key: g.name, label: g.name, count: g.tracks })), s.genres));
   filter.addEventListener('input', () => { sy.filter = filter.value; draw(); });
   draw();
-  return el('div', { class: 'sy-chooser' }, el('div', { class: 'filter-row' }, filter), boxes);
+  return el('div', { class: 'sy-chooser' }, el('div', { class: 'filter-row' }, filter), boxes,
+    selectionEmpty(s) ? el('p', { class: 'sy-choose-some', role: 'status', text: t('syChooseSome') }) : null);
 }
 
 // ---- rendering: the running and finished states ------------------------------------------------
@@ -644,7 +752,7 @@ function fillSyncing(card) {
       el('span', { class: 'applying-name', text: sub }),
       el('div', { class: `step-bar small${fileFrac === null ? ' wait' : ''}` }, el('span', { style: fileFrac === null ? '' : `width:${(fileFrac * 100).toFixed(1)}%` }))),
     fasterOverUsb(link(), eta) ? el('p', { class: 'sy-note', text: t('syFasterUsb') }) : null,
-    p.warnings.some((w) => w.code === 'failed') ? el('p', { class: 'fail-text small-text', text: t('syFailedSoFar', { n: p.warnings.filter((w) => w.code === 'failed').length }) }) : null,
+    p.warnings.some((w) => w.code === 'failed') ? el('p', { class: 'fail-text small-text', text: tc('syFailedSoFar', p.warnings.filter((w) => w.code === 'failed').length) }) : null,
   ].filter(Boolean));
 }
 
@@ -670,7 +778,8 @@ function pausedCard() {
       el('div', { class: 'applying-icon paused' }, M.icon(reason === 'usb_storage' ? M.ICONS.sd : reason === 'battery' ? M.ICONS.battery : M.ICONS.pause)),
       el('div', { class: 'grow' },
         el('h2', { text: t(`syPaused_${reason}`) }),
-        el('p', { class: 'muted', text: [t(`syPausedBody_${reason}`), total ? t('syDoneOf', { done: fmtCount(done), total: fmtCount(total) }) : done ? t('syDoneSoFar', { n: fmtCount(done) }) : ''].filter(Boolean).join(' ') })),
+        el('p', { class: 'muted', text: [t(`syPausedBody_${reason}`), total ? t('syDoneOf', { done: fmtCount(done), total: fmtCount(total), count: total }) : done ? tc('syDoneSoFar', done) : ''].filter(Boolean).join(' ') })),
+      run?.run_id || sy.pause?.runId ? el('button', { class: 'btn link danger sy-discard', text: t('syDiscard'), onclick: () => discard() }) : null,
       el('button', { class: 'btn', text: t('syNotNow'), onclick: () => backToIdle() }),
       el('button', { class: 'btn primary', text: t('syResume'), disabled: !reachable(), onclick: () => resume() })),
     total ? el('div', { class: 'step-bar big paused' }, el('span', { style: `width:${(frac * 100).toFixed(1)}%` })) : null);
@@ -678,14 +787,21 @@ function pausedCard() {
 
 function lockedCard() {
   const by = sy.lockedBy ?? {};
-  return el('div', { class: 'card sy-locked' },
+  const v = lockView(by);
+  const vars = { name: by.name || '?', age: by.heartbeat ? M.ageText(by.heartbeat) : '' };
+  // another sync on this computer: only waiting helps (Take Over cannot pass this computer's own lock)
+  const actions = v.takeOver
+    ? [el('button', { class: 'btn', text: t('syNotNow'), onclick: () => backToIdle() }),
+      el('button', { class: 'btn primary', text: t('syTakeOver'), onclick: () => takeOver() })]
+    : [el('button', { class: 'btn', text: t('syTryAgain'), disabled: !reachable(), onclick: () => tryAgain() }),
+      el('button', { class: 'btn primary', text: t('ok'), onclick: () => backToIdle() })];
+  return el('div', { class: `card sy-locked${v.takeOver ? '' : ' here'}` },
     el('div', { class: 'applying-head' },
       el('div', { class: 'applying-icon lock' }, M.icon(M.ICONS.lock)),
       el('div', { class: 'grow' },
-        el('h2', { text: t('syLocked', { name: by.name ?? '?' }) }),
-        el('p', { class: 'muted', text: t('syLockedBody', { name: by.name ?? '?', age: by.heartbeat ? M.ageText(by.heartbeat) : '' }) })),
-      el('button', { class: 'btn', text: t('syNotNow'), onclick: () => backToIdle() }),
-      el('button', { class: 'btn primary', text: t('syTakeOver'), onclick: () => takeOver() })));
+        el('h2', { text: t(v.title, vars) }),
+        el('p', { class: 'muted', text: t(v.body, vars) })),
+      ...actions));
 }
 
 function resultCard() {
@@ -694,29 +810,33 @@ function resultCard() {
   const tot = resultTotals(f);
   const ok = s === 'done';
   const card = el('div', { class: `card result ${ok ? 'ok' : s === 'done_with_problems' ? 'partial' : 'pending-db'}` });
-  const title = s === 'done_with_problems' ? t('syProblems', { n: fmtCount((f.failures ?? []).length || tot.failed) }) : s === 'blocked_db' ? t('syCopiedOnly') : t('syDone');
+  const title = s === 'done_with_problems' ? tc('syProblems', (f.failures ?? []).length || tot.failed) : s === 'blocked_db' ? t('syCopiedOnly') : t('syDone');
   card.append(el('div', { class: 'result-icon' }, M.icon(ok ? M.ICONS.check : s === 'done_with_problems' ? M.ICONS.warn : M.ICONS.info)), el('h2', { text: title }));
-  const parts = [t('syResCopied', { n: fmtCount(tot.written), size: fmtBytes(tot.bytes) })];
-  if (tot.moved) parts.push(t('syResMoved', { n: fmtCount(tot.moved) }));
-  if (tot.removed) parts.push(t('syResRemoved', { n: fmtCount(tot.removed) }));
-  if (tot.pulled) parts.push(t('syResPulled', { n: fmtCount(tot.pulled) }));
-  if (tot.kept) parts.push(t('syResKept', { n: fmtCount(tot.kept) }));
+  const parts = [tc('syResCopied', tot.written, { size: fmtBytes(tot.bytes) })];
+  if (tot.moved) parts.push(tc('syResMoved', tot.moved));
+  if (tot.removed) parts.push(tc('syResRemoved', tot.removed));
+  if (tot.pulled) parts.push(tc('syResPulled', tot.pulled));
+  if (tot.kept) parts.push(tc('syResKept', tot.kept));
   card.append(el('p', { class: 'muted', text: parts.join(' · ') }));
   if (s === 'done') {
     card.append(el('p', { class: 'sy-lib-line', text: f.library?.restart ? t('syRestart') : f.library?.ok && f.library.action !== 'none' ? t('syLibUpdated') : '' }));
   }
   if (s === 'done_with_problems') {
     const ul = el('ul', { class: 'fail-list' });
-    for (const i of (f.failures ?? []).slice(0, 12)) ul.append(el('li', {}, el('span', { text: (i.dest ?? '').split('/').pop() }), el('span', { class: 'muted', text: i.error ?? '' })));
+    // the reason in words (BTP names such as E_IO through the app's error texts); the code stays in the tooltip
+    for (const i of (f.failures ?? []).slice(0, 12)) {
+      const why = C.errorMessage({ btp: i.error ? { name: i.error } : undefined, code: i.code, message: t('syFailGeneric') });
+      ul.append(el('li', { title: [i.error, i.message].filter(Boolean).join(': ') }, el('span', { text: (i.dest ?? '').split('/').pop() }), el('span', { class: 'muted', text: why })));
+    }
     card.append(el('p', { class: 'muted', text: t('syProblemsBody') }), ul);
   }
   if (s === 'blocked_db' || (s === 'done_with_problems' && f.library && f.library.action !== 'none' && !f.library.ok)) {
     card.append(el('div', { class: 'pending' }, M.icon(M.ICONS.info, 'i pending-i'),
-      el('div', {}, el('p', { text: t('libraryPending') }),
+      el('div', {}, el('p', { text: t('syLibraryPending') }),
         el('div', { class: 'howto' }, el('span', { class: 'howto-step', text: t('howtoSettings') }), el('span', { text: '›' }), el('span', { class: 'howto-step', text: t('howtoUpdate') })))));
   }
   const actions = el('div', { class: 'result-actions' });
-  if (s === 'done_with_problems') actions.append(el('button', { class: 'btn primary', text: t('retryFailed'), onclick: () => startSync(sy.kinds ?? 'all') }));
+  if (s === 'done_with_problems') actions.append(el('button', { class: 'btn primary', text: t(`syRetryFailed_${sy.kinds ?? 'all'}`), onclick: () => startSync(sy.kinds ?? 'all') }));
   actions.append(el('button', { class: `btn${s === 'done_with_problems' ? '' : ' primary'}`, text: t('syOk'), onclick: () => backToIdle() }));
   card.append(actions);
   return card;
@@ -771,7 +891,7 @@ function fillPreview() {
         el('span', { text: g.reason === 'mass_delete' ? t('pvGuardMassBody') : t(`pvGuardBody_${g.reason}`) }))));
   }
   if (!okFit) notes.append(el('div', { class: 'pv-banner danger' }, M.icon(M.ICONS.warn, 'i'), el('div', {}, el('strong', { text: t('notEnoughSpace') }), el('span', { text: t('pvNoSpaceBody') }))));
-  if (tot.needsDecision) notes.append(el('div', { class: 'pv-banner info' }, M.icon(M.ICONS.info, 'i'), el('span', { text: t('pvNeedsDecision', { n: fmtCount(tot.needsDecision) }) })));
+  if (tot.needsDecision) notes.append(el('div', { class: 'pv-banner info' }, M.icon(M.ICONS.info, 'i'), el('span', { text: tc('pvNeedsDecision', tot.needsDecision) })));
   if (fasterOverUsb(link(), eta)) notes.append(el('div', { class: 'pv-banner info' }, M.icon(M.ICONS.info, 'i'), el('span', { text: t('syFasterUsbPlan', { min: Math.round(eta / 60) }) })));
   const body = el('div', { class: 'pv-body' });
   if (empty) body.append(el('div', { class: 'pv-empty' }, el('div', { class: 'result-icon ok-mini' }, M.icon(M.ICONS.check)), el('h3', { text: t('pvNothing') }), el('p', { class: 'muted', text: t('pvNothingBody') })));
@@ -786,18 +906,26 @@ function fillPreview() {
       any = true;
       block.append(section(g, sec, n, items));
     }
-    if (g.quiet) block.append(el('p', { class: 'muted small-text pv-quiet', text: t('pvQuiet', { n: fmtCount(g.quiet) }) }));
+    if (g.quiet) block.append(el('p', { class: 'muted small-text pv-quiet', text: tc('pvQuiet', g.quiet) }));
     if (!any && !g.quiet && groups.length > 1) block.append(el('p', { class: 'muted small-text pv-quiet', text: t('pvKindNothing') }));
     body.append(block);
   }
   const foot = el('footer', { class: 'pv-foot' });
-  foot.append(el('span', { class: `pv-del grow${del.count ? ' danger' : ''}`, text: del.count ? t('pvDelLine', { n: fmtCount(del.count), size: fmtBytes(del.bytes) }) : t('pvNoDelete') }));
-  foot.append(el('button', { class: 'btn', text: t('cancel'), onclick: () => cancelPreview() }));
-  foot.append(el('button', {
-    class: `btn primary${del.count ? ' danger' : ''} pv-apply`, text: idle ? t('syOk') : applyLabel(plan, ch, t, fmt),
-    disabled: (!okFit && !idle) || !reachable(),
-    onclick: () => (idle ? cancelPreview() : apply()),
-  }));
+  // what is deleted, and on a second line what cannot be recovered (files not on this computer)
+  const delText = el('div', { class: `pv-del grow${del.count ? ' danger' : ''}` },
+    el('span', { text: del.count ? tc('pvDelLine', del.count, { size: fmtBytes(del.bytes) }) : t('pvNoDelete') }));
+  if (del.lost) delText.append(el('span', { class: 'pv-del-lost', text: del.lost === del.count ? tc('pvDelLostAll', del.lost) : tc('pvDelLost', del.lost) }));
+  foot.append(delText);
+  // nothing would change: one Done button (the header's close button stays)
+  if (idle) foot.append(el('button', { class: 'btn primary pv-apply', text: t('syOk'), onclick: () => cancelPreview() }));
+  else {
+    foot.append(el('button', { class: 'btn', text: t('cancel'), onclick: () => cancelPreview() }));
+    foot.append(el('button', {
+      class: `btn primary${del.count ? ' danger' : ''} pv-apply`, text: applyLabel(plan, ch, t, fmt),
+      disabled: !okFit || !reachable(),
+      onclick: () => apply(),
+    }));
+  }
   dlg.append(head, notes, body, foot);
   const nb = dlg.querySelector('.pv-body');
   if (nb) nb.scrollTop = keep;
@@ -837,21 +965,26 @@ function section(g, sec, n, items) {
 
 function reasonGroup(g, reason, list) {
   const gc = groupChoice(sy.choices, list);
-  const seg = el('div', { class: 'segmented small pv-group-seg', role: 'radiogroup', 'aria-label': t(`pvReason_${reason}`) });
-  for (const v of ['keep', 'delete']) {
+  const v = groupView(sy.plan, reason, list);
+  const seg = el('div', { class: 'segmented small pv-group-seg', role: 'radiogroup', 'aria-label': t(v.title) });
+  // Delete All is not offered when the folder could not be read (each file can still be deleted,
+  // behind the typed count); Copy All to Computer when the files can be pulled
+  const opts = [['keep', 'pvKeepAll'], ...(v.deleteAll ? [['delete', 'pvDeleteAll']] : []), ...(v.pullAll ? [['pull', 'pvCopyAll']] : [])];
+  for (const [c, label] of opts) {
     seg.append(el('button', {
-      role: 'radio', 'aria-selected': String(gc === v), 'aria-checked': String(gc === v), class: v === 'delete' ? 'del' : '',
-      text: t(v === 'keep' ? 'pvKeepAll' : 'pvDeleteAll'),
-      onclick: () => { setGroup(sy.choices, list, v); fillPreview(); },
+      role: 'radio', 'aria-selected': String(gc === c), 'aria-checked': String(gc === c), class: c === 'delete' ? 'del' : '',
+      text: t(label),
+      onclick: () => { setGroup(sy.choices, list, c); fillPreview(); },
     }));
   }
   const guarded = list.some((i) => i.guard);
   return el('div', { class: `pv-group${guarded ? ' guarded' : ''}` },
     el('div', { class: 'pv-group-head' },
       el('div', { class: 'grow' },
-        el('div', { class: 'pv-group-title', text: `${t(`pvReason_${reason}`)} · ${fmtCount(list.length)}` }),
-        el('div', { class: 'muted small-text', text: t(`pvReasonHint_${reason}`) })),
-      seg),
+        el('div', { class: 'pv-group-title', text: `${t(v.title)} · ${fmtCount(list.length)}` }),
+        el('div', { class: 'muted small-text', text: t(v.hint) }),
+        v.lost ? el('div', { class: 'small-text pv-lost-hint', text: t('pvReasonHintLost') }) : null),
+      opts.length > 1 ? seg : null),
     rows(list, (it) => playerOnlyRow(it)));
 }
 
@@ -999,7 +1132,15 @@ export async function demoSyncStep() {
     await loadLinks({ force: true });
     await loadCatalog();
   }
-  if (name === 'sync-idle') { await waitFor(() => !sy.checking && sy.checkedAt); return; }
+  if (d.params.get('nochoice')) {
+    // "Selected artists, albums and genres" with nothing ticked: that link cannot sync
+    for (const l of linksOf(sy.links, 'music')) {
+      sy.pendingSel.set(l.id, { all: false, artists: new Set(), albums: new Set(), genres: new Set() });
+      sy.expanded.add(l.id);
+    }
+    render();
+  }
+  if (name === 'sync-idle') { await waitFor(() => !sy.checking && sy.checkedAt); render(); return; }
   await waitFor(() => !sy.checking);
   const freeze = d.params.get('freeze');
   if (d.params.get('wifi')) sy.demoWifi = true;
@@ -1041,7 +1182,7 @@ export async function demoSyncStep() {
         file: sy.plan.items.find((i) => i.action === 'add')?.dest, fileDone: 21000000, fileTotal: 33000000,
       });
       sy.state = name === 'sync-building' ? 'building' : name === 'sync-paused' ? 'paused' : 'syncing';
-      if (name === 'sync-paused') sy.pause = { reason: d.params.get('reason') ?? 'user' };
+      if (name === 'sync-paused') sy.pause = { reason: d.params.get('reason') ?? 'user', runId: 'demo-run' };
       render();
       return;
     }

@@ -6,7 +6,7 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
-  createWriteStream, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync,
+  copyFileSync, createWriteStream, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -308,7 +308,8 @@ export function createApp(options = {}) {
       // ---- Library and Music tabs: the files byos-cli made in its cache, the music folders
       const cm = url.pathname.match(/^\/api\/(library|art)\/([^/]+)$/);
       if (req.method === 'GET' && (cm || url.pathname === '/api/catalog' || url.pathname === '/api/plan')) {
-        const kind = cm ? cm[1] : url.pathname.slice(5);
+        // /api/plan?check=1: the idle check's own plan (it never replaces the plan of the preview)
+        const kind = cm ? cm[1] : url.pathname === '/api/plan' && url.searchParams.get('check') === '1' ? 'plan-check' : url.pathname.slice(5);
         const file = cacheFile(cache, kind, cm ? decodeURIComponent(cm[2]) : undefined);
         if (!file) return send(res, 400, { error: 'bad name' });
         let buf;
@@ -391,7 +392,7 @@ export function createApp(options = {}) {
       }
       return send(res, 404, { error: 'not found' });
     } catch (e) {
-      if (e instanceof UsageError) return send(res, 400, { error: e.message });
+      if (e instanceof UsageError) return send(res, e.code === 'plan_changed' ? 409 : 400, e.code ? { error: e.message, code: e.code } : { error: e.message });
       return send(res, e.status ?? 500, { error: e.message });
     }
   }
@@ -460,7 +461,7 @@ export function createApp(options = {}) {
   // settings), a link's folder from a picked token, the plan and decisions live in the cache.
   function mediaParams(command, p) {
     if (p === null || typeof p !== 'object' || Array.isArray(p)) throw new UsageError('params must be an object');
-    const { catalog: _c, plan: _p, sources: _s, local: _l, out: _o, decisions, folder, ...rest } = p;
+    const { catalog: _c, plan: _p, sources: _s, local: _l, out: _o, decisions, folder, check, runId, ...rest } = p;
     switch (command) {
       case 'music-scan': {
         const dirs = musicFolders();
@@ -478,14 +479,34 @@ export function createApp(options = {}) {
         return out;
       }
       case 'sync-plan': {
-        // linked folders; the plan goes to the runner's cache, where /api/plan reads it
+        // linked folders; the plan goes to the runner's cache, where /api/plan reads it. The Sync
+        // tab's quiet idle check ({check: true}) writes its own file: only the plan the user opened
+        // in the preview is the one sync-apply reads.
         const { select: _x, selection: _y, dest: _d, layout: _la, covers: _co, removeUnselected: _r, ...keep } = rest;
-        const out = { ...keep, out: cacheFile(cache, 'plan') };
+        const out = { ...keep, out: cacheFile(cache, check === true ? 'plan-check' : 'plan') };
         mkdirSync(path.dirname(out.out), { recursive: true });
         return out;
       }
       case 'sync-apply': {
-        const out = { ...rest, linked: true, plan: cacheFile(cache, 'plan') };
+        // The choices name items of one plan (i1, i2… are numbered per plan): they are only sent
+        // with the plan they were made on. The page names it by its run_id; the plan is copied
+        // first, so a later sync-plan cannot change it under byos-cli.
+        const hasChoices = decisions !== undefined && decisions !== null && Object.keys(decisions).some((k) => k !== 'policy');
+        if (hasChoices && runId === undefined) throw new UsageError('sync-apply: runId (the plan the choices were made on) is required with decisions');
+        let planFile = cacheFile(cache, 'plan');
+        if (runId !== undefined) {
+          if (typeof runId !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/.test(runId)) throw new UsageError('runId: the run_id of the plan');
+          let cur = null;
+          try { cur = JSON.parse(readFileSync(planFile, 'utf8'))?.run_id ?? null; } catch { /* no plan */ }
+          if (cur !== runId) {
+            throw Object.assign(new UsageError('the changes were looked up again since this preview was made; review them again'), { code: 'plan_changed' });
+          }
+          const copy = cacheFile(cache, 'plan-apply');
+          mkdirSync(path.dirname(copy), { recursive: true });
+          copyFileSync(planFile, copy);
+          planFile = copy;
+        }
+        const out = { ...rest, linked: true, plan: planFile };
         if (decisions !== undefined) {
           const f = path.join(cache, 'sync', 'decisions.json');
           mkdirSync(path.dirname(f), { recursive: true });

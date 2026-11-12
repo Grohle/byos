@@ -858,6 +858,8 @@ svg.i { width: 18px; height: 18px; flex: none; }
 .btn.link.danger { color: var(--danger); }
 .sy-unlink { padding: 0; height: auto; margin-top: 2px; }
 .sy-chooser { margin-top: 12px; }
+.sy-choose-some { color: var(--danger); font-size: 12px; margin: 8px 2px 0; }
+.opt.off { cursor: default; opacity: .55; }
 .sy-chooser-wait { margin-top: 12px; display: flex; align-items: center; gap: 6px; }
 .sy-waiting { display: flex; align-items: center; gap: 10px; animation: rise 260ms var(--ease-out); }
 .sy-waiting svg { color: var(--accent); }
@@ -970,8 +972,10 @@ svg.i { width: 18px; height: 18px; flex: none; }
   display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
 }
-.pv-del { color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pv-del { display: flex; flex-direction: column; gap: 1px; color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .pv-del.danger { color: var(--danger); font-weight: 600; }
+.pv-del-lost { font-weight: 400; font-size: 11.5px; }
+.pv-lost-hint { color: var(--danger); margin-top: 2px; }
 .pv-apply { min-width: 120px; height: 30px; font-weight: 600; }
 
 /* ---- the computer's library (sidebar, design 10.1) ------------------------------------------- */

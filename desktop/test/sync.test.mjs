@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildArgs, UsageError } from '../lib/cli.mjs';
 import {
-  decisionsFor, deletionSummary, guards, initialChoices, migrationPlan, outcome, setGroup,
+  decisionsFor, deletionSummary, guards, initialChoices, lockView, migrationPlan, outcome, pendingRun, setGroup,
 } from '../lib/sync-flow.mjs';
 import { checkDecisions, createApp } from '../server.mjs';
 import { STRINGS } from '../ui/i18n.js';
@@ -59,9 +59,9 @@ test('decisions: only item ids and known choices', () => {
 const H = { 'X-ByOS-Token': 'testtoken', 'Content-Type': 'application/json' };
 
 // One runner per scenario, each with its own folders.
-function runner(name, scenario = 'ok', pick = music) {
+function runner(name, scenario = 'ok', pick = music, step = '0') {
   const dir = path.join(tmp, name);
-  const env = { ...process.env, BYOS_MOCK_STATE: path.join(dir, 'state.json'), BYOS_MOCK_SCENARIO: scenario, BYOS_MOCK_SYNC_STEP_MS: '0' };
+  const env = { ...process.env, BYOS_MOCK_STATE: path.join(dir, 'state.json'), BYOS_MOCK_SCENARIO: scenario, BYOS_MOCK_SYNC_STEP_MS: step };
   let next = pick;
   const app = createApp({
     mock: true, env, token: 'testtoken', config: path.join(dir, 'cli'), settingsDir: path.join(dir, 'desk'),
@@ -79,7 +79,7 @@ function runner(name, scenario = 'ok', pick = music) {
     },
     async job(command, params) {
       const s = await r.call('POST', '/api/jobs', { command, params });
-      if (s.status !== 202) return { ok: false, status: s.status, error: s.json?.error, events: [] };
+      if (s.status !== 202) return { ok: false, status: s.status, error: s.json?.error, code: s.json?.code, events: [] };
       const ev = await fetch(new URL(`/api/jobs/${s.json.id}/events?token=testtoken`, r.base));
       const text = await ev.text();
       const blocks = text.split('\n\n');
@@ -97,8 +97,8 @@ function runner(name, scenario = 'ok', pick = music) {
 }
 
 const apps = [];
-async function start(name, scenario, pick) {
-  const r = runner(name, scenario, pick);
+async function start(name, scenario, pick, step) {
+  const r = runner(name, scenario, pick, step);
   r.base = await r.app.listen(0);
   apps.push(r.app);
   return r;
@@ -179,7 +179,7 @@ test('a whole sync: links, plan, preview choices, apply, then nothing left to do
   setGroup(ch, plan.items.filter((i) => i.reason === 'added_on_player' && !i.parent), 'delete');
   const del = deletionSummary(plan, ch);
   assert.equal(del.count, 5);
-  const apply = await r.job('sync-apply', { device: 'usb', then: 'rescan', yes: true, decisions: decisionsFor(plan, ch) });
+  const apply = await r.job('sync-apply', { device: 'usb', then: 'rescan', yes: true, decisions: decisionsFor(plan, ch), runId: plan.run_id });
   assert.equal(apply.ok, true, JSON.stringify(apply).slice(0, 400));
   assert.deepEqual(outcome(apply), { state: 'done', restart: false });
   assert.equal(apply.kinds.music.removed, 5);
@@ -217,7 +217,7 @@ test('mass delete: the typed count (--allow-mass-delete) or nothing is deleted',
   setGroup(ch, plan.items.filter((i) => i.reason === 'deleted_on_computer' && !i.parent), 'delete');
   assert.equal(deletionSummary(plan, ch).guarded, 240);
   // without the typed confirmation, byos-cli keeps them
-  const kept = await r.job('sync-apply', { device: 'usb', yes: true, decisions: decisionsFor(plan, ch) });
+  const kept = await r.job('sync-apply', { device: 'usb', yes: true, decisions: decisionsFor(plan, ch), runId: plan.run_id });
   assert.equal(kept.ok, true);
   assert.ok(kept.events.some((e) => e.event === 'warn' && e.code === 'mass_delete_blocked'));
   assert.equal(kept.kinds.music.removed, 0);
@@ -230,7 +230,7 @@ test('mass delete confirmed by typing the count', async () => {
   const plan = (await r.call('GET', '/api/plan')).json;
   const ch = initialChoices(plan);
   setGroup(ch, plan.items.filter((i) => i.reason === 'deleted_on_computer' && !i.parent), 'delete');
-  const gone = await r.job('sync-apply', { device: 'usb', yes: true, allowMassDelete: true, decisions: decisionsFor(plan, ch) });
+  const gone = await r.job('sync-apply', { device: 'usb', yes: true, allowMassDelete: true, decisions: decisionsFor(plan, ch), runId: plan.run_id });
   assert.equal(gone.ok, true);
   assert.equal(gone.kinds.music.removed, 240);
 });
@@ -298,6 +298,95 @@ test('ask policy: files only on the HiBy wait for a decision', async () => {
   assert.deepEqual(Object.keys(decisionsFor(plan, initialChoices(plan))).sort(), undecided.map((i) => i.id).sort());
 });
 
+// ---- review fixes ---------------------------------------------------------------------------------
+
+test('the idle check never replaces the previewed plan; choices for another plan are refused (finding 1)', async () => {
+  const r = await start('race');
+  await r.link('music');
+  // the user opens the preview
+  const p1 = await r.job('sync-plan', { device: 'usb', kind: 'music' });
+  const plan = (await r.call('GET', '/api/plan')).json;
+  assert.equal(plan.run_id, p1.run_id);
+  // the quiet idle check runs meanwhile: its own file, the previewed plan stays as it is
+  const check = await r.job('sync-plan', { device: 'usb', kind: 'all', check: true });
+  assert.equal(check.ok, true);
+  assert.notEqual(check.run_id, plan.run_id);
+  assert.equal((await r.call('GET', '/api/plan')).json.run_id, plan.run_id);
+  assert.equal((await r.call('GET', '/api/plan?check=1')).json.run_id, check.run_id);
+  const ch = initialChoices(plan);
+  setGroup(ch, plan.items.filter((i) => i.reason === 'added_on_player' && !i.parent), 'delete');
+  const dec = decisionsFor(plan, ch);
+  assert.ok(Object.keys(dec).length > 0);
+  // choices without the plan they were made on are refused
+  const noRun = await r.job('sync-apply', { device: 'usb', yes: true, decisions: dec });
+  assert.equal(noRun.status, 400);
+  // another plan replaced the previewed one: the ids (i1, i2…) would name other files
+  await r.job('sync-plan', { device: 'usb', kind: 'all' });
+  const stale = await r.job('sync-apply', { device: 'usb', yes: true, decisions: dec, runId: plan.run_id });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.status, 409);
+  assert.equal(stale.code, 'plan_changed');
+  assert.equal(outcome(stale).state, 'error');
+  assert.equal(existsSync(path.join(r.app.cache, 'sync', 'decisions.json')), false); // nothing was handed to byos-cli
+  assert.equal((await r.job('sync-apply', { device: 'usb', yes: true, decisions: dec, runId: 'bad id!' })).status, 400);
+  // with the plan it was made on, it runs (on a copy byos-cli reads, not the shared plan file)
+  const again = await r.job('sync-plan', { device: 'usb', kind: 'music' });
+  const plan2 = (await r.call('GET', '/api/plan')).json;
+  assert.equal(plan2.run_id, again.run_id);
+  const ch2 = initialChoices(plan2);
+  setGroup(ch2, plan2.items.filter((i) => i.reason === 'added_on_player' && !i.parent), 'delete');
+  const ok = await r.job('sync-apply', { device: 'usb', yes: true, then: 'rescan', decisions: decisionsFor(plan2, ch2), runId: plan2.run_id });
+  assert.equal(ok.ok, true, JSON.stringify(ok).slice(0, 300));
+  assert.equal(ok.kinds.music.removed, plan2.items.filter((i) => i.reason === 'added_on_player' && !i.parent).length);
+  assert.equal(JSON.parse(readFileSync(path.join(r.app.cache, 'sync', 'plan-apply-v2.json'), 'utf8')).run_id, plan2.run_id);
+});
+
+test('Stop: the run ends cancelled, and once discarded it is not offered again (finding 2)', async () => {
+  const r = await start('stop', 'ok', music, '40');
+  await r.link('music');
+  await r.job('sync-plan', { device: 'usb', kind: 'music' });
+  const s = await r.call('POST', '/api/jobs', { command: 'sync-apply', params: { device: 'usb', yes: true, then: 'rescan' } });
+  assert.equal(s.status, 202);
+  const ev = await fetch(new URL(`/api/jobs/${s.json.id}/events?token=testtoken`, r.base));
+  const reader = ev.body.getReader();
+  let text = '';
+  let cancelled = false;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += Buffer.from(value).toString('utf8');
+    // Stop once the copies are under way
+    if (!cancelled && text.includes('"op":"put"')) {
+      cancelled = true;
+      await r.call('POST', `/api/jobs/${s.json.id}/cancel`, {});
+    }
+  }
+  const end = text.split('\n\n').find((b) => b.startsWith('event: end'));
+  const final = JSON.parse(/^data: (.*)$/m.exec(end)[1]);
+  assert.equal(final.code, 'cancelled');
+  assert.equal(final.resumable, true); // byos-cli always says so…
+  const o = outcome(final, { userPaused: false });
+  assert.deepEqual(o, { state: 'cancelled', run: final.run_id }); // …but Stop is not Pause
+  assert.deepEqual(outcome(final, { userPaused: true }), { state: 'paused', reason: 'user' });
+  const st = await r.job('sync-status', { deviceId: DEV });
+  assert.equal(st.runs.length, 1);
+  assert.equal(pendingRun(st.runs).run_id, final.run_id); // offered until the page records the Stop
+  assert.equal(pendingRun(st.runs, new Set([o.run])), null);
+});
+
+test('locked by another sync on this computer: no Take Over (finding 3)', async () => {
+  const r = await start('lockhere', 'sync_locked_here');
+  await r.link('music');
+  await r.job('sync-plan', { device: 'usb', kind: 'music' });
+  for (const takeOver of [false, true]) {
+    const f = await r.job('sync-apply', { device: 'usb', yes: true, takeOver });
+    const o = outcome(f);
+    assert.equal(o.state, 'locked');
+    assert.equal(o.by.same_computer, true);
+    assert.equal(lockView(o.by).takeOver, false);
+  }
+});
+
 // ---- translations -------------------------------------------------------------------------------------
 
 test('the Sync tab and the computer library exist in English, French and Spanish', () => {
@@ -317,6 +406,9 @@ test('the Sync tab and the computer library exist in English, French and Spanish
   for (const c of ['keep', 'delete', 'pull']) used.add(`pvChoice_${c}`);
   for (const w of ['edited_on_player', 'changed_both', 'different_content', 'other']) used.add(`pvConflictWhy_${w}`);
   for (const b of ['too_big_fat32', 'too_big', 'bad_path_too_long', 'bad_path_too_deep', 'bad_path', 'folder_full_fat', 'inside_other_link', 'other']) used.add(`pvBlocked_${b}`);
+  for (const k of ['music', 'audiobooks', 'ebooks', 'video', 'all']) used.add(`syRetryFailed_${k}`);
+  for (const k of ['pvReason_not_found', 'pvReasonHint_not_found_source_unavailable', 'pvReasonHint_not_found_volume_changed', 'syLocked', 'syLockedBody',
+    'syLockedBodyNoAge', 'syLockedHere', 'syLockedHereBody', 'pvKeepAll', 'pvDeleteAll', 'pvCopyAll', 'err_plan_changed', 'err_E_IO']) used.add(k);
   for (const k of ['pcEmptyTitle', 'pcEmptyBody', 'pcNoLinksTitle', 'pcNoLinksBody', 'pcRebuild', 'pcScanningTags', 'pcPlaylistsNone', 'pcInfoReadOnly', 'pcTitle', 'tabSync', 'err_locked']) used.add(k);
   const missingEn = [...used].filter((k) => !(k in STRINGS.en));
   assert.deepEqual(missingEn, []);

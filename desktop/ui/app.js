@@ -75,7 +75,7 @@ async function api(path, { method = 'GET', body, raw } = {}) {
     body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, code: data.code });
   return data;
 }
 
@@ -116,7 +116,7 @@ async function runCli(command, params, opts = {}) {
     opts.onStarted?.(job);
     job.final = await follow(id, job);
   } catch (e) {
-    job.final = { v: 1, event: 'error', ok: false, code: e.status === 503 ? 'no_cli' : 'usage', message: e.message };
+    job.final = { v: 1, event: 'error', ok: false, code: e.code ?? (e.status === 503 ? 'no_cli' : 'usage'), message: e.message };
   }
   job.state = job.final.ok ? 'done' : 'failed';
   job.markEnded();

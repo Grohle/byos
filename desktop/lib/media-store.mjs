@@ -97,6 +97,10 @@ export function cacheFile(cache, kind, name) {
     case 'catalog': return path.join(cache, 'music', 'catalog.json');
     // the Sync tab's linked-folder plan (sync-plan --out)
     case 'plan': return path.join(cache, 'sync', 'plan-v2.json');
+    // the Sync tab's quiet idle check (never read by sync-apply)
+    case 'plan-check': return path.join(cache, 'sync', 'plan-check-v2.json');
+    // the copy of the previewed plan that sync-apply runs
+    case 'plan-apply': return path.join(cache, 'sync', 'plan-apply-v2.json');
     default: return null;
   }
 }

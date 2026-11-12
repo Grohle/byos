@@ -5,11 +5,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyLabel, applyProgress, currentAlbum, decisionsFor, deletionSummary, emptyProgress, fasterOverUsb, fits, folderName, freeAfter,
-  groupChoice, groupPlan, guards, headline, initialChoices, kindChanges, linkPath, migrationPlan, needsTypedConfirm, nothingToDo,
-  outcome, planEta, planIsEmpty, planTotals, playerOnlyCount, resultTotals, selectArgs, setChoice, setGroup, typedCountOk,
+  groupChoice, groupGuard, groupPlan, groupView, guards, headline, initialChoices, kindChanges, linkPath, lockView, migrationPlan,
+  needsTypedConfirm, nothingToDo, outcome, pendingRun, planEta, planIsEmpty, planTotals, playerOnlyCount, resultTotals, selectArgs,
+  selectionEmpty, selectionRequest, setChoice, setGroup, typedCountOk,
 } from '../lib/sync-flow.mjs';
 import { virtualWindow } from '../lib/media-format.mjs';
-import { setLang, t } from '../ui/i18n.js';
+import { STRINGS, setLang, t } from '../ui/i18n.js';
 
 const fmt = { count: (n) => String(n), bytes: (n) => `${Math.round(n / 1e6)} MB` };
 
@@ -115,7 +116,7 @@ test('deletions: summary, DeleteGuard and the typed count', () => {
   const plan = samplePlan();
   const ch = initialChoices(plan);
   let del = deletionSummary(plan, ch);
-  assert.deepEqual(del, { count: 2, bytes: 20e6, reasons: { deleted_on_computer: 2 }, guarded: 0, guardedBytes: 0 });
+  assert.deepEqual(del, { count: 2, bytes: 20e6, reasons: { deleted_on_computer: 2 }, guarded: 0, guardedBytes: 0, lost: 0, lostBytes: 0 });
   assert.equal(needsTypedConfirm(del), false);
   // DeleteGuard: guarded items are never pre-ticked; ticking them asks for the typed count
   const guarded = { items: Array.from({ length: 240 }, (_, k) => po(`g${k}`, 'deleted_on_computer', { guard: true })), links: [{ id: 'l1', kind: 'music', guard: { tripped: true, reason: 'mass_delete' } }] };
@@ -146,7 +147,7 @@ test('header line and Apply button in English, French and Spanish', () => {
   assert.equal(headline(plan, ch, t, fmt), 'Ajouter 2 morceaux (20 MB) · Mettre à jour 1 · Déplacer 1 · 979 MB libres ensuite');
   setLang('es');
   setChoice(ch, plan.items.find((i) => i.id === 'p1'), 'delete');
-  assert.equal(applyLabel(plan, ch, t, fmt), 'Sincronizar y eliminar 1 archivos del HiBy');
+  assert.equal(applyLabel(plan, ch, t, fmt), 'Sincronizar y eliminar 1 archivo del HiBy');
   assert.equal(headline({ kinds: ['music', 'video'], items: [], sd_free: 5e9 }, new Map(), t, fmt), 'Nada que copiar · 5000 MB libres después');
   setLang('en');
 });
@@ -190,8 +191,9 @@ test('how a run ended: every Sync tab state', () => {
   assert.deepEqual(outcome({ ok: false, code: 'remote', btp: { name: 'E_BATTERY' } }), { state: 'paused', reason: 'battery' });
   assert.deepEqual(outcome({ ok: false, code: 'remote', btp: { name: 'E_SD_UNAVAILABLE' } }), { state: 'paused', reason: 'usb_storage' });
   assert.deepEqual(outcome({ ok: false, code: 'timeout' }), { state: 'paused', reason: 'link' });
-  assert.deepEqual(outcome({ ok: false, code: 'cancelled', resumable: true }), { state: 'paused', reason: 'user' });
-  assert.deepEqual(outcome({ ok: false, code: 'cancelled' }), { state: 'cancelled' });
+  // byos-cli says every cancelled run is resumable: only Pause makes it paused, Stop stops
+  assert.deepEqual(outcome({ ok: false, code: 'cancelled', resumable: true, run_id: 'r1' }), { state: 'cancelled', run: 'r1' });
+  assert.deepEqual(outcome({ ok: false, code: 'cancelled' }), { state: 'cancelled', run: null });
   assert.deepEqual(outcome({ ok: false, code: 'cancelled' }, { userPaused: true }), { state: 'paused', reason: 'user' });
   assert.deepEqual(outcome({ ok: true, resumed: false, status: 'nothing_to_resume' }), { state: 'idle' });
   assert.deepEqual(outcome({ ok: false, code: 'usage' }), { state: 'error' });
@@ -251,4 +253,110 @@ test('50,000 files: grouping, choices, decisions and the visible rows stay fast'
   assert.equal(tot.add, 50000);
   assert.ok(w.end - w.start < 30, 'only the visible rows are drawn');
   assert.ok(ms < 1000, `took ${ms} ms`);
+});
+
+// ---- review fixes --------------------------------------------------------------------------------
+
+test('Stop is not Pause: a stopped or discarded run is not offered again (finding 2)', () => {
+  assert.deepEqual(outcome({ ok: false, code: 'cancelled', resumable: true, run_id: 'r2' }, { userPaused: true }), { state: 'paused', reason: 'user' });
+  assert.deepEqual(outcome({ ok: false, code: 'cancelled', resumable: true, run_id: 'r2' }, { userPaused: false }), { state: 'cancelled', run: 'r2' });
+  const runs = [{ run_id: 'r1', resumable: true }, { run_id: 'r2', resumable: true }, { run_id: 'r3', resumable: false }];
+  // byos-cli resumes the last resumable run: that is the one offered
+  assert.equal(pendingRun(runs).run_id, 'r2');
+  assert.equal(pendingRun(runs, new Set(['r1'])).run_id, 'r2');
+  assert.equal(pendingRun(runs, new Set(['r2'])), null);
+  assert.equal(pendingRun([], new Set()), null);
+  assert.equal(pendingRun(undefined), null);
+});
+
+test('locked: another computer (Take Over) or this computer (wait) (finding 3)', () => {
+  assert.deepEqual(lockView({ name: 'ANA-LAPTOP', heartbeat: 1700000000 }), { title: 'syLocked', body: 'syLockedBody', takeOver: true });
+  assert.deepEqual(lockView({ name: 'ANA-LAPTOP' }), { title: 'syLocked', body: 'syLockedBodyNoAge', takeOver: true });
+  assert.deepEqual(lockView({ name: 'THIS-PC', same_computer: true }), { title: 'syLockedHere', body: 'syLockedHereBody', takeOver: false });
+  assert.deepEqual(lockView(null), { title: 'syLocked', body: 'syLockedBodyNoAge', takeOver: true });
+  for (const l of ['en', 'fr', 'es']) {
+    setLang(l);
+    // no empty "last seen" when the lock has no heartbeat
+    assert.doesNotMatch(t('syLockedBodyNoAge', { name: 'ANA' }), /\(\s*\)|\{age\}/, l);
+    assert.ok(t('syLockedHere') !== 'syLockedHere' && t('syLockedHereBody') !== 'syLockedHereBody', l);
+  }
+  setLang('en');
+});
+
+test('chooser: an empty selection is never sent, it blocks the sync (finding 6)', () => {
+  assert.deepEqual(selectionRequest({ all: true, artists: new Set(['x']) }), { selectAll: true });
+  assert.deepEqual(selectionRequest(null), { selectAll: true });
+  assert.deepEqual(selectionRequest({ all: false, artists: new Set(['abba']), albums: new Set(['abba\u0000gold']), genres: new Set(['pop']) }),
+    { select: ['artist:abba', 'album:abba::gold', 'genre:pop'] });
+  const empty = { all: false, artists: new Set(), albums: new Set(), genres: new Set() };
+  assert.equal(selectionRequest(empty), null);
+  assert.equal(selectionEmpty(empty), true);
+  assert.equal(selectionEmpty({ ...empty, genres: new Set(['jazz']) }), false);
+  assert.equal(selectionEmpty({ ...empty, all: true }), false);
+  assert.equal(selectionEmpty(undefined), false); // nothing pending: byos-cli already has what the page shows
+});
+
+test('permanent deletions and unreadable folders in the preview (findings 4 and 5)', () => {
+  const plan = samplePlan();
+  const ch = initialChoices(plan);
+  setChoice(ch, plan.items.find((i) => i.id === 'p1'), 'delete');
+  setChoice(ch, plan.items.find((i) => i.id === 'p2'), 'delete');
+  const del = deletionSummary(plan, ch);
+  assert.equal(del.count, 4);
+  assert.equal(del.lost, 2); // added and downloaded on the HiBy: not on this computer
+  const g = groupPlan(plan)[0];
+  assert.deepEqual(groupView(plan, 'added_on_player', g.player_only.added_on_player),
+    { title: 'pvReason_added_on_player', hint: 'pvReasonHint_added_on_player', lost: true, deleteAll: true, pullAll: true });
+  assert.equal(groupView(plan, 'deleted_on_computer', g.player_only.deleted_on_computer).lost, false);
+  // Copy All to Computer
+  setGroup(ch, g.player_only.added_on_player, 'pull');
+  assert.equal(groupChoice(ch, g.player_only.added_on_player), 'pull');
+  // the folder could not be read: not "Deleted on this computer", and no Delete All
+  for (const reason of ['source_unavailable', 'volume_changed']) {
+    const un = {
+      links: [{ id: 'l1', kind: 'music', guard: { tripped: true, reason } }],
+      items: [po('u1', 'deleted_on_computer', { guard: true }), po('u2', 'added_on_player', { guard: true })],
+    };
+    assert.equal(groupGuard(un, un.items), reason);
+    const v = groupView(un, 'deleted_on_computer', [un.items[0]]);
+    assert.deepEqual(v, { title: 'pvReason_not_found', hint: `pvReasonHint_not_found_${reason}`, lost: false, deleteAll: false, pullAll: true });
+    assert.equal(groupView(un, 'added_on_player', [un.items[1]]).deleteAll, false);
+    assert.equal(groupView(un, 'added_on_player', [un.items[1]]).title, 'pvReason_added_on_player');
+  }
+  const mass = { links: [{ id: 'l1', kind: 'music', guard: { tripped: true, reason: 'mass_delete' } }], items: [po('m1', 'deleted_on_computer', { guard: true })] };
+  assert.deepEqual(groupView(mass, 'deleted_on_computer', mass.items), { title: 'pvReason_deleted_on_computer', hint: 'pvReasonHint_deleted_on_computer', lost: false, deleteAll: true, pullAll: true });
+  assert.equal(groupGuard(plan, g.player_only.added_on_player), null);
+});
+
+test('singular and plural forms in English, French and Spanish (finding 12)', () => {
+  const one = Object.keys(STRINGS.en).filter((k) => k.endsWith('_one'));
+  assert.ok(one.length >= 20, String(one.length));
+  for (const l of ['fr', 'es']) assert.deepEqual(one.filter((k) => !(k in STRINGS[l])), [], l);
+  const want = {
+    en: ['Sync and Delete 1 File from the HiBy', 'Sync and Delete 3 Files from the HiBy', '1 change on this computer', '1 file could not be copied so far.', 'Delete 1 File'],
+    fr: ['Synchroniser et supprimer 1 fichier du HiBy', 'Synchroniser et supprimer 3 fichiers du HiBy', '1 changement sur cet ordinateur', '1 fichier n’a pas pu être copié pour l’instant.', 'Supprimer 1 fichier'],
+    es: ['Sincronizar y eliminar 1 archivo del HiBy', 'Sincronizar y eliminar 3 archivos del HiBy', '1 cambio en este ordenador', 'Hasta ahora no se pudo copiar 1 archivo.', 'Eliminar 1 archivo'],
+  };
+  for (const [l, w] of Object.entries(want)) {
+    setLang(l);
+    assert.equal(t('pvApplyDelete', { n: '1', count: 1 }), w[0], l);
+    assert.equal(t('pvApplyDelete', { n: '3', count: 3 }), w[1], l);
+    assert.equal(t('syChanges', { n: '1', count: 1 }), w[2], l);
+    assert.equal(t('syFailedSoFar', { n: '1', count: 1 }), w[3], l);
+    assert.equal(t('pvDeleteN', { n: '1', count: 1 }), w[4], l);
+    // the plan's own texts: header line and Apply button
+    const plan = { kinds: ['music'], sd_free: 1e9, items: [item('a1', 'add'), po('d1', 'deleted_on_computer', { default_choice: 'delete' })] };
+    const ch = initialChoices(plan);
+    assert.match(headline(plan, ch, t, fmt), l === 'en' ? /^Add 1 song \(/ : l === 'fr' ? /^Ajouter 1 morceau \(/ : /^Añadir 1 canción \(/);
+    assert.equal(applyLabel(plan, ch, t, fmt), w[0]);
+  }
+  // French uses the singular for 0; English and Spanish the plural
+  setLang('fr');
+  assert.equal(t('pvDeleteN', { n: '0', count: 0 }), 'Supprimer 0 fichier');
+  setLang('es');
+  assert.equal(t('pvDeleteN', { n: '0', count: 0 }), 'Eliminar 0 archivos');
+  // a key without a singular form, and a call without a count, keep the base text
+  setLang('en');
+  assert.equal(t('pvHeadUpdate', { n: '1', count: 1 }), 'Update 1');
+  assert.equal(t('pvApplyDelete', { n: '1' }), 'Sync and Delete 1 Files from the HiBy');
 });

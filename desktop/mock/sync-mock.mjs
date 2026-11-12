@@ -6,6 +6,7 @@
 //   sync_unavailable   the music folder is missing: DeleteGuard keeps every deletion unticked
 //   sync_mass_delete   240 files deleted on this computer: DeleteGuard asks for the typed count
 //   sync_locked        another computer holds the HiBy's sync lock (Take over works)
+//   sync_locked_here   another sync of this HiBy runs on this computer (same_computer: no Take over)
 //   sync_pause         the link drops after 40 % of the copies (paused; sync-resume goes on)
 //   sync_usb_pause     the card becomes a USB drive during the copies (paused_usb_storage)
 //   sync_partial       three files fail (done_with_problems)
@@ -502,6 +503,11 @@ export function installSync(commands, ctx) {
       throw new Fail('locked', 'The HiBy is being synced from ANA-LAPTOP (last seen 2 min ago)', undefined, { locked_by: lockInfo() });
     }
     if (SCENARIO === 'sync_locked') { ss.tookOver = true; save(state); emit('warn', { code: 'lock_taken_over', message: 'The sync lock of ANA-LAPTOP was taken over' }); }
+    // byos-cli's own run lock (another ByOS window, or byos-cli in a terminal): --take-over cannot pass it
+    if (SCENARIO === 'sync_locked_here') {
+      throw new Fail('locked', 'Another sync of this HiBy is already running on this computer', undefined,
+        { locked_by: { client_id: CLIENT_ID, name: 'THIS-PC', same_computer: true } });
+    }
     if (SCENARIO === 'sync_battery') {
       throw new Fail('remote', "The HiBy's battery is at 11 %. Charge it, then sync again.", { code: 67, name: 'E_BATTERY' }, { battery: 11, charging: false });
     }
