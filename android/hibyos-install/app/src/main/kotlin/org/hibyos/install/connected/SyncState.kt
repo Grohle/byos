@@ -240,6 +240,14 @@ data class SyncState(
     val covers: Map<String, String?> = emptyMap(),
     val otaPick: OtaPick = OtaPick(),
     val ota: OtaPhase = OtaPhase.Idle,
+    /**
+     * The open session lost its connection outside a transfer or an update (browsing, the
+     * keep-alive) and connects again: the attempt (0: connected). The connection and file
+     * screens show it with a Cancel.
+     */
+    val reconnecting: Int = 0,
+    /** How many attempts the reconnection in progress makes (shown as "n of [reconnectOf]"). */
+    val reconnectOf: Int = 0,
 ) {
     val connected: Link.Connected? get() = link as? Link.Connected
     val target: String get() = destPath ?: dest.path

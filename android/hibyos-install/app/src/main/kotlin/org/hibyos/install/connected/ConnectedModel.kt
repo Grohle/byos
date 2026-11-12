@@ -81,6 +81,18 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     private var stop = false
     private val cancelled = { stop }
 
+    /** The open session is connecting again by itself (its listener said so). */
+    @Volatile
+    private var reconnectingNow = false
+
+    /** The user pressed Cancel while the session was connecting again: it stops trying. */
+    @Volatile
+    private var giveUpReconnect = false
+
+    /** Connection drops seen so far (the session's own reconnections and the transfers' ones). */
+    @Volatile
+    private var drops = 0
+
     /** Picked on the phone, waiting to be sent. */
     private var picked: List<LocalItem> = emptyList()
     private var sources: Map<Int, LocalItem> = emptyMap()
@@ -120,7 +132,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         try {
             s.ping()
         } catch (e: Exception) {
-            if (session === s) failed(e)
+            if (!abandoned(s, e) && session === s) failed(e)
             throw e
         }
     }
@@ -139,6 +151,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     private fun begin(): Boolean {
         if (state.busy) return false
         stop = false
+        giveUpReconnect = false
         return true
     }
 
@@ -208,6 +221,22 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
      * never show Connected without a session.
      */
     private fun lost(e: Throwable): Boolean = (e is SyncException && e.fatal) || session == null
+
+    /**
+     * A request of [s] ended with E_CANCELLED although nobody cancelled that request: the session
+     * was closed or replaced meanwhile (Disconnect), or the user stopped its reconnection. True
+     * when that is the case (and handled): the caller shows nothing more.
+     */
+    private fun abandoned(s: SyncSession, e: Throwable): Boolean {
+        if (e !is SyncException || e.code != SyncException.E_CANCELLED) return false
+        if (session !== s) return true
+        if (!giveUpReconnect) return false
+        // the connection was lost and the user stopped looking for the player
+        giveUpReconnect = false
+        dropSession()
+        ui { it.copy(link = Link.Idle, reconnecting = 0, browser = it.browser.copy(loading = false, working = false, prompt = null)) }
+        return true
+    }
 
     // ---- connection -----------------------------------------------------------------------
 
@@ -299,9 +328,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
      * the running transfer or update says "connecting again" instead of looking stuck.
      */
     private fun watch(s: SyncSession) {
-        s.onReconnect { n ->
+        // Cancel (and Disconnect, which replaces the session) also stop a reconnection of a request
+        // that has no cancel of its own: browsing, the keep-alive PING, the free space
+        s.cancelWhen { session !== s || giveUpReconnect }
+        s.onReconnect { n, of ->
+            if (n == 1) {
+                giveUpReconnect = false
+                drops++
+            }
+            reconnectingNow = n > 0
             ui {
+                val work = it.transfer.running || it.update is UpdatePhase.Sending || it.ota is OtaPhase.Sending
                 it.copy(
+                    // the connection and file screens say it too, with a Cancel
+                    reconnecting = if (work) 0 else n,
+                    reconnectOf = if (n > 0) of else it.reconnectOf,
                     transfer = if (it.transfer.running) it.transfer.copy(reconnecting = n) else it.transfer,
                     update = (it.update as? UpdatePhase.Sending)?.copy(reconnecting = n) ?: it.update,
                     ota = (it.ota as? OtaPhase.Sending)?.copy(reconnecting = n) ?: it.ota,
@@ -439,7 +480,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 val space = s.df()
                 ui { st -> st.connected?.let { st.copy(link = it.copy(space = space)) } ?: st }
             } catch (e: Exception) {
-                failed(e)
+                if (!abandoned(s, e)) failed(e)
             }
         }
     }
@@ -481,6 +522,8 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     private fun reconnectDuringTransfer(from: Int, lostWith: SyncException,
                                         show: (Int) -> Unit = { n -> ui { it.copy(transfer = it.transfer.copy(reconnecting = n)) } }): Int {
         dropSession()
+        drops++
+        ui { it.copy(reconnectOf = RECONNECT_DELAYS.size) }
         var attempt = from
         try {
             while (attempt < RECONNECT_DELAYS.size) {
@@ -657,6 +700,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 st.copy(transfer = st.transfer.copy(jobs = st.transfer.jobs.map { if (it.id == id) f(it) else it }))
             }
             val settled = HashSet<Int>()
+            // files whose connection dropped in the middle: sent again once the session is back,
+            // and marked failed (not left "waiting") when the run ends before that
+            val interrupted = HashSet<Int>()
+            // files sent again after a card error that followed a dropped connection
+            val retried = HashSet<Int>()
             var attempt = 0
             try {
                 while (true) {
@@ -668,60 +716,78 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                             if (job.id in settled) continue
                             if (stop) throw SyncException(SyncException.E_CANCELLED)
                             val src = sources[job.id] ?: continue
-                            try {
-                                val sha = hashes[job.id] ?: run {
-                                    mark(job.id) { it.copy(status = JobStatus.HASHING) }
+                            while (true) {
+                                val dropsBefore = drops
+                                try {
+                                    val sha = hashes[job.id] ?: run {
+                                        mark(job.id) { it.copy(status = JobStatus.HASHING) }
+                                        val base = done
+                                        val h = hash(src.open) { n ->
+                                            if (pace.due()) ui { st -> st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = true)) }
+                                        }
+                                        if (h.second != job.size) throw IOException("${job.local}: the file changed while it was read")
+                                        hashes[job.id] = h.first
+                                        done += job.size
+                                        h.first
+                                    }
+                                    mark(job.id) { it.copy(status = JobStatus.SENDING) }
                                     val base = done
-                                    val h = hash(src.open) { n ->
-                                        if (pace.due()) ui { st -> st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = true)) }
+                                    val r = putLocal(Ns.SD, job.remote, job.size, sha, src.mtime, replace, { off -> openAt(src.open, off) }) { n ->
+                                        if (pace.due()) ui { st ->
+                                            st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = false,
+                                                jobs = st.transfer.jobs.map { if (it.id == job.id) it.copy(done = n) else it }))
+                                        }
                                     }
-                                    if (h.second != job.size) throw IOException("${job.local}: the file changed while it was read")
-                                    hashes[job.id] = h.first
-                                    done += job.size
-                                    h.first
+                                    done = base + job.size
+                                    mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
+                                    if (!r.skipped && FileKinds.isAudio(job.remote)) {
+                                        if (r.replaced) changedMusic += job.remote else newMusic++
+                                    }
+                                } catch (e: SyncException) {
+                                    when {
+                                        e.code == SyncException.E_CANCELLED -> throw e
+                                        // the connection dropped: the file is not marked "not sent" while the
+                                        // session comes back and the PUT resumes (it would read as a failure
+                                        // that then turns into "sent"); the final catch marks it not sent if
+                                        // the connection never comes back
+                                        e.fatal || e.code == SyncException.CONNECTION_LOST || e.code == SyncException.RECONNECTED -> {
+                                            interrupted += job.id
+                                            mark(job.id) { it.copy(status = JobStatus.WAITING, done = 0) }
+                                            throw e
+                                        }
+                                        // the card could not write the file, or its content did not match, right
+                                        // after the connection dropped: the daemon was stopped in the middle of
+                                        // this upload (its part may be cut short). Sent once more before it is
+                                        // shown as not sent; the device drops a part that does not match, so the
+                                        // second PUT starts clean. The phone's hash is kept: a file that really
+                                        // changed fails again and is hashed anew on the next try.
+                                        (e.code == SyncException.E_IO || e.code == SyncException.E_HASH_MISMATCH) &&
+                                            (job.id in interrupted || drops != dropsBefore) && retried.add(job.id) -> {
+                                            mark(job.id) { it.copy(status = JobStatus.WAITING, done = 0) }
+                                            continue
+                                        }
+                                        e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE -> {
+                                            mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
+                                            throw e
+                                        }
+                                        e.code == SyncException.E_EXISTS -> mark(job.id) { it.copy(status = JobStatus.EXISTS, error = e.code) }
+                                        e.code == SyncException.E_FILE_TOO_BIG -> mark(job.id) { it.copy(status = JobStatus.TOO_BIG, error = e.code) }
+                                        e.code == SyncException.E_BAD_PATH -> mark(job.id) { it.copy(status = JobStatus.BAD_NAME, error = e.code) }
+                                        else -> {
+                                            // the file changed after it was hashed: the next try hashes it again
+                                            if (e.code == SyncException.E_HASH_MISMATCH) hashes.remove(job.id)
+                                            mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
+                                        }
+                                    }
+                                } catch (e: IOException) {
+                                    // this file could not be read on the phone (putLocal already opened a new
+                                    // session if a PUT was under way): the others go on
+                                    hashes.remove(job.id)
+                                    mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
                                 }
-                                mark(job.id) { it.copy(status = JobStatus.SENDING) }
-                                val base = done
-                                val r = putLocal(Ns.SD, job.remote, job.size, sha, src.mtime, replace, { off -> openAt(src.open, off) }) { n ->
-                                    if (pace.due()) ui { st ->
-                                        st.copy(transfer = st.transfer.copy(done = base + n, current = job.remote, hashing = false,
-                                            jobs = st.transfer.jobs.map { if (it.id == job.id) it.copy(done = n) else it }))
-                                    }
-                                }
-                                done = base + job.size
-                                mark(job.id) { it.copy(status = if (r.skipped) JobStatus.SKIPPED else JobStatus.SENT, done = job.size) }
-                                if (!r.skipped && FileKinds.isAudio(job.remote)) {
-                                    if (r.replaced) changedMusic += job.remote else newMusic++
-                                }
-                            } catch (e: SyncException) {
-                                when {
-                                    e.code == SyncException.E_CANCELLED -> throw e
-                                    // the connection dropped: the file is not marked "not sent" while the
-                                    // session comes back and the PUT resumes (it would read as a failure
-                                    // that then turns into "sent"); the end marks it if it never comes back
-                                    e.fatal || e.code == SyncException.CONNECTION_LOST || e.code == SyncException.RECONNECTED -> {
-                                        mark(job.id) { it.copy(status = JobStatus.WAITING, done = 0) }
-                                        throw e
-                                    }
-                                    e.code == SyncException.E_NO_SPACE || e.code == SyncException.E_SD_UNAVAILABLE -> {
-                                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
-                                        throw e
-                                    }
-                                    e.code == SyncException.E_EXISTS -> mark(job.id) { it.copy(status = JobStatus.EXISTS, error = e.code) }
-                                    e.code == SyncException.E_FILE_TOO_BIG -> mark(job.id) { it.copy(status = JobStatus.TOO_BIG, error = e.code) }
-                                    e.code == SyncException.E_BAD_PATH -> mark(job.id) { it.copy(status = JobStatus.BAD_NAME, error = e.code) }
-                                    else -> {
-                                        // the file changed after it was hashed: the next try hashes it again
-                                        if (e.code == SyncException.E_HASH_MISMATCH) hashes.remove(job.id)
-                                        mark(job.id) { it.copy(status = JobStatus.FAILED, error = e.code) }
-                                    }
-                                }
-                            } catch (e: IOException) {
-                                // this file could not be read on the phone (putLocal already opened a new
-                                // session if a PUT was under way): the others go on
-                                hashes.remove(job.id)
-                                mark(job.id) { it.copy(status = JobStatus.FAILED, error = 0) }
+                                break
                             }
+                            interrupted -= job.id
                             settled += job.id
                         }
                         break
@@ -747,11 +813,16 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 // also a reconnection the player refused (NOT_PAIRED, FORGOTTEN): the session is gone
                 val gone = lost(e)
                 if (gone) dropSession()
+                // the file in flight, and one whose connection dropped and that never came back, end
+                // as not sent (or cancelled): "waiting" would read as still queued
+                val code = (e as? SyncException)?.code ?: 0
+                val cut = HashSet(interrupted)
                 ui {
                     it.copy(link = if (gone) Link.Idle else it.link, transfer = it.transfer.copy(running = false, current = "", error = err,
                         jobs = it.transfer.jobs.map { j ->
-                            if (j.status == JobStatus.HASHING || j.status == JobStatus.SENDING) j.copy(status = if (cancel) JobStatus.CANCELLED else JobStatus.FAILED)
-                            else j
+                            if (j.status == JobStatus.HASHING || j.status == JobStatus.SENDING || (j.status == JobStatus.WAITING && j.id in cut)) {
+                                j.copy(status = if (cancel) JobStatus.CANCELLED else JobStatus.FAILED, done = 0, error = if (cancel) 0 else code)
+                            } else j
                         }))
                 }
             }
@@ -840,6 +911,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 val list = sortEntries(s.list(path))
                 ui { if (it.browser.path == path) it.copy(browser = it.browser.copy(entries = list, loading = false)) else it }
             } catch (e: Exception) {
+                if (abandoned(s, e)) return@execute
                 val err = errorOf(e)
                 if (lost(e)) dropSession()
                 ui {
@@ -912,6 +984,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 }
                 refreshAfterWrite(s)
             } catch (e: Exception) {
+                if (abandoned(s, e)) return@execute
                 val err = errorOf(e)
                 if (lost(e)) dropSession()
                 ui {
@@ -1494,6 +1567,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 var next = 0
                 val hashed = HashMap<Int, ByteArray>()
                 var attempt = 0
+                // the file whose connection dropped, and the files sent again after a card error
+                // that followed a drop (see startSend)
+                var cutAt = -1
+                val retried = HashSet<Int>()
+                var dropsBefore = drops
                 fun sending(d: Long, path: String) = ui { st ->
                     val r = (st.update as? UpdatePhase.Sending)?.reconnecting ?: 0
                     st.copy(update = UpdatePhase.Sending(d, total, path, r))
@@ -1517,6 +1595,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                                 h.first
                             }
                             val base = done
+                            dropsBefore = drops
                             val r = putLocal(Ns.SD, f.path, f.size, sha, 0, true, { off -> openAt(f.open, off) }) { n ->
                                 if (pace.due()) sending(base + n, f.path)
                             }
@@ -1526,6 +1605,9 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                         }
                         break
                     } catch (e: SyncException) {
+                        if ((e.code == SyncException.E_IO || e.code == SyncException.E_HASH_MISMATCH) && !stop && session != null &&
+                            (cutAt == next || drops != dropsBefore) && retried.add(next)) continue
+                        if (e.fatal || e.code == SyncException.CONNECTION_LOST || e.code == SyncException.RECONNECTED) cutAt = next
                         if (e.code == SyncException.RECONNECTED && !stop && session != null && attempt < RECONNECT_DELAYS.size) {
                             attempt++
                             continue
@@ -1689,12 +1771,20 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 // comes back by itself, or the sending connects again and goes on (the device resumes
                 // the tar from its part)
                 var attempt = 0
+                var retriedCard = false
                 fun sendSurely() {
                     while (true) {
+                        val dropsBefore = drops
                         try {
                             send()
                             return
                         } catch (e: SyncException) {
+                            // a card error right after a dropped connection (see startSend): once more
+                            if ((e.code == SyncException.E_IO || e.code == SyncException.E_HASH_MISMATCH) && !stop && session != null &&
+                                (drops != dropsBefore || attempt > 0) && !retriedCard) {
+                                retriedCard = true
+                                continue
+                            }
                             if (e.code == SyncException.RECONNECTED && !stop && session != null && attempt < RECONNECT_DELAYS.size) {
                                 attempt++
                                 continue
@@ -1808,6 +1898,8 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     override fun cancelWork() {
         stop = true
+        // also a reconnection of the open session (browsing, the keep-alive): it stops trying
+        if (reconnectingNow) giveUpReconnect = true
     }
 
     /** The device to reconnect to after a lost connection. */
@@ -1845,6 +1937,9 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
         /** Waits before each new connection when a transfer lost its own (about a minute in all). */
         val RECONNECT_DELAYS = longArrayOf(2_000, 4_000, 8_000, 15_000, 30_000)
+
+        /** The "of" of "connecting again (n of m)": the reconnection in progress says how many attempts it makes. */
+        fun reconnectOf(s: SyncState): Int = if (s.reconnectOf > 0) s.reconnectOf else RECONNECT_DELAYS.size
 
         /** What runs in the background, for the notification of the transfer service. */
         fun workOf(s: SyncState): WorkNote? {

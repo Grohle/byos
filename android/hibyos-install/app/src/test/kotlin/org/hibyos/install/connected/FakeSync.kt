@@ -51,6 +51,21 @@ class FakeCard {
 
     /** What UPDATE_STATUS answers after UPDATE_INSTALL, one per request (the last repeats); null drops the connection. */
     val statusScript = ArrayList<UpdateProgress?>()
+
+    /**
+     * A PUT that resumes from a part fails once with this device error, and the part is dropped
+     * (a part that the daemon's stop left inconsistent). 0: never.
+     */
+    var failResumeWith = 0
+
+    /** The next PUT fails once with this device error (no connection drop before it). 0: never. */
+    var failNextPutWith = 0
+
+    /**
+     * The next LIST loses its connection and the session connects again by itself (as the real
+     * session does): the listener hears attempt 1, this runs, then the session's cancel is asked.
+     */
+    var duringReconnect: (() -> Unit)? = null
 }
 
 fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
@@ -87,8 +102,27 @@ class FakeSession(private val card: FakeCard, override val info: SyncDeviceInfo)
         return SyncSpace(0, if (card.fat) 1 else 2, 32L shl 30, card.free, 1L shl 30, 100L shl 20)
     }
 
+    private var reconnectListener: (Int, Int) -> Unit = { _, _ -> }
+    private var abort: () -> Boolean = { false }
+
+    override fun onReconnect(listener: (attempt: Int, of: Int) -> Unit) {
+        reconnectListener = listener
+    }
+
+    override fun cancelWhen(cancelled: () -> Boolean) {
+        abort = cancelled
+    }
+
     override fun list(path: String): List<SyncEntry> {
         live()
+        card.duringReconnect?.let { hook ->
+            card.duringReconnect = null
+            reconnectListener(1, 4)
+            hook()
+            val stop = abort()
+            reconnectListener(0, 0)
+            if (stop) throw SyncException(SyncException.E_CANCELLED, "cancelled")
+        }
         checkPath(path, true)
         if (path.isNotEmpty() && card.folders.none { it == path }) {
             if (card.fileKey(path) != null) throw SyncException(SyncException.E_NOT_DIR) else throw SyncException(SyncException.E_NOT_FOUND)
@@ -186,6 +220,17 @@ class FakeSession(private val card: FakeCard, override val info: SyncDeviceInfo)
             }
         }
         val key = path + "|" + sha256.joinToString("") { "%02x".format(it) } + "|" + size
+        if (card.failNextPutWith != 0) {
+            val code = card.failNextPutWith
+            card.failNextPutWith = 0
+            throw SyncException(code, "card error")
+        }
+        if (card.failResumeWith != 0 && (card.parts[key]?.size ?: 0) >= 65536) {
+            val code = card.failResumeWith
+            card.failResumeWith = 0
+            card.parts.remove(key)
+            throw SyncException(code, "the kept part does not match")
+        }
         val part = card.parts[key] ?: ByteArray(0)
         val offset = minOf(part.size / 65536 * 65536L, size)
         if (size - offset + (1 shl 20) > card.free) throw SyncException(SyncException.E_NO_SPACE)

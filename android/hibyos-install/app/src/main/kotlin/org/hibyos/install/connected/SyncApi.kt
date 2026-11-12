@@ -148,10 +148,17 @@ interface SyncSession : Closeable {
     val host: String? get() = null
 
     /**
-     * [listener] is told while the session connects again: the attempt (from 1), then 0 once
-     * it is back or has given up.
+     * [listener] is told while the session connects again: the attempt (from 1) and the number
+     * of attempts, then 0 once it is back or has given up.
      */
-    fun onReconnect(listener: (attempt: Int) -> Unit) {}
+    fun onReconnect(listener: (attempt: Int, of: Int) -> Unit) {}
+
+    /**
+     * While a request connects again, [cancelled] is asked as well as the request's own cancel
+     * (requests without one, such as browsing and PING, have only this one): true stops the
+     * reconnection and the request ends with E_CANCELLED.
+     */
+    fun cancelWhen(cancelled: () -> Boolean) {}
 
     fun df(): SyncSpace
     fun list(path: String): List<SyncEntry>

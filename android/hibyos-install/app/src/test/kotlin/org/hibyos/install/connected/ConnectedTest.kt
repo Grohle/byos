@@ -319,9 +319,12 @@ class ConnectedTest {
         assertFalse(t.running)
         assertEquals(R.string.sync_err_lost, t.error?.title)
         assertTrue(m.state.link is Link.Idle)
-        // the file whose connection dropped is not shown as "not sent": it waits for the next try
-        assertEquals(JobStatus.WAITING, t.jobs[0].status)
-        assertEquals(0, t.problems)
+        // the connection never came back: the file it was sending is "not sent", not left as
+        // "waiting" next to the error (it would look queued); the next file still waits
+        assertEquals(JobStatus.FAILED, t.jobs[0].status)
+        assertEquals(SyncException.CONNECTION_LOST, t.jobs[0].error)
+        assertEquals(JobStatus.WAITING, t.jobs[1].status)
+        assertEquals(1, t.problems)
         assertEquals(2, t.left)
         // connect again and go on: the device resumes from the 64 KiB boundary of what it kept
         m.connectTo(env.c.device.copy(paired = true))
@@ -358,6 +361,93 @@ class ConnectedTest {
         // the notification saw the reconnection, and nothing runs any more
         assertTrue(env.notes.any { it?.reconnecting == 1 })
         assertNull(env.notes.last())
+    }
+
+    @Test
+    fun aCardErrorRightAfterADropIsSentAgainOnce() {
+        // the daemon was stopped in the middle of the file: the resumed PUT finds a part that does
+        // not match. The file is sent once more in the same run, not shown as "not sent" first
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        val big = ByteArray(300_000) { (it * 17).toByte() }
+        m.setDestination(Destination.MUSIC)
+        m.addPicked { listOf(item("Live", "cut.flac", data = big), item("Live", "c.mp3")) }
+        card.dropAfter = 200_000
+        card.failResumeWith = SyncException.E_HASH_MISMATCH
+        m.startSend()
+        val t = m.state.transfer
+        assertTrue(t.finished)
+        assertNull(t.error)
+        assertEquals(2, t.sent)
+        assertEquals(0, t.problems)
+        assertTrue(card.files["Music/Live/cut.flac"]!!.contentEquals(big))
+        // the second try started clean: the device had dropped the part
+        assertTrue(card.resumedAt.isEmpty())
+    }
+
+    @Test
+    fun aCardErrorWithoutADropIsShownAtOnce() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        m.setDestination(Destination.MUSIC)
+        m.addPicked { listOf(item("a.mp3"), item("b.mp3")) }
+        card.failNextPutWith = SyncException.E_IO
+        val putsBefore = card.puts
+        m.startSend()
+        val t = m.state.transfer
+        assertEquals(JobStatus.FAILED, t.jobs[0].status)
+        assertEquals(SyncException.E_IO, t.jobs[0].error)
+        assertEquals(JobStatus.SENT, t.jobs[1].status)
+        // no second try of the failed file in the same run
+        assertEquals(putsBefore + 2, card.puts)
+    }
+
+    @Test
+    fun browsingSaysWhenTheSessionConnectsAgain() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        card.folders += "Music"
+        var seen = 0
+        card.duringReconnect = { seen = m.state.reconnecting }
+        m.openFolder("")
+        assertEquals(1, seen)
+        assertEquals(0, m.state.reconnecting)
+        assertTrue(m.state.link is Link.Connected)
+        assertEquals(listOf("Music"), m.state.browser.entries?.map { it.name })
+    }
+
+    @Test
+    fun cancelStopsTheReconnectionOfBrowsing() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        card.duringReconnect = { m.cancelWork() }
+        m.openFolder("")
+        // the user gave up on the lost connection: back to the start, without an error to read
+        assertTrue(m.state.link is Link.Idle)
+        assertNull(m.state.error)
+        assertNull(m.state.browser.error)
+        assertEquals(0, m.state.reconnecting)
+        // a later cancel of something else is not taken for a stopped reconnection
+        m.connectTo(env.c.device.copy(paired = true))
+        assertTrue(m.state.link is Link.Connected)
+        m.openFolder("")
+        assertTrue(m.state.link is Link.Connected)
+    }
+
+    @Test
+    fun disconnectStopsTheReconnectionQuietly() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        card.duringReconnect = { m.disconnect() }
+        m.openFolder("")
+        assertTrue(m.state.link is Link.Idle)
+        assertNull(m.state.error)
+        assertNull(m.state.browser.error)
     }
 
     @Test

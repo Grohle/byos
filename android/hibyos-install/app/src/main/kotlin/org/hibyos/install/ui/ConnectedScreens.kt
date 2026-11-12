@@ -177,6 +177,24 @@ internal fun SyncPage(s: UiState, a: Actions, screen: Screen, busy: Boolean, tra
         trailing = trailing, bottom = bottom, content = content)
 }
 
+/**
+ * The open session lost its connection (the player's sync service restarted, the Wi-Fi blinked)
+ * and connects again by itself: said here instead of a screen that looks stuck. [cancel] adds a
+ * Cancel row (the connection screen has its own button).
+ */
+@Composable
+internal fun ReconnectingSection(st: org.hibyos.install.connected.SyncState, cancel: (() -> Unit)? = null) {
+    if (st.reconnecting <= 0) return
+    Section(footer = stringResource(R.string.sync_reconnecting_footer)) {
+        row {
+            Item(title = stringResource(R.string.sync_reconnecting, st.reconnecting, ConnectedModel.reconnectOf(st)), trailing = { Spinner() })
+        }
+        if (cancel != null) row {
+            Item(title = stringResource(R.string.cancel), titleColor = C.blue, onClick = cancel)
+        }
+    }
+}
+
 /** A sub-screen without a session: the way back to the connection screen. */
 @Composable
 internal fun NotConnected(a: Actions) {
@@ -207,6 +225,8 @@ fun SyncHome(s: UiState, a: Actions) {
                 }
             }
         }
+        // the session lost its connection and looks for the player again: Cancel stops that
+        link is Link.Connected && st.reconnecting > 0 -> { { GreyButton(stringResource(R.string.cancel)) { x.cancelWork() } } }
         link is Link.Connected -> { { LinkButton(stringResource(R.string.sync_disconnect)) { x.disconnect() } } }
         link is Link.Searching -> { { GreyButton(stringResource(R.string.cancel)) { x.cancelWork() } } }
         // a remembered player is waited for and looked for: that can take a few seconds
@@ -224,6 +244,7 @@ fun SyncHome(s: UiState, a: Actions) {
                 Hero(Glyphs.Player, C.green, link.device.name,
                     listOfNotNull(link.info.byosVersion?.let { "ByOS $it" },
                         stringResource(if (link.info.local) R.string.sync_link_usb else R.string.sync_link_wifi)).joinToString("  ·  "))
+                ReconnectingSection(st)
                 val sp = link.space
                 Section(header = stringResource(R.string.sync_card_h)) {
                     row {
@@ -534,7 +555,7 @@ fun SyncSend(s: UiState, a: Actions) {
             if (t.running) {
                 ProgressCard(title = stringResource(R.string.sync_sending),
                     fraction = if (t.total > 0) t.done.toFloat() / t.total else 0f,
-                    detail = if (t.reconnecting > 0) stringResource(R.string.sync_reconnecting, t.reconnecting, ConnectedModel.RECONNECT_DELAYS.size)
+                    detail = if (t.reconnecting > 0) stringResource(R.string.sync_reconnecting, t.reconnecting, ConnectedModel.reconnectOf(st))
                     else stringResource(if (t.hashing) R.string.sync_job_hashing else R.string.sync_job_sending),
                     detail2 = t.current.ifEmpty { " " }, note = stringResource(R.string.sync_sending_note_bg))
                 if (st.sharedWaiting) Section {
@@ -679,6 +700,7 @@ fun SyncFiles(s: UiState, a: Actions) {
             }
             Txt(listOf(stringResource(R.string.sync_card)).plus(if (b.path.isEmpty()) emptyList() else b.path.split('/')).joinToString("  ›  "),
                 T.sub, Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp), maxLines = 2, overflow = TextOverflow.MiddleEllipsis)
+            ReconnectingSection(st, cancel = { x.cancelWork() })
             if (b.moving != null) {
                 Section {
                     row {
@@ -1224,7 +1246,7 @@ fun SyncUpdate(s: UiState, a: Actions) {
             is UpdatePhase.Sending -> {
                 ProgressCard(title = stringResource(R.string.sync_update_sending, b.hibyosVersion),
                     fraction = if (u.total > 0) u.done.toFloat() / u.total else 0f,
-                    detail = if (u.reconnecting > 0) stringResource(R.string.sync_reconnecting, u.reconnecting, ConnectedModel.RECONNECT_DELAYS.size) else null,
+                    detail = if (u.reconnecting > 0) stringResource(R.string.sync_reconnecting, u.reconnecting, ConnectedModel.reconnectOf(st)) else null,
                     detail2 = u.path.ifEmpty { " " },
                     note = stringResource(R.string.sync_sending_note))
                 return@SyncPage

@@ -70,6 +70,8 @@ class CoreSync(
     private val net: SyncNetwork = SyncNetwork(),
     /** Waits between the attempts to reach a paired player (see [BtpReconnector]). */
     private val delaysMs: LongArray = BtpReconnector.DEFAULT_DELAYS_MS,
+    /** The same for a short request of an open session (browsing, PING, DF). */
+    private val quickDelaysMs: LongArray = BtpReconnector.QUICK_DELAYS_MS,
 ) : SyncConnector {
     private class Entry(val core: CorePaired, var host: String?)
 
@@ -169,20 +171,24 @@ class CoreSync(
         }
     }
 
-    /** Looks for one player by its device id: the UDP probe, then (from the second attempt) the sweep. */
-    private fun locate(idHex: String, attempt: Int): Found? {
+    /**
+     * Looks for one player by its device id: the UDP probe, then (from the second attempt, and
+     * only with [sweep]) the sweep. [cancelled] ends both.
+     */
+    private fun locate(idHex: String, attempt: Int, cancelled: () -> Boolean, sweep: Boolean = true): Found? {
         beforeDiscovery()
         try {
             val want = { f: Found -> f.deviceIdHex.equals(idHex, ignoreCase = true) }
             val udp = try {
-                BtpDiscovery.probe(1500, net.broadcasts(), net.discoveryPort, socket = net.datagram, stopWhen = want)
+                BtpDiscovery.probe(1500, net.broadcasts(), net.discoveryPort, socket = net.datagram, cancelled = cancelled, stopWhen = want)
             } catch (e: IOException) {
                 emptyList()
             }
             udp.firstOrNull(want)?.let { return it }
-            if (attempt < 1) return null
+            if (!sweep || attempt < 1 || cancelled()) return null
             val hosts = try { net.neighbours() } catch (e: Exception) { emptyList() }
-            return BtpDiscovery.sweep(hosts, hello("ByOS Install"), net.sweepPort, socketFactory = net.socket, stopWhen = want).firstOrNull(want)
+            return BtpDiscovery.sweep(hosts, hello("ByOS Install"), net.sweepPort, socketFactory = net.socket, cancelled = cancelled,
+                stopWhen = want).firstOrNull(want)
         } finally {
             afterDiscovery()
         }
@@ -194,17 +200,26 @@ class CoreSync(
 
     private fun open(host: String, port: Int, name: String): BtpSession = wrap { dial(host, port, name) }
 
-    private fun reconnector() = BtpReconnector(dial = { h, p -> dial(h, p, "ByOS Install") }, locate = ::locate, delaysMs = delaysMs)
+    private fun reconnector() = BtpReconnector(dial = { h, p -> dial(h, p, "ByOS Install") },
+        locate = { id, attempt, cancelled -> locate(id, attempt, cancelled) }, delaysMs = delaysMs)
+
+    /**
+     * For the short requests of an open session: a 4 s connect, the UDP probe only (no sweep of
+     * the subnet) and [quickDelaysMs], so that a player that went away is reported in seconds.
+     */
+    private fun quickReconnector() = BtpReconnector(
+        dial = { h, p -> BtpSession.connect(h, p, hello("ByOS Install"), socketFactory = net.socket, connectTimeoutMs = QUICK_CONNECT_MS) },
+        locate = { id, attempt, cancelled -> locate(id, attempt, cancelled, sweep = false) }, delaysMs = quickDelaysMs)
 
     /** A session that comes back by itself, stored under its new address when the player moved. */
     private fun link(core: CorePaired, secret: ByteArray, reached: Reached, r: BtpReconnector = reconnector()) =
-        BtpLink(r, core, secret, reached) { h, _ ->
+        BtpLink(r, core, secret, reached, onMoved = { h, _ ->
             try {
                 remember(core, h)
             } catch (e: IOException) {
                 // only the remembered address is older
             }
-        }
+        }, quick = quickReconnector())
 
     /**
      * Opens a session with a paired player and runs AUTH (8.3).
@@ -353,6 +368,9 @@ class CoreSync(
     }
 
     companion object {
+        /** TCP connect and HELLO limit of the quick reconnection. */
+        const val QUICK_CONNECT_MS = 4_000
+
         fun isLoopback(host: String): Boolean = try {
             InetAddress.getByName(host).isLoopbackAddress
         } catch (e: Exception) {
@@ -417,47 +435,57 @@ private class CoreSession(private val link: BtpLink?, private val plain: BtpSess
 
     override val host: String? get() = link?.host
 
-    @Volatile private var listener: (Int) -> Unit = {}
+    @Volatile private var listener: (Int, Int) -> Unit = { _, _ -> }
+    @Volatile private var abort: () -> Boolean = { false }
 
-    override fun onReconnect(listener: (attempt: Int) -> Unit) {
+    override fun onReconnect(listener: (attempt: Int, of: Int) -> Unit) {
         this.listener = listener
     }
 
-    /** Runs [f] on the session; on a lost connection, see [BtpLink.call]. */
-    private fun <T> run(retry: Boolean, cancelled: () -> Boolean = { false }, f: (BtpSession) -> T): T {
+    override fun cancelWhen(cancelled: () -> Boolean) {
+        abort = cancelled
+    }
+
+    /**
+     * Runs [f] on the session; on a lost connection, see [BtpLink.call]. [quick]: a short
+     * request, reconnected with fewer, shorter attempts. The reconnection stops when [cancelled]
+     * or the session's own cancel ([cancelWhen]) says so.
+     */
+    private fun <T> run(retry: Boolean, cancelled: (() -> Boolean)? = null, quick: Boolean = false, f: (BtpSession) -> T): T {
         val l = link ?: return CoreSync.wrap { f(plain!!) }
+        val stop = { cancelled?.invoke() == true || abort() }
         var told = false
         try {
             return CoreSync.wrap {
                 try {
-                    l.call(retry, cancelled, onRetry = { n, _ ->
+                    l.call(retry, stop, onRetry = { n, of ->
                         told = true
-                        listener(n)
-                    }, f = f)
+                        listener(n, of)
+                    }, quick = quick, f = f)
                 } catch (e: BtpReconnectedException) {
                     throw SyncException(SyncException.RECONNECTED, e.message, e)
                 }
             }
         } finally {
-            if (told) listener(0)
+            if (told) listener(0, 0)
         }
     }
 
-    override fun df(): SyncSpace = run(true) { s ->
+    override fun df(): SyncSpace = run(true, quick = true) { s ->
         val d = s.df()
         SyncSpace(d.sdState, d.sdFs, d.sdTotal, d.sdFree, d.dataTotal, d.dataFree)
     }
 
-    override fun list(path: String): List<SyncEntry> = run(true) { s -> s.list(path).map { SyncEntry(it.name, it.kind, it.size, it.mtime) } }
+    override fun list(path: String): List<SyncEntry> = run(true, quick = true) { s -> s.list(path).map { SyncEntry(it.name, it.kind, it.size, it.mtime) } }
 
-    override fun stat(path: String): SyncEntry? = run(true) { s ->
+    override fun stat(path: String): SyncEntry? = run(true, quick = true) { s ->
         s.statOrNull(path)?.let { SyncEntry(SyncPaths.name(path), it.kind, it.size, it.mtime) }
     }
 
     // with parents, MKDIR of a folder that is there is fine: it can run twice
-    override fun mkdir(path: String, parents: Boolean) = run(parents) { s -> s.mkdir(path, parents) }
-    override fun move(src: String, dst: String, replace: Boolean) = run(false) { s -> s.move(src, dst, replace) }
-    override fun delete(path: String, recursive: Boolean) = run(false) { s -> s.delete(path, recursive) }
+    override fun mkdir(path: String, parents: Boolean) = run(parents, quick = true) { s -> s.mkdir(path, parents) }
+    override fun move(src: String, dst: String, replace: Boolean) = run(false, quick = true) { s -> s.move(src, dst, replace) }
+    override fun delete(path: String, recursive: Boolean) = run(false, quick = true) { s -> s.delete(path, recursive) }
 
     /**
      * A PUT that lost its connection is sent again on the new session: the device resumes it from
@@ -504,7 +532,7 @@ private class CoreSession(private val link: BtpLink?, private val plain: BtpSess
             s.dbSnapshot(cancelled, Progress { d, t -> progress(d, t) }) { DataSink { b, off, len -> out.write(b, off, len) } }.sha256
         }
 
-    override fun libRescan(paths: List<String>?) = run(true) { s -> s.libRescan(paths) }
+    override fun libRescan(paths: List<String>?) = run(true, quick = true) { s -> s.libRescan(paths) }
 
     override fun updateStage(allowDowngrade: Boolean): StagedUpdate = run(false) { s ->
         val r = s.updateStage(allowDowngrade)
@@ -515,9 +543,9 @@ private class CoreSession(private val link: BtpLink?, private val plain: BtpSess
         run(false) { s -> s.updateInstall(noConfirm = false, allowDowngrade = allowDowngrade) }
     }
 
-    override fun ping() = run(true) { s -> s.ping() }
+    override fun ping() = run(true, quick = true) { s -> s.ping() }
 
-    override fun updateStatus(): UpdateProgress = run(true) { s ->
+    override fun updateStatus(): UpdateProgress = run(true, quick = true) { s ->
         val r = s.updateStatus()
         UpdateProgress(r.state, r.permille, r.error, r.version)
     }

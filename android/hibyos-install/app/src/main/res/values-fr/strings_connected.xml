@@ -337,4 +337,5 @@
     <string name="sync_err_reconnected">La connexion a été coupée un instant</string>
     <string name="sync_hint_reconnected">Le baladeur est de nouveau connecté. Réessayez.</string>
     <string name="sync_paired_no_address">Touchez pour le chercher sur ce Wi-Fi</string>
+    <string name="sync_reconnecting_footer">Le service de synchronisation du baladeur redémarre peut-être. Vos fichiers et l\'association sont conservés.</string>
 </resources>

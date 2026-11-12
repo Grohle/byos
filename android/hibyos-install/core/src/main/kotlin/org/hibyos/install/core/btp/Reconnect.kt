@@ -28,8 +28,8 @@ class Reached(val session: BtpSession, val host: String, val port: Int, val atte
 class BtpReconnector(
     /** TCP connect and HELLO; throws as [BtpSession.connect]. */
     private val dial: (host: String, port: Int) -> BtpSession,
-    /** Looks for the device on the network; [attempt] counts from 0. Null when it did not answer. */
-    private val locate: (deviceIdHex: String, attempt: Int) -> Found? = { _, _ -> null },
+    /** Looks for the device on the network; [attempt] counts from 0. Null when it did not answer or [cancelled]. */
+    private val locate: (deviceIdHex: String, attempt: Int, cancelled: () -> Boolean) -> Found? = { _, _, _ -> null },
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
     val delaysMs: LongArray = DEFAULT_DELAYS_MS,
 ) {
@@ -70,7 +70,7 @@ class BtpReconnector(
             }
             if (!look || cancelled()) continue
             val f = try {
-                locate(idHex, attempt)
+                locate(idHex, attempt, cancelled)
             } catch (e: IOException) {
                 null
             }
@@ -146,6 +146,12 @@ class BtpReconnector(
         /** About 20 s in all: long enough for the shell to start hibysync again. */
         val DEFAULT_DELAYS_MS = longArrayOf(0, 1_000, 2_000, 3_000, 5_000, 8_000)
 
+        /**
+         * For a short request (browsing, PING, DF): about 6 s of waiting, enough for a daemon
+         * restart, but a player that went away is reported within seconds, not minutes.
+         */
+        val QUICK_DELAYS_MS = longArrayOf(0, 1_000, 2_000, 3_000)
+
         /** Device errors that a later attempt can get past. */
         val TRANSIENT = setOf(Btp.E_BUSY, Btp.E_RATE_LIMIT, Btp.E_TIMEOUT)
 
@@ -154,8 +160,12 @@ class BtpReconnector(
             is BtpConnectionException -> true
             is java.net.SocketTimeoutException -> true
             is java.net.SocketException -> true
-            // the device's idle timeout or shutdown arrives as an ERROR on stream 0, then it closes
-            is BtpException -> e.remote && e.code == Btp.E_TIMEOUT
+            // the device's idle timeout arrives as an ERROR E_TIMEOUT on stream 0, then it closes.
+            // A daemon that stops (QUIT or SIGTERM from the shell: low memory, Wi-Fi option changed,
+            // shell restart) ends every running stream with ERROR E_CANCELLED, then sends BYE. The
+            // client never gets a remote E_CANCELLED for a cancel of its own: BtpSession turns the
+            // answer to its CANCEL into a local one (remote = false).
+            is BtpException -> e.remote && (e.code == Btp.E_TIMEOUT || e.code == Btp.E_CANCELLED)
             else -> false
         }
     }
@@ -167,10 +177,14 @@ class BtpReconnectedException(cause: Exception) :
 
 /**
  * A session with a paired device that comes back by itself: when a request finds the
- * connection gone (hibysync restarted, Wi-Fi blinked, the phone slept), [call] opens a new one
- * with [reconnector] (AUTH with the stored keys, no code) and, for requests that can safely run
- * twice, runs the request again. Requests that must not run twice get [BtpReconnectedException]
- * once the new session is open.
+ * connection gone (hibysync restarted or was stopped, Wi-Fi blinked, the phone slept), [call]
+ * opens a new one with [reconnector] (AUTH with the stored keys, no code) and, for requests that
+ * can safely run twice, runs the request again. Requests that must not run twice get
+ * [BtpReconnectedException] once the new session is open.
+ *
+ * [quick] (optional) is used instead of [reconnector] for short requests (`call(quick = true)`):
+ * fewer, shorter attempts, so that browsing or a keep-alive does not wait minutes for a player
+ * that went away.
  *
  * Not thread-safe: one request at a time, as [BtpSession].
  */
@@ -181,6 +195,7 @@ class BtpLink(
     first: Reached,
     /** Told when the device was reached at another address (to store it). */
     private val onMoved: (host: String, port: Int) -> Unit = { _, _ -> },
+    private val quick: BtpReconnector? = null,
 ) : Closeable {
     @Volatile var session: BtpSession = first.session
         private set
@@ -190,47 +205,67 @@ class BtpLink(
         private set
 
     /** New sessions opened after the first one. */
-    var reconnects = 0
+    @Volatile var reconnects = 0
         private set
 
     @Volatile private var closed = false
 
     /**
      * Runs [f] on the session. On a lost connection: a new session, then [f] again when [retry]
-     * (it gets the new session), otherwise [BtpReconnectedException].
+     * (it gets the new session), otherwise [BtpReconnectedException]. [onRetry] is told the attempt
+     * (from 1) and the number of attempts before each one; [cancelled] stops the reconnection.
      */
-    fun <T> call(retry: Boolean, cancelled: () -> Boolean = { false }, onRetry: (Int, Exception) -> Unit = { _, _ -> },
-                 f: (BtpSession) -> T): T {
+    fun <T> call(retry: Boolean, cancelled: () -> Boolean = { false }, onRetry: (attempt: Int, of: Int) -> Unit = { _, _ -> },
+                 quick: Boolean = false, f: (BtpSession) -> T): T {
         val s = session
         try {
             return f(s)
         } catch (e: Exception) {
             if (closed || !BtpReconnector.isConnectionLoss(e)) throw e
-            reopen(cancelled, onRetry, e)
+            if (cancelled()) throw BtpException(Btp.E_CANCELLED, "cancelled")
+            reopen(cancelled, onRetry, e, quick)
             if (!retry) throw BtpReconnectedException(e)
         }
         return f(session)
     }
 
-    /** Replaces the session with a new one (throws the reconnector's error, or [cause] when cancelled before any attempt). */
-    fun reopen(cancelled: () -> Boolean = { false }, onRetry: (Int, Exception) -> Unit = { _, _ -> }, cause: Exception? = null) {
+    /**
+     * Replaces the session with a new one. Throws [BtpConnectionException] when the device could
+     * not be reached again (the last error is its cause), the reconnector's error when retrying
+     * cannot help (a forgotten client, another device), a local E_CANCELLED when [cancelled], or
+     * [cause] when the link was closed.
+     */
+    fun reopen(cancelled: () -> Boolean = { false }, onRetry: (attempt: Int, of: Int) -> Unit = { _, _ -> },
+               cause: Exception? = null, quick: Boolean = false) {
         try {
             session.close()
         } catch (e: Exception) {
             // already gone
         }
         if (closed) throw cause ?: BtpConnectionException("closed")
-        val r = reconnector.open(paired, clientSecret, host, port, cancelled, onRetry)
+        val r = (if (quick) this.quick else null) ?: reconnector
+        val of = r.delaysMs.size
+        onRetry(1, of)
+        val reached = try {
+            r.open(paired, clientSecret, host, port, cancelled) { n, _ -> onRetry(n + 1, of) }
+        } catch (e: BtpException) {
+            // a device that stayed busy (both session slots taken, an old session still open) or
+            // rate limited the last attempt: the connection is still lost, not a request refused
+            if (e.remote && e.code in BtpReconnector.TRANSIENT) {
+                throw BtpConnectionException("the connection could not be opened again: ${e.message}", e)
+            }
+            throw e
+        }
         if (closed) {
-            r.session.close()
+            reached.session.close()
             throw cause ?: BtpConnectionException("closed")
         }
-        val moved = r.host != host || r.port != port
-        session = r.session
-        host = r.host
-        port = r.port
+        val moved = reached.host != host || reached.port != port
+        session = reached.session
+        host = reached.host
+        port = reached.port
         reconnects++
-        if (moved) onMoved(r.host, r.port)
+        if (moved) onMoved(reached.host, reached.port)
     }
 
     override fun close() {

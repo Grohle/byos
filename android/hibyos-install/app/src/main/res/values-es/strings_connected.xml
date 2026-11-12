@@ -337,4 +337,5 @@
     <string name="sync_err_reconnected">La conexión se cortó un momento</string>
     <string name="sync_hint_reconnected">El reproductor vuelve a estar conectado. Inténtalo de nuevo.</string>
     <string name="sync_paired_no_address">Toca para buscarlo en esta Wi-Fi</string>
+    <string name="sync_reconnecting_footer">Puede que el servicio de sincronización del reproductor se esté reiniciando. Tus archivos y la vinculación se conservan.</string>
 </resources>

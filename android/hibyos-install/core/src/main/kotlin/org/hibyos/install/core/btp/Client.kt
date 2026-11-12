@@ -563,10 +563,12 @@ class BtpSession private constructor(
         /**
          * Connects over TCP and exchanges HELLO. [socketFactory] makes the unconnected socket
          * (Android ties it to the Wi-Fi network, so a phone that prefers mobile data still
-         * reaches the player).
+         * reaches the player). [timeoutMs] is the read timeout of the session; [connectTimeoutMs]
+         * bounds the TCP connect and the HELLO answer (a quick check that the device is there).
          */
         fun connect(host: String, port: Int, hello: Hello, timeoutMs: Int = 15000,
-                    socketFactory: () -> Socket = { Socket() }, random: (Int) -> ByteArray = BtpCrypto::random): BtpSession {
+                    socketFactory: () -> Socket = { Socket() }, connectTimeoutMs: Int = timeoutMs,
+                    random: (Int) -> ByteArray = BtpCrypto::random): BtpSession {
             val s = try {
                 socketFactory()
             } catch (e: IOException) {
@@ -574,13 +576,22 @@ class BtpSession private constructor(
             }
             try {
                 s.tcpNoDelay = true
-                s.connect(InetSocketAddress(host, port), timeoutMs)
-                s.soTimeout = timeoutMs
+                s.connect(InetSocketAddress(host, port), connectTimeoutMs)
+                s.soTimeout = connectTimeoutMs
             } catch (e: IOException) {
                 try { s.close() } catch (x: IOException) {}
                 throw BtpConnectionException("cannot connect to $host:$port: ${e.message}", e)
             }
-            return open(s.getInputStream(), s.getOutputStream(), hello, null, s, random)
+            val session = open(s.getInputStream(), s.getOutputStream(), hello, null, s, random)
+            if (connectTimeoutMs != timeoutMs) {
+                try {
+                    s.soTimeout = timeoutMs
+                } catch (e: IOException) {
+                    session.close()
+                    throw BtpConnectionException("cannot connect to $host:$port: ${e.message}", e)
+                }
+            }
+            return session
         }
     }
 }

@@ -4,6 +4,7 @@ import org.hibyos.install.core.testing.FakeDevice
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -51,9 +52,10 @@ class ReconnectTest {
 
     private fun reconnector(udp: Int? = null, delays: LongArray = longArrayOf(0, 100, 200, 300, 500, 800)) = BtpReconnector(
         dial = ::dial,
-        locate = { id, _ ->
+        locate = { id, _, cancelled ->
             if (udp == null) null
-            else BtpDiscovery.probe(600, listOf(localhost), udp, stopWhen = { it.deviceIdHex == id }).firstOrNull { it.deviceIdHex == id }
+            else BtpDiscovery.probe(600, listOf(localhost), udp, cancelled = cancelled, stopWhen = { it.deviceIdHex == id })
+                .firstOrNull { it.deviceIdHex == id }
         },
         delaysMs = delays,
     )
@@ -201,6 +203,121 @@ class ReconnectTest {
             // the same file again is identical: skipped
             val again = it.call(retry = true) { s -> s.put("song.flac", data.size.toLong(), sha(data), Btp.MODE_SKIP_IDENTICAL) { data.inputStream() } }
             assertEquals(1, again.result)
+        }
+    }
+
+    // ---- the shell stops hibysync gracefully (shutdown_all: ERROR E_CANCELLED on the stream, BYE)
+
+    private fun putAll(l: BtpLink, path: String, data: ByteArray): PutOutcome = l.call(retry = true) { s ->
+        s.put(path, data.size.toLong(), sha(data), Btp.MODE_SKIP_IDENTICAL) { off -> data.inputStream(off.toInt(), data.size - off.toInt()) }
+    }
+
+    @Test
+    fun aGracefulStopInTheMiddleOfAnUploadIsResumed() {
+        val data = ByteArray(700_000) { (it * 13 + 1).toByte() }
+        link(reconnector()).use {
+            dev.stopPutAfter = 300_000
+            val out = putAll(it, "stopped.flac", data)
+            assertEquals(1, dev.gracefulStops)
+            // not a cancel by the user: the session came back and the PUT resumed from the part
+            assertEquals(0, out.result)
+            assertTrue("resumed, not sent again from the start", out.resumedFrom > 0)
+            assertArrayEquals(data, File(dir, "sd/stopped.flac").readBytes())
+            assertEquals(1, it.reconnects)
+        }
+    }
+
+    @Test
+    fun aGracefulStopBeforePutDoneIsResumed() {
+        val data = ByteArray(700_000) { (it * 5 + 3).toByte() }
+        link(reconnector()).use {
+            dev.stopAtPutEnd = true
+            val out = putAll(it, "waiting.flac", data)
+            assertEquals(1, dev.gracefulStops)
+            assertEquals(0, out.result)
+            assertTrue(out.resumedFrom > 0)
+            assertArrayEquals(data, File(dir, "sd/waiting.flac").readBytes())
+            assertEquals(1, it.reconnects)
+        }
+    }
+
+    @Test
+    fun aGracefulStopInTheMiddleOfADownloadGoesOn() {
+        val data = ByteArray(700_000) { (it * 11 + 2).toByte() }
+        File(dir, "sd/big.bin").writeBytes(data)
+        link(reconnector()).use {
+            dev.stopGetAfter = 200_000
+            val out = java.io.ByteArrayOutputStream()
+            var pos = 0L
+            val r = it.call(retry = true) { s ->
+                s.get("big.bin", pos) { DataSink { b, off, len -> out.write(b, off, len); pos += len } }
+            }
+            assertEquals(1, dev.gracefulStops)
+            assertArrayEquals(data, out.toByteArray())
+            assertArrayEquals(sha(data), r.sha256)
+            assertEquals(1, it.reconnects)
+        }
+    }
+
+    @Test
+    fun aCancelOfTheClientIsNotTakenForALostConnection() {
+        assertTrue(BtpReconnector.isConnectionLoss(BtpException(Btp.E_CANCELLED, "stopping", remote = true)))
+        assertFalse(BtpReconnector.isConnectionLoss(BtpException(Btp.E_CANCELLED, "cancelled")))
+        val data = ByteArray(700_000) { it.toByte() }
+        File(dir, "sd/slow.bin").writeBytes(data)
+        dev.getDelayMs = 5
+        link(reconnector()).use {
+            var cancel = false
+            try {
+                it.call(retry = true, cancelled = { cancel }) { s ->
+                    s.get("slow.bin", 0, cancelled = { cancel }, progress = Progress { d, _ -> if (d > 100_000) cancel = true }) {
+                        DataSink { _, _, _ -> }
+                    }
+                }
+                fail("cancelled by the client")
+            } catch (e: BtpException) {
+                assertEquals(Btp.E_CANCELLED, e.code)
+                assertFalse(e.remote)
+            }
+            assertEquals(0, it.reconnects)
+        }
+    }
+
+    @Test
+    fun aPlayerThatStaysBusyAfterALossIsStillALostConnection() {
+        link(reconnector(delays = longArrayOf(0, 50, 50))).use {
+            dev.restart()
+            dev.busyHellos = 100
+            try {
+                it.call(retry = true) { s -> s.df() }
+                fail("never reached again")
+            } catch (e: BtpConnectionException) {
+                // a lost connection (the app drops the session), not a "busy" answer to the request
+                val c = e.cause as BtpException
+                assertEquals(Btp.E_BUSY, c.code)
+                assertTrue(BtpReconnector.isConnectionLoss(e))
+            }
+        }
+    }
+
+    @Test
+    fun aShortRequestUsesTheQuickReconnector() {
+        val quick = reconnector(delays = longArrayOf(0, 50))
+        val full = reconnector(delays = longArrayOf(0, 2000, 2000, 2000))
+        val l = BtpLink(full, paired, secret, full.open(paired, secret, "127.0.0.1", port), quick = quick)
+        l.use {
+            dev.refuseConnections = true
+            dev.restart()
+            val tries = ArrayList<Pair<Int, Int>>()
+            val started = System.nanoTime()
+            try {
+                it.call(retry = true, onRetry = { n, of -> tries += n to of }, quick = true) { s -> s.ping() }
+                fail("the player went away")
+            } catch (e: java.io.IOException) {
+                assertTrue(BtpReconnector.isConnectionLoss(e))
+            }
+            assertTrue("reported in well under the full patience", System.nanoTime() - started < 1_500_000_000L)
+            assertEquals(listOf(1 to 2, 2 to 2), tries)
         }
     }
 

@@ -902,7 +902,15 @@ found and kept on a real Wi-Fi:
   that does not open are never retried.
 - An open session whose connection drops is replaced by a new one (AUTH, no code), and the
   requests that can safely run twice are sent again: a PUT resumes from the part the device
-  kept (11.3), a GET goes on from the bytes already received.
+  kept (11.3), a GET goes on from the bytes already received. A lost connection is an I/O
+  error, BYE, `E_TIMEOUT` on stream 0, or a remote `E_CANCELLED` on a stream the client did
+  not cancel: a stopping daemon ends every running stream with `E_CANCELLED` and then sends
+  BYE (18.2), so this is how a graceful stop by the shell reaches the client. The answer to
+  the client's own CANCEL stays a cancel.
+- Short requests (browsing, PING, DF) use fewer, shorter attempts (0, 1, 2, 3 s, a 4 s connect
+  timeout, no sweep), so that a player that went away is reported within seconds. When the
+  attempts end on `E_BUSY` or `E_RATE_LIMIT`, the client reports a lost connection, not the
+  refusal.
 
 ## 17. Limits and timeouts
 

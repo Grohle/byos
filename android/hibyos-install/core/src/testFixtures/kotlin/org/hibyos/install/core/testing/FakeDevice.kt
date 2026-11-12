@@ -84,6 +84,18 @@ class FakeDevice(val sd: File, val data: File) {
     @Volatile var busyHellos = 0
     /** Connections accepted so far (each listener). */
     @Volatile var accepted = 0
+    /**
+     * The shell stops hibysync gracefully (QUIT or SIGTERM: low memory, Wi-Fi option changed,
+     * shell restart) once this many PUT data bytes were received: like shutdown_all(), the
+     * running PUT gets ERROR E_CANCELLED, then BYE, then the connection closes.
+     */
+    @Volatile var stopPutAfter: Long = -1
+    /** The same graceful stop when PUT_END arrives, before PUT_DONE (the part holds every byte). */
+    @Volatile var stopAtPutEnd = false
+    /** The same graceful stop once this many bytes of a GET were sent. */
+    @Volatile var stopGetAfter: Long = -1
+    /** Graceful stops done ([stopPutAfter], [stopAtPutEnd], [stopGetAfter]). */
+    @Volatile var gracefulStops = 0
     /** Entries per LIST_R page (small pages exercise the client's paging). */
     @Volatile var listPage = 3
     /** Uploads finished in NS_SD. */
@@ -226,6 +238,26 @@ class FakeDevice(val sd: File, val data: File) {
         var incomingThisSession = false
 
         fun err(stream: Int, code: Int, msg: String) = ch.send(Frame(Btp.ERROR, stream, ErrorMsg(code, msg).encode(), Btp.F_END))
+
+        /**
+         * hibysync's shutdown_all(1): the running stream ends with ERROR E_CANCELLED, then BYE, then
+         * the session closes. What the client still sends meanwhile is read and dropped, so that it
+         * reads the ERROR (not a reset), as it does when the daemon's last frames reach it first.
+         */
+        fun stopGracefully(stream: Int): Nothing {
+            gracefulStops++
+            log += "SHUTDOWN"
+            err(stream, Btp.E_CANCELLED, "cancelled")
+            ch.send(Frame(Btp.BYE, 0, ByteArray(0)))
+            try {
+                sock.soTimeout = 300
+                val until = System.nanoTime() + 2_000_000_000L
+                while (System.nanoTime() < until) ch.receive()
+            } catch (e: Exception) {
+                // the client closed, or stayed quiet
+            }
+            throw BtpException(-1, "stopped")
+        }
         fun ok(stream: Int, type: Int, payload: ByteArray = ByteArray(0)) = ch.send(Frame(type, stream, payload, Btp.F_END))
 
         fun run() {
@@ -546,6 +578,11 @@ class FakeDevice(val sd: File, val data: File) {
                     if (withSha) md.update(buf, 0, n)
                     ch.send(Frame(Btp.DATA, s, Payloads.data(pos, buf, 0, n)), flush = getDelayMs > 0)
                     pos += n
+                    val stopAt = stopGetAfter
+                    if (stopAt >= 0 && pos - off >= stopAt) {
+                        stopGetAfter = -1
+                        stopGracefully(s)
+                    }
                     if (getDelayMs > 0) Thread.sleep(getDelayMs)
                 }
             }
@@ -614,9 +651,19 @@ class FakeDevice(val sd: File, val data: File) {
                                 log += "DROPPED at $pos"
                                 return false
                             }
+                            val stopAt = stopPutAfter
+                            if (stopAt >= 0 && pos >= stopAt) {
+                                stopPutAfter = -1
+                                raf.fd.sync()
+                                stopGracefully(s)
+                            }
                         }
                         Btp.PUT_END -> {
                             raf.fd.sync()
+                            if (stopAtPutEnd) {
+                                stopAtPutEnd = false
+                                stopGracefully(s)
+                            }
                             break
                         }
                         else -> { err(s, Btp.E_PROTO, "unexpected during PUT"); return false }
