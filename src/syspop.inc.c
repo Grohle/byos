@@ -79,6 +79,7 @@ static void sp_start(int kind)
         memcpy(sp_base, fr0_shm, HM_FRAME_BYTES);
         sp_cap = 1;
     }
+    if (!sp_cap) memcpy(sp_base, fr0, HM_FRAME_BYTES);   /* app del shell: su ultimo fotograma */
     sp_on = 1; sp_closing = 0; sp_t0 = now_ms();
     lcd_boost();
     lg("aviso: %s (%s)", kind == 1 ? "biblioteca actualizandose" : kind == 2 ? "volumen alto" : "auriculares conectados", sp_cap ? "sobre HiBy" : "sobre el shell");
@@ -100,7 +101,7 @@ static void syspop_tick(void)
         if (sp_closing && t - sp_tc >= SP_OUT_MS) sp_finish();
         else {
             uint32_t p = st->presents;
-            sp_present_over(sp_cap ? sp_base : fr0);
+            sp_present_over(sp_base);     /* en una app: su ultimo fotograma terminado, nunca fr0 a medio pintar */
             cmd('P'); while (st->presents == p && now_ms() - t < 80) msleep(1);
         }
     }
@@ -109,15 +110,17 @@ static void syspop_tick(void)
 /* present() con el aviso sobre una app: lo compone entero sobre fr0 (0 si no hay aviso) */
 static int syspop_owns_frame(void)
 {
-    if (!sp_on || sp_cap || sp_in_tick) return 0;
-    sp_in_tick = 1; sp_present_over(fr0); sp_in_tick = 0;
-    return 1;
+    if (!sp_on || sp_cap) return 0;
+    memcpy(sp_base, fr0, HM_FRAME_BYTES);          /* la app acaba de terminar este fotograma */
+    if (!sp_in_tick) { sp_in_tick = 1; sp_present_over(sp_base); sp_in_tick = 0; }
+    return 1;                                      /* dentro de un paso: lo presenta el paso, con tarjeta */
 }
 /* gancho de present(): la app acaba de presentar su fotograma; se pone la tarjeta encima */
 static void syspop_after_present(void)
 {
     if (!sp_on || sp_cap || sp_in_tick) return;
-    sp_in_tick = 1; sp_present_over(fr0); sp_in_tick = 0;
+    memcpy(sp_base, fr0, HM_FRAME_BYTES);
+    sp_in_tick = 1; sp_present_over(sp_base); sp_in_tick = 0;
 }
 /* gancho de read_pkt: un toque que empieza en la tarjeta es suyo. Devuelve 1 si se lo queda. */
 static int syspop_touch(const struct pkt *p)
