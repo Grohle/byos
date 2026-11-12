@@ -404,8 +404,37 @@ static void nu_draw_prog(uint16_t *d)
     }
     nu.shown_sec = pos / 1000;
 }
+/* aleatorio (izquierda) y repetir (derecha), como en iOS: icono gris apagado; activo, blanco sobre
+ * una ficha clara. Modos de HiBy (setting 0x1a, excluyentes): 0 en orden, 1 repetir cancion,
+ * 2 aleatorio, 3 repetir lista */
+static void nu_repeat_icon(uint16_t *d, int cx, int cy, uint16_t col, int one)
+{
+    fill_rrect(d, cx - 9, cy - 6, 18, 2, 1, col, 255); fill_rrect(d, cx - 9, cy + 4, 18, 2, 1, col, 255);   /* las dos ramas */
+    fill_rrect(d, cx - 9, cy - 6, 2, 7, 1, col, 255); fill_rrect(d, cx + 7, cy - 1, 2, 7, 1, col, 255);
+    for (int i = 0; i < 4; i++) { fill_rrect(d, cx + 6 - i, cy - 6 - i, 2, 2 + i * 2, 1, col, 255); fill_rrect(d, cx - 8 + i, cy + 4 - i, 2, 2 + i * 2, 1, col, 255); }   /* puntas */
+    if (one) { fill_circle(d, cx + 9, cy - 8, 5.5f, col, 255); draw_text(d, cx + 6, cy - 4, "1", 9, rgb(20, 20, 22), 8, 0, H); }
+}
+static void nu_draw_modes(uint16_t *d)
+{
+    int pm = ps_ok[PS_PLAYMODE] ? ps_v[PS_PLAYMODE] : 0, sh = pm == 2, rp = pm == 1 || pm == 3;
+    uint16_t on = 0xFFFF, off = nu.c_sub;
+    if (sh) fill_rrect(d, 24 - 15, NU_CY - 13, 30, 26, 7, 0xFFFF, 46);
+    mu_shuffle_icon(d, 24 - 8, NU_CY, sh ? on : off);
+    if (rp) fill_rrect(d, W - 24 - 15, NU_CY - 13, 30, 26, 7, 0xFFFF, 46);
+    nu_repeat_icon(d, W - 24, NU_CY, rp ? on : off, pm == 1);
+}
+static void nu_mode_tap(int which)        /* 8 aleatorio, 9 repetir */
+{
+    int pm = ps_ok[PS_PLAYMODE] ? ps_v[PS_PLAYMODE] : 0, nm;
+    if (which == 8) nm = pm == 2 ? 0 : 2;                                         /* quitar aleatorio: en orden */
+    else nm = pm == 0 || pm == 2 ? 3 : pm == 3 ? 1 : 0;                           /* no -> lista -> cancion -> no */
+    ps_set_now(PS_PLAYMODE, nm); ps_ok[PS_PLAYMODE] = 1;
+    toast(tr(nm == 2 ? "Aleatorio activado" : nm == 3 ? "Repetir todo" : nm == 1 ? "Repetir esta canción" : which == 8 ? "Aleatorio desactivado" : "Repetir desactivado"));
+    lg("reproduciendo: modo %d -> %d", pm, nm);
+}
 static void nu_draw_ctl(uint16_t *d)
 {
+    nu_draw_modes(d);
     for (int i = 0; i < 3; i++) {
         float cx = 80 + i * 80.f, cy = NU_CY, k = nu.pressed == i ? 0.86f : 1;
         if (nu.pressed == i) nu_disc(d, cx, cy, 28, 0xFFFF, 40, NU_CB0, NU_CB1);
@@ -663,6 +692,7 @@ static double nu_start_playing_t;
 static int nu_init(void)
 {
     memset(&nu, 0, sizeof nu);
+    ps_start(); ps_refresh();                    /* modo de reproduccion (aleatorio / repetir) */
     nu.bg = malloc(HM_FRAME_BYTES); nu.page = malloc(HM_FRAME_BYTES); nu.art = malloc(NU_S * NU_S * 2);
     nu_make_shadow();
     if (!nu.bg || !nu.page || !nu.art || !nu.shm) return 0;
@@ -734,7 +764,7 @@ static int nu_drag(int sy)
 /* ------------------------------------------------------------------ bucle */
 static int nu_hit(int x, int y)
 {
-    if (y >= NU_CB0 && y < NU_CB1 + 4) { int i = (x - 40) / 80; if (x >= 40 && i >= 0 && i < 3) return i; }
+    if (y >= NU_CB0 && y < NU_CB1 + 4) { int i = (x - 40) / 80; if (x >= 40 && i >= 0 && i < 3) return i; if (x < 40) return 8; if (x >= W - 40) return 9; }
     if (!nu.lyr && abs(x - (W - 40)) < 24 && abs(y - (NU_TY - 7)) < 22) return 3;
     if (nu.lyr && abs(x - (W - 40)) < 24 && abs(y - 72) < 24) return 3;
     if (abs(x - NU_LBX) < 30 && abs(y - NU_LBY) < 22) return 4;
@@ -1237,6 +1267,7 @@ static int nu_loop(int *arg)
         if (hit == 3) { int r = nu_song_menu(arg); if (r != NU_NONE) { if (mu_open > 0 && mu_st[mu_sp]) mu_render(img_under, mu_st[mu_sp], 1); nu_sheet_build(); nu_sheet_anim(0, 0, NU_HM, 0.36f, 2, 0); return r; } last = now_ms(); continue; }
         if (hit == 4 || hit == 5) { nu_toggle_lyrics(); last = now_ms(); continue; }
         if (hit == 7) { nu_lx(0); last = now_ms(); continue; }      /* sin letra: buscarla aqui mismo */
+        if (hit == 8 || hit == 9) { nu_mode_tap(hit); nu_band(NU_CB0, NU_CB1); present_rows(NU_CB0, NU_CB1); last = now_ms(); continue; }
     }
 }
 /* abre Reproduciendo desde el mini reproductor (toque o arrastre hacia arriba). sx, sy: donde
