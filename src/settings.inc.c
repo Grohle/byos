@@ -45,8 +45,13 @@ static void home_prev_build(void)
     render_launcher(img_sheet, now_ms());
     V.scroll = s; V.edit = e; V.pressed_app = pa; V.drag_app = da; hud_active = ha;
     hp_shrink(img_sheet, hp_home);
-    float ws = wg_scroll; wg_scroll = 0; wg_compose(); wg_scroll = ws;
-    if (wg_cache) { memcpy(wg_cache, img_sheet, 30 * W * 2); hp_shrink(wg_cache, hp_wg); }
+    /* desactivada: solo el fondo (atenuado al dibujar). Componerla volvia a cargar los widgets
+     * (~600 KB y sus datos) que wg_free_all acababa de soltar */
+    if (!wg_page_on) hp_shrink(wall, hp_wg);
+    else {
+        float ws = wg_scroll; wg_scroll = 0; wg_compose(); wg_scroll = ws;
+        if (wg_cache) { memcpy(wg_cache, img_sheet, 30 * W * 2); hp_shrink(wg_cache, hp_wg); }
+    }
     wg_cache_ok = 0; have_under = 0;                   /* img_sheet reutilizado */
     home_prev_ok = 1;
 }
