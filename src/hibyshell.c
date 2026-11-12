@@ -1692,7 +1692,7 @@ static const struct guard_rule guard_rules[] = {
 static int guard_write(const char *path, int v)
 {
     char cur[16] = ""; int f = open(path, O_RDONLY | O_CLOEXEC);
-    if (f >= 0) { ssize_t n = read(f, cur, sizeof cur - 1); close(f); if (n > 0) { cur[n] = 0; if (atoi(cur) == v) return 0; } }
+    if (f >= 0) { ssize_t n = read(f, cur, sizeof cur - 1); close(f); if (n > 0) { cur[n] = 0; int c = atoi(cur); if (c == v || (v < 0 && c < v)) return 0; } }   /* mas protegido ya (hibyguard: reproductor -1000, adbd -800): no se le quita; antes se peleaban cada 10 s */
     f = open(path, O_WRONLY | O_CLOEXEC); if (f < 0) return -1;
     char b[16]; int n = snprintf(b, sizeof b, "%d", v), ok = write(f, b, n) == n; close(f);
     return ok ? 1 : -1;
