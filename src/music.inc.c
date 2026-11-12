@@ -746,7 +746,7 @@ static void mu_spinner(uint16_t *d, int cx, int cy)   /* indicador de actividad 
 /* ------------------------------------------------------------------ paginas */
 enum { PG_LIB, PG_ALBUMS, PG_ARTISTS, PG_ARTIST, PG_ALBUM, PG_SONGS, PG_GENRES, PG_LIST, PG_PLAYLISTS, PG_MIXES, PG_SEARCH };
 enum { IT_TITLE, IT_MENU, IT_SECTION, IT_GRID, IT_SONG, IT_ARTIST, IT_HERO, IT_BUTTONS, IT_TRACK, IT_DISC, IT_FOOTER, IT_TEXT, IT_PLAYLIST, IT_MIX, IT_EMPTY, IT_SEARCH, IT_ALBUMROW };
-enum { M_PLAYLISTS, M_ARTISTS, M_ALBUMS, M_SONGS, M_GENRES, M_MIXES, M_HIBY };
+enum { M_PLAYLISTS, M_ARTISTS, M_ALBUMS, M_SONGS, M_GENRES, M_MIXES, M_HIBY, M_SOUND };
 struct mit { int y; short type, h; int a, b; const char *s; };
 struct mpl { char kind[4]; char arg[300]; char name[128]; int n; };
 struct mu_job { char *argv[8]; char a[4][420]; char *out; int len; volatile int done, refs; };
@@ -823,8 +823,9 @@ static void mu_build(struct mpg *p)
     if (p->kind == PG_SEARCH) { mu_search_items(p); return; }
     if (p->kind == PG_LIB) {
         it_add(p, IT_TITLE, 52, 0, 0, p->title);
-        static const char *const names[] = { "Listas", "Artistas", "Álbumes", "Canciones", "Géneros", "Mezclas", "Biblioteca de HiBy" };
-        for (int i = 0; i < 7; i++) it_add(p, IT_MENU, 46, i, i == 6, names[i]);
+        /* "Ecualizador y sonido": donde lo buscan los usuarios de HiBy (su engranaje de Musica) */
+        static const char *const names[] = { "Listas", "Artistas", "Álbumes", "Canciones", "Géneros", "Mezclas", "Biblioteca de HiBy", "Ecualizador y sonido" };
+        for (int i = 0; i < 8; i++) it_add(p, IT_MENU, 46, i, i >= 6, names[i]);
         it_add(p, IT_SECTION, 50, 0, 0, tr("Añadido recientemente"));
         if (!L) { it_add(p, IT_EMPTY, 120, mu_lib_state == 3 ? 0 : 1, 0, mu_lib_state == 3 ? tr("No se pudo leer la biblioteca") : 0); }
         else if (!L->nA) it_add(p, IT_EMPTY, 120, 0, 0, tr("No hay música en la biblioteca"));
@@ -981,6 +982,7 @@ static void mu_draw_item(uint16_t *d, struct mpg *p, int idx, int y)
         case M_GENRES: for (int i = 0; i < 4; i++) fill_rrect(d, x + (i % 2) * 11, cy - 9 + (i / 2) * 10, 8, 8, 2, c, 255); break;
         case M_MIXES: fill_circle(d, x + 10, cy, 9.5f, c, 255); fill_circle(d, x + 10, cy, 7.5f, 0, 255); fill_circle(d, x + 10, cy, 5, c, 255); fill_circle(d, x + 10, cy, 3, 0, 255); fill_circle(d, x + 10, cy, 1.6f, c, 255); break;
         case M_HIBY: fill_rrect(d, x, cy - 10, 20, 20, 5, rgb(72, 72, 76), 255); draw_text(d, x + 5, cy + 6, "H", 15, 0xFFFF, 0, 0, H); break;
+        case M_SOUND: for (int i = 0; i < 3; i++) { int bx = x + 3 + i * 6, ky = cy - 8 + (i == 1 ? 9 : i == 0 ? 3 : 6); fill_rrect(d, bx, cy - 9, 2, 18, 1, c, 255); fill_rrect(d, bx - 2, ky, 6, 4, 2, c, 255); } break;   /* deslizadores */
         }
         draw_text(d, 54, y + 30, tr(m->s), 17, m->b ? rgb(200, 200, 205) : 0xFFFF, W - 90, 0, H);
         mu_chevron(d, W - 24, cy);
@@ -1491,6 +1493,11 @@ static void mu_tap(struct mpg *p, int idx, int x, int longp)
     case IT_MENU:
         if (longp) return;
         if (m->a == M_HIBY) { if (mu_open_stock()) mu_open = -1; return; }
+        if (m->a == M_SOUND) {                        /* Ajustes > Sonido: Musica se va con su gesto de inicio y se abre */
+            pend_start = SET_SOUND; pend_kind = 2; fake_home_req = 1; fk_step = 0;
+            lg("musica: abrir Ajustes > Sonido");
+            return;
+        }
         if (m->a == M_PLAYLISTS) mu_push(mu_page_new(PG_PLAYLISTS, 0, tr("Listas")));
         else if (m->a == M_ARTISTS) mu_push(mu_page_new(PG_ARTISTS, 0, tr("Artistas")));
         else if (m->a == M_ALBUMS) mu_push(mu_page_new(PG_ALBUMS, 0, tr("Álbumes")));

@@ -463,6 +463,7 @@ static const char *const TRS[][1 + LANG_N] = {
     { "Repetir todo", "Repetir todo", "Repeat All", "Tout répéter", "Alle wiederholen", "Ripeti tutto", "全曲リピート", "전체 반복", "Powtarzaj wszystko", "Повторять все", "全部重复", "เล่นซ้ำทั้งหมด", "全部重複", "Повторювати все" },
     { "Repetir esta canción", "Repetir esta canción", "Repeat This Song", "Répéter ce morceau", "Diesen Titel wiederholen", "Ripeti questo brano", "1曲リピート", "이 곡 반복", "Powtarzaj ten utwór", "Повторять этот трек", "单曲重复", "เล่นซ้ำเพลงนี้", "單曲重複", "Повторювати цей трек" },
     { "Repetir desactivado", "Repetir desactivado", "Repeat Off", "Répétition désactivée", "Wiederholen aus", "Ripetizione disattiva", "リピート オフ", "반복 끔", "Powtarzanie wyłączone", "Повтор выкл.", "重复已关闭", "ปิดการเล่นซ้ำ", "重複已關閉", "Повтор вимк." },
+    { "Ecualizador y sonido", "Ecualizador y sonido", "Equalizer & Sound", "Égaliseur et son", "Equalizer & Ton", "Equalizzatore e suono", "イコライザとサウンド", "이퀄라이저 및 사운드", "Korektor i dźwięk", "Эквалайзер и звук", "均衡器与声音", "อีควอไลเซอร์และเสียง", "等化器與聲音", "Еквалайзер і звук" },
 };
 /* traduccion de s al idioma l o 0 si la clave no es de esta tabla */
 static const char *trs_lookup(const char *s, int l)
