@@ -408,12 +408,11 @@ static void gesture_demo(uint16_t *d, int cx, int y0, int edge, int act, double 
 static int set_labels, set_dots, set_dockbg, set_dim, set_wgpage;
 static int wg_page_on, wg_cache_ok, home_prev_ok;
 static void wg_free_all(void);
-static int set_lang_idx, set_icon_idx, set_cols_idx, set_kb_h = 1, set_kb_num = 0, set_kb_layout = 0, set_adb_mode;
+static int set_lang_idx, set_icon_idx, set_cols_idx, set_kb_h = 1, set_kb_num = 0, set_kb_en[LANG_N], set_adb_mode;
 static int g_bottom_app_i, g_bottom_home_i, g_top_i, g_topr_i, g_left_i, g_right_i, g_chev;
 static const char *const O_ICON[] = { "Pequeños", "Normales", "Grandes" };
 static const char *const O_COLS[] = { "3", "4", "5" };
 static const char *const O_KBH[] = { "Compacta", "Normal", "Alta" };
-static const char *const O_KBL[] = { "Español (QWERTY)", "Inglés (QWERTY)", "Francés (AZERTY)" };
 static const char *const O_ADB[] = { "Desactivado", "Wi-Fi", "USB" };
 static const char *const O_G_BOTTOM_APP[] = { "Inicio y multitarea", "Reproductor", "Centro de control", "Nada" };
 static const int V_G_BOTTOM_APP[] = { GA_HOME, GA_PLAYER, GA_CC, GA_NONE };
@@ -442,8 +441,10 @@ static void relabel_apps(void);
 /* idioma: -1 = igual que el sistema (el del reproductor de HiBy) */
 static void apply_lang(void)
 {
+    int old = ui_lang;
     ui_lang_sys = set_lang_idx < 0;
     ui_lang = ui_lang_sys ? lang_system() : lang_ok(set_lang_idx) ? set_lang_idx : LANG_EN;
+    if (ui_lang != old) kb_lang_added(ui_lang);   /* su teclado se activa y pasa a ser el actual */
     relabel_apps(); lconf_save();
 }
 static const char *v_lang(void) { return LANG_NAMES[lang_ok(ui_lang) ? ui_lang : LANG_EN]; }
@@ -473,7 +474,24 @@ static void apply_gestures(void)
     G.top = V_G_TOP[g_top_i]; G.top_r = V_G_TOP[g_topr_i]; G.left = V_G_LEFT[g_left_i]; G.right = V_G_RIGHT[g_right_i]; G.chevron = g_chev;
     lconf_save();
 }
-static void apply_kb(void) { kb_cfg_height = set_kb_h; kb_cfg_numrow = set_kb_num; kb_cfg_layout = set_kb_layout; lconf_save(); }
+static void apply_kb(void) { kb_cfg_height = set_kb_h; kb_cfg_numrow = set_kb_num; lconf_save(); }
+/* Teclados (como iOS): los activados salen en el globo; siempre queda al menos uno, y si se quita el
+ * actual pasa a serlo el primero de los que quedan */
+static void apply_kbs(void)
+{
+    int m = 0;
+    for (int i = 0; i < LANG_N; i++) if (set_kb_en[i]) m |= 1 << i;
+    if (!m) { for (int i = 0; i < LANG_N; i++) set_kb_en[i] = kb_cfg_layouts >> i & 1; return; }
+    kb_cfg_layouts = m;
+    if (!(m >> kb_cfg_layout & 1)) for (int i = 0; i < LANG_N; i++) if (m >> KB_ORD[i] & 1) { kb_cfg_layout = KB_ORD[i]; break; }
+    lconf_save();
+}
+static const char *v_kbs(void)
+{
+    static char b[8]; int n = 0;
+    for (int i = 0; i < LANG_N; i++) n += kb_cfg_layouts >> i & 1;
+    snprintf(b, sizeof b, "%d", n); return b;
+}
 static void apply_adb(void)
 {
     static const char *m[] = { "off", "wifi", "usb" };
@@ -542,7 +560,9 @@ static void nav_lang(void) { open_page(page_lang, "General"); }   /* desde Gener
 static const char *sp_root_name = "Ajustes";
 static void nav_home(void) { home_prev_ok = 0; open_page(page_home, sp_root_name); }
 static void nav_gestures(void) { open_page(page_gestures, sp_root_name); }
-static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; set_kb_layout = kb_cfg_layout; open_page(page_kb, sp_root_name); }
+static void nav_kb(void) { set_kb_h = kb_cfg_height; set_kb_num = kb_cfg_numrow; open_page(page_kb, sp_root_name); }
+static void page_kbs(struct spage *p);
+static void nav_kbs(void) { for (int i = 0; i < LANG_N; i++) set_kb_en[i] = kb_cfg_layouts >> i & 1; open_page(page_kbs, "Teclado"); }
 static void nav_dev(void) { open_page(page_dev, "Ajustes"); }
 static void nav_about(void);   /* sysset.inc.c (General > Informacion) */
 static void nav_audio(void);
@@ -603,8 +623,20 @@ static void page_kb(struct spage *p)
     *p = (struct spage){ "Teclado" };
     p->secs[0] = (struct ssec){ 0, 0, { ROW("Altura", R_CHOICE, &set_kb_h, O_KBH, 3, apply_kb, 0, 0),
                                         ROW("Fila de números", R_TOGGLE, &set_kb_num, 0, 0, apply_kb, 0, 0),
-                                        ROW("Distribución", R_CHOICE, &set_kb_layout, O_KBL, 3, apply_kb, 0, 0) }, 3 };
+                                        ROW("Teclados", R_NAV, 0, 0, 0, nav_kbs, v_kbs, 0) }, 3 };
     p->nsec = 1;
+}
+/* los 13 teclados por su propio nombre, en el orden de Idioma */
+static void page_kbs(struct spage *p)
+{
+    *p = (struct spage){ "Teclados" };
+    p->secs[0] = (struct ssec){ 0, 0, { { 0 } }, 7 };
+    p->secs[1] = (struct ssec){ 0, "Toca el globo para pasar al siguiente teclado; mantenlo pulsado para ver la lista.", { { 0 } }, 6 };
+    for (int i = 0; i < KB_NLAY; i++) {
+        struct srow *r = i < 7 ? &p->secs[0].rows[i] : &p->secs[1].rows[i - 7];
+        *r = ROW(kb_lay(KB_ORD[i])->name, R_TOGGLE, &set_kb_en[KB_ORD[i]], 0, 0, apply_kbs, 0, 0);
+    }
+    p->nsec = 2;
 }
 static const char *adb_footer(void) { return set_adb_mode == 2 ? "ADB_HELP_USB" : set_adb_mode == 1 ? "ADB_HELP_WIFI" : "ADB_HELP_OFF"; }
 static void page_dev(struct spage *p)
