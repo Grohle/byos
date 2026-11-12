@@ -851,9 +851,17 @@ static void open_page(void (*build)(struct spage *), const char *back)
             if (bk < 0) continue;
             if (!cur_down) { sx = cur_x; sy = cur_y; hi = sp_hit(&pg, sx, sy, &rw); on_slider = 0; }
         }
-        if (hi >= 0 && !on_slider) { sp_render(fr0, &pg, hi, back); present(); }
+        /* resaltado de la fila a los 70 ms con el dedo quieto (iOS): al pintarlo al tocar, cada
+         * desplazamiento encendia la fila un fotograma (lo encontro el probador) */
+        int hl_shown = 0;
         int sliding = 0, v0 = on_slider ? *rw->ival : 0;
-        while (cur_down && read_pkt(&p, 3000)) {   /* hasta soltar: una pausa del dedo no es un toque */
+        while (cur_down) {   /* hasta soltar: una pausa del dedo no es un toque */
+            int wait_hl = hi >= 0 && !on_slider && !hl_shown && !moved;
+            if (!read_pkt(&p, wait_hl ? 20 : 3000)) {
+                if (!wait_hl) break;
+                if (now_ms() - ts >= 70) { sp_render(fr0, &pg, hi, back); present(); hl_shown = 1; }
+                continue;
+            }
             if (on_slider && !moved && !sliding && abs(cur_x - sx) > 6 && abs(cur_x - sx) > abs(cur_y - sy)) sliding = 1;
             if (sliding) {
                 int nv = sl_value(rw, v0, cur_x - sx);
@@ -887,6 +895,7 @@ static void open_page(void (*build)(struct spage *), const char *back)
         }
         if (back && sy < NAVH + 30 && sx < 110) break;
         if (hi < 0 || !rw || now_ms() - ts > 700) continue;           /* pulsacion corta y quieta */
+        if (!hl_shown && !on_slider) { sp_render(fr0, &pg, hi, back); present(); msleep(40); }   /* toque rapido: se ve igual */
         if (rw->dis) { toast(tr("No disponible ahora")); continue; }
         if (rw->type == R_SLIDER && rw->ival) {                      /* toque en los extremos: un paso */
             int st = rw->nopts == SL_BRIGHT ? 10 : 1, nv = *rw->ival;

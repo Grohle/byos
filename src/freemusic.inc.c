@@ -1459,7 +1459,10 @@ static int fm_hit_at(int x, int y, int *idx)
     for (int i = fm_nhit - 1; i >= 0; i--) if (x >= fm_hits[i].x0 && x < fm_hits[i].x1 && y >= fm_hits[i].y0 && y < fm_hits[i].y1) { *idx = fm_hits[i].idx; return fm_hits[i].kind; }
     *idx = -1; return 0;
 }
-static int fm_pressed(int kind, int idx) { return fm_press_kind == kind && fm_press_idx == idx; }
+/* el resaltado se ve a los 70 ms con el dedo quieto (iOS): al pintarlo al tocar, cada
+ * desplazamiento encendia la fila bajo el dedo un fotograma (lo encontro el probador) */
+static double fm_press_t; static int fm_press_vis = 1;
+static int fm_pressed(int kind, int idx) { return fm_press_kind == kind && fm_press_idx == idx && (fm_press_vis || now_ms() - fm_press_t >= 70); }
 
 /* ------------------------------------------------------------------ pages */
 enum { FP_ROOT, FP_ALBUM, FP_DL, FP_SET, FP_PICK, FP_SRCS, FP_N };
@@ -2801,8 +2804,10 @@ static void freemusic_app_at(int ix, int iy)
         pthread_mutex_lock(&fm_dmu); for (int i = 0; i < fm_nq; i++) if (fm_q[i].state == DS_RUN) busy = 1; pthread_mutex_unlock(&fm_dmu);
         int anim = moving || now_ms() < toast_until + 40;
         static double last_busy; if (busy && now_ms() - last_busy > 90) { last_busy = now_ms(); dirty = 1; }
+        if (fm_press_kind && !fm_press_vis && now_ms() - fm_press_t >= 70) { fm_press_vis = 1; dirty = 1; }
         if (dirty || anim) { fm_render(); present(); dirty = 0; }
         int wait = anim ? 0 : busy ? 60 : 250;
+        if (fm_press_kind && !fm_press_vis && cur_down) wait = 20;   /* despertar para el resaltado */
         while (!quit && read_pkt(&p, wait)) {
             wait = 0;
             int down_edge = p.down && !was_down, up_edge = !p.down && was_down;
@@ -2823,7 +2828,7 @@ static void freemusic_app_at(int ix, int iy)
                     if (bk < 0) { ts = FT_IDLE; dirty = 1; break; }
                 }
                 fm_press_kind = kind; fm_press_idx = idx; ts = kind == FH_CHIP ? FT_CHIPS : FT_PRESS; chip0 = fm_chip_x;
-                if (kind) dirty = 1;
+                fm_press_t = now_ms(); fm_press_vis = 0;
                 if (!cur_down) up_edge = 1; else break;
             }
             if (p.down && !down_edge) {
@@ -2865,6 +2870,7 @@ static void freemusic_app_at(int ix, int iy)
                 if (t0s == FT_BOTTOM) { dirty = 1; continue; }
                 int k = fm_press_kind, i = fm_press_idx;
                 if (t0s == FT_CHIPS && !k) { dirty = 1; continue; }
+                if (k) { fm_press_vis = 1; fm_render(); present(); msleep(40); }   /* toque rapido: se ve igual */
                 fm_press_kind = 0; fm_press_idx = -1; dirty = 1;
                 if (k) { fm_render(); present(); fm_tap(k, i, sx); }
                 was_down = cur_down;
