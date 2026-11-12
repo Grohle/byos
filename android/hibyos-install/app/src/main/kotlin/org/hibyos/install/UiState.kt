@@ -89,6 +89,22 @@ sealed interface UpdateState {
     data class Failed(val error: ErrorInfo) : UpdateState
 }
 
+/** Updates of this app from the project's releases (core AppUpdater). */
+sealed interface AppUpdateState {
+    data object Idle : AppUpdateState
+    data object Checking : AppUpdateState
+    data class UpToDate(val version: String) : AppUpdateState
+    data class Available(val version: String, val size: Long, val notes: String) : AppUpdateState
+    data class Downloading(val version: String, val done: Long, val total: Long, val notes: String) : AppUpdateState
+
+    /** Downloaded and checked: the system installer is (or can be) shown. */
+    data class Ready(val version: String, val notes: String) : AppUpdateState
+
+    /** Downloaded and checked, but Android first needs "install unknown apps" for this app. */
+    data class NeedsPermission(val version: String, val notes: String) : AppUpdateState
+    data class Failed(val error: ErrorInfo) : AppUpdateState
+}
+
 data class UiState(
     /** Where the user is: the last one is on screen, "back" drops it. */
     val stack: List<Screen> = listOf(Screen.HOME),
@@ -100,6 +116,13 @@ data class UiState(
     val wifi: WifiState = WifiState(),
     val manual: ManualState = ManualState.Idle,
     val update: UpdateState = UpdateState.Idle,
+    val appUpdate: AppUpdateState = AppUpdateState.Idle,
+    /** The quiet check for app updates, at most once a day when the app starts. */
+    val appUpdateAuto: Boolean = true,
+    /** An earlier build that no longer fits (other ByOS files, another app version, stopped half way) was removed. */
+    val buildDiscarded: Boolean = false,
+    /** "Start Over" removed the build in this session. */
+    val startedOver: Boolean = false,
     /** The files were sent or saved in this session. */
     val delivered: Boolean = false,
     val storageUsed: Long = 0,
@@ -151,6 +174,14 @@ interface Actions {
 
     fun checkUpdate()
     fun downloadUpdate()
+
+    /** "Start Over": removes the build steps, keeps the official firmware. */
+    fun startOver() {}
+
+    fun checkAppUpdate() {}
+    fun downloadAppUpdate() {}
+    fun installAppUpdate() {}
+    fun setAppUpdateAuto(on: Boolean) {}
     fun openNotice(item: NoticeItem?)
     fun cleanUp()
 }

@@ -9,6 +9,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import org.hibyos.install.core.AppId
+import org.hibyos.install.core.AppRelease
+import org.hibyos.install.core.AppUpdater
 import org.hibyos.install.core.Bundle
 import org.hibyos.install.core.BundleStore
 import org.hibyos.install.core.ByosBuild
@@ -62,6 +65,15 @@ interface Host {
     fun createSyncDocument(name: String)
     fun open(url: String): Boolean
     fun share(files: List<File>)
+
+    /** True when Android lets this app hand an APK to the system installer. */
+    fun canInstallPackages(): Boolean
+
+    /** Opens Android's "install unknown apps" setting for this app. */
+    fun askInstallPermission()
+
+    /** Hands a checked APK to the system installer; false when it could not be opened. */
+    fun installPackage(file: File): Boolean
 }
 
 /**
@@ -93,6 +105,18 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     private var bundle: Bundle? = null
     private var builtIn: Bundle? = null
     private var remote: RemoteBundle? = null
+
+    // ---- this app's own updates: their own worker, so a check never waits for a build
+    private val appWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "hibyos-app-update") }
+    @Volatile
+    private var appStop = false
+    private val appUpdateDir = File(files, "app-update")
+    private var appRelease: AppRelease? = null
+    private var appApk: File? = null
+    private val prefs = app.getSharedPreferences("app_update", android.content.Context.MODE_PRIVATE)
+
+    /** What a build in [outDir] was made from: the ByOS files and this version of the app. */
+    private fun stamp(b: Bundle) = ByosBuild.stamp(b, "android ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
 
     /** ByOS connected: its own worker, so that a transfer never waits for a patch and the other way round. */
     private val syncWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "hibyos-sync") }
@@ -189,8 +213,10 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         } catch (e: Exception) {
             ""
         }
-        state = state.copy(appVersion = version)
+        val auto = prefs.getBoolean("auto", true)
+        state = state.copy(appVersion = version, appUpdateAuto = auto)
         worker.execute { start() }
+        quietAppCheck()
     }
 
     // ---- small tools ------------------------------------------------------------------------
@@ -276,11 +302,17 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         canUpdate = this.builtIn?.let { it.updateIndex != null && it.updatePrefix != null && it.updateKeys.isNotEmpty() } ?: false,
     )
 
+    /** The space "Free space" gives back: the builds and partial files (the checked firmware is kept). */
     private fun used(): Long {
         var n = 0L
-        for (d in listOf(firmwareDir, outDir, workDir, shareDir)) d.listFiles()?.forEach { if (it.isFile) n += it.length() }
+        for (d in listOf(outDir, workDir, shareDir, appUpdateDir)) d.walkTopDown().forEach { if (it.isFile) n += it.length() }
+        partialFirmware().forEach { n += it.length() }
         return n
     }
+
+    /** A firmware download or copy that did not finish (never the checked file). */
+    private fun partialFirmware(): List<File> =
+        firmwareDir.listFiles()?.filter { it.isFile && (it.name.endsWith(".part") || it.name.endsWith(".tmp")) } ?: emptyList()
 
     // ---- start: the ByOS files, and what a previous run left -------------------------------
 
@@ -301,9 +333,12 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
             bundle = use
             val bi = info(use, current.builtIn)
             val fw = restoreFirmware(use)
+            // a build made from other ByOS files or by another version of the app, or one that
+            // stopped half way, is removed now instead of getting in the way of the next one
+            val discarded = sweepBuild(use)
             val patch = restorePatch(use)
             val usedNow = used()
-            ui { it.copy(bundle = bi, firmware = fw, patch = patch, storageUsed = usedNow, startError = null) }
+            ui { it.copy(bundle = bi, firmware = fw, patch = patch, storageUsed = usedNow, startError = null, buildDiscarded = discarded) }
         } catch (e: Exception) {
             val err = error(e)
             ui { it.copy(startError = err) }
@@ -315,8 +350,20 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         return FirmwareState.Ready(f.size, f.sha256)
     }
 
+    /**
+     * Clears what an earlier build left that does not fit [b] and this app (core ByosBuild.sweep).
+     * True when something that looked like a build was removed. The firmware is never touched.
+     */
+    private fun sweepBuild(b: Bundle): Boolean {
+        val had = outDir.listFiles()?.any { it.name == ByosBuild.RECORD || it.name == ByosBuild.STAMP || it.name.endsWith(".part") } == true
+        workDir.deleteRecursively()
+        val kept = ByosBuild.sweep(b, outDir, workDir, stamp(b))
+        if (!kept) shareDir.deleteRecursively()
+        return had && !kept
+    }
+
     private fun restorePatch(b: Bundle): PatchState {
-        val r = ByosBuild.restore(b, outDir) ?: return PatchState.Idle
+        val r = ByosBuild.restore(b, outDir, stamp(b)) ?: return PatchState.Idle
         return PatchState.Done(r.size, r.sha256, r.buildId, r.files, r.hibyosVersion)
     }
 
@@ -359,6 +406,11 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     override fun downloadFirmware() {
         val b = bundle ?: return
         if (!begin()) return
+        // the checked firmware is kept for good: never downloaded twice
+        FirmwareCache.ready(firmwareDir, b.firmware)?.let {
+            state = state.copy(firmware = FirmwareState.Ready(it.size, it.sha256))
+            return
+        }
         val dest = File(firmwareDir, b.firmware.fileName)
         val size = b.firmware.size ?: 0
         val have = File(dest.path + ".part").length()
@@ -477,15 +529,10 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     }
 
     override fun forgetFirmware() {
-        val b = bundle ?: return
-        if (state.busy) return
-        // the file stays until another one replaces it; only the screen goes back to the choices
+        if (bundle == null || state.busy) return
+        // the checked file stays until another checked one replaces it (a firmware is deleted
+        // only when its checksum no longer matches); only the screen goes back to the choices
         state = state.copy(firmware = FirmwareState.Idle)
-        worker.execute {
-            FirmwareCache.forget(firmwareDir, b.firmware)
-            val usedNow = used()
-            ui { it.copy(storageUsed = usedNow) }
-        }
     }
 
     // ---- step 2: patching -------------------------------------------------------------------
@@ -495,12 +542,15 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         if (state.firmware !is FirmwareState.Ready) return
         if (!begin()) return
         val need = (b.firmware.size ?: (48L shl 20)) * 2 + (24L shl 20)
-        val reusable = File(outDir, b.outName).length()
+        // everything an earlier build left is replaced: it counts as free space
+        val reusable = (outDir.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L) +
+            (workDir.listFiles()?.sumOf { it.length() } ?: 0L)
         if (files.usableSpace + reusable < need) {
             state = state.copy(patch = PatchState.Failed(ErrorInfo(R.string.err_space, null, R.string.hint_space, mb(need))))
             return
         }
         state = state.copy(patch = PatchState.Running(org.hibyos.install.core.Stage.CHECK, 0f), delivered = false,
+            buildDiscarded = false, startedOver = false,
             wifi = state.wifi.copy(phase = if (state.wifi.player != null) WifiPhase.Connected(state.wifi.player!!) else WifiPhase.Idle),
             manual = ManualState.Idle)
         worker.execute {
@@ -509,10 +559,12 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
                 shareDir.deleteRecursively()
                 val pace = Pace()
                 // the core's build step (also byos-cli's "build"): patch, then record the result
+                // with the stamp: what an earlier run left is cleared first, and a later start can
+                // tell what this build was made from
                 val (r, _) = ByosBuild.patch(input, b, outDir, workDir, PatchOptions(cancelled = cancelled),
                     PatchListener { stage, f ->
                         if (pace.due(f >= 1.0)) ui { it.copy(patch = PatchState.Running(stage, stage.overall(f).toFloat())) }
-                    })
+                    }, stamp(b))
                 val usedNow = used()
                 ui { it.copy(patch = PatchState.Done(r.size, r.sha256, r.buildId, r.files, r.hibyosVersion), storageUsed = usedNow) }
             } catch (e: PatchException) {
@@ -767,6 +819,8 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
                 remote = null
                 val bi = info(b, false)
                 val fw = restoreFirmware(b)
+                // the build of the older files goes now; the checked firmware stays
+                sweepBuild(b)
                 val patch = restorePatch(b)
                 ui {
                     it.copy(bundle = bi, firmware = if (it.firmware is FirmwareState.Ready) fw else it.firmware, patch = patch,
@@ -806,18 +860,174 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
         }
     }
 
+    /** Frees the space of the builds and partial files. The checked official firmware is kept. */
     override fun cleanUp() {
         if (!begin()) return
-        state = state.copy(firmware = FirmwareState.Idle, patch = PatchState.Idle, manual = ManualState.Idle, delivered = false,
+        state = state.copy(patch = PatchState.Idle, manual = ManualState.Idle, delivered = false,
             wifi = state.wifi.copy(phase = if (state.wifi.player != null) WifiPhase.Connected(state.wifi.player!!) else WifiPhase.Idle))
         worker.execute {
-            for (d in listOf(firmwareDir, outDir, workDir, shareDir)) d.deleteRecursively()
-            ui { it.copy(storageUsed = 0) }
+            for (d in listOf(outDir, workDir, shareDir)) d.deleteRecursively()
+            partialFirmware().forEach { it.delete() }
+            if (state.appUpdate !is AppUpdateState.Downloading) appUpdateDir.deleteRecursively()
+            val usedNow = used()
+            ui { it.copy(storageUsed = usedNow) }
         }
+    }
+
+    /**
+     * "Start Over" on the build screen: removes the build steps (the patched firmware, its
+     * record and stamp, partial files, the work folder, the zip for sharing). The official
+     * firmware stays, so the next build starts at once.
+     */
+    override fun startOver() {
+        val b = bundle ?: return
+        if (!begin()) return
+        state = state.copy(patch = PatchState.Idle, manual = ManualState.Idle, delivered = false, buildDiscarded = false,
+            wifi = state.wifi.copy(phase = if (state.wifi.player != null) WifiPhase.Connected(state.wifi.player!!) else WifiPhase.Idle))
+        worker.execute {
+            ByosBuild.startOver(outDir, workDir)
+            shareDir.deleteRecursively()
+            val fw = restoreFirmware(b)
+            val usedNow = used()
+            ui { it.copy(firmware = if (it.firmware is FirmwareState.Downloading || it.firmware is FirmwareState.Checking) it.firmware else fw,
+                startedOver = true, storageUsed = usedNow) }
+        }
+    }
+
+    // ---- this app's own updates (core AppUpdater, docs/APP_UPDATES.md) ----------------------
+
+    private fun appError(e: Throwable): ErrorInfo = when {
+        e is DownloadException && e.kind == DownloadException.Kind.HTTP && e.status == 429 ->
+            ErrorInfo(R.string.err_appupd_limit, nice(e.message), R.string.hint_appupd_limit)
+        e is DownloadException && (e.kind == DownloadException.Kind.UNTRUSTED || e.kind == DownloadException.Kind.MISMATCH) ->
+            ErrorInfo(R.string.err_appupd_untrusted, nice(e.message), R.string.hint_appupd_untrusted)
+        e is DownloadException && e.kind == DownloadException.Kind.STORAGE ->
+            ErrorInfo(R.string.err_storage, nice(e.message), R.string.hint_storage)
+        e is DownloadException -> ErrorInfo(R.string.err_appupd_offline, nice(e.message), R.string.hint_appupd_offline)
+        else -> ErrorInfo(R.string.err_appupd_untrusted, nice(e.message) ?: e.javaClass.simpleName, R.string.hint_appupd_untrusted)
+    }
+
+    private fun lang(): String = java.util.Locale.getDefault().language
+
+    /** At most once a day, when the app starts and the user did not turn it off. Silent unless an update is found. */
+    private fun quietAppCheck() {
+        if (!prefs.getBoolean("auto", true)) return
+        val last = prefs.getLong("last", 0)
+        val now = System.currentTimeMillis()
+        if (now - last in 0 until 24L * 3600 * 1000) return
+        appCheck(quiet = true)
+    }
+
+    override fun checkAppUpdate() = appCheck(quiet = false)
+
+    private fun appCheck(quiet: Boolean) {
+        val s = state.appUpdate
+        if (s is AppUpdateState.Checking || s is AppUpdateState.Downloading) return
+        appStop = false
+        if (!quiet) state = state.copy(appUpdate = AppUpdateState.Checking)
+        try {
+            appWorker.execute {
+                try {
+                    val r = AppUpdater.check(AppId.ANDROID, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE.toLong(),
+                        cancelled = { appStop })
+                    prefs.edit().putLong("last", System.currentTimeMillis()).apply()
+                    val minSdk = r?.minOs?.substringBefore('.')?.toIntOrNull()
+                    when {
+                        r == null -> {
+                            appUpdateDir.deleteRecursively() // an APK of this or an older version is no use any more
+                            if (!quiet) ui { it.copy(appUpdate = AppUpdateState.UpToDate(BuildConfig.VERSION_NAME)) }
+                        }
+                        minSdk != null && minSdk > android.os.Build.VERSION.SDK_INT ->
+                            if (!quiet) ui { it.copy(appUpdate = AppUpdateState.Failed(ErrorInfo(R.string.err_appupd_os, "Android API $minSdk", R.string.hint_appupd_os))) }
+                        else -> {
+                            appRelease = r
+                            ui { it.copy(appUpdate = AppUpdateState.Available(r.version, r.size, r.notesFor(lang()))) }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (!quiet) {
+                        val err = if (e is DownloadException && e.kind == DownloadException.Kind.CANCELLED) null else appError(e)
+                        ui { it.copy(appUpdate = if (err == null) AppUpdateState.Idle else AppUpdateState.Failed(err)) }
+                    }
+                }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            // the view model is gone
+        }
+    }
+
+    override fun downloadAppUpdate() {
+        val r = appRelease ?: return
+        if (state.appUpdate is AppUpdateState.Downloading) return
+        appStop = false
+        val notes = r.notesFor(lang())
+        state = state.copy(appUpdate = AppUpdateState.Downloading(r.version, 0, r.size, notes))
+        val app = getApplication<Application>()
+        appWorker.execute {
+            try {
+                appUpdateDir.mkdirs()
+                // only this version's file stays in the folder
+                appUpdateDir.listFiles()?.forEach { if (!it.name.startsWith(r.asset)) it.delete() }
+                val pace = Pace()
+                val apk = AppUpdater.download(r, File(appUpdateDir, r.asset), { appStop }) { done, total ->
+                    if (pace.due(done == total)) ui { it.copy(appUpdate = AppUpdateState.Downloading(r.version, done, if (total > 0) total else r.size, notes)) }
+                }
+                // the signed SHA-256 matched; the APK must also be this app at the signed versionCode
+                @Suppress("DEPRECATION")
+                val info = app.packageManager.getPackageArchiveInfo(apk.path, 0)
+                val code = info?.let { if (android.os.Build.VERSION.SDK_INT >= 28) it.longVersionCode else it.versionCode.toLong() }
+                if (info == null || info.packageName != app.packageName || code != r.versionCode) {
+                    apk.delete()
+                    throw DownloadException(DownloadException.Kind.MISMATCH, "the downloaded file is not ByOS Install ${r.version}")
+                }
+                appApk = apk
+                main.post { handOff(r.version, notes) }
+            } catch (e: Exception) {
+                val cancelled = e is DownloadException && e.kind == DownloadException.Kind.CANCELLED
+                ui { it.copy(appUpdate = if (cancelled) AppUpdateState.Available(r.version, r.size, notes) else AppUpdateState.Failed(appError(e))) }
+            }
+        }
+    }
+
+    /** On the main thread: the checked APK to the system installer, or first to the permission screen. */
+    private fun handOff(version: String, notes: String) {
+        val apk = appApk ?: return
+        val h = host
+        if (h == null) {
+            state = state.copy(appUpdate = AppUpdateState.Ready(version, notes))
+            return
+        }
+        if (!h.canInstallPackages()) {
+            state = state.copy(appUpdate = AppUpdateState.NeedsPermission(version, notes))
+            return
+        }
+        state = state.copy(appUpdate = if (h.installPackage(apk)) AppUpdateState.Ready(version, notes)
+            else AppUpdateState.Failed(ErrorInfo(R.string.err_appupd_open, null, R.string.hint_appupd_open)))
+    }
+
+    override fun installAppUpdate() {
+        when (val s = state.appUpdate) {
+            is AppUpdateState.NeedsPermission -> if (host?.canInstallPackages() == true) handOff(s.version, s.notes) else host?.askInstallPermission()
+            is AppUpdateState.Ready -> handOff(s.version, s.notes)
+            else -> {}
+        }
+    }
+
+    /** The activity is back in front (for example from the "install unknown apps" setting). */
+    fun resumed() {
+        val s = state.appUpdate
+        if (s is AppUpdateState.NeedsPermission && host?.canInstallPackages() == true) handOff(s.version, s.notes)
+    }
+
+    override fun setAppUpdateAuto(on: Boolean) {
+        prefs.edit().putBoolean("auto", on).apply()
+        state = state.copy(appUpdateAuto = on)
     }
 
     override fun onCleared() {
         stop = true
+        appStop = true
+        appWorker.shutdown()
         connected.close()
         syncWorker.shutdown()
         worker.shutdown()

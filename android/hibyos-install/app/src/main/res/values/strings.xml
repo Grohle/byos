@@ -207,14 +207,14 @@
     <string name="about_update_footer">Newer ByOS files come from the project\'s releases on GitHub. They are accepted only if they are signed with the project\'s release key and match their SHA-256.</string>
     <string name="about_net_h">What the app sends over the network</string>
     <string name="about_net_1">**HiBy\'s download link** (Google Drive): only when you tap “Download from HiBy”.</string>
-    <string name="about_net_2">**GitHub**: only when you tap “Check for newer ByOS files”.</string>
+    <string name="about_net_2">**GitHub**: when you check for a newer ByOS or app version, and once a day for app updates unless you turn that off.</string>
     <string name="about_net_3">**Your player**, on your own Wi-Fi network: only when you use the Wi-Fi way.</string>
     <string name="about_net_footer">No accounts, no ads, no analytics. The app sends nothing about you or your devices to anyone.</string>
     <string name="about_licenses">Open-source licences</string>
     <string name="about_project">Project page</string>
     <string name="about_project_value">github.com/Grohle/hibyos</string>
     <string name="about_storage">Free space on this phone</string>
-    <string name="about_storage_sub">Removes the downloaded firmware and the built file (%1$s)</string>
+    <string name="about_storage_sub">Removes the built files and unfinished downloads (%1$s). The checked official firmware is kept.</string>
     <string name="about_legal">ByOS is an independent community project, not affiliated with HiBy. This app contains no HiBy firmware. Installing unofficial software on your player is at your own risk.</string>
 
     <string name="licenses_title">Licences</string>

@@ -40,11 +40,21 @@ class TranslationsTest {
 
     @Test
     fun frenchAndSpanishHaveEveryText() {
+        check("strings_connected.xml", 250)
+    }
+
+    /** The app's own updates, the ByOS check on the build screens and "Start Over". */
+    @Test
+    fun frenchAndSpanishHaveEveryUpdateText() {
+        check("strings_update.xml", 35)
+    }
+
+    private fun check(file: String, atLeast: Int) {
         val dir = res()
-        val en = read(File(dir, "values/strings_connected.xml"))
-        assertTrue(en.size > 250)
+        val en = read(File(dir, "values/$file"))
+        assertTrue(en.size > atLeast)
         for (lang in listOf("fr", "es")) {
-            val other = read(File(dir, "values-$lang/strings_connected.xml"))
+            val other = read(File(dir, "values-$lang/$file"))
             assertEquals("$lang: missing", emptySet<String>(), en.keys - other.keys)
             assertEquals("$lang: unknown", emptySet<String>(), other.keys - en.keys)
             for ((k, v) in en) {

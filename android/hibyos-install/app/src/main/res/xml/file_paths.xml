@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <files-path name="out" path="out/" />
+    <!-- the checked app update, for the system installer only -->
+    <files-path name="app_update" path="app-update/" />
     <cache-path name="share" path="share/" />
 </paths>

@@ -72,6 +72,12 @@ Tap **Download from HiBy**, or **Choose a file on this phone** if you already ha
 Tap **Build ByOS**. It takes less than a minute. Nothing is sent anywhere: the work is done on
 the phone.
 
+**Check for a Newer ByOS** (on this screen and on the home screen) asks the project's releases
+for newer ByOS files and offers **Download and Use ByOS X.Y.Z** right there. A build that stopped
+half way, or one made from older ByOS files or by an older version of the app, is removed by
+itself before the next build. **Start Over** removes the build by hand. The official firmware is
+always kept, so it never has to be downloaded again.
+
 ### 3. Send: over Wi-Fi
 
 On the player (official firmware, menus in English):
@@ -140,14 +146,25 @@ signed with the same certificate, so Android refuses an update signed by anyone 
 
 - **To HiBy's download link** (Google Drive, HTTPS): one download of the official firmware, only
   when you tap **Download from HiBy**.
-- **To GitHub** (HTTPS): only when you tap **Check for newer ByOS files** on the About screen.
-  It downloads a small signed list and, if you accept, the newer ByOS files. They are used
-  only if their signature (Ed25519, the project's release key) and SHA-256 are right.
+- **To GitHub** (HTTPS): when you tap **Check for a Newer ByOS** or **Check for App Updates**,
+  and once a day for app updates unless you turn **Check once a day** off in About. It downloads
+  the list of releases and a small signed file and, if you accept, the newer ByOS files or the new
+  APK. They are used only if their signature (Ed25519, the project's release key) and SHA-256 are
+  right.
 - **To your player**, inside your own Wi-Fi network, on port 4399: the files of step 3. With
   **Find my player**, a connection attempt to port 4399 of the addresses of your own network.
-- Nothing else. No account, no analytics, no advertising, no crash reports. The app has only the
-  "internet" and "network state" permissions; it cannot read your files, except the one you
-  choose.
+- Nothing else. No account, no analytics, no advertising, no crash reports. The app cannot read
+  your files, except the ones you choose. "Install unknown apps" (`REQUEST_INSTALL_PACKAGES`) is
+  only used to hand a checked update of this app to Android's installer, which asks you first.
+
+## Updating the app
+
+Open **About › Check for App Updates**. When a newer ByOS Install exists you see its version and
+what is new; **Download and Install** downloads it, checks it, and opens Android's installer. The
+first time Android asks you to allow "install unknown apps" for ByOS Install: turn it on and come
+back. The app also checks by itself once a day when it starts (switch in About); it only says
+something when there is a new version. Details and the release steps:
+[docs/APP_UPDATES.md](../../docs/APP_UPDATES.md).
 
 ## Troubleshooting
 
@@ -194,6 +211,12 @@ cd android/hibyos-install
 `tools/export_bundle.py` also writes `build/hibyos-install-bundle-<version>.zip` and
 `build/hibyos-install-bundle.json`. Sign the `.json` with the release key
 (`tools/ota_sign.py sign`) and attach both, with the signature, to the GitHub release.
+
+### Publishing a new version of the app
+
+Every app release carries a signed `byos-app-update.json` made by `tools/app_release.py`, and is
+never marked "latest" (that is the ByOS firmware release). The steps are in
+[docs/APP_UPDATES.md](../../docs/APP_UPDATES.md), "Publishing an app release".
 
 ## Licence
 
