@@ -286,6 +286,8 @@
     <string name="sync_note_reconnecting">Connection lost, connecting again…</string>
     <string name="sync_reconnecting">Connection lost. Connecting again (%1$d of %2$d)…</string>
     <string name="sync_sending_note_bg">You can leave the app: the transfer goes on and its progress is in the notifications. If the connection drops, it connects again by itself and goes on where it stopped.</string>
+    <string name="sync_shared_waiting">Shared files are waiting</string>
+    <string name="sync_shared_waiting_sub">They are added to the list when this transfer ends.</string>
 
     <!-- Search, artwork, save to phone -->
     <string name="sync_search_hint">Artists, albums and songs</string>

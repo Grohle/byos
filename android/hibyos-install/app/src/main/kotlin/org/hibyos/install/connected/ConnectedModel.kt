@@ -201,7 +201,12 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         session = null
     }
 
-    private fun lost(e: Throwable): Boolean = e is SyncException && e.fatal
+    /**
+     * The error ended the session: a fatal one, or any error after the session was already
+     * dropped (a reconnection the player refused with NOT_PAIRED or FORGOTTEN), so the screens
+     * never show Connected without a session.
+     */
+    private fun lost(e: Throwable): Boolean = (e is SyncException && e.fatal) || session == null
 
     // ---- connection -----------------------------------------------------------------------
 
@@ -285,11 +290,21 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         }
         val paired = safePaired()
         val d = device.copy(name = s.info.name.ifEmpty { device.name }, deviceId = s.info.deviceId, paired = true)
+        val samePlayer = d.deviceId.isNotEmpty() && d.deviceId == libraryOf
+        libraryOf = d.deviceId
         current = d
         lastDevice = d
         coverAsked.clear()
-        ui { it.copy(link = Link.Connected(d, s.info, space), paired = paired, error = null, browser = Browser()) }
+        ui {
+            val base = it.copy(link = Link.Connected(d, s.info, space), paired = paired, error = null, browser = Browser())
+            // what was read from another player (its library, playlists, artwork) must never act on this one's card
+            if (samePlayer) base else base.copy(library = LibraryPhase.Idle, libraryNav = LibraryNav(), playlists = Playlists(), covers = emptyMap(),
+                rescan = Rescan.Idle, libDelete = null, libError = null, libraryChanged = false, libraryQuery = "")
+        }
     }
+
+    /** The player whose library, playlists and artwork the state holds (its device id). */
+    private var libraryOf: String? = null
 
     override fun setCode(text: String) {
         val l = state.link as? Link.Pairing ?: return
@@ -362,7 +377,8 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         if (state.busy) return
         val s = session
         session = null
-        state = state.copy(link = Link.Idle, browser = Browser(), library = LibraryPhase.Idle, libraryNav = LibraryNav())
+        state = state.copy(link = Link.Idle, browser = Browser(), library = LibraryPhase.Idle, libraryNav = LibraryNav(), playlists = Playlists(),
+            covers = emptyMap(), libDelete = null, libError = null, libraryChanged = false, rescan = Rescan.Idle)
         env.execute {
             try {
                 s?.close()
@@ -509,20 +525,30 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         if (!state.transfer.running) env.pickFolder()
     }
 
-    /** Adds what the user picked (read on the worker by [load], which may walk a folder). */
+    /**
+     * Adds what the user picked (read on the worker by [load], which may walk a folder). Files
+     * shared from another app while a transfer runs are not dropped: the worker reads them once
+     * the transfer is over, and the send screen says they are waiting meanwhile.
+     */
     fun addPicked(load: () -> List<LocalItem>) {
-        if (state.transfer.running) return
+        if (state.transfer.running) state = state.copy(sharedWaiting = true)
         env.execute {
             try {
                 val items = load()
                 env.post {
+                    if (state.transfer.running) {
+                        // a transfer started meanwhile: they wait behind it on the worker
+                        addPicked { items }
+                        return@post
+                    }
                     // a finished transfer is replaced by the new choice
                     if (state.transfer.finished) clearPlan()
                     picked = picked + items
                     replan()
+                    state = state.copy(sharedWaiting = false)
                 }
             } catch (e: Exception) {
-                ui { it.copy(transfer = it.transfer.copy(error = errorOf(e))) }
+                ui { it.copy(sharedWaiting = false, transfer = it.transfer.copy(error = errorOf(e))) }
             }
         }
     }
@@ -535,16 +561,25 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         state = state.copy(transfer = Transfer())
     }
 
+    /**
+     * Plans the picked files for the chosen destination. After a transfer that stopped half way
+     * (cancelled, connection lost), the files already on the card stay as they are and only the
+     * others (and anything picked since) follow the new choice.
+     */
     private fun replan() {
-        if (state.transfer.jobs.any { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME && it.status != JobStatus.TOO_BIG &&
-                it.status != JobStatus.UPDATE_FILE }) return
+        val old = state.transfer
+        val kept = old.jobs.filter { it.finished }
+        val keptItems = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<LocalItem, Boolean>())
+        for (j in kept) sources[j.id]?.let { keptItems += it }
+        val rest = picked.filter { it !in keptItems }
         val max = state.connected?.space?.maxFile ?: Long.MAX_VALUE
-        val plan = if (state.destPath == null && state.dest == Destination.AUTO) SendPlan.auto(picked, state.routes, max)
-        else SendPlan.build(picked, state.target, max)
-        sources = plan.sources
+        val firstId = (kept.maxOfOrNull { it.id } ?: 0) + 1
+        val plan = if (state.destPath == null && state.dest == Destination.AUTO) SendPlan.auto(rest, state.routes, max, firstId)
+        else SendPlan.build(rest, state.target, max, firstId)
+        sources = kept.mapNotNull { j -> sources[j.id]?.let { j.id to it } }.toMap() + plan.sources
         folders = plan.folders
         hashes.clear()
-        state = state.copy(transfer = Transfer(jobs = plan.jobs))
+        state = state.copy(transfer = Transfer(jobs = kept + plan.jobs, newMusic = old.newMusic))
     }
 
     override fun clearSend() {
@@ -648,9 +683,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             } catch (e: Exception) {
                 val cancel = e is SyncException && e.code == SyncException.E_CANCELLED
                 val err = if (cancel) null else errorOf(e)
-                if (lost(e)) dropSession()
+                // also a reconnection the player refused (NOT_PAIRED, FORGOTTEN): the session is gone
+                val gone = lost(e)
+                if (gone) dropSession()
                 ui {
-                    it.copy(link = if (lost(e)) Link.Idle else it.link, transfer = it.transfer.copy(running = false, current = "", error = err,
+                    it.copy(link = if (gone) Link.Idle else it.link, transfer = it.transfer.copy(running = false, current = "", error = err,
                         jobs = it.transfer.jobs.map { j ->
                             if (j.status == JobStatus.HASHING || j.status == JobStatus.SENDING) j.copy(status = if (cancel) JobStatus.CANCELLED else JobStatus.FAILED)
                             else j
@@ -809,7 +846,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                 val path = state.browser.path
                 val list = sortEntries(s.list(path))
                 ui {
-                    it.copy(browser = it.browser.copy(working = false, prompt = null, moving = null, entries = list),
+                    it.copy(browser = it.browser.copy(working = false, prompt = null, moving = null, movingFiles = emptyList(), movingLabel = null, entries = list),
                         libraryChanged = it.libraryChanged || it.library is LibraryPhase.Ready)
                 }
                 refreshAfterWrite(s)
@@ -826,16 +863,39 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     override fun startMove(entry: SyncEntry) {
         if (state.busy) return
-        state = state.copy(browser = state.browser.copy(moving = SyncPaths.join(state.browser.path, entry.name), prompt = null))
+        state = state.copy(browser = state.browser.copy(moving = SyncPaths.join(state.browser.path, entry.name), movingFiles = emptyList(), movingLabel = null, prompt = null))
     }
 
     override fun moveHere() {
         val s = session ?: return
         val b = state.browser
         val src = b.moving ?: return
+        if (b.movingFiles.isNotEmpty()) {
+            // an album's songs out of a shared folder: each file goes here, the folder stays
+            val files = b.movingFiles
+            if (files.all { SyncPaths.parent(it) == b.path }) {
+                cancelMove()
+                return
+            }
+            if (!begin()) return
+            state = state.copy(browser = b.copy(working = true, error = null))
+            browserOp(s) {
+                for (f in files) {
+                    if (stop) throw SyncException(SyncException.E_CANCELLED)
+                    if (SyncPaths.parent(f) == b.path) continue
+                    try {
+                        s.move(f, SyncPaths.join(b.path, SyncPaths.name(f)), false)
+                    } catch (e: SyncException) {
+                        // moved by an earlier try that stopped half way
+                        if (e.code != SyncException.E_NOT_FOUND) throw e
+                    }
+                }
+            }
+            return
+        }
         val dst = SyncPaths.join(b.path, SyncPaths.name(src))
         if (dst == src) {
-            state = state.copy(browser = b.copy(moving = null))
+            cancelMove()
             return
         }
         if (b.path == src || b.path.startsWith("$src/")) {
@@ -848,7 +908,7 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     }
 
     override fun cancelMove() {
-        state = state.copy(browser = state.browser.copy(moving = null))
+        state = state.copy(browser = state.browser.copy(moving = null, movingFiles = emptyList(), movingLabel = null))
     }
 
     // ---- library --------------------------------------------------------------------------------
@@ -903,11 +963,52 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         state = state.copy(libDelete = target, libError = null)
     }
 
+    /**
+     * Opens Files ready to move [target]. An album moves with its folder only when that folder is
+     * its own (the rule of Delete, [ownsFolder]); in a folder shared with other songs or files
+     * (Music/Singles, a flat "Música"), only the album's songs and their lyrics move.
+     */
     override fun libraryMove(target: LibTarget) {
         val p = target.cardPath ?: return
         if (state.busy) return
-        state = state.copy(browser = Browser(path = SyncPaths.parent(p), moving = p))
-        openFolder(SyncPaths.parent(p))
+        if (target !is LibTarget.AlbumOf) {
+            state = state.copy(browser = Browser(path = SyncPaths.parent(p), moving = p))
+            openFolder(SyncPaths.parent(p))
+            return
+        }
+        val s = session ?: return
+        if (!begin()) return
+        val songs = target.album.tracks.mapNotNull { Library.cardPath(it.path) }
+        val parent = SyncPaths.parent(p)
+        state = state.copy(browser = Browser(path = parent, loading = true, working = true))
+        env.execute {
+            try {
+                val files = if (ownsFolder(s, p, songs)) emptyList() else {
+                    // each song with the lyrics of the same name beside it
+                    val stems = songs.map { SyncPaths.name(it).substringBeforeLast('.').lowercase() }.toSet()
+                    val lyrics = try {
+                        s.list(p).filter { !it.isFolder && FileKinds.of(it.name) == FileKind.LYRICS && it.name.substringBeforeLast('.').lowercase() in stems }
+                            .map { SyncPaths.join(p, it.name) }
+                    } catch (e: SyncException) {
+                        if (e.fatal) throw e
+                        emptyList()
+                    }
+                    songs + lyrics
+                }
+                val list = sortEntries(s.list(parent))
+                ui {
+                    it.copy(browser = Browser(path = parent, entries = list, moving = p, movingFiles = files,
+                        movingLabel = if (files.isEmpty()) null else target.album.title.ifEmpty { SyncPaths.name(songs.first()) }))
+                }
+            } catch (e: Exception) {
+                val err = errorOf(e)
+                if (lost(e)) dropSession()
+                ui {
+                    it.copy(link = if (lost(e)) Link.Idle else it.link, error = if (lost(e)) err else it.error,
+                        browser = Browser(path = parent, error = err))
+                }
+            }
+        }
     }
 
     override fun revealInFiles(target: LibTarget) {
@@ -990,7 +1091,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         }
     }
 
-    /** True when [folder] holds no subfolder and no song other than [songs]: it is the album's own folder. */
+    /**
+     * True when [folder] is the album's own folder: no subfolder, and nothing but [songs] and the
+     * files that come with an album (artwork, lyrics, cue sheets, rip logs, hidden files). Any
+     * other file (a booklet PDF, a video, notes, another song) keeps the folder: only the songs go.
+     */
     private fun ownsFolder(s: SyncSession, folder: String, songs: List<String>): Boolean {
         val mine = songs.map { SyncPaths.name(it).lowercase() }.toSet()
         val list = try {
@@ -999,8 +1104,17 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
             if (e.fatal) throw e
             return false
         }
-        return list.none { it.isFolder || (FileKinds.isAudio(it.name) && it.name.lowercase() !in mine) }
+        return list.all { !it.isFolder && (it.name.lowercase() in mine || albumCompanion(it.name)) }
     }
+
+    /** Files that belong to an album's folder and go with it. */
+    private fun albumCompanion(name: String): Boolean {
+        val n = name.lowercase()
+        if (n.startsWith(".") || n == "thumbs.db" || n == "desktop.ini") return true
+        return FileKinds.of(n) == FileKind.IMAGE || FileKinds.ext(n) in companionExts
+    }
+
+    private val companionExts = setOf("lrc", "cue", "log", "accurip", "m3u", "m3u8", "sfv", "md5", "ffp")
 
     // ---- playlists (.m3u8 files in Playlists) ---------------------------------------------------
 
@@ -1031,16 +1145,22 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         emptyList()
     }
 
-    private fun readPlaylist(s: SyncSession, file: String): Playlist {
+    /** The playlist file as it is on the card, line for line (its other lines are kept when it is changed). */
+    private fun readPlaylistFile(s: SyncSession, file: String): M3uFile {
         val out = java.io.ByteArrayOutputStream()
         s.get(file, 0, out, cancelled) { _, _ -> }
-        return Playlist(file, M3u.read(SyncPaths.parent(file), String(out.toByteArray(), Charsets.UTF_8)))
+        return M3u.parse(SyncPaths.parent(file), out.toByteArray())
     }
 
-    private fun writePlaylist(s: SyncSession, file: String, songs: List<String>, create: Boolean) {
+    /** Card path -> "Artist - Title" for the #EXTINF lines of songs added to a playlist. */
+    private fun titled(songs: List<String>): List<Pair<String, String>> {
         val titles = ((state.library as? LibraryPhase.Ready)?.library?.tracks ?: emptyList())
             .associate { (Library.cardPath(it.path) ?: "").lowercase() to listOf(it.artist, it.title).filter { t -> t.isNotEmpty() }.joinToString(" - ") }
-        val data = M3u.write(SyncPaths.parent(file), songs.map { it to (titles[it.lowercase()] ?: "") }).toByteArray(Charsets.UTF_8)
+        return songs.map { it to (titles[it.lowercase()] ?: "") }
+    }
+
+    private fun writePlaylist(s: SyncSession, file: String, f: M3uFile, create: Boolean) {
+        val data = f.bytes()
         s.mkdir(SyncPaths.parent(file), true)
         s.put(Ns.SD, file, data.size.toLong(), MessageDigest.getInstance("SHA-256").digest(data), 0,
             if (create) PutMode.CREATE else PutMode.REPLACE, { off -> openAt({ data.inputStream() }, off) }, cancelled) {}
@@ -1052,9 +1172,11 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     }
 
     override fun openPlaylist(file: String) {
+        // refused while other work runs: the list stays as it is (no endless "Loading")
+        if (session == null || state.busy) return
         state = state.copy(libraryNav = state.libraryNav.copy(playlist = file), playlists = state.playlists.copy(open = null))
         playlistJob { s ->
-            val p = readPlaylist(s, file)
+            val p = Playlist(file, readPlaylistFile(s, file).songs)
             pl { it.copy(open = p) }
         }
     }
@@ -1070,10 +1192,9 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
     override fun addToPlaylistFile(file: String) {
         val t = state.playlists.adding ?: return
         playlistJob { s ->
-            val p = readPlaylist(s, file)
-            val songs = p.songs + songsOf(t)
-            writePlaylist(s, file, songs, false)
-            pl { it.copy(adding = null, added = M3u.title(file), open = if (it.open?.file == file) Playlist(file, songs) else it.open) }
+            val f = readPlaylistFile(s, file).adding(titled(songsOf(t)))
+            writePlaylist(s, file, f, false)
+            pl { it.copy(adding = null, added = M3u.title(file), open = if (it.open?.file == file) Playlist(file, f.songs) else it.open) }
         }
     }
 
@@ -1091,19 +1212,25 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
         val file = SyncPaths.join(M3u.FOLDER, "$name.m3u8")
         val songs = state.playlists.adding?.let { songsOf(it) } ?: emptyList()
         playlistJob { s ->
-            writePlaylist(s, file, songs, true)
+            writePlaylist(s, file, M3u.empty(SyncPaths.parent(file)).adding(titled(songs)), true)
             val files = listPlaylists(s)
             pl { it.copy(files = files, newName = null, adding = null, added = if (songs.isEmpty()) null else M3u.title(file)) }
         }
     }
 
+    /**
+     * Takes one song out of the open playlist. The file is read again first and only that song's
+     * lines go; when the file changed meanwhile, the same song is looked for by its path.
+     */
     override fun removeFromPlaylist(index: Int) {
         val p = state.playlists.open ?: return
         if (index !in p.songs.indices) return
-        val songs = p.songs.filterIndexed { i, _ -> i != index }
+        val song = p.songs[index]
         playlistJob { s ->
-            writePlaylist(s, p.file, songs, false)
-            pl { it.copy(open = Playlist(p.file, songs)) }
+            val f = readPlaylistFile(s, p.file)
+            val at = if (f.songs.getOrNull(index) == song) index else f.songs.indexOfFirst { it.equals(song, ignoreCase = true) }
+            val next = if (at >= 0) f.removing(at).also { writePlaylist(s, p.file, it, false) } else f
+            pl { it.copy(open = Playlist(p.file, next.songs)) }
         }
     }
 
@@ -1119,25 +1246,26 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     private val coverAsked: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
 
-    private fun coverFile(folder: String): File {
-        val id = (current?.deviceId ?: "") + "/" + folder.lowercase()
-        val h = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
-        return File(File(env.cacheDir, "sync/covers"), "$h.img")
+    private fun shortHash(s: String): String =
+        MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
+
+    private val coverDir: File get() = File(env.cacheDir, "sync/covers")
+
+    /** The cache file of one version of a folder's artwork: the player and folder, then the picture's name, size and date. */
+    private fun coverFile(folder: String, pic: SyncEntry): File {
+        val prefix = shortHash((current?.deviceId ?: "") + "/" + folder.lowercase())
+        return File(coverDir, prefix + "-" + shortHash(pic.name + "|" + pic.size + "|" + pic.mtime) + ".img")
     }
 
     /**
      * The album's artwork, from its folder on the card (cover.jpg, folder.jpg..., else any
-     * picture): LIST, then GET into the app's cache, where it stays for the next time. Asked
-     * once per folder and per connection, when the album shows on screen.
+     * picture): LIST, then GET into the app's cache. The cached copy is used again only while
+     * the picture on the card keeps its name, size and date, so replaced artwork shows at the
+     * next connection. Asked once per folder and per connection, when the album shows on screen.
      */
     override fun loadCover(folder: String) {
         val s = session ?: return
         if (folder.isEmpty() || !coverAsked.add(folder)) return
-        val f = coverFile(folder)
-        if (f.isFile && f.length() > 0) {
-            state = state.copy(covers = state.covers + (folder to f.path))
-            return
-        }
         env.execute {
             if (session !== s) {
                 coverAsked.remove(folder)
@@ -1149,6 +1277,14 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                     ui { it.copy(covers = it.covers + (folder to null)) }
                     return@execute
                 }
+                val f = coverFile(folder, pic)
+                if (f.isFile && f.length() > 0) {
+                    ui { it.copy(covers = it.covers + (folder to f.path)) }
+                    return@execute
+                }
+                // older versions of this folder's artwork go
+                val prefix = f.name.substringBefore('-') + "-"
+                coverDir.listFiles()?.forEach { if (it.name.startsWith(prefix)) it.delete() }
                 f.parentFile?.mkdirs()
                 val tmp = File(f.path + ".tmp")
                 FileOutputStream(tmp).use { o -> s.get(SyncPaths.join(folder, pic.name), 0, o, { false }) { _, _ -> } }
@@ -1182,16 +1318,27 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
 
     /**
      * Copies the card file chosen with [saveToPhone] into what the user created on the phone
-     * ([open] gives its stream), checking the whole file against the SHA-256 of GET_END.
+     * ([open] gives its stream), checking the whole file against the SHA-256 of GET_END. When
+     * the copy does not finish whole (cancelled, connection lost, SHA-256 differs) or cannot
+     * start, [discard] deletes that document: no partial file is left looking like a good one.
      */
-    fun downloadTo(open: () -> java.io.OutputStream) {
-        val s = session ?: return
-        val path = pendingDownload ?: return
+    fun downloadTo(discard: () -> Unit = {}, open: () -> java.io.OutputStream) {
+        fun drop() = try {
+            discard()
+        } catch (e: Exception) {
+            // nothing more can be done about it
+        }
+        val s = session
+        val path = pendingDownload
         pendingDownload = null
-        if (!begin()) return
+        if (s == null || path == null || !begin()) {
+            env.execute { drop() }
+            return
+        }
         val name = SyncPaths.name(path)
         state = state.copy(browser = state.browser.copy(download = Download(name)))
         env.execute {
+            var whole = false
             try {
                 val pace = Pace()
                 val md = MessageDigest.getInstance("SHA-256")
@@ -1203,8 +1350,10 @@ class ConnectedModel(private val env: SyncEnv) : SyncActions {
                     }
                 }
                 if (!md.digest().contentEquals(r.sha256)) throw SyncException(SyncException.E_HASH_MISMATCH, "$name: the copy differs from the card")
+                whole = true
                 ui { it.copy(browser = it.browser.copy(download = Download(name, r.size, r.size, finished = true))) }
             } catch (e: Exception) {
+                if (!whole) drop()
                 if (e is SyncException && e.code == SyncException.E_CANCELLED) {
                     ui { it.copy(browser = it.browser.copy(download = null)) }
                 } else {

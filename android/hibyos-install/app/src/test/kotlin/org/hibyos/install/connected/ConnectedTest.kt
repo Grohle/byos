@@ -891,6 +891,276 @@ class ConnectedTest {
         assertNull(LibTarget.ArtistOf(lib(m).artists.first()).cardPath)
     }
 
+    // ---- review fixes -------------------------------------------------------------------------
+
+    /** An env whose worker jobs wait in a queue until [run] (the tests see the states in between). */
+    private class Queued(val base: Env) : SyncEnv by base {
+        var hold = false
+        val jobs = ArrayDeque<() -> Unit>()
+        override fun execute(f: () -> Unit) {
+            if (hold) jobs += f else f()
+        }
+        fun run() {
+            hold = false
+            while (jobs.isNotEmpty()) jobs.removeFirst()()
+        }
+    }
+
+    private fun pairedWith(env: SyncEnv, c: FakeConnector): ConnectedModel {
+        val m = ConnectedModel(env)
+        m.connectTo(c.device)
+        m.setCode(c.code)
+        m.confirmCode()
+        assertTrue(m.state.link is Link.Connected)
+        return m
+    }
+
+    @Test
+    fun albumFolderWithOtherFilesKeepsThem() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.fullRescan = false
+        val m = libraryOnCard(env)
+        for (p in listOf("Music/ABBA/Gold/booklet.pdf", "Music/ABBA/Gold/live.mp4", "Music/ABBA/Gold/01 Dancing Queen.lrc")) card.files[p] = p.toByteArray()
+        m.libraryDelete(LibTarget.AlbumOf(lib(m).albums.first { it.title == "Gold" }))
+        m.confirmLibraryDelete()
+        // only the songs go: the booklet, the video and the folder stay
+        assertTrue(card.folders.contains("Music/ABBA/Gold"))
+        assertFalse(card.files.containsKey("Music/ABBA/Gold/01 Dancing Queen.flac"))
+        assertFalse(card.files.containsKey("Music/ABBA/Gold/02 Knowing Me.flac"))
+        assertTrue(card.files.containsKey("Music/ABBA/Gold/booklet.pdf"))
+        assertTrue(card.files.containsKey("Music/ABBA/Gold/live.mp4"))
+    }
+
+    @Test
+    fun albumFolderWithLyricsAndArtworkGoesWithIt() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.fullRescan = false
+        val m = libraryOnCard(env)
+        for (p in listOf("Music/ABBA/Gold/01 Dancing Queen.lrc", "Music/ABBA/Gold/album.cue", "Music/ABBA/Gold/.DS_Store")) card.files[p] = p.toByteArray()
+        m.libraryDelete(LibTarget.AlbumOf(lib(m).albums.first { it.title == "Gold" }))
+        m.confirmLibraryDelete()
+        assertFalse(card.folders.contains("Music/ABBA/Gold"))
+        assertTrue(card.files.keys.none { it.startsWith("Music/ABBA/Gold/") })
+    }
+
+    @Test
+    fun movingAnAlbumOutOfASharedFolderMovesOnlyItsSongs() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.folders += "Music/Beatles"
+        card.files["Music/Mix/a.lrc"] = "lyrics".toByteArray()
+        val m = libraryOnCard(env)
+        val hits = lib(m).albums.first { it.title == "Hits" }
+        // its folder is shared with another album's song
+        assertEquals("Music/Mix", LibTarget.AlbumOf(hits).cardPath)
+        m.libraryMove(LibTarget.AlbumOf(hits))
+        val b = m.state.browser
+        assertEquals("Music", b.path)
+        assertEquals(listOf("Music/Mix/a.mp3", "Music/Mix/a.lrc"), b.movingFiles)
+        assertEquals("Hits", b.movingLabel)
+        assertFalse(m.state.busy)
+        m.openFolder("Music/Beatles")
+        m.moveHere()
+        assertTrue(card.files.containsKey("Music/Beatles/a.mp3"))
+        assertTrue(card.files.containsKey("Music/Beatles/a.lrc"))
+        assertTrue(card.files.containsKey("Music/Mix/b.mp3"))
+        assertTrue(card.folders.contains("Music/Mix"))
+        assertFalse(card.folders.contains("Music/Beatles/Mix"))
+        assertNull(m.state.browser.moving)
+        assertTrue(m.state.browser.movingFiles.isEmpty())
+    }
+
+    @Test
+    fun playlistEditsKeepWhatTheAppDoesNotRead() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.folders += "Playlists"
+        val cp1252 = charset("windows-1252")
+        val file = "Playlists/Old.m3u"
+        val text = "#EXTM3U\r\n#EXTINF:-1,Beyonc\u00e9 - Halo\r\n..\\M\u00fasica\\Beyonc\u00e9\\01.mp3\r\n#EXTINF:-1,Radio\r\nhttp://radio.example/stream\r\n" +
+            "C:\\Users\\Me\\Music\\x.mp3\r\n#EXTGENRE:Pop\r\n../Music/loose.mp3\r\n"
+        card.files[file] = text.toByteArray(cp1252)
+        val m = libraryOnCard(env)
+        m.openPlaylist(file)
+        assertEquals(listOf("M\u00fasica/Beyonc\u00e9/01.mp3", "Music/loose.mp3"), m.state.playlists.open!!.songs)
+        m.addToPlaylist(LibTarget.Song(lib(m).tracks.first { it.title == "B" }))
+        m.addToPlaylistFile(file)
+        var now = String(card.files[file]!!, cp1252)
+        assertEquals(text + "#EXTINF:-1,Other - B\r\n../Music/Mix/b.mp3\r\n", now)
+        assertEquals(3, m.state.playlists.open!!.songs.size)
+        // removing the first song takes its two lines only; the URL, the PC path and the tag stay
+        m.removeFromPlaylist(0)
+        now = String(card.files[file]!!, cp1252)
+        assertFalse(now.contains("Beyonc"))
+        assertTrue(now.contains("#EXTINF:-1,Radio\r\nhttp://radio.example/stream\r\n"))
+        assertTrue(now.contains("C:\\Users\\Me\\Music\\x.mp3\r\n#EXTGENRE:Pop\r\n"))
+        assertEquals(listOf("Music/loose.mp3", "Music/Mix/b.mp3"), m.state.playlists.open!!.songs)
+        // a UTF-8 file stays UTF-8, with its BOM
+        val utf = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + "#EXTM3U\n../Canci\u00f3n.flac\n".toByteArray()
+        val f = M3u.parse("Playlists", utf).adding(listOf("Music/\u00c1.mp3" to ""))
+        assertEquals("Canci\u00f3n.flac", f.songs[0])
+        assertTrue(f.bytes().contentEquals(utf + "../Music/\u00c1.mp3\n".toByteArray()))
+        // a legacy file that cannot hold a new name is written as UTF-8
+        val legacy = M3u.parse("Playlists", "..\\Caf\u00e9.mp3\n".toByteArray(cp1252)).adding(listOf("Music/\u65e5\u672c.mp3" to ""))
+        assertEquals(listOf("Caf\u00e9.mp3", "Music/\u65e5\u672c.mp3"), M3u.parse("Playlists", legacy.bytes()).songs)
+    }
+
+    @Test
+    fun aStoppedTransferFollowsANewDestination() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        m.setDestination(Destination.MUSIC)
+        m.addPicked { listOf(item("Live", "a.flac"), item("Live", "b.flac", data = ByteArray(300_000) { it.toByte() }), item("Live", "c.flac")) }
+        card.dropAfter = 200_000
+        env.c.down = true
+        m.startSend()
+        env.c.down = false
+        assertEquals(JobStatus.SENT, m.state.transfer.jobs[0].status)
+        // c.flac still waits: the screen offers the destination and the pickers again
+        assertFalse(m.state.transfer.finished)
+        m.connectTo(env.c.device.copy(paired = true))
+        // a new destination and one more file: the sent file stays, the rest follows the choice
+        m.setDestination(Destination.BOOKS)
+        m.addPicked { listOf(item("notes.txt")) }
+        val jobs = m.state.transfer.jobs
+        assertEquals(listOf("Music/Live/a.flac", "Books/Live/b.flac", "Books/Live/c.flac", "Books/notes.txt"), jobs.map { it.remote })
+        assertEquals(JobStatus.SENT, jobs[0].status)
+        assertEquals(4, jobs.map { it.id }.toSet().size)
+        m.startSend()
+        assertTrue(m.state.transfer.finished)
+        assertEquals(0, m.state.transfer.problems)
+        assertTrue(card.files.containsKey("Books/Live/b.flac"))
+        assertTrue(card.files.containsKey("Books/Live/c.flac"))
+        assertTrue(card.files.containsKey("Books/notes.txt"))
+        assertFalse(card.files.containsKey("Music/Live/b.flac"))
+        assertFalse(card.files.containsKey("Music/Live/c.flac"))
+    }
+
+    @Test
+    fun aRefusedReconnectionEndsTheSession() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = paired(env)
+        m.setDestination(Destination.MUSIC)
+        m.addPicked { listOf(item("Live", "b.flac", data = ByteArray(300_000) { it.toByte() })) }
+        card.dropAfter = 200_000
+        // the player forgot this phone while it slept
+        env.c.forgotten = true
+        m.startSend()
+        assertEquals(R.string.sync_err_forgotten, m.state.transfer.error?.title)
+        assertTrue(m.state.link is Link.Idle)
+        assertFalse(m.state.busy)
+    }
+
+    @Test
+    fun anotherPlayerStartsWithoutTheOldLibrary() {
+        val env = Env(FakeConnector())
+        val m = libraryOnCard(env)
+        val gold = lib(m).albums.first { it.title == "Gold" }
+        m.addToPlaylist(null)
+        m.loadPlaylists()
+        assertNotNull(m.state.playlists.files)
+        // the same player again keeps what was read
+        m.connectTo(env.c.device.copy(paired = true))
+        assertTrue(m.state.library is LibraryPhase.Ready)
+        // another player: nothing of the first one's card is kept
+        env.c.device = env.c.device.copy(deviceId = "fedcba9876543210", name = "Other")
+        m.connectTo(env.c.device)
+        m.setCode(env.c.code)
+        m.confirmCode()
+        assertEquals("Other", m.state.connected!!.device.name)
+        assertEquals(LibraryPhase.Idle, m.state.library)
+        assertEquals(Playlists(), m.state.playlists)
+        assertTrue(m.state.covers.isEmpty())
+        m.libraryDelete(LibTarget.AlbumOf(gold))
+        m.confirmLibraryDelete()
+        assertTrue(env.c.card.files.containsKey("Music/ABBA/Gold/01 Dancing Queen.flac"))
+    }
+
+    @Test
+    fun filesSharedDuringATransferWaitForItsEnd() {
+        val base = Env(FakeConnector())
+        val env = Queued(base)
+        val m = pairedWith(env, base.c)
+        m.setDestination(Destination.MUSIC)
+        m.addPicked { listOf(item("a.flac")) }
+        env.hold = true
+        m.startSend()
+        assertTrue(m.state.transfer.running)
+        m.addPicked { listOf(item("photo.jpg")) }
+        assertTrue(m.state.sharedWaiting)
+        env.run()
+        assertTrue(base.c.card.files.containsKey("Music/a.flac"))
+        assertEquals(listOf("Music/photo.jpg"), m.state.transfer.jobs.map { it.remote })
+        assertFalse(m.state.sharedWaiting)
+    }
+
+    @Test
+    fun playlistsAreNotLeftLoadingWhileTheLibraryIsBusy() {
+        val base = Env(FakeConnector())
+        val env = Queued(base)
+        val m = pairedWith(env, base.c)
+        base.c.sessions.last().snapshot = "SQLite format 3\u0000".toByteArray()
+        m.loadLibrary()
+        env.hold = true
+        m.rescanLibrary()
+        assertTrue(m.state.busy)
+        m.openPlaylist("Playlists/x.m3u8")
+        assertNull(m.state.libraryNav.playlist)
+        m.loadPlaylists()
+        assertNull(m.state.playlists.files)
+        env.run()
+        assertFalse(m.state.busy)
+        m.loadPlaylists()
+        assertEquals(emptyList<String>(), m.state.playlists.files)
+    }
+
+    @Test
+    fun aCopyThatDoesNotFinishLeavesNoFileOnThePhone() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        card.folders += "Recordings"
+        card.files["Recordings/talk.wav"] = ByteArray(1000) { it.toByte() }
+        val m = paired(env)
+        var discarded = 0
+        // the file went away on the card
+        m.openFolder("Recordings")
+        m.saveToPhone(m.state.browser.entries!!.single())
+        card.files.clear()
+        m.downloadTo(discard = { discarded++ }) { java.io.ByteArrayOutputStream() }
+        assertEquals(1, discarded)
+        // nothing was asked for (or the session is gone): the empty document goes too
+        m.downloadTo(discard = { discarded++ }) { java.io.ByteArrayOutputStream() }
+        assertEquals(2, discarded)
+        // a whole copy stays
+        card.files["Recordings/talk.wav"] = ByteArray(1000) { it.toByte() }
+        m.clearDownload()
+        m.saveToPhone(SyncEntry("talk.wav", 0, 1000, 0))
+        m.downloadTo(discard = { discarded++ }) { java.io.ByteArrayOutputStream() }
+        assertEquals(2, discarded)
+        assertTrue(m.state.browser.download!!.finished)
+    }
+
+    @Test
+    fun replacedArtworkIsReadAgain() {
+        val env = Env(FakeConnector())
+        val card = env.c.card
+        val m = libraryOnCard(env)
+        val folder = Library.artFolder(lib(m).albums.first { it.title == "Gold" })!!
+        m.loadCover(folder)
+        val first = m.state.covers[folder]!!
+        card.files["Music/ABBA/Gold/cover.jpg"] = "a new, larger picture".toByteArray()
+        m.disconnect()
+        m.connectTo(env.c.device.copy(paired = true))
+        m.loadCover(folder)
+        val second = m.state.covers[folder]!!
+        assertEquals("a new, larger picture", String(File(second).readBytes()))
+        assertFalse(File(first).exists())
+    }
+
     // ---- signed update (sections 14.1 to 14.3) ----------------------------------------------
 
     private class Release(val json: ByteArray, val tar: ByteArray, val key: String, val version: String)

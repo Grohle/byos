@@ -70,6 +70,12 @@ data class Browser(
     val error: ErrorInfo? = null,
     /** An entry being moved: the user walks to the target folder and taps "Move here". */
     val moving: String? = null,
+    /**
+     * An album that shares its folder with other files: only its songs move ([moving] is then
+     * their folder, which stays). [movingLabel] names what moves.
+     */
+    val movingFiles: List<String> = emptyList(),
+    val movingLabel: String? = null,
     val prompt: Prompt? = null,
     val working: Boolean = false,
     /** A card file being copied to the phone ("Save to phone"). */
@@ -213,6 +219,8 @@ data class SyncState(
     val destPath: String? = null,
     val replace: Boolean = false,
     val transfer: Transfer = Transfer(),
+    /** Files shared from another app while a transfer runs: they join the list when it ends. */
+    val sharedWaiting: Boolean = false,
     val browser: Browser = Browser(),
     val library: LibraryPhase = LibraryPhase.Idle,
     val libraryNav: LibraryNav = LibraryNav(),

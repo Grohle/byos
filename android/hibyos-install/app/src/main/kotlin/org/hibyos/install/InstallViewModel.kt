@@ -151,7 +151,8 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     /**
      * Files shared from another app: they are added to Send Files, which opens (over the
      * connection screen when no player is connected yet). ByOS update files among them are
-     * handed to Install Update by the automatic destination.
+     * handed to Install Update by the automatic destination. During a transfer they wait for
+     * its end (the send screen, which stays open while it runs, says so).
      */
     fun syncShared(uris: List<Uri>) {
         val app = getApplication<Application>()
@@ -163,7 +164,9 @@ class InstallViewModel(app: Application) : AndroidViewModel(app), Actions {
     /** The document created for "Save to phone": the card file is copied into it. */
     fun syncSaveTo(uri: Uri) {
         val app = getApplication<Application>()
-        connected.downloadTo { app.contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("the file cannot be written") }
+        connected.downloadTo(discard = { android.provider.DocumentsContract.deleteDocument(app.contentResolver, uri) }) {
+            app.contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("the file cannot be written")
+        }
     }
 
     fun syncUpdatePicked(uris: List<Uri>) {

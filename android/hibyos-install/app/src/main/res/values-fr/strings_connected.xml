@@ -280,6 +280,8 @@
     <string name="sync_note_reconnecting">Connexion perdue, reconnexion…</string>
     <string name="sync_reconnecting">Connexion perdue. Reconnexion (%1$d sur %2$d)…</string>
     <string name="sync_sending_note_bg">Vous pouvez quitter l\'app : l\'envoi continue et sa progression est dans les notifications. Si la connexion coupe, elle se rétablit d\'elle-même et l\'envoi reprend là où il s\'est arrêté.</string>
+    <string name="sync_shared_waiting">Fichiers partagés en attente</string>
+    <string name="sync_shared_waiting_sub">Ils sont ajoutés à la liste à la fin de cet envoi.</string>
 
     <!-- Search, artwork, save to phone -->
     <string name="sync_search_hint">Artistes, albums et morceaux</string>

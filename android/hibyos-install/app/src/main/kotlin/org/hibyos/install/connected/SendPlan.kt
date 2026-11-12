@@ -80,11 +80,11 @@ class SendPlan(val jobs: List<SendJob>, val folders: List<String>, val sources: 
          * replaces the defaults of [Route.folder]). Files that the player wants in one place
          * (the firmware, apps, playlists) lose the picked folders; the others keep them.
          */
-        fun auto(items: List<LocalItem>, folders: Map<Route, String> = emptyMap(), maxFile: Long = Long.MAX_VALUE): SendPlan {
+        fun auto(items: List<LocalItem>, folders: Map<Route, String> = emptyMap(), maxFile: Long = Long.MAX_VALUE, firstId: Int = 1): SendPlan {
             val musicDirs = items.filter { FileKinds.isAudio(it.parts.last()) }.map { it.parts.dropLast(1).joinToString("/").lowercase() }.toSet()
             val routes = HashMap<LocalItem, Route>()
             for (it in items) routes[it] = routeOf(it, musicDirs)
-            return build(items, maxFile = maxFile, place = { item ->
+            return build(items, maxFile = maxFile, firstId = firstId, place = { item ->
                 val r = routes[item]!!
                 val base = folders[r] ?: r.folder
                 val flat = r == Route.FIRMWARE || r == Route.APPS || r == Route.PLAYLISTS

@@ -532,6 +532,12 @@ fun SyncSend(s: UiState, a: Actions) {
                     detail = if (t.reconnecting > 0) stringResource(R.string.sync_reconnecting, t.reconnecting, ConnectedModel.RECONNECT_DELAYS.size)
                     else stringResource(if (t.hashing) R.string.sync_job_hashing else R.string.sync_job_sending),
                     detail2 = t.current.ifEmpty { " " }, note = stringResource(R.string.sync_sending_note_bg))
+                if (st.sharedWaiting) Section {
+                    row {
+                        Item(title = stringResource(R.string.sync_shared_waiting), subtitle = stringResource(R.string.sync_shared_waiting_sub),
+                            icon = { IconTile(Glyphs.Doc, C.blue) }, trailing = { Spinner() })
+                    }
+                }
             } else if (t.finished) {
                 val ok = t.problems == 0
                 Hero(if (ok) Glyphs.Check else Glyphs.Alert, if (ok) C.green else C.orange,
@@ -597,8 +603,8 @@ fun SyncSend(s: UiState, a: Actions) {
                         for (j in shown) row { JobRow(j) }
                     }
                 } else {
-                    val editable = !t.running && !t.finished && t.jobs.none { it.status != JobStatus.WAITING && it.status != JobStatus.BAD_NAME &&
-                        it.status != JobStatus.TOO_BIG && it.status != JobStatus.UPDATE_FILE }
+                    // after a stop half way, what is left still follows a new choice (the files already sent stay)
+                    val editable = !t.running && !t.finished
                     for (r in Route.entries) {
                         val js = t.jobs.filter { it.route == r }
                         if (js.isEmpty()) continue
@@ -671,8 +677,8 @@ fun SyncFiles(s: UiState, a: Actions) {
             if (b.moving != null) {
                 Section {
                     row {
-                        Item(title = stringResource(R.string.sync_moving, SyncPaths.name(b.moving)), subtitle = stringResource(R.string.sync_moving_sub),
-                            icon = { IconTile(Glyphs.Folder, C.orange) })
+                        Item(title = stringResource(R.string.sync_moving, b.movingLabel ?: SyncPaths.name(b.moving)), subtitle = stringResource(R.string.sync_moving_sub),
+                            icon = { IconTile(if (b.movingFiles.isEmpty()) Glyphs.Folder else Glyphs.Music, C.orange) })
                     }
                 }
             }
@@ -905,7 +911,9 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
                     nav.playlist != null -> {
                         val p = pls.open
                         if (p == null || p.file != nav.playlist) {
-                            item { Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } } }
+                            if (pls.working || pls.error == null) item {
+                                Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } }
+                            }
                         } else {
                             item { Txt(songs(p.songs.size), T.sub, Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp)) }
                             if (p.songs.isEmpty()) item {
@@ -1015,7 +1023,9 @@ private fun LibraryLists(s: UiState, a: Actions, lib: LibraryPhase.Ready, nav: L
                                 val files = pls.files
                                 when {
                                     files == null -> item {
-                                        LaunchedEffect(Unit) { x.loadPlaylists() }
+                                        // asked again once other work (a rescan) is over: the model refuses while busy
+                                        val busy = st.busy
+                                        LaunchedEffect(busy) { if (!busy && pls.error == null) x.loadPlaylists() }
                                         Section { row { Item(title = stringResource(R.string.sync_loading), trailing = { Spinner() }) } }
                                     }
                                     files.isEmpty() -> item {

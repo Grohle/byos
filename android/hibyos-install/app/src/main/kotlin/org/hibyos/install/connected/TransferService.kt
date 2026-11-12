@@ -18,29 +18,51 @@ import org.hibyos.install.R
  * front: a foreground service of type dataSync with one notification that shows the progress.
  * The work itself stays on the connected mode's worker; this service only holds the process
  * and draws [note]. It is started when work begins and stopped when it ends ([update]).
+ *
+ * A service started with startForegroundService() must call startForeground() before it stops,
+ * or the system ends the app. Work can end before the service gets its start (a file skipped in
+ * a few milliseconds), so the end of the work never stops a service that is not in the
+ * foreground yet: the service always goes to the foreground first, then stops itself when it
+ * finds no work left.
  */
 class TransferService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val n = note
-        if (n == null) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        // the foreground first, even when the work is already over (see the class comment)
+        val n = note ?: last ?: WorkNote(WorkNote.Kind.SEND, 0, 0, "")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(ID, build(this, n), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             else startForeground(ID, build(this, n))
         } catch (e: Exception) {
             // not allowed now (the app went to the background first): the work goes on without the notification
             stopSelf()
+            return START_NOT_STICKY
         }
+        instance = this
+        if (note == null) finish()
         return START_NOT_STICKY
+    }
+
+    private fun finish() {
+        if (instance === this) instance = null
+        stopForegroundCompat()
+        stopSelf()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun stopForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE) else stopForeground(true)
+    }
+
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
     }
 
     /** Android 15 ends a dataSync service after six hours a day. */
     override fun onTimeout(startId: Int, fgsType: Int) {
-        stopSelf()
+        finish()
     }
 
     companion object {
@@ -49,6 +71,14 @@ class TransferService : Service() {
 
         @Volatile
         private var note: WorkNote? = null
+
+        /** The last work shown: what a service started late shows for the moment it is in the foreground. */
+        @Volatile
+        private var last: WorkNote? = null
+
+        /** The service once it is in the foreground (null before its start and after its end). */
+        @Volatile
+        private var instance: TransferService? = null
         private var running = false
         private var shownAt = 0L
         private var shown: WorkNote? = null
@@ -94,12 +124,14 @@ class TransferService : Service() {
          */
         fun update(ctx: Context, n: WorkNote?, now: Long) {
             note = n
+            if (n != null) last = n
             val app = ctx.applicationContext
             if (n == null) {
                 if (running) {
                     running = false
                     shown = null
-                    app.stopService(Intent(app, TransferService::class.java))
+                    // in the foreground: it ends now; not yet started: it ends itself in onStartCommand
+                    instance?.finish()
                 }
                 return
             }

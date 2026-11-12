@@ -41,10 +41,32 @@ class TransferServiceTest {
         val nm = shadowOf(ctx.getSystemService(NotificationManager::class.java))
         assertEquals(ctx.getString(org.hibyos.install.R.string.sync_note_reconnecting),
             nm.allNotifications.last().extras.getString(Notification.EXTRA_TITLE))
-        // no work: stopped
+        // no work: the service leaves the foreground and stops itself
         TransferService.update(ctx, null, 200)
-        assertNotNull(app.nextStoppedService)
+        assertTrue(shadowOf(svc).isStoppedBySelf)
+        assertTrue(shadowOf(svc).isForegroundStopped)
         assertNull(app.nextStartedService)
+    }
+
+    /**
+     * Review: work that ends before the service gets its start (a file skipped in a few ms) must
+     * not stop the service before startForeground(), or Android ends the app.
+     */
+    @Test
+    fun workEndingBeforeTheStartStillGoesToTheForeground() {
+        val app = shadowOf(RuntimeEnvironment.getApplication())
+        TransferService.update(ctx, WorkNote(WorkNote.Kind.SEND, 0, 10, "Music/cover.jpg"), 0)
+        val started = app.nextStartedService
+        assertNotNull(started)
+        TransferService.update(ctx, null, 5)
+        // nothing stops it from outside while its start is pending
+        assertNull(app.nextStoppedService)
+        val svc = Robolectric.buildService(TransferService::class.java, started).create().get()
+        svc.onStartCommand(started, 0, 1)
+        assertTrue(shadowOf(svc).lastForegroundNotificationId != 0)
+        assertTrue(shadowOf(svc).notificationShouldRemoved)
+        assertTrue(shadowOf(svc).isForegroundStopped)
+        assertTrue(shadowOf(svc).isStoppedBySelf)
     }
 
     @Test
