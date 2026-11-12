@@ -1239,6 +1239,7 @@ static int wl_password(const char *ssid, const char *err, char *buf, int cap, in
     wpw_title = title; wpw_err = err; wpw_buf = &e; wpw_caret = 1; wpw_show = 0;
     int ac = kb_cfg_autocap, pe = kb_cfg_period;
     kb_cfg_autocap = 0; kb_cfg_period = 0;            /* contrasenas: sin mayuscula ni ". " automaticos */
+    kb_latin_only = 1;                                /* contrasena: teclado latino (kb_end lo quita) */
     kb_layer = 0; kb_shift = 0; kb_caps = 0; kb_layout(tr("Unirse"));
     kb_begin_ex(&e, fr0, wpw_redraw, wpw_field_y(), wpw_field_y() + 44);   /* el campo nunca queda bajo el teclado */
     struct pkt p; double blink = now_ms(); int ok = 0;

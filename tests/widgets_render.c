@@ -125,7 +125,7 @@ static void fake_cover(uint16_t *c, int k)
 }
 int main(int argc, char **argv)
 {
-    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)argc;
+    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)kb_cfg_layouts; (void)argc;
     if (!text_init()) { printf("no font\n"); return 2; }
     mkdir(outdir(), 0755);
     {   /* default wallpaper of the shell (RGB565, 320x480) */

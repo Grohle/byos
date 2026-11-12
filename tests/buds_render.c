@@ -216,7 +216,7 @@ static void widget_mock(const char *name)
 }
 int main(void)
 {
-    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout;
+    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)kb_cfg_layouts;
     if (!text_init()) { printf("no font\n"); return 2; }
     mkdir(outdir(), 0755);
     status_bar(); bu_t0 = now_ms() - 10000;

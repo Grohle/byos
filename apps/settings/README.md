@@ -35,7 +35,7 @@ Open **Settings** on the home screen (grey gear). The old **Customize** app is n
 | | **Home Screen** | live preview, icon size, columns, app names, page dots, dock background, dim the wallpaper, wallpaper (images from `SD/Pictures`), widgets page, reset the home screen |
 | | **Gestures** | the action of each edge (bottom in apps, bottom on the home screen, top-left, top-right, left edge, right edge) with an animated preview: swipe from the edge on the page to see it |
 | | **Control Center** | which controls appear, in two groups: Airplane Mode, Noise Control, Bluetooth, Wi-Fi, USB only, Power mode; then USB DAC, Digital filter, Files, Settings |
-| | **Keyboard** | height (Compact, Normal, Tall), number row, layout (English QWERTY, Spanish QWERTY, French AZERTY) |
+| | **Keyboard** | height (Compact, Normal, Tall), number row, **Keyboards**: one per interface language (13), turn on the ones you use; see [the keyboard guide](../../docs/KEYBOARD.md) |
 | | **Developer** | ADB: Off, Wi-Fi (shows the address to `adb connect`) or USB |
 
 <p align="center">

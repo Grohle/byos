@@ -259,7 +259,7 @@ static void test_txt(void)
 static void fmt_of(const char *s, char *o) { int k = 0; for (; *s && k < 15; s++) if (*s == '%' && s[1]) { o[k++] = s[1]; s++; } o[k] = 0; }
 static void test_i18n(void)
 {
-    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout;
+    (void)ui_lang_sys; (void)kb_cfg_height; (void)kb_cfg_numrow; (void)kb_cfg_layout; (void)kb_cfg_layouts;
     static const char *const used[] = { "Biblioteca", "%d de %d", "Eliminar", "Eliminado", "No se pudo eliminar del todo", "La SD está conectada al ordenador",
                                         "¿Eliminar «%s»? No se puede deshacer.", 0 };
     for (unsigned i = 0; i < sizeof BTR / sizeof BTR[0]; i++) {

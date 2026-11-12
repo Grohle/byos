@@ -1,5 +1,9 @@
 /* keyboard.inc.c - teclado estilo iOS (oscuro), ligero y fluido.
- *  - Distribuciones ES (con ñ), EN y FR (AZERTY); paginas 123 y #+=; fila de numeros opcional.
+ *  - Un teclado por cada idioma de la interfaz (13; datos y motores de entrada en kb_ime.inc.c): latinos
+ *    (ES con ñ, EN, FR AZERTY, DE QWERTZ, IT, PL), cirilicos (RU, UK), coreano (hangul compuesto en
+ *    el texto), tailandes (Kedmanee, 4 filas), japones (romaji -> kana) y chino (pinyin, simplificado y
+ *    tradicional) con barra de candidatos. Los activados se eligen en Ajustes > Teclado > Teclados; el
+ *    globo pasa al siguiente (mantenerlo: la lista). Paginas 123 y #+=; fila de numeros opcional.
  *  - Burbuja al pulsar, mayusculas (un toque) y bloqueo (doble toque), mayuscula automatica al
  *    empezar frase, doble espacio -> ". ", borrar con repeticion que acelera (y por palabras),
  *    pulsacion larga para tildes y variantes. Cursor: deslizar en la barra espaciadora (Gboard) o
@@ -17,25 +21,34 @@
  * editor de texto multilinea de Archivos. */
 
 /* configuracion (Personalizar > Teclado y la hoja del propio teclado) */
-static int kb_cfg_height = 1, kb_cfg_numrow = 0, kb_cfg_layout = 0;   /* layout: 0 ES, 1 EN, 2 FR */
+static int kb_cfg_height = 1, kb_cfg_numrow = 0, kb_cfg_layout = 0;   /* layout: su LANG_* (0 ES, 1 EN, 2 FR...) */
+static int kb_cfg_layouts;                    /* teclados activados: bit 1 << LANG_* (lconf "kbs") */
 static int kb_cfg_rowh;                       /* altura continua de tecla (px); 0 = segun kb_cfg_height */
 static int kb_cfg_autocap = 1, kb_cfg_period = 1;
 static int kb_rowh_coarse = -1, kb_conf_loaded;
+/* campos que solo admiten letras latinas (contrasena Wi-Fi, pantallas de HiBy): el llamante lo pone
+ * antes de kb_layout y kb_end lo quita. Si el teclado actual no es latino se usa otro (sin guardarlo). */
+static int kb_latin_only, kb_lay_tmp = -1;
 #define KB_CONF ASSETS "/keyboard.conf"
 #define KR_MIN 32
 #define KR_MAX 48
 #define KB_BB 28                              /* barra inferior (globo y ocultar) */
 #define KB_SH 165                             /* hoja de ajustes */
+#define KB_CB 42                              /* barra de candidatos (japones y chino) */
 static int kb_kr_h(void)
 {
     if (kb_cfg_rowh >= KR_MIN && kb_cfg_rowh <= KR_MAX) return kb_cfg_rowh;
     return kb_cfg_height == 0 ? 36 : kb_cfg_height == 2 ? 48 : 42;
 }
-static int kb_rows(void) { return 4 + (kb_cfg_numrow ? 1 : 0); }
+static int kb_cur_lay(void) { int l = kb_lay_tmp >= 0 ? kb_lay_tmp : kb_cfg_layout; return l >= 0 && l < KB_NLAY ? l : LANG_EN; }
+static const struct kb_lay *kb_ly(void) { return kb_lay(kb_cur_lay()); }
+/* filas de teclas (con la de abajo); el tailandes tiene 4 de letras y nunca la de numeros */
+static int kb_rows(void) { return kb_ly()->nrows == 4 ? 5 : 4 + (kb_cfg_numrow ? 1 : 0); }
+static int kb_cb_h(void) { return kb_ly()->flags & (KL_KANA | KL_PINYIN) ? KB_CB : 0; }
 #define KR_H (kb_kr_h())
 /* estado de presentacion: desplazamiento (animacion/oculto), relleno de arrastre, hoja, menu */
 static int kb_off, kb_hpad, kb_hadj, kb_sheet, kb_sheet_h, kb_menu, kb_menu_sel = -1, kb_trackpad, kb_bar_press;
-static int kb_keys_h(void) { return kb_rows() * (KR_H + 8) + 6 + KB_BB + kb_hpad; }
+static int kb_keys_h(void) { return kb_rows() * (KR_H + 8) + 6 + KB_BB + kb_hpad + kb_cb_h(); }
 #define KB_H (kb_keys_h() + kb_sheet_h + kb_hadj)
 /* Campo a la vista: la pagina del llamante vive en "coordenadas de pagina". Con kb_pg > 0, la fila y
  * (>= KB_SB) de la pagina se ve en la fila y - kb_pg de la pantalla. KB_YR es el borde superior real
@@ -51,7 +64,8 @@ static int (*kb_vmove)(int cur, int dir);     /* linea visual arriba/abajo (edit
 #define KB_YR (H - KB_H + kb_off)
 #define KB_Y (KB_YR + kb_pg + kb_vy)
 static int kb_keys_top(void) { return H - kb_keys_h() + kb_off; }
-static int kb_keys_y0(void) { return kb_keys_top() + kb_hpad; }
+static int kb_keys_y0(void) { return kb_keys_top() + kb_hpad + kb_cb_h(); }
+static int kb_cb_y(void) { return kb_keys_top() + kb_hpad; }                 /* barra de candidatos */
 static int kb_bar_y(void) { return kb_keys_y0() + kb_rows() * (KR_H + 8) + 6; }
 static int kb_row_y(int r) { return 8 + r * (KR_H + 8); }      /* relativa a kb_keys_y0() */
 
@@ -98,46 +112,64 @@ static void kb_row_keys(const char *row, int y, int x_left, int x_right, int max
 {
     static char lbls[64][5];
     int n = 0; const char *s = row; while (utf8_next(&s)) n++;
-    int avail = x_right - x_left, gap = 4, kw = (avail - (n - 1) * gap) / n; if (kw > maxkw) kw = maxkw;
+    if (!n) return;
+    int avail = x_right - x_left, gap, kw; kb_row_geom(n, avail, maxkw, &kw, &gap);
     int tot = n * kw + (n - 1) * gap, x0 = x_left + (avail - tot) / 2;
     s = row;
     for (int i = 0; i < n && nkeys < 64; i++) {
         const char *st0 = s; int c = utf8_next(&s);
-        int k = nkeys, len = (int)(s - st0); memcpy(lbls[k], st0, len); lbls[k][len] = 0;
+        int k = nkeys, len = (int)(s - st0); if (len > 4) len = 4; memcpy(lbls[k], st0, len); lbls[k][len] = 0;
         kbk[nkeys++] = (struct key){ x0 + i * (kw + gap), y, kw, KR_H, lbls[k], c };
     }
 }
 static unsigned kb_gen;                       /* cambia con cada distribucion: invalida los sprites */
+static int kb_built_sh;                       /* capa de mayusculas propia con la que se monto (coreano, tailandes) */
+static int kb_want_sh(void) { return kb_layer == 0 && (kb_shift || kb_caps) && kb_ly()->srows[0]; }
+/* texto de la barra espaciadora: con preedicion confirma (como iOS) */
+static const char *kb_space_lbl(void)
+{
+    const struct kb_lay *k = kb_ly();
+    if (ime_active()) return k->flags & KL_KANA ? "確定" : k->flags & KL_HANT ? "選定" : "选定";
+    return k->space;
+}
 static void kb_relayout(void)
 {
     kb_gen++;
-    static const char *LET[3][3] = {
-        { "qwertyuiop", "asdfghjklñ", "zxcvbnm" },        /* espanol */
-        { "qwertyuiop", "asdfghjkl", "zxcvbnm" },         /* ingles */
-        { "azertyuiop", "qsdfghjklm", "wxcvbn'" },        /* frances (AZERTY) */
-    };
-    int L = kb_cfg_layout < 0 || kb_cfg_layout > 2 ? 0 : kb_cfg_layout;
-    const char *top = 0, *r0, *r1, *r2;
-    if (kb_layer == 0) { r0 = LET[L][0]; r1 = LET[L][1]; r2 = LET[L][2]; if (kb_cfg_numrow) top = "1234567890"; }
-    else if (kb_layer == 1) { r0 = "1234567890"; r1 = L == 1 ? "-/:;()$&@\"" : "-/:;()€&@\""; r2 = ".,?!'"; if (kb_cfg_numrow) top = "[]{}#%^*+="; }
-    else { r0 = "[]{}#%^*+="; r1 = L == 1 ? "_\\|~<>€£¥•" : "_\\|~<>$£¥•"; r2 = ".,?!'"; if (kb_cfg_numrow) top = "1234567890"; }
+    const struct kb_lay *ly = kb_ly();
+    const char *rw[6]; int sh = kb_want_sh();
+    int n = kb_lay_rows(kb_cur_lay(), kb_layer, sh, kb_cfg_numrow, rw);
+    kb_built_sh = sh;
     nkeys = 0; int r = 0;
-    if (top) kb_row_keys(top, kb_row_y(r++), 3, W - 3, 30);
-    kb_row_keys(r0, kb_row_y(r++), 3, W - 3, 30);
-    kb_row_keys(r1, kb_row_y(r++), 3, W - 3, 30);
-    kbk[nkeys++] = (struct key){ 3, kb_row_y(r), 42, KR_H, kb_layer == 0 ? "" : kb_layer == 1 ? "#+=" : "123", K_SHIFT };
-    kb_row_keys(r2, kb_row_y(r), 49, W - 49, kb_layer ? 46 : 30);
-    kbk[nkeys++] = (struct key){ W - 45, kb_row_y(r), 42, KR_H, "", K_BACK };
+    for (; r < n - 1; r++) kb_row_keys(rw[r], kb_row_y(r), 3, W - 3, 30);
+    int cnt = 0; const char *s = rw[r]; while (utf8_next(&s)) cnt++;
+    int sw = kb_layer == 0 ? kb_side_w(cnt) : 42;   /* 9-10 teclas (cirilico, tailandes): mayusculas y borrar mas estrechas */
+    kbk[nkeys++] = (struct key){ 3, kb_row_y(r), sw, KR_H, kb_layer == 0 ? "" : kb_layer == 1 ? "#+=" : "123", K_SHIFT };
+    kb_row_keys(rw[r], kb_row_y(r), 3 + sw + 4, W - 3 - sw - 4, kb_layer ? 46 : 30);
+    kbk[nkeys++] = (struct key){ W - 3 - sw, kb_row_y(r), sw, KR_H, "", K_BACK };
     r++;
-    kbk[nkeys++] = (struct key){ 3, kb_row_y(r), 64, KR_H, kb_layer ? "ABC" : "123", K_LAYER };
-    kbk[nkeys++] = (struct key){ 71, kb_row_y(r), 166, KR_H, tr("espacio"), K_SPACE };
+    kbk[nkeys++] = (struct key){ 3, kb_row_y(r), 64, KR_H, kb_layer ? ly->abc : "123", K_LAYER };
+    kbk[nkeys++] = (struct key){ 71, kb_row_y(r), 166, KR_H, ly->space, K_SPACE };
     kbk[nkeys++] = (struct key){ 241, kb_row_y(r), 76, KR_H, kb_enter_lbl, K_ENTER };
 }
+/* coreano y tailandes: al cambiar las mayusculas cambian las teclas (no solo como se ven) */
+static void kb_sh_sync(void) { if (kb_built_sh != kb_want_sh()) kb_relayout(); }
+static int kb_lay_on(int l) { return l >= 0 && l < KB_NLAY && (kb_cfg_layouts >> l & 1); }
+/* en un campo solo latino: el actual si es latino; si no, el primer latino activado o el ingles */
+static int kb_first_latin(void)
+{
+    if (kb_lay(kb_cfg_layout)->flags & KL_LATIN) return kb_cfg_layout;
+    for (int i = 0; i < KB_NLAY; i++) if (kb_lay_on(KB_ORD[i]) && (kb_lay(KB_ORD[i])->flags & KL_LATIN)) return KB_ORD[i];
+    return LANG_EN;
+}
+static int kb_lay_usable(int l) { return !kb_latin_only || (kb_lay(l)->flags & KL_LATIN); }
 /* llamada por cada editor al empezar: estado limpio (capa y mayusculas las pone el llamante) */
 static void kb_layout(const char *enter_label)
 {
     kb_conf_load();
     if (kb_cfg_rowh && kb_rowh_coarse != kb_cfg_height) kb_cfg_rowh = 0;   /* cambiada en Ajustes */
+    if (!kb_cfg_layouts) kb_cfg_layouts = 1 << kb_cur_lay();
+    kb_lay_tmp = kb_latin_only && !(kb_lay(kb_cfg_layout)->flags & KL_LATIN) ? kb_first_latin() : -1;
+    kbi_drop();
     kb_enter_lbl = enter_label;
     kb_off = kb_hpad = kb_hadj = kb_sheet = kb_sheet_h = kb_menu = kb_trackpad = kb_bar_press = 0;
     kb_menu_sel = -1; kb_caps = 0; kb_shift_auto = 0; kb_pressed = -1;
@@ -174,7 +206,8 @@ static int kb_need(void)
 
 static int kb_hit(int x, int y)
 {
-    if (y < kb_keys_top() || y >= kb_bar_y()) return -1;
+    kb_sh_sync();
+    if (y < kb_keys_top() + kb_cb_h() || y >= kb_bar_y()) return -1;
     int best = -1, bd = 1 << 30, ry = y - kb_keys_y0();
     for (int i = 0; i < nkeys; i++) {   /* la tecla mas cercana (sin huecos muertos) */
         struct key *k = &kbk[i];
@@ -187,52 +220,31 @@ static int kb_hit(int x, int y)
 }
 
 /* ------------------------------------------------------------------ caracteres */
-static void put_utf8(char *o, int c)
+/* put_utf8 y up_case: kb_ime.inc.c. Mayusculas solo en las distribuciones que las tienen */
+static int kb_upper(void) { return kb_layer == 0 && (kb_shift || kb_caps) && (kb_ly()->flags & KL_CASE); }
+/* variantes de la pulsacion larga (como iOS, segun la distribucion); acaban en '|' o en 0 */
+static const char *kb_alts(int c) { return kb_lay_alts(kb_cur_lay(), c); }
+/* etiquetas que se centran por su dibujo y no por su avance: una marca sola (tailandes: no avanza) y
+ * los signos de ancho completo (CJK), cuyo dibujo va a un lado de su caja */
+static int kb_lbl_mark(const char *l) { const char *s = l; int c = utf8_next(&s); return c && !*s && text_is_mark(c); }
+static int kb_lbl_box(const char *l)
 {
-    if (c < 0x80) { o[0] = (char)c; o[1] = 0; }
-    else if (c < 0x800) { o[0] = (char)(0xC0 | c >> 6); o[1] = (char)(0x80 | (c & 63)); o[2] = 0; }
-    else { o[0] = (char)(0xE0 | c >> 12); o[1] = (char)(0x80 | ((c >> 6) & 63)); o[2] = (char)(0x80 | (c & 63)); o[3] = 0; }
+    const char *s = l; int c = utf8_next(&s);
+    if (!c || *s) return 0;
+    return text_is_mark(c) || (c >= 0x3000 && c <= 0x303F) || (c >= 0xFF01 && c <= 0xFF60) || (c >= 0x2018 && c <= 0x201D) || c == 0x2026;
 }
-static int up_case(int c)
+/* x para centrar l en [x, x + w) */
+static int kb_lbl_x(const char *l, int size, int x, int w)
 {
-    if (c >= 'a' && c <= 'z') return c - 32;
-    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return c - 32;
-    if (c == 0xFF) return 0x178;
-    if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) return c & 1 ? c - 1 : c;
-    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return c & 1 ? c : c - 1;
-    return c;
+    if (kb_lbl_box(l)) { const char *s = l; struct glyph *g = glyph_get(utf8_next(&s), size); if (g && g->w > 0) return x + (w - (g->xo * 2 + g->w)) / 2; }
+    return x + (w - tw_n(l, size, -1)) / 2;
 }
-static int kb_upper(void) { return kb_layer == 0 && (kb_shift || kb_caps); }
-/* variantes de la pulsacion larga (como iOS, segun la distribucion) */
-static const char *kb_alts(int c)
+/* linea base: la de siempre, salvo una marca sola, que se centra en vertical en ymid */
+static int kb_lbl_base(const char *l, int size, int base, int ymid)
 {
-    int L = kb_cfg_layout;
-    switch (c) {
-    case 'a': return L == 2 ? "àâæáäãåā" : L == 1 ? "àáâäæãåā" : "áàäâãåæª";
-    case 'e': return L == 2 ? "éèêëēėę" : L == 1 ? "èéêëēėę" : "éèëêęėē";
-    case 'i': return L == 2 ? "îïìíįī" : L == 1 ? "îïíīįì" : "íïìîįī";
-    case 'o': return L == 2 ? "ôœöòóõøō" : L == 1 ? "ôöòóœøōõ" : "óòöôõøœº";
-    case 'u': return L == 2 ? "ùûüúū" : L == 1 ? "ûüùúū" : "úüùûū";
-    case 'c': return "çćč";
-    case 'n': return "ñń";
-    case 's': return "ßśš";
-    case 'y': return "ÿ";
-    case 'z': return "žźż";
-    case 'l': return "ł";
-    case '?': return "¿";
-    case '!': return "¡";
-    case '-': return "–—•";
-    case '/': return "\\";
-    case '$': return "€£¥¢";
-    case 0x20AC: return "$£¥¢";
-    case '&': return "§";
-    case '.': return "…";
-    case '\'': return "‘’`";
-    case '"': return "“”„«»";
-    case '0': return "°";
-    case '%': return "‰";
-    }
-    return 0;
+    const char *s = l; int c = utf8_next(&s);
+    if (c && !*s && text_is_mark(c)) { struct glyph *g = glyph_get(c, size); if (g && g->h > 0) return ymid - (g->yo + g->h / 2); }
+    return base;
 }
 
 /* ------------------------------------------------------------------ dibujo rapido */
@@ -455,7 +467,7 @@ static int kb_alt_open(int k)
 {
     const char *s = kb_alts(kbk[k].code); if (!s) return 0;
     kb_alt_n = 0; int c;
-    while (kb_alt_n < 8 && (c = utf8_next(&s))) { int gi; font_glyph(c, &gi); if (gi) kb_alt_cp[kb_alt_n++] = c; }
+    while (kb_alt_n < 8 && (c = utf8_next(&s)) && c != '|') { int gi; font_glyph(c, &gi); if (gi) kb_alt_cp[kb_alt_n++] = c; }
     if (!kb_alt_n) return 0;
     kb_alt_key = k; kb_alt_sel = 0; kb_alt_dir = kbk[k].x + kbk[k].w / 2 < W / 2 ? 1 : -1;
     return 1;
@@ -493,16 +505,15 @@ static void kb_draw_popup(uint16_t *d, int i, int y0)
     char lb[8];
     if (!alt) {
         put_utf8(lb, kb_upper() ? up_case(k->code) : k->code);
-        int w = tw_n(lb, 30, -1);
-        draw_text(d, bx + (bw - w) / 2, by + bh / 2 + 11, lb, 30, 0xFFFF, 0, 0, H);
+        int ps = kb_lbl_mark(lb) ? 42 : 30;          /* una marca sola, mas grande: se lee mejor */
+        draw_text(d, kb_lbl_x(lb, ps, bx, bw), kb_lbl_base(lb, ps, by + bh / 2 + 11, by + bh / 2 + 1), lb, ps, 0xFFFF, 0, 0, H);
         return;
     }
     for (int j = 0; j < kb_alt_n; j++) {
         int s = kb_alt_dir > 0 ? j : kb_alt_n - 1 - j, cx = bx + 4 + s * cw;
         if (j == kb_alt_sel) kb_blit(d, cx, by + 4, cw, bh - 4, 7, KB_C_BLUE, 255, 0, H);
         put_utf8(lb, kb_upper() ? up_case(kb_alt_cp[j]) : kb_alt_cp[j]);
-        int w = tw_n(lb, 22, -1);
-        draw_text(d, cx + (cw - w) / 2, by + bh / 2 + 9, lb, 22, 0xFFFF, 0, 0, H);
+        draw_text(d, kb_lbl_x(lb, 22, cx, cw), kb_lbl_base(lb, 22, by + bh / 2 + 9, by + bh / 2 + 2), lb, 22, 0xFFFF, 0, 0, H);
     }
 }
 
@@ -524,11 +535,12 @@ static void kb_draw_key(uint16_t *d, int i, int pressed, int y0, int cy0, int sh
     float s = h / 42.f; if (s < .85f) s = .85f; if (s > 1.1f) s = 1.1f;
     if (k->code == K_SHIFT && kb_layer == 0) { kb_icon(d, !shift_on ? KI_SHIFT : kb_caps ? KI_CAPS : KI_SHIFT_ON, x + w / 2.f, y + h / 2.f + .5f, s, fg, cy0); return; }
     if (k->code == K_BACK) { kb_icon(d, KI_BACK, x + w / 2.f - .5f, y + h / 2.f, s, fg, cy0); return; }
-    char lb[8]; const char *l = k->lbl;
+    char lb[8]; const char *l = k->code == K_SPACE ? kb_space_lbl() : k->lbl;
     if (k->code > 0 && kb_upper()) { put_utf8(lb, up_case(k->code)); l = lb; }
     int size = k->code > 0 ? (h >= 38 ? 21 : 19) : (k->code == K_SPACE ? 14 : 15);
-    int tw = tw_n(l, size, -1);
-    draw_text(d, x + (w - tw) / 2, y + h / 2 + size * 7 / 20, l, size, fg, 0, cy0, H);
+    if (k->code > 0 && kb_lbl_mark(l)) size = size * 3 / 2;   /* marca tailandesa sola: mas grande */
+    if (k->code > 0 && w < 24 && size > 19) size = 19;      /* teclas estrechas (11-12 por fila) */
+    draw_text(d, kb_lbl_x(l, size, x, w), kb_lbl_base(l, size, y + h / 2 + size * 7 / 20, y + h / 2), l, size, fg, 0, cy0, H);
 }
 
 /* interruptor iOS (t: 0 apagado .. 1 encendido) */
@@ -541,9 +553,54 @@ static void kb_switch(uint16_t *d, int x, int y, float t, int cy0, int cy1)
     kb_blit(d, kx, y + 3, 18, 18, 9, 0, 60, cy0, cy1);
     kb_blit(d, kx, y + 2, 18, 18, 9, 0xFFFF, 255, cy0, cy1);
 }
-static const char *const KB_LNAMES[3] = { "Español", "English", "Français" };
+/* teclados de la tira de la hoja y del menu del globo: los activados, en el orden de Ajustes */
+static int kb_lst[KB_NLAY], kb_nlst;
+static int kb_list_build(void)
+{
+    kb_nlst = 0;
+    for (int i = 0; i < KB_NLAY; i++) if (kb_lay_on(KB_ORD[i])) kb_lst[kb_nlst++] = KB_ORD[i];
+    if (!kb_nlst) kb_lst[kb_nlst++] = kb_cur_lay();
+    return kb_nlst;
+}
+static int kb_list_pos(int l) { for (int i = 0; i < kb_nlst; i++) if (kb_lst[i] == l) return i; return -1; }
 static float kb_seg_pos = -1, kb_sw_t[3] = { -1, -1, -1 };   /* animaciones de la hoja (-1: en reposo) */
 static int kb_sheet_press = -1;
+/* con mas de 3 teclados la tira son botones que se desplazan de lado */
+static int kb_chip_x;
+static int kb_chip_w(int i) { return tw_n(kb_lay(kb_lst[i])->name, 13, -1) + 26; }
+static int kb_chip_x0(int i) { int x = 12; for (int j = 0; j < i; j++) x += kb_chip_w(j) + 6; return x; }
+static int kb_chip_max(void) { int m = kb_chip_x0(kb_nlst) - 6 + 12 - W; return m > 0 ? m : 0; }
+/* deja el teclado actual a la vista en la tira */
+static void kb_chip_show_cur(void)
+{
+    int p = kb_list_pos(kb_cur_lay()); if (p < 0 || kb_nlst <= 3) { kb_chip_x = 0; return; }
+    int x0 = kb_chip_x0(p), x1 = x0 + kb_chip_w(p);
+    if (x0 - kb_chip_x < 12) kb_chip_x = x0 - 12;
+    if (x1 - kb_chip_x > W - 12) kb_chip_x = x1 - (W - 12);
+    if (kb_chip_x < 0) kb_chip_x = 0; if (kb_chip_x > kb_chip_max()) kb_chip_x = kb_chip_max();
+}
+static void kb_draw_laystrip(uint16_t *d, int ty, int sy0, int sy1)
+{
+    kb_list_build();
+    int tx = 12, tw = W - 24, cur = kb_list_pos(kb_cur_lay());
+    if (kb_nlst <= 3) {                       /* control segmentado (como antes) */
+        int segw = (tw - 4) / kb_nlst;
+        kb_blit(d, tx, ty, tw, 30, 8, rgb(44, 44, 47), 255, sy0, sy1);
+        float sp = kb_seg_pos >= 0 ? kb_seg_pos : (float)cur;
+        if (sp >= 0) kb_blit(d, tx + 2 + (int)(sp * segw + .5f), ty + 2, segw, 26, 7, rgb(99, 99, 102), 255, sy0, sy1);
+        for (int i = 0; i < kb_nlst; i++) {
+            const char *nm = kb_lay(kb_lst[i])->name; int w = tw_n(nm, 13, -1);
+            draw_text(d, tx + 2 + i * segw + (segw - w) / 2, ty + 20, nm, 13, kb_lay_usable(kb_lst[i]) ? 0xFFFF : rgb(110, 110, 116), segw - 8, sy0, sy1);
+        }
+        return;
+    }
+    for (int i = 0; i < kb_nlst; i++) {       /* botones desplazables */
+        int x = kb_chip_x0(i) - kb_chip_x, w = kb_chip_w(i);
+        if (x >= W || x + w <= 0) continue;
+        kb_blit(d, x, ty, w, 30, 8, i == cur ? rgb(99, 99, 102) : rgb(44, 44, 47), 255, sy0, sy1);
+        draw_text(d, x + 13, ty + 20, kb_lay(kb_lst[i])->name, 13, kb_lay_usable(kb_lst[i]) ? 0xFFFF : rgb(110, 110, 116), 0, sy0, sy1);
+    }
+}
 static int kb_sheet_top(void) { return KB_YR + kb_sheet_h - KB_SH; }
 static void kb_draw_sheet(uint16_t *d)
 {
@@ -555,14 +612,7 @@ static void kb_draw_sheet(uint16_t *d)
     draw_text(d, 16, cy + 20, tr("Teclado"), 16, 0xFFFF, 0, sy0, sy1);
     const char *ok = tr("Listo");
     draw_text(d, W - 16 - tw_n(ok, 16, -1), cy + 20, ok, 16, kb_sheet_press == 0 ? rgb(10, 70, 140) : KB_C_BLUE, 0, sy0, sy1);
-    int tx = 12, ty = cy + 29, tw = W - 24, segw = (tw - 4) / 3;
-    kb_blit(d, tx, ty, tw, 30, 8, rgb(44, 44, 47), 255, sy0, sy1);
-    float sp = kb_seg_pos >= 0 ? kb_seg_pos : (float)kb_cfg_layout;
-    kb_blit(d, tx + 2 + (int)(sp * segw + .5f), ty + 2, segw, 26, 7, rgb(99, 99, 102), 255, sy0, sy1);
-    for (int i = 0; i < 3; i++) {
-        int w = tw_n(KB_LNAMES[i], 13, -1);
-        draw_text(d, tx + 2 + i * segw + (segw - w) / 2, ty + 20, KB_LNAMES[i], 13, 0xFFFF, 0, sy0, sy1);
-    }
+    kb_draw_laystrip(d, cy + 29, sy0, sy1);
     const char *lab[3] = { tr("Fila de números"), tr("Mayúsculas automáticas"), tr("Atajo del punto") };
     int val[3] = { kb_cfg_numrow, kb_cfg_autocap, kb_cfg_period };
     for (int i = 0; i < 3; i++) {
@@ -576,25 +626,125 @@ static void kb_draw_sheet(uint16_t *d)
     const char *hint = tr("Arrastra para cambiar la altura");
     draw_text(d, (W - tw_n(hint, 11, -1)) / 2, gy + 19, hint, 11, rgb(142, 142, 147), 0, sy0, sy1);
 }
-static int kb_menu_geom(int *mx, int *my, int *mw, int *ih) { *mx = 6; *mw = 214; *ih = 36; *my = kb_bar_y() - 2 - 4 * *ih; return 4; }
+/* menu del globo: fila 0 "Ajustes del teclado", 1..n los teclados activados. Si no caben (teclado
+ * bajo, muchos activados) la lista se desplaza: arrastrando, o sola con el dedo en su borde. En un
+ * campo solo latino, los demas salen apagados con una nota debajo. */
+static int kb_menu_scroll;
+static int kb_menu_foot(void)
+{
+    if (!kb_latin_only) return 0;
+    for (int i = 0; i < kb_nlst; i++) if (!kb_lay_usable(kb_lst[i])) return 1;
+    return 0;
+}
+static int kb_menu_geom(int *mx, int *my, int *mw, int *ih, int *vis, int *fh)
+{
+    int n = 1 + kb_list_build();
+    *mx = 6; *mw = 214; *ih = 36; *fh = kb_menu_foot() ? 42 : 0;
+    int avail = kb_bar_y() - 2 - *fh - (kb_keys_top() + 4);
+    *vis = avail / *ih; if (*vis < 3) *vis = 3; if (*vis > n) *vis = n;
+    *my = kb_bar_y() - 2 - *fh - *vis * *ih;
+    return n;
+}
+static int kb_menu_smax(void) { int mx, my, mw, ih, vis, fh, n = kb_menu_geom(&mx, &my, &mw, &ih, &vis, &fh); return (n - vis) * ih; }
+static void kb_menu_clamp(void) { int m = kb_menu_smax(); if (kb_menu_scroll > m) kb_menu_scroll = m; if (kb_menu_scroll < 0) kb_menu_scroll = 0; }
 static int kb_menu_item(int x, int y)
 {
-    int mx, my, mw, ih, n = kb_menu_geom(&mx, &my, &mw, &ih);
-    if (x < mx || x >= mx + mw || y < my || y >= my + n * ih) return -1;
-    return (y - my) / ih;
+    int mx, my, mw, ih, vis, fh, n = kb_menu_geom(&mx, &my, &mw, &ih, &vis, &fh);
+    if (x < mx || x >= mx + mw || y < my || y >= my + vis * ih) return -1;
+    int i = (y - my + kb_menu_scroll) / ih;
+    return i < n ? i : -1;
+}
+static int kb_menu_ok(int i) { return i == 0 || (i > 0 && i <= kb_nlst && kb_lay_usable(kb_lst[i - 1])); }
+static void kb_menu_open(void)
+{
+    int mx, my, mw, ih, vis, fh; kb_menu_geom(&mx, &my, &mw, &ih, &vis, &fh);
+    int p = kb_list_pos(kb_cur_lay()) + 1;    /* el actual, a la vista */
+    kb_menu = 1; kb_menu_sel = -1; kb_bar_press = 1;
+    kb_menu_scroll = p >= vis ? (p - vis + 1) * ih : 0; kb_menu_clamp();
+}
+/* texto en dos lineas como mucho (corta en un espacio, o donde quepa si no los hay: CJK) */
+static void kb_text2(uint16_t *d, int x, int y, const char *s, int size, int maxw, uint16_t c)
+{
+    if (tw_n(s, size, -1) <= maxw) { draw_text(d, x, y, s, size, c, 0, 0, H); return; }
+    int cut = 0, sp = 0, n = (int)strlen(s);
+    for (int i = 1; i <= n; i++) {
+        if (i < n && ((unsigned char)s[i] & 0xC0) == 0x80) continue;
+        if (tw_n(s, size, i) > maxw) break;
+        cut = i; if (s[i] == ' ') sp = i;
+    }
+    if (sp > 0 && cut < n) cut = sp;
+    char a[160]; if (cut >= (int)sizeof a) cut = sizeof a - 1;
+    memcpy(a, s, cut); a[cut] = 0;
+    draw_text(d, x, y, a, size, c, maxw, 0, H);
+    const char *r = s + cut; while (*r == ' ') r++;
+    draw_text(d, x, y + size + 3, r, size, c, maxw, 0, H);
 }
 static void kb_draw_menu(uint16_t *d)
 {
-    int mx, my, mw, ih, n = kb_menu_geom(&mx, &my, &mw, &ih);
-    fill_rrect(d, mx, my + 2, mw, n * ih, 13, 0, 110);
-    fill_rrect(d, mx, my, mw, n * ih, 13, rgb(48, 48, 51), 255);
+    int mx, my, mw, ih, vis, fh, n = kb_menu_geom(&mx, &my, &mw, &ih, &vis, &fh);
+    int lh = vis * ih, y1 = my + lh, cur = kb_cur_lay();
+    fill_rrect(d, mx, my + 2, mw, lh + fh, 13, 0, 110);
+    fill_rrect(d, mx, my, mw, lh + fh, 13, rgb(48, 48, 51), 255);
     for (int i = 0; i < n; i++) {
-        int iy = my + i * ih;
-        if (i == kb_menu_sel) kb_blit(d, mx + 4, iy + 3, mw - 8, ih - 6, 8, KB_C_BLUE, 255, 0, H);
-        if (i) kb_fill(d, mx + 12, iy, mw - 24, 1, i == 1 ? rgb(24, 24, 26) : rgb(64, 64, 68));
-        const char *l = i ? KB_LNAMES[i - 1] : tr("Ajustes del teclado");
-        draw_text(d, mx + (i ? 34 : 16), iy + 24, l, 15, 0xFFFF, mw - 44, 0, H);
-        if (i && i - 1 == kb_cfg_layout) kb_icon_check(d, mx + 18, iy + ih / 2.f, 0xFFFF);
+        int iy = my + i * ih - kb_menu_scroll;
+        if (iy + ih <= my || iy >= y1) continue;
+        int lay = i ? kb_lst[i - 1] : -1, ok = kb_menu_ok(i);
+        if (i == kb_menu_sel && ok) kb_blit(d, mx + 4, iy + 3, mw - 8, ih - 6, 8, KB_C_BLUE, 255, my, y1);
+        if (i && iy >= my && iy < y1) kb_fill(d, mx + 12, iy, mw - 24, 1, i == 1 ? rgb(24, 24, 26) : rgb(64, 64, 68));
+        const char *l = i ? kb_lay(lay)->name : tr("Ajustes del teclado");
+        draw_text(d, mx + (i ? 34 : 16), iy + 24, l, 15, ok ? 0xFFFF : rgb(110, 110, 116), mw - 44, my, y1);
+        if (i && lay == cur && iy >= my && iy + ih <= y1) kb_icon_check(d, mx + 18, iy + ih / 2.f, 0xFFFF);
+    }
+    int sm = (n - vis) * ih;
+    if (sm > 0) {                                 /* indicador de desplazamiento */
+        int bh = lh * vis / n; if (bh < 16) bh = 16;
+        kb_blit(d, mx + mw - 6, my + 4 + (lh - 8 - bh) * kb_menu_scroll / sm, 3, bh, 1, rgb(120, 120, 126), 255, my, y1);
+    }
+    if (fh) {
+        kb_fill(d, mx + 12, y1, mw - 24, 1, rgb(24, 24, 26));
+        kb_text2(d, mx + 14, y1 + 17, tr("Este campo solo admite letras latinas"), 12, mw - 28, rgb(152, 152, 158));
+    }
+}
+
+/* barra de candidatos (japones y chino): arriba la preedicion, debajo los candidatos en una fila que
+ * se desplaza de lado; el primero (el de la barra espaciadora) resaltado. Solo el contenido: el fondo
+ * va en el sprite. */
+#define KB_CAND_SZ 20
+static int kb_cand_x, kb_cand_press = -1, kb_cand_n;
+static short kb_cand_x0[IME_MAXC + 1];
+static void kb_cand_geom(void)
+{
+    ime_build(kb_cur_lay());
+    int x = 4; kb_cand_n = ime_nc;
+    for (int i = 0; i < ime_nc; i++) {
+        int w = tw_n(ime_cand(i), KB_CAND_SZ, -1) + 22; if (w < 40) w = 40;
+        kb_cand_x0[i] = (short)x; x += w;
+    }
+    kb_cand_x0[ime_nc] = (short)x;
+}
+static int kb_cand_max(void) { int m = kb_cand_x0[kb_cand_n] + 4 - W; return m > 0 ? m : 0; }
+static int kb_cand_at(int x)
+{
+    for (int i = 0; i < kb_cand_n; i++) if (x + kb_cand_x >= kb_cand_x0[i] && x + kb_cand_x < kb_cand_x0[i + 1]) return i;
+    return -1;
+}
+static void kb_draw_cands(uint16_t *d, int cy0)
+{
+    if (!kb_cb_h() || !ime_active()) return;
+    int y = kb_cb_y(), y1 = y + KB_CB - 1;
+    char pre[110]; ime_preedit(pre, sizeof pre);
+    int pw = tw_n(pre, 13, -1), px = 12;
+    if (pw > W - 24) px = W - 12 - pw;            /* larga: se ve el final (lo que se escribe) */
+    draw_text(d, px, y + 15, pre, 13, rgb(152, 152, 158), 0, cy0 > y ? cy0 : y, y1);
+    kb_cand_geom();
+    if (kb_cand_x > kb_cand_max()) kb_cand_x = kb_cand_max();
+    for (int i = 0; i < kb_cand_n; i++) {
+        int x = kb_cand_x0[i] - kb_cand_x, w = kb_cand_x0[i + 1] - kb_cand_x0[i];
+        if (x >= W || x + w <= 0) continue;
+        if (i == kb_cand_press) kb_blit(d, x + 1, y + 18, w - 2, 23, 7, KB_C_BLUE, 255, cy0, y1);
+        else if (i == 0) kb_blit(d, x + 1, y + 18, w - 2, 23, 7, KB_C_SPEC, 255, cy0, y1);
+        const char *c = ime_cand(i);
+        draw_text(d, x + (w - tw_n(c, KB_CAND_SZ, -1)) / 2, y + 37, c, KB_CAND_SZ, 0xFFFF, 0, cy0 > y ? cy0 : y, y1);
     }
 }
 
@@ -604,6 +754,7 @@ static void kb_paint_base(uint16_t *d, int cy0)
 {
     int ky = kb_keys_y0();
     kb_fill(d, 0, cy0, W, H - cy0, KB_C_BG);
+    if (kb_cb_h() && kb_cb_y() + KB_CB - 1 >= cy0) kb_fill(d, 0, kb_cb_y() + KB_CB - 1, W, 1, rgb(48, 48, 51));
     for (int i = 0; i < nkeys; i++) kb_draw_key(d, i, 0, ky, cy0, 1);
     int by = kb_bar_y();
     if (by < H && !kb_trackpad) {
@@ -618,9 +769,10 @@ static void kb_paint_base(uint16_t *d, int cy0)
 struct kb_spr { uint16_t *px; int rows, cap; unsigned key; };
 static struct kb_spr kb_sp[2];
 static float kb_tp_t;                         /* 0 teclas normales .. 1 trackpad (fundido) */
-static unsigned kb_spr_key(int tp) { return kb_gen * 8u + (kb_shift ? 1u : 0u) + (kb_caps ? 2u : 0u) + (tp ? 4u : 0u); }
+static unsigned kb_spr_key(int tp) { return kb_gen * 16u + (kb_shift ? 1u : 0u) + (kb_caps ? 2u : 0u) + (tp ? 4u : 0u) + (ime_active() ? 8u : 0u); }
 static const uint16_t *kb_spr_get(int tp)
 {
+    kb_sh_sync();
     struct kb_spr *s = &kb_sp[tp];
     unsigned key = kb_spr_key(tp); int rows = kb_keys_h();
     if (s->px && s->key == key && s->rows == rows) return s->px;
@@ -646,6 +798,7 @@ static void kb_draw_keys(uint16_t *dst, int pressed)
 {
     kb_ov_on = 0;                                 /* lo salvado ya no vale: se acaba de repintar */
     if (KB_YR >= H) return;
+    kb_sh_sync();
     double t0 = now_ms();
     int y0 = KB_YR < 0 ? 0 : KB_YR, top = kb_keys_top(), ky = kb_keys_y0(), cy0 = top > y0 ? top : y0;
     if (cy0 > y0) kb_fill(dst, 0, y0, W, cy0 - y0, KB_C_BG);
@@ -662,6 +815,7 @@ static void kb_draw_keys(uint16_t *dst, int pressed)
         }
     }
     int tpv = kb_trackpad || tp > 0;
+    if (!tpv) kb_draw_cands(dst, cy0);
     if (pressed >= 0 && pressed < nkeys && kbk[pressed].code <= 0 && !tpv) kb_draw_key(dst, pressed, 1, ky, cy0, 0);
     int by = kb_bar_y();
     if (by < H && !tpv && (kb_bar_press || kb_menu)) {
@@ -741,32 +895,7 @@ static void kb_draw(uint16_t *dst, int pressed)
 }
 
 /* ------------------------------------------------------------------ motor de edicion */
-struct ebuf { char *b; int len, cap, cur; };
-static void eb_insert(struct ebuf *e, const char *s)
-{
-    int n = (int)strlen(s);
-    if (e->len + n >= e->cap) return;
-    memmove(e->b + e->cur + n, e->b + e->cur, e->len - e->cur + 1);
-    memcpy(e->b + e->cur, s, n); e->len += n; e->cur += n;
-}
-static void eb_back(struct ebuf *e)
-{
-    if (e->cur <= 0) return;
-    int p = e->cur - 1;
-    while (p > 0 && ((unsigned char)e->b[p] & 0xC0) == 0x80) p--;
-    memmove(e->b + p, e->b + e->cur, e->len - e->cur + 1);
-    e->len -= e->cur - p; e->cur = p;
-}
-static void eb_back_word(struct ebuf *e)
-{
-    while (e->cur > 0 && (e->b[e->cur - 1] == ' ' || e->b[e->cur - 1] == '\n')) eb_back(e);
-    while (e->cur > 0 && e->b[e->cur - 1] != ' ' && e->b[e->cur - 1] != '\n') eb_back(e);
-}
-static void eb_move(struct ebuf *e, int n)
-{
-    for (; n > 0 && e->cur < e->len; n--) { e->cur++; while (e->cur < e->len && ((unsigned char)e->b[e->cur] & 0xC0) == 0x80) e->cur++; }
-    for (; n < 0 && e->cur > 0; n++) { e->cur--; while (e->cur > 0 && ((unsigned char)e->b[e->cur] & 0xC0) == 0x80) e->cur--; }
-}
+/* struct ebuf y eb_*: kb_ime.inc.c (con hangul, preedicion y el cursor sobre las marcas) */
 /* principio de frase: vacio, tras salto de linea o tras ". " "! " "? " (y tras ¿ ¡ en esa posicion) */
 static int kb_sentence_start(const struct ebuf *e)
 {
@@ -781,7 +910,7 @@ static int kb_sentence_start(const struct ebuf *e)
 static void kb_autoshift(const struct ebuf *e)
 {
     if (kb_caps) return;
-    if (kb_cfg_autocap && kb_layer == 0 && kb_sentence_start(e)) { kb_shift = 1; kb_shift_auto = 1; }
+    if (kb_cfg_autocap && (kb_ly()->flags & KL_AUTO) && kb_layer == 0 && kb_sentence_start(e)) { kb_shift = 1; kb_shift_auto = 1; }
     else if (kb_shift_auto) { kb_shift = 0; kb_shift_auto = 0; }
 }
 
@@ -967,6 +1096,7 @@ static void kb_reveal(uint16_t *dst, void (*redraw)(uint16_t *, int))
 }
 static void kb_hide(void)
 {
+    if (kb_e) kbi_commit(kb_e, kb_cur_lay());     /* lo que se estaba componiendo se queda (iOS) */
     kb_menu = 0; kb_sheet = 0; kb_sheet_h = 0; kb_pressed = -1; kb_trackpad = 0; kb_tp_t = 0; kb_tpmode = 0;
     kb_ov_on = 0; kb_cmp_top = -1;
     int kh = KB_H;
@@ -1016,36 +1146,115 @@ static void kb_end(void)
     kb_stats_flush();
     kb_spr_free(); kb_pgbuf_free();
     kb_pg = 0; kb_fy0 = kb_fy1 = -1; kb_area = 0; kb_vmove = 0; kb_tpmode = 0; kb_tp_t = 0; kb_trackpad = 0;
+    kbi_drop(); kb_latin_only = 0; kb_lay_tmp = -1;
 }
 
+/* cambia de teclado: lo que se componia se confirma; si cambia el alto (barra de candidatos,
+ * tailandes) el teclado crece o encoge con la misma animacion que la fila de numeros */
 static void kb_set_layout(int l)
 {
-    if (l == kb_cfg_layout) return;
-    kb_cfg_layout = l; kb_relayout(); lconf_save();
+    int old = kb_cur_lay();
+    if (l == old || l < 0 || l >= KB_NLAY) return;
+    int h0 = kb_keys_h(), f = kb_e ? kbi_commit(kb_e, old) : 0;
+    if (kb_latin_only) kb_lay_tmp = l;            /* solo para este campo */
+    else { kb_cfg_layout = l; kb_lay_tmp = -1; lconf_save(); }
+    kb_cand_x = 0; kb_chip_show_cur();
+    kb_relayout();
+    if (kb_e) kb_autoshift(kb_e);
+    kb_hadj = h0 - kb_keys_h();
+    if (kb_hadj && !kb_off && kb_rd) kb_anim(&kb_hadj, 0, 240);
+    kb_hadj = 0;
+    if (f & KBI_TEXT && kb_rd) kb_full();
+    lg("teclado: distribucion %s", kb_ly()->code);
 }
-static void kb_sheet_open(void) { kb_sheet = 1; kb_seg_pos = -1; kb_anim(&kb_sheet_h, KB_SH, 280); }
+/* el globo con 2 o mas teclados: el siguiente (como iOS) */
+static int kb_next_layout(int apply)
+{
+    kb_list_build();
+    int p = kb_list_pos(kb_cur_lay());
+    for (int k = 1; k <= kb_nlst; k++) {
+        int l = kb_lst[((p < 0 ? -1 : p) + k + kb_nlst) % kb_nlst];
+        if (l != kb_cur_lay() && kb_lay_usable(l)) { if (apply) kb_set_layout(l); return l; }
+    }
+    return -1;
+}
+static void kb_sheet_open(void) { kb_sheet = 1; kb_seg_pos = -1; kb_list_build(); kb_chip_show_cur(); kb_anim(&kb_sheet_h, KB_SH, 280); }
 static void kb_sheet_close(void) { kb_anim(&kb_sheet_h, 0, 250); kb_sheet = 0; }
 
-/* menu del globo: 0 ajustes, 1..3 distribuciones */
+/* menu del globo: 0 ajustes, 1..n teclados activados */
 static void kb_menu_pick(int i)
 {
     kb_menu = 0; kb_menu_sel = -1; kb_bar_press = 0;
     if (i == 0) { kb_show(); kb_sheet_open(); return; }
-    if (i > 0) kb_set_layout(i - 1);
+    if (i > 0 && kb_menu_ok(i)) kb_set_layout(kb_lst[i - 1]);
     kb_show();
 }
-static void kb_menu_track(struct pkt *p, int sticky_ok)
+/* sigue el dedo en el menu. Desde el globo (deslizar y soltar) la lista se desplaza sola con el dedo
+ * en su borde; con el menu ya abierto, arrastrar en vertical la desplaza */
+static void kb_menu_track(struct pkt *p, int sticky_ok, int from_globe)
 {
-    int moved = 0, sx = cur_x, sy = cur_y;
+    int moved = 0, sx = cur_x, sy = cur_y, drag = 0, s0 = kb_menu_scroll, smax = kb_menu_smax();
+    int inside = kb_menu_item(sx, sy) >= 0;
     while (kb_pump(p, 40)) {
         if (abs(cur_x - sx) > 6 || abs(cur_y - sy) > 6) moved = 1;
-        int s = kb_menu_item(cur_x, cur_y);
-        if (s != kb_menu_sel) { kb_menu_sel = s; kb_show(); }
+        if (!from_globe && inside && smax > 0 && abs(cur_y - sy) > 8) drag = 1;
+        if (drag) {
+            int v = s0 - (cur_y - sy); if (v < 0) v = 0; if (v > smax) v = smax;
+            if (v != kb_menu_scroll || kb_menu_sel >= 0) { kb_menu_scroll = v; kb_menu_sel = -1; kb_show(); }
+            continue;
+        }
+        int ch = 0;
+        if (from_globe && smax > 0) {
+            int mx, my, mw, ih, vis, fh; kb_menu_geom(&mx, &my, &mw, &ih, &vis, &fh);
+            int ov = kb_menu_scroll;
+            if (cur_x >= mx && cur_x < mx + mw && cur_y < my + 20 && cur_y > my - 50) kb_menu_scroll -= 6;
+            else if (cur_x >= mx && cur_x < mx + mw && cur_y >= my + vis * ih - 20 && cur_y < my + vis * ih) kb_menu_scroll += 6;
+            kb_menu_clamp(); ch = ov != kb_menu_scroll;
+        }
+        int s = kb_menu_item(cur_x, cur_y); if (!kb_menu_ok(s)) s = -1;
+        if (s != kb_menu_sel || ch) { kb_menu_sel = s; kb_show(); }
     }
+    if (drag) { kb_menu_sel = -1; kb_show(); return; }  /* se ha desplazado: sigue abierto */
     int s = kb_menu_item(cur_x, cur_y);
-    if (s >= 0) { kb_menu_pick(s); return; }
-    if (sticky_ok && !moved) { kb_menu_sel = -1; kb_show(); return; }   /* toque en el globo: el menu se queda */
+    if (s >= 0 && kb_menu_ok(s)) { kb_menu_pick(s); return; }
+    if (s >= 0 || (sticky_ok && !moved)) { kb_menu_sel = -1; kb_show(); return; }   /* toque en el globo: el menu se queda */
     kb_menu = 0; kb_menu_sel = -1; kb_bar_press = 0; kb_show();
+}
+/* globo: con un solo teclado abre el menu; con mas, un toque pasa al siguiente y mantenerlo
+ * (~300 ms) o deslizar hacia arriba abre el menu (para elegir deslizando y soltando) */
+static void kb_globe_touch(struct pkt *p)
+{
+    kb_bar_press = 1; kb_show();
+    if (kb_next_layout(0) >= 0) {
+        double t0 = now_ms(); int sx = cur_x, sy = cur_y, open = 0;
+        while (kb_pump(p, 20)) if (now_ms() - t0 > 300 || sy - cur_y > 12 || abs(cur_x - sx) > 24) { open = 1; break; }
+        if (!open) {
+            kb_bar_press = 0;
+            if (cur_y >= kb_bar_y() - 20 && cur_x < 90) kb_next_layout(1);
+            kb_show();
+            return;
+        }
+    }
+    kb_menu_open(); kb_show(); kb_menu_track(p, 1, 1);
+}
+/* tira de teclados de la hoja con mas de 3: arrastrar la desplaza, tocar elige */
+static void kb_chips_touch(struct pkt *p, int x)
+{
+    int x0 = kb_chip_x, drag = 0, mx = kb_chip_max();
+    while (kb_pump(p, 40)) {
+        if (abs(cur_x - x) > 8) drag = 1;
+        if (!drag) continue;
+        int v = x0 - (cur_x - x); if (v < 0) v = 0; if (v > mx) v = mx;
+        if (v != kb_chip_x) { kb_chip_x = v; kb_show(); }
+    }
+    if (drag) return;
+    for (int i = 0; i < kb_nlst; i++) {
+        int cx = kb_chip_x0(i) - kb_chip_x;
+        if (cur_x >= cx - 3 && cur_x < cx + kb_chip_w(i) + 3) {
+            if (kb_lay_usable(kb_lst[i])) { kb_set_layout(kb_lst[i]); kb_chip_show_cur(); kb_show(); }
+            return;
+        }
+    }
 }
 
 /* anima el interruptor i de la hoja y aplica el cambio */
@@ -1059,10 +1268,10 @@ static void kb_sheet_toggle(int i)
         if (t >= 1) break;
     }
     kb_sw_t[i] = -1; *v = !*v;
-    if (i == 0) {   /* la fila nueva entra por debajo de la hoja */
+    if (i == 0) {   /* la fila nueva entra por debajo de la hoja (el tailandes no cambia: ya tiene 4) */
         int pitch = KR_H + 8;
-        kb_relayout(); kb_hadj = *v ? -pitch : pitch;
-        kb_anim(&kb_hadj, 0, 240);
+        kb_relayout(); kb_hadj = kb_ly()->nrows == 4 ? 0 : *v ? -pitch : pitch;
+        if (kb_hadj) kb_anim(&kb_hadj, 0, 240); else kb_show();
         lconf_save();
     } else {
         if (i == 1) { if (kb_cfg_autocap) kb_autoshift(kb_e); else if (kb_shift_auto) { kb_shift = 0; kb_shift_auto = 0; } }
@@ -1072,7 +1281,7 @@ static void kb_sheet_toggle(int i)
 /* arrastre del borde superior: la altura sigue al dedo 1:1 */
 static void kb_height_drag(struct pkt *p)
 {
-    int rows = kb_rows(), h0 = kb_keys_h(), sy = cur_y, base = rows * 8 + 6 + KB_BB, kr = KR_H;
+    int rows = kb_rows(), h0 = kb_keys_h(), sy = cur_y, base = rows * 8 + 6 + KB_BB + kb_cb_h(), kr = KR_H;
     kb_cfg_rowh = kr;
     while (kb_pump(p, 40)) {
         int want = h0 - (cur_y - sy);
@@ -1098,18 +1307,22 @@ static void kb_sheet_touch(struct pkt *p, int x, int y)
         if (cur_x >= W - 110 && cur_y >= kb_sheet_top() - 20 && cur_y < kb_sheet_top() + 50) kb_sheet_close(); else kb_show();
         return;
     }
+    if (rel < 62 && kb_list_build() > 3) { kb_chips_touch(p, x); return; }
     while (kb_pump(p, 3000)) {}
     if (abs(cur_y - y) > 24) return;
-    if (rel < 62) {                                   /* distribucion (control segmentado) */
-        int segw = (W - 28) / 3, s = (cur_x - 14) / segw; if (s < 0) s = 0; if (s > 2) s = 2;
-        if (s == kb_cfg_layout) return;
-        float a = (float)kb_cfg_layout; double t0 = now_ms();
-        for (;;) {
-            double t = (now_ms() - t0) / 200; if (t > 1) t = 1;
-            kb_seg_pos = a + (s - a) * (float)ease_out(t); kb_show();
-            if (t >= 1) break;
+    if (rel < 62) {                                   /* teclado (control segmentado de los activados) */
+        int n = kb_list_build(), segw = (W - 28) / n, s = (cur_x - 14) / segw; if (s < 0) s = 0; if (s > n - 1) s = n - 1;
+        int cur = kb_list_pos(kb_cur_lay());
+        if (s == cur || !kb_lay_usable(kb_lst[s])) return;
+        if (cur >= 0) {
+            float a = (float)cur; double t0 = now_ms();
+            for (;;) {
+                double t = (now_ms() - t0) / 200; if (t > 1) t = 1;
+                kb_seg_pos = a + (s - a) * (float)ease_out(t); kb_show();
+                if (t >= 1) break;
+            }
         }
-        kb_seg_pos = -1; kb_set_layout(s); kb_show();
+        kb_seg_pos = -1; kb_set_layout(kb_lst[s]); kb_show();
         return;
     }
     int i = (rel - 64) / 26; if (i < 0) i = 0; if (i > 2) i = 2;
@@ -1173,19 +1386,41 @@ static int kb_fade_tick(void)
 
 /* procesa un toque completo en el teclado; devuelve K_ENTER si se pulso intro, 0 si no.
  * Las coordenadas son las reales (cur_x/cur_y): el llamante puede haber pasado p por kb_map. */
+/* refresco tras escribir: el texto cambio (pantalla del llamante) o solo la preedicion (teclado) */
+static void kb_after(int f) { if (f & KBI_TEXT) kb_full(); else kb_show(); }
+/* toque en la barra de candidatos: tocar elige, arrastrar de lado desplaza la fila */
+static void kb_cand_touch(struct pkt *p, struct ebuf *e, int x)
+{
+    kb_cand_geom();
+    int x0 = kb_cand_x, drag = 0, hit = ime_active() ? kb_cand_at(x) : -1;
+    kb_cand_press = hit; kb_show();
+    while (kb_pump(p, 40)) {
+        if (abs(cur_x - x) > 8) drag = 1;
+        if (!drag) continue;
+        int v = x0 - (cur_x - x), mx = kb_cand_max(); if (v > mx) v = mx; if (v < 0) v = 0;
+        if (v != kb_cand_x || kb_cand_press >= 0) { kb_cand_x = v; kb_cand_press = -1; kb_show(); }
+    }
+    kb_cand_press = -1;
+    if (drag || hit < 0) { kb_show(); return; }
+    int f = kbi_pick(e, kb_cur_lay(), hit);
+    kb_cand_x = 0; kb_autoshift(e); kb_after(f);
+}
 static int kb_touch(struct pkt *p, struct ebuf *e, uint16_t *dst, void (*redraw)(uint16_t *, int), int multiline)
 {
     kb_ctx(e, dst, redraw); kb_ml = multiline;
+    kbi_sync(e);                                  /* el llamante movio el cursor: la silaba hangul queda */
+    int L = kb_cur_lay();
     double tev = kb_evt_ms(p);
     int x = cur_x, y = cur_y;
     if (kb_menu) {   /* menu abierto: el toque es para el */
-        if (kb_menu_item(x, y) >= 0) { kb_menu_sel = kb_menu_item(x, y); kb_show(); kb_menu_track(p, 0); }
+        if (kb_menu_item(x, y) >= 0) { int s = kb_menu_item(x, y); kb_menu_sel = kb_menu_ok(s) ? s : -1; kb_show(); kb_menu_track(p, 0, 0); }
         else { while (kb_pump(p, 3000)) {} kb_menu = 0; kb_menu_sel = -1; kb_bar_press = 0; kb_show(); }
         return 0;
     }
     if (kb_sheet_h > 0 && y < kb_keys_top()) { kb_sheet_touch(p, x, y); return 0; }
+    if (kb_cb_h() && y >= kb_cb_y() && y < kb_cb_y() + KB_CB && y < kb_bar_y()) { kb_cand_touch(p, e, x); return 0; }
     if (y >= kb_bar_y()) {   /* barra inferior: globo y ocultar */
-        if (x < 60) { kb_menu = 1; kb_menu_sel = -1; kb_bar_press = 1; kb_show(); kb_menu_track(p, 1); return 0; }
+        if (x < 60) { kb_globe_touch(p); return 0; }
         if (x > W - 64) {
             kb_bar_press = 2; kb_show();
             while (kb_pump(p, 3000)) {}
@@ -1207,7 +1442,7 @@ static int kb_touch(struct pkt *p, struct ebuf *e, uint16_t *dst, void (*redraw)
 
     /* pulsacion: visible en el siguiente fotograma */
     kb_pressed = k;
-    if (kbk[k].code == K_BACK) { eb_back(e); kb_autoshift(e); kb_full(); }
+    if (kbk[k].code == K_BACK) { int f = kbi_back(e, L); kb_autoshift(e); kb_after(f); }
     else kb_show();
     double lat = kb_now_real() - tev;
     kb_st_n++; kb_st_lat += lat; if (lat > kb_st_latmax) kb_st_latmax = lat;
@@ -1242,22 +1477,24 @@ static int kb_touch(struct pkt *p, struct ebuf *e, uint16_t *dst, void (*redraw)
             if (down > 30) { kb_pressed = -1; kb_drag_dismiss(p, sy + 30); return 0; }
             continue;                               /* aun puede serlo: no cambia de tecla */
         }
-        if (code == K_SPACE) {
+        if (code == K_SPACE && !ime_active()) {     /* con preedicion el espacio solo confirma */
             int mx = abs(cur_x - sx), my = abs(cur_y - sy);
             if (mx > 14 && mx > my) {                /* deslizar en el espacio (Gboard): mueve el cursor */
-                kb_tpmode = 1; lx = cur_x; ly = cur_y; lt = t; tp_t0 = t; continue;
+                hg_commit(); kb_tpmode = 1; lx = cur_x; ly = cur_y; lt = t; tp_t0 = t; continue;
             }
             if (t - t0 > 300 && mx <= 14 && my <= 14) {   /* mantener: trackpad (iOS) */
-                kb_tpmode = 2; kb_trackpad = 1; kb_pressed = -1; lx = cur_x; ly = cur_y; lt = t; tp_t0 = t;
+                hg_commit(); kb_tpmode = 2; kb_trackpad = 1; kb_pressed = -1; lx = cur_x; ly = cur_y; lt = t; tp_t0 = t;
                 kb_fade_start(1, 150); kb_fade_tick(); kb_full(); tp_fr++;
                 continue;
             }
         }
         if (code == K_BACK) {   /* repeticion que acelera: letras y, tras 1,8 s, palabras */
             double held = t - t0, iv = held > 1800 ? 230 : held > 1100 ? 55 : 90;
-            if (held > 480 && t - trep >= iv && e->cur > 0) {
-                if (held > 1800) eb_back_word(e); else eb_back(e);
-                trep = t; kb_autoshift(e); kb_full();
+            if (held > 480 && t - trep >= iv && (e->cur > 0 || ime_active())) {
+                int f;
+                if (held > 1800 && !ime_active()) { hg_commit(); eb_back_word(e); f = KBI_TEXT; }
+                else f = kbi_back(e, L);
+                trep = t; kb_autoshift(e); kb_after(f);
             }
             continue;
         }
@@ -1288,33 +1525,38 @@ static int kb_touch(struct pkt *p, struct ebuf *e, uint16_t *dst, void (*redraw)
                           was == 2 ? "trackpad" : "deslizar en espacio", tc - tp_t0, tp_n, tp_n ? tp_lat / tp_n : 0, tp_latmax, tp_n ? tp_dr / tp_n : 0, tp_drmax, tp_fr);
         return 0;
     }
+    (void)o;
     if (alt) {
-        put_utf8(o, kb_upper() ? up_case(kb_alt_cp[kb_alt_sel]) : kb_alt_cp[kb_alt_sel]);
-        eb_insert(e, o); kb_alt_n = 0; text = 1;
+        text = kbi_char(e, L, kb_upper() ? up_case(kb_alt_cp[kb_alt_sel]) : kb_alt_cp[kb_alt_sel]); kb_alt_n = 0;
         if (!kb_caps) { kb_shift = 0; kb_shift_auto = 0; }
     } else if (code > 0) {
-        put_utf8(o, kb_upper() ? up_case(code) : code); eb_insert(e, o); text = 1;
+        text = kbi_char(e, L, kb_upper() ? up_case(code) : code);
         if (!kb_caps) { kb_shift = 0; kb_shift_auto = 0; }
     } else if (code == K_SPACE) {
         static double last_space;
-        unsigned char pc = e->cur >= 2 ? (unsigned char)e->b[e->cur - 2] : ' ';
-        if (kb_cfg_period && tc - last_space < 800 && e->cur >= 2 && e->b[e->cur - 1] == ' ' && (isalnum(pc) || pc >= 0x80 || pc == ')' || pc == '"')) {
-            eb_back(e); eb_insert(e, ". "); last_space = 0;
-        } else { eb_insert(e, " "); last_space = tc; }
-        text = 1;
+        if (!(text = kbi_space(e, L))) {          /* sin preedicion: el espacio (y ". " con dos seguidos) */
+            unsigned char pc = e->cur >= 2 ? (unsigned char)e->b[e->cur - 2] : ' ';
+            if (kb_cfg_period && (kb_ly()->flags & KL_AUTO) && tc - last_space < 800 && e->cur >= 2 && e->b[e->cur - 1] == ' ' && (isalnum(pc) || pc >= 0x80 || pc == ')' || pc == '"')) {
+                eb_back(e); eb_insert(e, ". "); last_space = 0;
+            } else { eb_insert(e, " "); last_space = tc; }
+            text = KBI_TEXT;
+        } else kb_cand_x = 0;
     } else if (code == K_SHIFT) {
         static double last_shift;
-        if (kb_layer) { kb_layer = kb_layer == 1 ? 2 : 1; kb_relayout(); }
+        /* en las letras Shift no cierra la silaba hangul: ㅆ ㄲ ㄸ ㅃ ㅉ ㅒ ㅖ solo salen con Shift (있다, 했다) */
+        if (kb_layer) { hg_commit(); kb_layer = kb_layer == 1 ? 2 : 1; kb_relayout(); }
         else if (tc - last_shift < 350 && !kb_caps) { kb_caps = 1; kb_shift = 1; last_shift = 0; }
         else if (kb_caps) { kb_caps = 0; kb_shift = 0; last_shift = 0; }
         else { kb_shift = !kb_shift; last_shift = tc; }
         kb_shift_auto = 0;
     } else if (code == K_LAYER) {
-        kb_layer = kb_layer ? 0 : 1; kb_relayout(); kb_autoshift(e);
+        hg_commit(); kb_layer = kb_layer ? 0 : 1; kb_relayout(); kb_autoshift(e);
     } else if (code == K_ENTER) {
-        if (multiline) { eb_insert(e, "\n"); text = 1; } else r = K_ENTER;
+        if ((text = kbi_enter(e, L))) kb_cand_x = 0;   /* con preedicion intro la confirma tal cual */
+        else if (multiline) { eb_insert(e, "\n"); text = KBI_TEXT; } else r = K_ENTER;
     }
-    if (text) { kb_autoshift(e); kb_full(); }
+    if (text & KBI_PRE) kb_cand_x = 0;            /* candidatos nuevos: desde el principio */
+    if (text) { kb_autoshift(e); kb_after(text); }
     else if (r != K_ENTER) kb_show();
     double com = now_ms() - tc;
     if (text) { kb_st_com += com; if (com > kb_st_commax) kb_st_commax = com; }

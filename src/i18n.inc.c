@@ -10,7 +10,7 @@
 enum { LANG_ES, LANG_EN, LANG_FR, LANG_DE, LANG_IT, LANG_JA, LANG_KO, LANG_PL, LANG_RU, LANG_ZHS, LANG_TH, LANG_ZHT, LANG_UK, LANG_N };
 static int ui_lang = LANG_ES;
 static int ui_lang_sys = 1;        /* 1: "Igual que el sistema" (sigue al idioma del reproductor) */
-static int kb_cfg_height, kb_cfg_numrow, kb_cfg_layout;   /* definidas en keyboard.inc.c */
+static int kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, kb_cfg_layouts;   /* definidas en keyboard.inc.c */
 static const char *const LANG_CODES[LANG_N] = { "es", "en", "fr", "de", "it", "ja", "ko", "pl", "ru", "zh-Hans", "th", "zh-Hant", "uk" };
 static const char *const LANG_NAMES[LANG_N] = { "Español", "English", "Français", "Deutsch", "Italiano", "日本語", "한국어", "Polski",
                                                 "Русский", "简体中文", "ไทย", "繁體中文", "Українська" };
@@ -327,6 +327,9 @@ static const char *const TR[][3] = {
     { "60 Hz", "60 Hz", "60 Hz" },
     { "GitHub", "GitHub", "GitHub" },
     { "Ajustes del teclado", "Keyboard Settings", "Réglages du clavier" },
+    { "Teclados", "Keyboards", "Claviers" },
+    { "Toca el globo para pasar al siguiente teclado; mantenlo pulsado para ver la lista.", "Tap the globe to switch to the next keyboard; touch and hold it to see the list.", "Touchez le globe pour passer au clavier suivant ; maintenez-le pour voir la liste." },
+    { "Este campo solo admite letras latinas", "This field only accepts Latin letters", "Ce champ n’accepte que les lettres latines" },
     { "Mayúsculas automáticas", "Auto-Capitalization", "Majuscules auto" },
     { "Atajo del punto", "“.” Shortcut", "Raccourci « . »" },
     { "Arrastra para cambiar la altura", "Drag to change the height", "Faites glisser pour changer la hauteur" },

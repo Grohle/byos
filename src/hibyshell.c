@@ -1329,6 +1329,7 @@ static const char *v_sync_root(void);
 #include "launcher.inc.c"
 #include "launcher_touch.inc.c"
 #include "settings.inc.c"
+#include "kb_ime.inc.c"                 /* teclado: distribuciones de los 13 idiomas, hangul, kana, pinyin */
 #include "keyboard.inc.c"
 #include "hibykb.inc.c"                  /* el teclado de ByOS sobre el T9 de HiBy */
 #include "tageditor.inc.c"

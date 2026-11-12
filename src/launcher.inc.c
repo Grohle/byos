@@ -208,7 +208,8 @@ static void lconf_save(void)
     gestures_conf_save(f);
     cc_conf_save(f);
     wg_conf_save(f);
-    fprintf(f, "lang %s\nkb %d %d %d\ncorners %d\nvolui %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout, ui_corners, vol_ui);
+    fprintf(f, "lang %s\nkb %d %d %d\nkbs %d\ncorners %d\nvolui %d\n", ui_lang_sys ? "sys" : lang_code(), kb_cfg_height, kb_cfg_numrow, kb_cfg_layout,
+            kb_cfg_layouts, ui_corners, vol_ui);
     fprintf(f, "sync %d\n", sync_wifi_on);        /* ByOS Sync: conexiones por Wi-Fi (sync.inc.c) */
     /* a prueba de cortes (UBIFS casi lleno, reinicio justo despues): solo se sustituye el
      * fichero si se escribio entero y llego al disco; el anterior queda como .bak */
@@ -219,8 +220,10 @@ static void lconf_save(void)
     { int d = open(ASSETS, O_RDONLY); if (d >= 0) { fsync(d); close(d); } }
 }
 
-/* distribucion de teclado por defecto segun el idioma: 0 ES, 1 EN (QWERTY), 2 FR (AZERTY) */
-static int kb_layout_for(int l) { return l == LANG_ES ? 0 : l == LANG_FR ? 2 : 1; }
+/* teclado por defecto segun el idioma: el suyo (cada idioma tiene el suyo; su id es el LANG_*) */
+static int kb_layout_for(int l) { return lang_ok(l) ? l : LANG_EN; }
+/* idioma nuevo (Ajustes o "igual que el sistema"): su teclado se activa y pasa a ser el actual (iOS) */
+static void kb_lang_added(int l) { l = kb_layout_for(l); kb_cfg_layouts |= 1 << l; kb_cfg_layout = l; }
 static int lconf_order_migrated;     /* lconf_load reordeno al orden oficial: hay que guardarlo */
 static void relabel_apps(void);
 /* "Igual que el sistema": si el usuario cambio el idioma en los ajustes de HiBy, seguirlo */
@@ -228,15 +231,15 @@ static void lang_sys_poll(void)
 {
     if (!ui_lang_sys) return;
     int l = lang_system();
-    if (l != ui_lang) { ui_lang = l; relabel_apps(); }
+    if (l != ui_lang) { ui_lang = l; relabel_apps(); kb_lang_added(l); lconf_save(); }
 }
 static void lconf_load0(void)
 {
     lconf_default();
     ui_lang_sys = 1; ui_lang = lang_system();        /* sin "lang" (instalacion nueva): el del sistema */
-    kb_cfg_layout = kb_layout_for(ui_lang);
+    kb_cfg_layout = kb_layout_for(ui_lang); kb_cfg_layouts = 0;
     FILE *f = fopen(LCONF, "r");
-    if (!f) return;
+    if (!f) { kb_cfg_layouts = 1 << kb_cfg_layout | 1 << LANG_EN; return; }
     char line[512]; int pages = 0, seen[40] = {0}, got_dock = 0, layout2 = 0, got_kb = 0, order = 0;
     int npn[MAXPAGES] = {0}, np[MAXPAGES][MAXAPPS], nd = 0, dk[4];
     while (fgets(line, sizeof line, f)) {
@@ -251,7 +254,8 @@ static void lconf_load0(void)
         else if (!strcmp(t, "sync")) { char *v = strtok(0, " \t\r\n"); sync_wifi_on = v ? atoi(v) != 0 : 0; }
         else if (!strcmp(t, "lang")) { char *v = strtok(0, " \t\r\n"); int l = v ? lang_from_code(v) : -1; if (l >= 0) { ui_lang = l; ui_lang_sys = 0; } }
         else if (!strcmp(t, "kb")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n");
-            if (a && b && c) { kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = atoi(c) % 3; got_kb = 1; } }
+            if (a && b && c) { int lv = atoi(c); kb_cfg_height = atoi(a) % 3; kb_cfg_numrow = atoi(b) != 0; kb_cfg_layout = lang_ok(lv) ? lv : LANG_EN; got_kb = 1; } }
+        else if (!strcmp(t, "kbs")) { char *v = strtok(0, " \t\r\n"); kb_cfg_layouts = v ? atoi(v) & ((1 << LANG_N) - 1) : 0; }
         else if (!strcmp(t, "look")) { char *a = strtok(0, " \t\r\n"), *b = strtok(0, " \t\r\n"), *c = strtok(0, " \t\r\n"), *d = strtok(0, " \t\r\n");
             if (a && b && c && d) { L.labels = atoi(a) != 0; L.dots = atoi(b) != 0; L.dockbg = atoi(c) != 0; L.dim = atoi(d) != 0; } }
         else if (!strcmp(t, "widgets")) wg_conf_line(strtok(0, "\r\n"));
@@ -267,6 +271,9 @@ static void lconf_load0(void)
     }
     fclose(f);
     if (!got_kb) kb_cfg_layout = kb_layout_for(ui_lang);
+    /* sin "kbs" (instalacion nueva o conf anterior): el del idioma, el ingles y el que estaba elegido */
+    if (!kb_cfg_layouts) kb_cfg_layouts = 1 << kb_layout_for(ui_lang) | 1 << LANG_EN | 1 << kb_cfg_layout;
+    if (!(kb_cfg_layouts >> kb_cfg_layout & 1)) kb_cfg_layouts |= 1 << kb_cfg_layout;
     if (!got_dock && !pages) return;
     if (order < 2) {
         /* conf anterior al orden oficial: se queda el orden oficial (ya puesto por lconf_default)
