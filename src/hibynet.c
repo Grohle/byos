@@ -1155,28 +1155,31 @@ static int write_jpeg(const char *out, const unsigned char *img, int w, int h) {
 }
 
 static int write_thumb(const char *out, const unsigned char *img, int w, int h) {
-    int tw, th;
-    if (w >= h) { tw = THUMB; th = (int)(((long long)h * THUMB + w / 2) / w); }
-    else { th = THUMB; tw = (int)(((long long)w * THUMB + h / 2) / h); }
-    if (tw < 1) tw = 1;
-    if (th < 1) th = 1;
+    /* una tira muy ancha o muy alta (p. ej. el 180x45 de Internet Archive para los audios sin
+     * caratula) no es una caratula: sin miniatura, la app deja su hueco */
+    if (w > 2 * h || h > 2 * w) return 1;
+    /* rellenar el cuadrado recortando el centro (como iOS), no encajar con bandas negras */
+    int c = w < h ? w : h, cx = (w - c) / 2, cy = (h - c) / 2;
+    unsigned char *sq = malloc((size_t)c * c * 3);
+    if (!sq) return -1;
+    for (int y = 0; y < c; y++) memcpy(sq + (size_t)y * c * 3, img + ((size_t)(cy + y) * w + cx) * 3, (size_t)c * 3);
+    int tw = THUMB, th = THUMB;
     unsigned char *t = malloc((size_t)tw * th * 3);
-    if (!t) return -1;
-    if (w >= tw && h >= th) {
-        scaler sc; if (sc_init(&sc, w, h, tw, th, t)) { free(t); return -1; }
-        for (int y = 0; y < h; y++) sc_row(&sc, img + (size_t)y * w * 3);
+    if (!t) { free(sq); return -1; }
+    if (c >= THUMB) {
+        scaler sc; if (sc_init(&sc, c, c, tw, th, t)) { free(t); free(sq); return -1; }
+        for (int y = 0; y < c; y++) sc_row(&sc, sq + (size_t)y * c * 3);
         sc_free(&sc);
     } else {                      /* origen mas pequeno que 96: vecino mas cercano */
         for (int y = 0; y < th; y++) for (int x = 0; x < tw; x++)
-            memcpy(t + ((size_t)y * tw + x) * 3, img + ((size_t)(y * h / th) * w + x * w / tw) * 3, 3);
+            memcpy(t + ((size_t)y * tw + x) * 3, sq + ((size_t)(y * c / th) * c + x * c / tw) * 3, 3);
     }
+    free(sq);
     static uint16_t px[THUMB * THUMB];
-    memset(px, 0, sizeof px);
-    int ox = (THUMB - tw) / 2, oy = (THUMB - th) / 2;
     for (int y = 0; y < th; y++) for (int x = 0; x < tw; x++) {
         const unsigned char *p = t + ((size_t)y * tw + x) * 3;
         uint16_t v = (uint16_t)(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
-        unsigned char *d = (unsigned char *)&px[(oy + y) * THUMB + ox + x];
+        unsigned char *d = (unsigned char *)&px[y * THUMB + x];
         d[0] = v & 0xFF; d[1] = v >> 8;                 /* little-endian explicito */
     }
     free(t);
@@ -1212,6 +1215,7 @@ static int cmd_cover_get(int argc, char **argv) {
         strncat(th, ".thumb.raw", sizeof th - strlen(th) - 1);
         rc = write_thumb(th, img, w, h);
         if (!rc) printf("%s\t%d\t%d\t%s\n", out, w, h, th);
+        if (rc == 1) { unlink(out); free(img); logf_("no es una caratula (%dx%d)", w, h); return E_NONE; }
     }
     free(img);
     return rc ? E_IO : E_OK;

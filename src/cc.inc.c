@@ -322,7 +322,11 @@ static void cc_mix(const uint16_t *under, const uint16_t *panel, double e)
 static void cc_animate(const uint16_t *under, const uint16_t *panel, double from, double to, int ms)
 {
     double t0 = now_ms();
-    for (;;) { double t = (now_ms() - t0) / ms; if (t > 1) t = 1; double e = from + (to - from) * ease_out(t);
+    for (;;) { double t = (now_ms() - t0) / ms; if (t > 1) t = 1;
+        /* al cerrar, curva suave (cuadratica): con la cubica casi todo el cambio caia en los dos
+         * primeros fotogramas y el cierre parecia de golpe (revisor r3) */
+        double k = to < from ? 1 - (1 - t) * (1 - t) : ease_out(t);
+        double e = from + (to - from) * k;
         if (cc_ctl && cc_blur_buf) cc_frame(under, cc_blur_buf, panel, e); else cc_mix(under, panel, e);
         dirty_y0 = dirty_y1 = 0;            /* el fotograma entero: con filas sucias de antes salia partido (revisor, 12-11) */
         present(); if (t >= 1) break; }
@@ -381,7 +385,7 @@ static void cc_app_restore(void) { if (cc_app_frame) memcpy(fr0, cc_app_frame, H
  * decia "Vuelve al inicio para abrirlo". */
 static void cc_go_app(const uint16_t *under, uint16_t *panel, const char *id)
 {
-    cc_animate(under, panel, 1, 0, 240);
+    cc_animate(under, panel, 1, 0, 300);
     if (!cc_in_app) { cc_open_app(id); return; }
     snprintf(pend_id, sizeof pend_id, "%s", id); pend_kind = 1; fake_home_req = 1; fk_step = 0;
     lg("cc: abrir %s al cerrar la app", id);
@@ -389,7 +393,7 @@ static void cc_go_app(const uint16_t *under, uint16_t *panel, const char *id)
 }
 static void cc_go_settings(const uint16_t *under, uint16_t *panel, int start)
 {
-    cc_animate(under, panel, 1, 0, 240);
+    cc_animate(under, panel, 1, 0, 300);
     if (!cc_in_app) { cc_open_settings(start); return; }
     pend_start = start; pend_kind = 2; fake_home_req = 1; fk_step = 0;
     lg("cc: abrir Ajustes (%d) al cerrar la app", start);
@@ -698,7 +702,7 @@ static int cc_close_drag(const uint16_t *under, uint16_t *panel, const uint16_t 
     }
     if (!from_launcher && !cc_in_app) nav_start(NAV_HOME);  /* el reproductor va al inicio durante el fundido */
     double t0 = now_ms(), e0 = e;
-    for (;;) { double t = (now_ms() - t0) / 240.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 * (1 - ease_out(t))); present(); if (t >= 1) break; }
+    for (;;) { double t = (now_ms() - t0) / 300.0; if (t > 1) t = 1; cc_frame(home, blur, panel, e0 * (1 - (1 - (1 - t) * (1 - t)))); present(); if (t >= 1) break; }
     if (cc_in_app) { cc_app_restore(); return 1; }
     if (from_launcher) { launcher_present(); return 1; }
     nav_wait(3000); if (!launcher_resume()) cmd('R');
@@ -742,7 +746,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
         if (hit == 101) {                                    /* brillo (iOS); mantener: sus ajustes */
             if (cc_brightness_drag(panel, blur, sy) && !cc_in_app) {
                 while (cur_down && read_pkt(&p, 3000)) {}
-                cc_animate(under, panel, 1, 0, 240); cc_open_settings(SET_DISPLAY); return;
+                cc_animate(under, panel, 1, 0, 300); cc_open_settings(SET_DISPLAY); return;
             }
             continue;
         }
@@ -804,7 +808,7 @@ static void cc_session_body(uint16_t *under, uint16_t *panel, uint16_t *blur, do
             if (cc_player_right) { cc_hpage(panel, under, 0); double t0 = now_ms();   /* volver al reproductor */
                 for (;;) { double t = (now_ms() - t0) / 230.0; if (t > 1) t = 1; cc_hpage(panel, under, -(int)(W * ease_out(t))); present(); if (t >= 1) break; }
                 cmd('R'); return; }
-            cc_animate(under, panel, 1, 0, 240);
+            cc_animate(under, panel, 1, 0, 300);
             if (cc_in_app) { np_from_screen(cc_app_frame); cc_app_restore(); return; }
             cc_open_app("nowplaying"); return;
         }

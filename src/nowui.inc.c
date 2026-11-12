@@ -1576,7 +1576,9 @@ static int own_home_gesture_body(int sx, int sy, int self)
     double ht[16]; int hy[16], hn = 0;
     for (;;) {
         int got = read_pkt(&p, 0);
-        while (got && p.down && read_pkt(&p, 0)) {}
+        /* el gesto sintetico (fake_pkt) siempre "tiene" el siguiente punto: vaciar la cola se tragaba
+         * los 16 puntos y el primer fotograma salia con la tarjeta ya arriba (revisor r3, musound4 1228) */
+        while (got && p.down && !fake_home_req && read_pkt(&p, 0)) {}
         if (got && !p.down) break;
         double t = now_ms();
         if (t > lt) { vel = 0.6 * vel + 0.4 * (cur_y - ly) / (t - lt); ly = cur_y; lx = cur_x; lt = t; }

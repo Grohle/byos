@@ -207,6 +207,21 @@ static void ab_img_draw(uint16_t *d, const uint16_t *im, const char *path, int w
     if (a < 32) { if (y >= c0 && y + h <= c1) fill_rrect(d, x, y, w, h, (float)r, rgb(44, 44, 48), 255); ab_fading = now_ms() + 30; }
     if (a > 0) bk_blit_scaled(d, im, w, h, x, y, w, h, a, r, c0, c1);
 }
+/* a book's cover: its real cover (fading in over the generated one when it has just loaded) or
+ * the generated one. a5 is the usual 0..32 opacity of bk_blit_scaled (pressed cells pass 22). */
+static const uint16_t *ab_gen_cover(const char *title, const char *author);
+static void ab_cover_draw(uint16_t *d, const char *path, const char *title, const char *author, int x, int y, int w, int h, int a5, int r, int c0, int c1)
+{
+    const uint16_t *cv = ab_img_get(path, AB_CS, AB_CS);
+    uint64_t k = ab_hash(path) ^ (uint64_t)(AB_CS * 1000 + AB_CS); double age = AB_FADE;
+    if (cv) for (int i = 0; i < 40; i++) if (ab_im[i].px && ab_im[i].h == k) { age = now_ms() - ab_im[i].t; break; }
+    if (!cv || age < AB_FADE) { const uint16_t *g = ab_gen_cover(title, author); if (g) bk_blit_scaled(d, g, AB_CS, AB_CS, x, y, w, h, a5, r, c0, c1); }
+    if (cv) {
+        int a = age >= AB_FADE ? a5 : (int)(a5 * ease_out(age / AB_FADE));
+        if (age < AB_FADE) ab_fading = now_ms() + 30;
+        if (a > 0) bk_blit_scaled(d, cv, AB_CS, AB_CS, x, y, w, h, a, r, c0, c1);
+    }
+}
 static int ab_img_known(const char *path, int w, int h)
 {
     uint64_t k = ab_hash(path) ^ (uint64_t)(w * 1000 + h);
@@ -1054,8 +1069,7 @@ static void ab_render_mine(uint16_t *d, float scroll)
         if (y + AB_GW + 54 < c0 || y > c1) continue;
         struct ab_mi *m = &ab_mine[i];
         char cp[200]; ab_cov_path(m->id, cp, sizeof cp);
-        const uint16_t *cv = ab_img_get(cp, AB_CS, AB_CS); if (!cv) cv = ab_gen_cover(m->title, m->author);
-        bk_blit_scaled(d, cv, AB_CS, AB_CS, x, y, AB_GW, AB_GW, ab_pressed(H_CELL, i) ? 22 : 32, 5, c0, c1);
+        ab_cover_draw(d, cp, m->title, m->author, x, y, AB_GW, AB_GW, ab_pressed(H_CELL, i) ? 22 : 32, 5, c0, c1);
         if (m->nq) {   /* descargando: velo y anillo */
             for (int yy = y; yy < y + AB_GW; yy++) if (yy >= c0 && yy < c1) for (int xx = x; xx < x + AB_GW; xx++) d[yy * W + xx] = dim565(d[yy * W + xx], 14);
             int paused = ab_is_paused(m->id);
@@ -1451,8 +1465,7 @@ static int ab_render_dl(uint16_t *d, int y0, int c0, int c1)
             struct ab_mi *m = &ab_mine[i];
             if (ab_pressed(H_DLAB, i)) ab_row_bg(d, y, c0, c1);
             char cp[200]; ab_cov_path(m->id, cp, sizeof cp);
-            const uint16_t *cv = ab_img_get(cp, AB_CS, AB_CS); if (!cv) cv = ab_gen_cover(m->title, m->author);
-            bk_blit_scaled(d, cv, AB_CS, AB_CS, 16, y + 8, 56, 56, 32, 5, c0, c1);
+            ab_cover_draw(d, cp, m->title, m->author, 16, y + 8, 56, 56, 32, 5, c0, c1);
             draw_text(d, 84, y + 25, m->title, 15, 0xFFFF, mw, c0, c1);
             draw_text(d, 84, y + 44, m->author[0] ? m->author : tr("Anónimo"), 13, AB_GRAY, mw, c0, c1);
             char st[64]; uint16_t sc = rgb(99, 99, 104);

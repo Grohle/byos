@@ -58,10 +58,18 @@ static int fm_need_login = -1;               /* a Subsonic source asks for its u
 /* ------------------------------------------------------------------ settings */
 static int fm_lossless, fm_coll, fm_genre = -1, fm_lang = -1, fm_sort = FSORT_REL, fm_cache_mb = 500;   /* fm_sort: searches only */
 static char fm_key[100];
+/* the thumbnails before covers were cropped to fill (letterboxed strips): removed once */
+static void fm_rmtree_old_th(void)
+{
+    DIR *d = opendir(FM_CACHE "/th"); if (!d) return;
+    struct dirent *e; char p[300];
+    while ((e = readdir(d))) { if (e->d_name[0] == '.') continue; snprintf(p, sizeof p, FM_CACHE "/th/%s", e->d_name); unlink(p); }
+    closedir(d); rmdir(FM_CACHE "/th");
+}
 static void fm_mkdirs(void)
 {
     mkdir("/usr/data/hibymod/appdata", 0755); mkdir(FM_DATA, 0755);
-    mkdir("/usr/data/hibymod/cache", 0755); mkdir(FM_CACHE, 0755); mkdir(FM_CACHE "/th", 0755); mkdir(FM_CACHE "/cv", 0755);
+    mkdir("/usr/data/hibymod/cache", 0755); mkdir(FM_CACHE, 0755); mkdir(FM_CACHE "/th2", 0755); mkdir(FM_CACHE "/cv", 0755); fm_rmtree_old_th();
 }
 static void fm_conf_load(void)
 {
@@ -578,7 +586,7 @@ static void fm_run_image(struct fm_job *j)
 {
     int big = j->kind == NJ_COVER, s = big ? FM_BIG : 96;
     char raw[160], jpg[170], th[180];
-    fm_hpath(big ? FM_CACHE "/cv" : FM_CACHE "/th", j->url, ".raw", raw, sizeof raw);
+    fm_hpath(big ? FM_CACHE "/cv" : FM_CACHE "/th2", j->url, ".raw", raw, sizeof raw);
     uint16_t *px = fm_load_raw(raw, s);
     if (!px) {
         snprintf(jpg, sizeof jpg, "%.*s.jpg", (int)strlen(raw) - 4, raw);

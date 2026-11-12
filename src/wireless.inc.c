@@ -1011,7 +1011,8 @@ static void wl_build(struct wpage *pg, int kind, const char *param)
         int on = wl_bt_on();
         wp_sec(pg, 0);
         struct wrow *r = wp_row(pg, WR_TOGGLE, RID_BT_TOG, "Bluetooth"); r->on = on; if (wv.bpend) r->flags |= WF_BUSY;
-        if (!wv.ad.found && !wv.bpend && wv.bset >= 0 && on) { wp_foot(pg, tr("WL_BT_NA")); }
+        if (!on && !wv.bpend) wp_foot(pg, tr("WL_BT_OFF_HELP"));   /* apagado: que no quede una pagina vacia (revisor r3) */
+        else if (!wv.ad.found && !wv.bpend && wv.bset >= 0 && on) { wp_foot(pg, tr("WL_BT_NA")); }
         else if (on && wv.ad.alias[0]) { snprintf(b, sizeof b, tr("Visible como «%s»."), wv.ad.alias); wp_foot(pg, b); }
         if (!on || !wv.ad.powered) return;
         int nmine = 0;

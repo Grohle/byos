@@ -898,6 +898,19 @@ static struct mpg *mu_page_new(int kind, int arg, const char *title)
     mu_build(p);
     return p;
 }
+static void mu_job_done(struct mpg *p);
+/* la lista de listas suele llegar en 100-250 ms: esperarla (max 400 ms) para que la pagina entre ya
+ * con su contenido, como iOS; antes salia un indicador y la fila aparecia de golpe (revisor r3) */
+static struct mpg *mu_page_new_ready(int kind, int arg, const char *title)
+{
+    struct mpg *p = mu_page_new(kind, arg, title);
+    if (p && p->job) {
+        double t = now_ms();
+        while (!p->job->done && now_ms() - t < 400) msleep(10);
+        if (p->job->done) { mu_job_done(p); mu_build(p); }
+    }
+    return p;
+}
 /* resultado de un trabajo de hibymix: lista de rutas (primer campo) -> pistas */
 static void mu_job_done(struct mpg *p)
 {
@@ -1498,7 +1511,7 @@ static void mu_tap(struct mpg *p, int idx, int x, int longp)
             lg("musica: abrir Ajustes > Sonido");
             return;
         }
-        if (m->a == M_PLAYLISTS) mu_push(mu_page_new(PG_PLAYLISTS, 0, tr("Listas")));
+        if (m->a == M_PLAYLISTS) mu_push(mu_page_new_ready(PG_PLAYLISTS, 0, tr("Listas")));
         else if (m->a == M_ARTISTS) mu_push(mu_page_new(PG_ARTISTS, 0, tr("Artistas")));
         else if (m->a == M_ALBUMS) mu_push(mu_page_new(PG_ALBUMS, 0, tr("Álbumes")));
         else if (m->a == M_SONGS) mu_push(mu_page_new(PG_SONGS, 0, tr("Canciones")));

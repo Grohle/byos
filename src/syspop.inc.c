@@ -35,6 +35,7 @@ static void sp_present_over(const uint16_t *src)
     if (!sp_tmp) return;
     memcpy(sp_tmp, src, HM_FRAME_BYTES);
     if (!sp_cap) { statusbar_tint(sp_tmp); int a = 0, b = 0; homebar_layer(sp_tmp, src, &a, &b); }   /* como los de la app */
+    else if (cap_ov == &spr_bar && spr_bar.w) blend_sprite(sp_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de la pantalla de HiBy */
     if (sp_kind == 1) lib_popup_draw(sp_tmp, sp_progress()); else if (sp_kind == 2) vol_popup_draw(sp_tmp, sp_progress()); else buds_popup_draw(sp_tmp, sp_progress());
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, sp_tmp, HM_FRAME_BYTES);
@@ -72,6 +73,7 @@ static void sp_start(int kind)
         if (hud_cap) { hud_cap = 0; memcpy(sp_base, fr1, HM_FRAME_BYTES); sp_cap = 1; took = 1; }
     }
     if (!took && !st->capture && !st->held && !launcher_on) {      /* pantalla de HiBy: congelarla */
+        cap_ov = ov_cur;
         st->ov_on = 0; ov_cur = 0;
         cmd('C');
         double t = now_ms(); while (!st->capture && now_ms() - t < 200) msleep(2);

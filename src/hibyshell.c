@@ -1169,6 +1169,9 @@ static void hiby_dlgs_quiet(void)
     hiby_dlg_quiet("/usr/data/hibymod/theme/litegui/theme3/dialog/music_update.dlg");
 }
 static void hud_compose_present_ex(const uint16_t *src, int pill);
+/* la capa (barra de inicio) que tenia la pantalla de HiBy al congelarla la pildora o un aviso:
+ * se compone encima mientras esta congelada; antes desaparecia en cada pulsacion de volumen */
+static const struct sprite *cap_ov;
 static void hud_compose_present(const uint16_t *src) { hud_compose_present_ex(src, 1); }
 static void hud_compose_present_ex(const uint16_t *src, int pill)
 {
@@ -1179,7 +1182,7 @@ static void hud_compose_present_ex(const uint16_t *src, int pill)
     if (!hud_cap) {
         statusbar_tint(hud_tmp);
         int a = 0, b = 0; homebar_layer(hud_tmp, src, &a, &b);
-    } else if (ov_cur == &spr_bar && spr_bar.w) blend_sprite(hud_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de las pantallas de HiBy */
+    } else if (cap_ov == &spr_bar && spr_bar.w) blend_sprite(hud_tmp, &spr_bar, (W - spr_bar.w) / 2, BAR_Y);   /* la barra de las pantallas de HiBy */
     if (pill) hud_overlay(hud_tmp);
     st->fr0_seq++; __sync_synchronize();
     memcpy(fr0_shm, hud_tmp, HM_FRAME_BYTES);
@@ -1194,6 +1197,7 @@ static void hud_frame(void)
      * franja del inicio por encima de la app */
     if (launcher_on && hud_main) { launcher_present_hud(); return; }
     if (!hud_cap && !st->capture && !st->held) {           /* pantalla de HiBy: tomarla */
+        cap_ov = ov_cur;                                   /* su barra de inicio se sigue viendo (revisor r3) */
         st->ov_on = 0; ov_cur = 0; cmd('C');
         double t = now_ms(); while (!st->capture && now_ms() - t < 200) msleep(2);
         if (!st->capture) return;

@@ -274,6 +274,7 @@ static int sp_content_h(const struct spage *pg)
     }
     return h;
 }
+static uint16_t blend565(uint16_t a, uint16_t b, int k);   /* cc.inc.c */
 static int ss_sel_y = -1;    /* y de la fila pulsada en el ultimo dibujo (su accesorio puede llevar un indicador) */
 static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *back)
 {
@@ -361,7 +362,18 @@ static void sp_render(uint16_t *d, const struct spage *pg, int sel, const char *
         if (tw_n(bl, 16, -1) > bmax) { bl = tr("Atrás"); if (tw_n(bl, 16, -1) > bmax) bl = 0; }
         if (bl) draw_text(d, 28, 68, bl, 16, rgb(10, 132, 255), bmax, 0, H);
         draw_text(d, (W - tw) / 2, 68, tr(pg->title), 17, 0xFFFF, 216, 0, H);
-    } else draw_text(d, 16, 80, tr(pg->title), 26, 0xFFFF, 0, 0, H);
+    } else {
+        /* titulo grande que se pliega al desplazar (como Musica e iOS): sube y se funde, y el
+         * titulo pequeno centrado aparece con la linea de la barra (revisor r3) */
+        float sc = sp_scroll < 0 ? 0 : sp_scroll > 44 ? 44 : sp_scroll;
+        int kl = 32 - (int)(sc * 32 / 30); if (kl < 0) kl = 0;           /* grande: fuera en 30 px */
+        int ks = (int)((sc - 14) * 32 / 30); if (ks < 0) ks = 0; if (ks > 32) ks = 32;   /* pequeno: entra de 14 a 44 */
+        uint16_t bar = rgb(12, 12, 13);
+        if (ks < 32) for (int x = 0; x < W; x++) d[(NAVH + 29) * W + x] = blend565(bar, rgb(38, 38, 40), ks);
+        if (kl > 0) draw_text(d, 16, 80 - (int)(sc * 0.5f), tr(pg->title), 26, blend565(bar, 0xFFFF, kl), 0, 30, NAVH + 29);
+        if (ks > 0) { int tw = tw_n(tr(pg->title), 17, -1); if (tw > 216) tw = 216;
+                      draw_text(d, (W - tw) / 2, 68, tr(pg->title), 17, blend565(bar, 0xFFFF, ks), 216, 30, NAVH + 29); }
+    }
     draw_toast(d);
 }
 /* fila en (x,y) o -1 */
@@ -861,12 +873,18 @@ static void choice_page(const struct srow *rw, const char *back)
 /* bucle de una pagina; vuelve al pulsar "atras" o deslizar desde el borde.
  * sp_gone: se salio al inicio con el gesto de la barra (desde cualquier pagina): todas las
  * paginas abiertas vuelven sin transicion y la app no hace su animacion de cierre. */
+/* enlace directo a una pagina (Musica > Ecualizador y sonido, Centro de control): Ajustes se abre
+ * en ella, pero con "< Ajustes" para subir a la raiz, como iOS. open_page de la raiz la empuja al
+ * empezar, sin animacion (sp_deep_now). */
+static void (*sp_deep_child)(struct spage *); static int sp_deep_now;
 static void open_page(void (*build)(struct spage *), const char *back)
 {
     if (sp_gone) return;
+    if (!back && sp_deep_child) { void (*c)(struct spage *) = sp_deep_child; sp_deep_child = 0; sp_deep_now = 1; open_page(c, sp_root_name); if (sp_gone) return; }
     struct spage pg; build(&pg);
     float saved = sp_scroll; sp_scroll = 0;
-    if (back) {   /* fs_transition no puede leer de fr0 mientras escribe en el: copia antes */
+    if (back && sp_deep_now) sp_deep_now = 0;      /* ya esta en pantalla (el zoom de apertura la mostro) */
+    else if (back) {   /* fs_transition no puede leer de fr0 mientras escribe en el: copia antes */
         memcpy(img_under, fr0, HM_FRAME_BYTES); have_under = 0;
         sp_render(img_base, &pg, -1, back); fs_transition(img_under, img_base, 1, 0);
     }
@@ -1023,9 +1041,10 @@ static void settings_run(int ix, int iy, int mode)
     if (mode == 5) { int b = sysfs_get(BL_PATH, -1); ui_bright = b < 0 ? (ps_ok[PS_BRIGHT] ? ps_v[PS_BRIGHT] : 50) : b * 100 / 101;
                      if (ui_bright < 1) ui_bright = 1; if (ui_bright > 100) ui_bright = 100; }
     sp_root_name = mode == 2 ? "Personalizar" : "Ajustes";
+    int deep = mode >= 3 && mode <= 6;               /* pagina concreta: debajo, la raiz de Ajustes */
     struct spage root; root_fn(&root);
     sp_scroll = 0;
-    sp_render(img_app, &root, -1, 0);
+    sp_render(img_app, &root, -1, deep ? sp_root_name : 0);
     render_launcher(img_base, now_ms());
     double t0 = now_ms();
     for (;;) {   /* apertura con zoom desde el icono */
@@ -1034,7 +1053,9 @@ static void settings_run(int ix, int iy, int mode)
         zoom_frame_app(fr0, img_base, 32 - (int)(8 * e), img_app, (int)(ix * (1 - e)), (int)(iy * (1 - e)), w, h, win_radius(w, h, e));
         present(); if (t >= 1) break;
     }
+    if (deep) { sp_deep_child = root_fn; root_fn = page_root; }
     open_page(root_fn, 0);
+    sp_deep_child = 0; sp_deep_now = 0;
     if (ss_handoff) {   /* se abrio un editor de HiBy: su pantalla ya esta delante, sin animacion ni inicio */
         ss_handoff = 0; sp_gone = 0; sp_self = -1; sp_root_name = "Ajustes";
         drain_until_up();
