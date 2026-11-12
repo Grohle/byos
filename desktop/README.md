@@ -13,7 +13,7 @@ It is a test bench for the device pages and for the `byos-cli` contract
 ([docs/BYOS_CLI.md](../docs/BYOS_CLI.md)). The real app will be the Museeks-based Tauri app
 (DESKTOP_APP.md section 6), which reuses this UI logic.
 
-## Windows program (`ByOS-Desktop-<version>.exe`)
+## Windows program (`ByOS.exe`)
 
 The release ships the app as one Windows program. Double-click it: the first start unpacks it
 into `%LOCALAPPDATA%\ByOS Desktop\<version>` (a few seconds), then it starts the local runner

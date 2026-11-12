@@ -27,6 +27,10 @@ const STATIC = {
   '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
   '/icon.svg': ['icon.svg', 'image/svg+xml'],
+  '/icon-32.png': ['icon-32.png', 'image/png'],
+  '/icon-192.png': ['icon-192.png', 'image/png'],
+  '/icon-512.png': ['icon-512.png', 'image/png'],
+  '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
   // The same path rules as the runner, shared with the browser.
   '/btp-path.js': ['../lib/btp-path.mjs', 'text/javascript; charset=utf-8'],
   // The Updates page's build-and-install steps, shared with the tests.

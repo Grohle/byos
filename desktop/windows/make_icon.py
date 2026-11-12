@@ -45,4 +45,8 @@ if __name__ == "__main__":
     big = draw(256)
     out = os.path.join(HERE, "byos.ico")
     big.save(out, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    # the app window's icon (Edge app mode takes it from the page: favicon PNGs and the manifest)
+    ui = os.path.join(os.path.dirname(HERE), "ui")
+    for n in (32, 192, 512):
+        (big if n <= 256 else draw(512)).resize((n, n), Image.LANCZOS).save(os.path.join(ui, "icon-%d.png" % n))
     print(out, os.path.getsize(out))

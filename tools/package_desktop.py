@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package ByOS Desktop for Windows as one program: ByOS-Desktop-<version>.exe.
+"""Package ByOS Desktop for Windows as one program: ByOS.exe.
 
     python tools/package_desktop.py --version 0.9.0
 
@@ -86,7 +86,7 @@ def main():
     payload = buf.getvalue()
 
     os.makedirs(a.out, exist_ok=True)
-    out = os.path.join(a.out, "ByOS-Desktop-%s.exe" % a.version)
+    out = os.path.join(a.out, "ByOS.exe")   # an app name, not a file name with a version (the version is in its properties)
     launcher = open(a.launcher, "rb").read()
     with open(out, "wb") as f:
         f.write(launcher)
