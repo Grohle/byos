@@ -19,7 +19,14 @@ object SyncRules {
 
     fun nfc(s: String): String = Normalizer.normalize(s, Normalizer.Form.NFC)
 
-    fun lower(p: String) = p.lowercase()
+    /**
+     * The comparison key of a path: lowercase and NFC. Card paths keep the spelling LIST gave
+     * (an NFD name is another name on vfat and exFAT), and are compared through this key.
+     */
+    fun lower(p: String): String {
+        for (c in p) if (c.code >= 0x80) return nfc(p).lowercase()
+        return p.lowercase()
+    }
 
     fun under(path: String, root: String): Boolean = root.isEmpty() || lower(path).startsWith(lower(root) + "/")
 

@@ -164,8 +164,17 @@ class LocalTags(
     }
 }
 
-/** One file of a link's folder (local.json). [rel]: NFC, '/' separated, relative to the link's folder. */
-class LocalEntry(val rel: String, val size: Long, val mtime: Long, val tags: LocalTags? = null, var sha: String? = null, var qfp: String? = null)
+/**
+ * One file of a link's folder (local.json). [rel]: NFC, '/' separated, relative to the link's
+ * folder: the file's identity. [disk]: the name as stored on disk when it differs from [rel]
+ * (an NFD name on NTFS or ext4), used to open the file. [tagError]: its tags could not be read
+ * ([tags] are then the last ones read, if any).
+ */
+class LocalEntry(val rel: String, val size: Long, val mtime: Long, val tags: LocalTags? = null, var sha: String? = null, var qfp: String? = null,
+                 val disk: String? = null, val tagError: Boolean = false) {
+    /** The path to open, relative to the link's folder. */
+    val path get() = disk ?: rel
+}
 
 /** The result of scanning one link's folder. */
 class LocalScan(
@@ -180,7 +189,10 @@ class LocalScan(
     val errors: Int = 0,
     val time: Long = System.currentTimeMillis() / 1000,
 ) {
-    fun underUnreadable(rel: String) = unreadableDirs.any { it.isEmpty() || rel.startsWith("$it/") }
+    fun underUnreadable(rel: String) = unreadableDirs.any { it.isEmpty() || rel == it || rel.startsWith("$it/") }
+
+    /** Media files whose tags could not be read. */
+    val tagErrors get() = entries.values.count { it.tagError }
 
     fun toMap(): Map<String, Any?> = linkedMapOf("format" to 1, "link" to linkId, "root" to root, "status" to status, "volume_id" to volumeId,
         "time" to time, "errors" to errors, "unreadable" to unreadableDirs,
@@ -189,6 +201,8 @@ class LocalScan(
                 if (e.tags != null) put("tags", e.tags.toMap())
                 if (e.sha != null) put("sha", e.sha)
                 if (e.qfp != null) put("qfp", e.qfp)
+                if (e.disk != null) put("disk", e.disk)
+                if (e.tagError) put("tag_error", true)
             }
         })
 
@@ -198,7 +212,8 @@ class LocalScan(
             for ((rel, v) in Json.obj(m["files"])) {
                 val e = Json.obj(v)
                 files[rel] = LocalEntry(rel, Json.optLong(e, "size", 0), Json.optLong(e, "mtime", 0),
-                    (e["tags"] as? Map<*, *>)?.let { LocalTags.fromMap(Json.obj(it)) }, Json.optStr(e, "sha"), Json.optStr(e, "qfp"))
+                    (e["tags"] as? Map<*, *>)?.let { LocalTags.fromMap(Json.obj(it)) }, Json.optStr(e, "sha"), Json.optStr(e, "qfp"),
+                    Json.optStr(e, "disk"), e["tag_error"] == true)
             }
             return LocalScan(Json.optStr(m, "link") ?: "", Json.optStr(m, "root") ?: "", Json.optStr(m, "status") ?: "ok",
                 Json.optStr(m, "volume_id"), files, (m["unreadable"] as? List<*>)?.map { it.toString() } ?: emptyList(),
@@ -301,7 +316,7 @@ class PlanItem(
             Json.optStr(m, "parent"), m["then_update"] == true, Json.optStr(m, "covers"), (m["record"] as? Map<*, *>)?.let { Json.obj(it) },
             m.filterKeys { it in EXTRA_KEYS })
 
-        private val EXTRA_KEYS = setOf("card_changed", "needs_decision", "guard")
+        private val EXTRA_KEYS = setOf("card_changed", "needs_decision", "guard", "tags_unreadable")
     }
 }
 

@@ -826,8 +826,15 @@ source folder could not be read. Policy `ask` ticks nothing and marks the items
 
 **DeleteGuard** turns every deletion of a link into an unticked item (`extra guard: true`,
 summary `guard.tripped`) when the linked folder is missing, empty or unreadable, its volume
-changed (Windows volume serial, Unix device), the scan had I/O errors, or more than 10 % of the
-link's tracked files (or more than 200) would be `deleted_on_computer`.
+changed (Windows volume serial, Linux file system UUID, else the Unix device; ids of different
+kinds are not compared), the scan had I/O errors, or more than 10 % of the link's tracked files
+(or more than 200) would be pre-ticked for deletion (`deleted_on_computer`, and with
+`remove_unselected` also `excluded_on_computer`). A file whose tags could not be read
+(`warn tags_unreadable` at the scan, `tag_errors` in its result) stays where it is on the HiBy
+and is never pre-ticked (`extra tags_unreadable: true`). Symbolic links and junctions in the
+folder are followed; a broken one counts as an unreadable folder. Every plan names its card:
+`sync-plan` writes `ByOS/sync/card.json` when the card has none, and a plan without `card_id`
+or for another card is refused (`card_changed`).
 
 Result: `plan`, `run_id`, `kinds`, `fits`, `sd_free`, `items` (count), `size` (bytes of the plan
 file), and `summary` per kind: `add`, `update`, `move`, `adopt`, `record`, `skip`, `conflict`,
@@ -850,7 +857,10 @@ otherwise they are kept (`warn mass_delete_blocked`).
 
 Order (section 3.5): the lock (`ByOS/sync/lock.json`, created atomically; another client's lock
 with a heartbeat younger than 10 minutes gives error `locked`, exit 11, with `locked_by`;
-`--take-over` replaces it; a stale lock is taken over with `warn lock_taken_over`), the battery
+`--take-over` replaces it; a stale lock is taken over with `warn lock_taken_over`; a second run
+on the same computer, desktop app or byos-cli, gives `locked` with `locked_by.same_computer`,
+while the lock left by a killed run of this computer is taken over at once; before a transfer
+that may outlast the 10 minutes, the lock gets `busy_until`, which keeps it from going stale), the battery
 (below 15 % and not charging: error `remote` `E_BATTERY`; below 30 %: `warn low_battery`), the
 replay of unfinished journals, then per kind: moves (swaps through a temporary name), approved
 deletes and empty folders, copies one album folder at a time (smallest first when space is

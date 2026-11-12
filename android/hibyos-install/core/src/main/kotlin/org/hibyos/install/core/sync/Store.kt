@@ -97,6 +97,9 @@ class SyncStore(val configDir: File, val deviceId: String) {
 
     fun saveCardQfp(m: Map<String, String>) = writeAtomic(cardQfpFile, Json.write(linkedMapOf("format" to 1, "files" to m)) + "\n")
 
+    /** The file [LocalRunLock] locks while a run of this HiBy applies. */
+    val runLockFile = File(dir, "apply.lock")
+
     fun runFile(runId: String) = File(runsDir, "$runId.jsonl")
     fun runPlanFile(runId: String) = File(runsDir, "$runId.plan.json")
     fun runDecisionsFile(runId: String) = File(runsDir, "$runId.dec.json")
@@ -268,17 +271,45 @@ class Manifest(val kind: String) {
     }
 }
 
-/** lock.json on the card (section 3.5 step 1). */
-class LockInfo(val clientId: String, val name: String, val runId: String, val kinds: List<String>, val started: Long, val heartbeat: Long) {
-    fun toMap(): Map<String, Any?> = linkedMapOf("client_id" to clientId, "name" to name, "run_id" to runId, "kinds" to kinds,
-        "started" to started, "heartbeat" to heartbeat)
+/**
+ * lock.json on the card (section 3.5 step 1). [busyUntil]: while one long transfer runs the
+ * holder cannot refresh [heartbeat], so it says beforehand how long the transfer may take.
+ */
+class LockInfo(val clientId: String, val name: String, val runId: String, val kinds: List<String>, val started: Long, val heartbeat: Long,
+               val busyUntil: Long = 0) {
+    fun toMap(): Map<String, Any?> = linkedMapOf<String, Any?>("client_id" to clientId, "name" to name, "run_id" to runId, "kinds" to kinds,
+        "started" to started, "heartbeat" to heartbeat).apply { if (busyUntil > 0) put("busy_until", busyUntil) }
 
-    /** The holder stopped refreshing it more than 10 minutes ago. */
-    fun stale(now: Long = System.currentTimeMillis() / 1000) = now - heartbeat > STALE_S
+    /** The holder stopped refreshing it more than 10 minutes ago (and is not inside a long transfer it announced). */
+    fun stale(now: Long = System.currentTimeMillis() / 1000) = now - maxOf(heartbeat, busyUntil) > STALE_S
 
     companion object {
         const val STALE_S = 600L
         fun fromMap(m: Map<String, Any?>) = LockInfo(Json.optStr(m, "client_id") ?: "", Json.optStr(m, "name") ?: "", Json.optStr(m, "run_id") ?: "",
-            (m["kinds"] as? List<*>)?.map { it.toString() } ?: emptyList(), Json.optLong(m, "started", 0), Json.optLong(m, "heartbeat", 0))
+            (m["kinds"] as? List<*>)?.map { it.toString() } ?: emptyList(), Json.optLong(m, "started", 0), Json.optLong(m, "heartbeat", 0),
+            Json.optLong(m, "busy_until", 0))
+    }
+}
+
+/**
+ * The lock of the sync runs of one HiBy on this computer (an OS file lock, gone when its process
+ * dies). The desktop app and byos-cli share the client id, so the card lock alone cannot tell a
+ * second run of this computer from a run that was killed.
+ */
+class LocalRunLock private constructor(private val raf: java.io.RandomAccessFile, private val lock: java.nio.channels.FileLock) : AutoCloseable {
+    override fun close() {
+        try { lock.release() } catch (e: Exception) {}
+        try { raf.close() } catch (e: Exception) {}
+    }
+
+    companion object {
+        /** The lock, or null when another run (in this or another process) holds it. */
+        fun tryAcquire(f: File): LocalRunLock? {
+            f.absoluteFile.parentFile?.mkdirs()
+            val raf = java.io.RandomAccessFile(f, "rw")
+            val l = try { raf.channel.tryLock() } catch (e: java.nio.channels.OverlappingFileLockException) { null } catch (e: java.io.IOException) { null }
+            if (l == null) { raf.close(); return null }
+            return LocalRunLock(raf, l)
+        }
     }
 }

@@ -327,6 +327,80 @@ class FolderSyncTest {
         assertTrue(p.items.single().reason.startsWith("bad_path"))
     }
 
+    @Test
+    fun aMoveIntoAnotherLinksFolderIsBlocked() {
+        // album artist "Audiobooks": the new place lies inside the audiobooks link's card root
+        val t = tr("a.flac", "Music/X/Y/01 T.flac")
+        val p = FolderSync.diff(DiffInput(link(root = "Music"), scan(e("a.flac", tags = tags("Audiobooks", "Ch", "T"))), listOf(t), emptyMap(),
+            listOf(card(t.dest)), client, nestedRoots = listOf("Music/Audiobooks")))
+        assertEquals("blocked", p.items.single().action)
+        assertEquals("inside_other_link", p.items.single().reason)
+    }
+
+    // ------------------------------------------------------------------ tags that could not be read, mass unselection
+
+    @Test
+    fun aTagReadErrorNeverPreticksADeleteNorMovesTheFile() {
+        val sel = LinkSelection(false, artists = listOf("abba"))
+        val t = listOf(tr("a.flac", "Music/ABBA/Gold/01 SOS.flac"), tr("b.flac", "Music/ABBA/Gold/02 Mamma.flac")) +
+            (3..30).map { tr("x$it.flac", "Music/ABBA/Gold/$it X.flac") }
+        val es = listOf(
+            // no tags at all (a new or retagged file whose tags could not be read)
+            LocalEntry("a.flac", 1000, t0, null, tagError = true),
+            // the last tags read, but a read error now: it stays where it is
+            LocalEntry("b.flac", 1000, t0 + 5, tags("ABBA", "Gold (Remaster)", "Mamma", 2), tagError = true)) +
+            (3..30).map { e("x$it.flac", tags = tags("ABBA", "Gold", "X", it)) }
+        val p = diff(link(selection = sel, removeUnselected = true), scan(*es.toTypedArray()), t, t.map { card(it.dest) }, localSha = { null })
+        val a = p.of("player_only").single { it.srcRel == "a.flac" }
+        assertEquals(PlayerOnly.EXCLUDED, a.reason)
+        assertEquals("keep", a.defaultChoice)
+        assertEquals(true, a.extra["tags_unreadable"])
+        assertTrue(p.of("move").none { it.srcRel == "b.flac" })
+        assertEquals("Music/ABBA/Gold/02 Mamma.flac", p.items.single { it.srcRel == "b.flac" }.dest)
+        assertFalse(p.guard.tripped)
+    }
+
+    @Test
+    fun aMassUnselectionTripsTheGuard() {
+        val es = (1..30).map { e("a$it.flac", tags = tags("ABBA", "Gold", "S$it", it)) } + e("q.flac", tags = tags("Queen", "Hits", "Q"))
+        val t = (1..30).map { tr("a$it.flac", "Music/ABBA/Gold/${"%02d".format(it)} S$it.flac") } + tr("q.flac", "Music/Queen/Hits/01 Q.flac")
+        // a retag or a narrowed selection that leaves out 30 of 31 files: nothing is pre-ticked
+        val p = diff(link(selection = LinkSelection(false, artists = listOf("queen")), removeUnselected = true), scan(*es.toTypedArray()), t, t.map { card(it.dest) })
+        assertEquals("mass_delete", p.guard.reason)
+        assertTrue(p.of("player_only").all { it.defaultChoice == "keep" && it.extra["guard"] == true })
+        // one of 31 is under the threshold: ticked as asked
+        val q = diff(link(selection = LinkSelection(false, artists = listOf("abba")), removeUnselected = true), scan(*es.toTypedArray()), t, t.map { card(it.dest) })
+        assertFalse(q.guard.tripped)
+        assertEquals("delete", q.of("player_only").single().defaultChoice)
+    }
+
+    @Test
+    fun aVolumeIdOfAnotherKindIsNotAChange() {
+        val t = listOf(tr("A/1.flac", "Music/A/1.flac"), tr("A/2.flac", "Music/A/2.flac"))
+        val p = diff(link(layout = "keep", policy = "delete", volume = "dev:2049"), scan(e("A/1.flac"), volume = "uuid:1234-abcd"), t, t.map { card(it.dest) })
+        assertNull(p.guard.reason.takeIf { it == "volume_changed" })
+        val q = diff(link(layout = "keep", policy = "delete", volume = "uuid:aaaa"), scan(e("A/1.flac"), volume = "uuid:bbbb"), t, t.map { card(it.dest) })
+        assertEquals("volume_changed", q.guard.reason)
+    }
+
+    @Test
+    fun cardPathsCompareWithoutUnicodeForm() {
+        // the card lists an NFD name: it is the tracked file, under its own spelling
+        val nfd = "Music/Beyoncé/x.flac"
+        val rel = SyncRules.nfc("Beyoncé/x.flac")
+        val t = tr(rel, SyncRules.nfc(nfd))
+        val p = diff(link(layout = "keep"), scan(e(rel)), listOf(t), listOf(card(nfd)))
+        assertTrue(p.items.toString(), p.items.isEmpty())
+        assertEquals(1, p.skip)
+        // a move or an update works on the card's own spelling
+        val m = diff(link(layout = "keep"), scan(e("x.flac")), listOf(t.copy(rel = "x.flac")), listOf(card(nfd))).of("move").single()
+        assertEquals(nfd, m.oldDest)
+        val u = diff(link(layout = "keep"), scan(e(rel, mtime = t0 + 9)), listOf(t), listOf(card(nfd))).of("update").single()
+        assertEquals(nfd, u.dest)
+        val d = diff(link(layout = "keep"), scan(e("other.flac", size = 5)), listOf(t), listOf(card(nfd))).of("player_only").single()
+        assertEquals(nfd, d.dest)
+    }
+
     // ------------------------------------------------------------------ performance
 
     @Test

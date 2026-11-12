@@ -8,6 +8,7 @@ import org.hibyos.install.core.btp.BtpException
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import kotlin.math.abs
 
 /**
  * DEC.json (section 3.4): the user's choice per item id, plus per-kind policy overrides
@@ -58,6 +59,8 @@ class ApplyOptions(
     val preparedDir: File? = null,
     /** Called after each journalled operation with the count so far (tests stop a run here). */
     val onRecord: ((Int) -> Unit)? = null,
+    /** The slowest transfer rate (bytes per second) a lock announcement of a long transfer allows for. */
+    val slowRate: Long = 1L shl 20,
 )
 
 class KindResult {
@@ -106,31 +109,69 @@ class SyncApply(
 
     // ------------------------------------------------------------------ lock
 
+    private var localLock: LocalRunLock? = null
+    private var started = 0L
+    private var lastLockWrite = 0L
+
+    /**
+     * Takes the card's lock.json. A lock of another computer is respected until it is stale (or
+     * --take-over). Runs of this computer share its client id: the OS lock of [LocalRunLock] tells
+     * a second run that is still going (refused) from one that was killed (taken over).
+     */
     fun acquireLock(kinds: List<String>) {
-        val mine = LockInfo(lf.clientId, opts.clientName, runId, kinds, now, now)
+        val local = LocalRunLock.tryAcquire(store.runLockFile)
+            ?: throw SyncException("locked", "Another sync of this HiBy is already running on this computer",
+                mapOf("locked_by" to linkedMapOf("client_id" to lf.clientId, "name" to opts.clientName, "same_computer" to true)))
         try {
-            CardStore.writeJson(fs, CardStore.LOCK, mine.toMap(), Btp.MODE_CREATE)
-        } catch (e: BtpException) {
-            if (!(e.remote && e.code == Btp.E_EXISTS)) throw e
-            val cur = CardStore.readLock(fs)
-            if (cur != null && cur.clientId != lf.clientId && !cur.stale() && !opts.takeOver) {
-                throw SyncException("locked", "The HiBy is being synced from ${cur.name.ifEmpty { "another computer" }}", mapOf("locked_by" to cur.toMap()))
+            started = now
+            val mine = LockInfo(lf.clientId, opts.clientName, runId, kinds, started, now)
+            try {
+                CardStore.writeJson(fs, CardStore.LOCK, mine.toMap(), Btp.MODE_CREATE)
+            } catch (e: BtpException) {
+                if (!(e.remote && e.code == Btp.E_EXISTS)) throw e
+                val cur = CardStore.readLock(fs)
+                if (cur != null && cur.clientId != lf.clientId && !cur.stale() && !opts.takeOver) {
+                    throw SyncException("locked", "The HiBy is being synced from ${cur.name.ifEmpty { "another computer" }}", mapOf("locked_by" to cur.toMap()))
+                }
+                if (cur != null && cur.clientId != lf.clientId) listener.warn("lock_taken_over", "took over the sync lock of ${cur.name}", mapOf("locked_by" to cur.toMap()))
+                else if (cur != null && cur.runId != runId && !cur.stale())
+                    listener.warn("lock_taken_over", "took over the lock left by an earlier sync of this computer that did not finish", mapOf("locked_by" to cur.toMap()))
+                CardStore.writeJson(fs, CardStore.LOCK, mine.toMap(), Btp.MODE_REPLACE)
             }
-            if (cur != null && cur.clientId != lf.clientId) listener.warn("lock_taken_over", "took over the sync lock of ${cur.name}", mapOf("locked_by" to cur.toMap()))
-            CardStore.writeJson(fs, CardStore.LOCK, mine.toMap(), Btp.MODE_REPLACE)
+            lastLockWrite = System.currentTimeMillis()
+            localLock = local
+        } catch (e: Throwable) {
+            local.close()
+            throw e
         }
     }
 
-    private fun refreshLock(kinds: List<String>) {
-        try { CardStore.writeJson(fs, CardStore.LOCK, LockInfo(lf.clientId, opts.clientName, runId, kinds, now, now).toMap(), Btp.MODE_REPLACE) }
-        catch (e: BtpException) { if (!e.remote) throw e }
+    /** Rewrites the lock with a new heartbeat; [busyFor] seconds announce a long transfer. */
+    private fun refreshLock(kinds: List<String>, busyFor: Long = 0) {
+        try {
+            CardStore.writeJson(fs, CardStore.LOCK, LockInfo(lf.clientId, opts.clientName, runId, kinds, started, now,
+                if (busyFor > 0) now + busyFor else 0).toMap(), Btp.MODE_REPLACE)
+            lastLockWrite = System.currentTimeMillis()
+        } catch (e: BtpException) { if (!e.remote) throw e }
+    }
+
+    /**
+     * Before a transfer of [bytes]: the heartbeat cannot be written while the transfer runs (one
+     * connection), so a transfer that may outlast the stale time is announced in the lock first.
+     */
+    private fun beforeTransfer(bytes: Long, kinds: List<String>) {
+        val expect = bytes / maxOf(1L, opts.slowRate) + 60
+        val long = expect > LockInfo.STALE_S / 2
+        if (long || System.currentTimeMillis() - lastLockWrite > 60_000) refreshLock(kinds, if (long) expect else 0)
     }
 
     fun releaseLock() {
         try {
             val cur = CardStore.readLock(fs)
-            if (cur == null || cur.clientId == lf.clientId) fs.delete(CardStore.LOCK)
+            if (cur == null || (cur.clientId == lf.clientId && cur.runId == runId)) fs.delete(CardStore.LOCK)
         } catch (e: Exception) {}
+        localLock?.close()
+        localLock = null
     }
 
     // ------------------------------------------------------------------ journal
@@ -195,7 +236,8 @@ class SyncApply(
             sdFree = fs.df().sdFree
             cardId = CardStore.ensureCardId(fs)
             val planCard = Json.optStr(plan, "card_id")
-            if (planCard != null && planCard != cardId) throw SyncException("card_changed", "The card in the HiBy is not the one this plan was made for; plan again")
+            if (planCard == null) throw SyncException("card_changed", "This plan does not say which card it was made for; plan again")
+            if (planCard != cardId) throw SyncException("card_changed", "The card in the HiBy is not the one this plan was made for; plan again")
             val ctx = SyncPlanning.loadCardState(fs, store, lf, kinds, listener)
             manifests = ctx.manifests
             seq = ctx.cardJournals.filter { it.runId == runId }.maxOfOrNull { it.seq } ?: 0
@@ -214,7 +256,7 @@ class SyncApply(
                 val folded = ArrayList<String>()
                 try {
                     for (kind in kinds) {
-                        applyKind(kind, items.filter { it.kind == kind && it.id !in done }, choices, results[kind]!!, kinds)
+                        applyKind(kind, items.filter { it.kind == kind && it.id !in done }, choices, results[kind]!!, kinds, swapped(items.filter { it.kind == kind }))
                         fold(kind, kinds)
                         folded += kind
                     }
@@ -259,6 +301,19 @@ class SyncApply(
 
     private fun linkOf(id: String) = lf.links.firstOrNull { it.id == id }
 
+    private val scans = HashMap<String, LocalScan?>()
+
+    /**
+     * The local file of [rel] (NFC). NTFS and ext4 do not normalise names: a name stored in NFD
+     * (copied from a Mac) is found under the on-disk spelling the scan kept.
+     */
+    private fun localFile(link: Link, rel: String): File {
+        val f = File(link.local, rel)
+        if (f.exists()) return f
+        val disk = scans.getOrPut(link.id) { store.loadScan(link.id) }?.entries?.get(rel)?.disk ?: return f
+        return File(link.local, disk)
+    }
+
     private fun fail(item: PlanItem, code: String, message: String, res: KindResult) {
         res.failed++
         failures += linkedMapOf("id" to item.id, "dest" to item.dest, "src_rel" to item.srcRel, "error" to code, "message" to message)
@@ -276,18 +331,53 @@ class SyncApply(
 
     // ------------------------------------------------------------------ one kind
 
-    private fun applyKind(kind: String, items: List<PlanItem>, choices: Map<String, String>, res: KindResult, kinds: List<String>) {
+    /**
+     * Runs one card operation of [item]: a device error fails that item only. Errors that stop
+     * the run (card gone, cancelled, busy, connection lost) go on up.
+     */
+    private fun itemOp(item: PlanItem, res: KindResult, op: () -> Unit): Boolean {
+        try { op(); return true } catch (e: BtpException) {
+            if (!e.remote || e.code == Btp.E_SD_UNAVAILABLE || e.code == Btp.E_CANCELLED || e.code == Btp.E_BUSY) throw e
+            fail(item, e.codeName, e.message ?: e.codeName, res)
+            return false
+        }
+    }
+
+    /** MOVE; a retried MOVE whose first try had already moved the file answers E_NOT_FOUND, which is a success. */
+    private fun moveFile(from: String, to: String) {
+        try { fs.move(from, to, false) } catch (e: BtpException) {
+            if (e.remote && e.code == Btp.E_NOT_FOUND && !exists(from) && exists(to)) return
+            throw e
+        }
+    }
+
+    /** The temporary name a swapped file waits under (the same in a resumed run of the same plan). */
+    private fun tempName(m: PlanItem) = SyncRules.parent(m.oldDest!!).let { if (it.isEmpty()) "" else "$it/" } + "byos-move-${runId.takeLast(8)}-${m.id}-" + SyncRules.name(m.oldDest)
+
+    /**
+     * Moves of the whole plan whose new place is another move's old place: they go through a
+     * temporary name. Taken from every item, not only the ones left, so a resumed run finds them.
+     */
+    private fun swapped(items: List<PlanItem>): Set<String> {
+        val moves = items.filter { it.action == "move" && it.oldDest != null }
+        val sources = moves.mapTo(HashSet()) { SyncRules.lower(it.oldDest!!) }
+        return moves.filter { SyncRules.lower(it.dest) in sources }.mapTo(HashSet()) { it.id }
+    }
+
+    private fun applyKind(kind: String, items: List<PlanItem>, choices: Map<String, String>, res: KindResult, kinds: List<String>, swapped: Set<String> = emptySet()) {
         res.blocked = items.count { it.action == "blocked" }
         for (i in items) if (i.action == "blocked") listener.warn("blocked", "${i.dest}: ${i.reason}", mapOf("path" to i.dest, "reason" to i.reason))
         // ---- moves (swaps go through a temporary name)
         val moves = items.filter { it.action == "move" && it.oldDest != null }
-        val sources = moves.map { SyncRules.lower(it.oldDest!!) }.toSet()
         val tempOf = HashMap<String, String>()
-        for (m in moves) if (SyncRules.lower(m.dest) in sources) {
+        val moveFailed = HashSet<String>()
+        for (m in moves) if (m.id in swapped) {
             checkCancel()
-            val tmp = SyncRules.parent(m.oldDest!!).let { if (it.isEmpty()) "" else "$it/" } + "byos-move-${m.id}-" + SyncRules.name(m.oldDest)
-            if (!exists(m.oldDest)) continue
-            fs.move(m.oldDest, tmp, false)
+            val tmp = tempName(m)
+            // a resumed run: this file was moved aside before the stop (its old place may hold its partner by now)
+            if (exists(tmp)) { tempOf[m.id] = tmp; continue }
+            if (!exists(m.oldDest!!)) continue
+            if (!itemOp(m, res) { moveFile(m.oldDest, tmp) }) { moveFailed += m.id; continue }
             record(linkedMapOf("op" to "move", "kind" to kind, "from" to m.oldDest, "to" to tmp), null, kinds)
             tempOf[m.id] = tmp
         }
@@ -295,15 +385,16 @@ class SyncApply(
         val puts = ArrayList<Pair<PlanItem, String>>()   // item, mode: add | replace | both
         for ((k, m) in moves.withIndex()) {
             checkCancel()
+            if (m.id in moveFailed) continue
             listener.progress("move", m.dest, k.toLong(), moves.size.toLong(), "files")
-            val from = tempOf[m.id] ?: m.oldDest!!
-            if (!exists(from)) {
+            // after a stop, a swapped file may still wait under its temporary name
+            val from = tempOf[m.id] ?: (if (m.id in swapped) tempName(m).takeIf { exists(it) } else null) ?: m.oldDest!!.takeIf { exists(it) }
+            if (from == null) {
                 // the old copy is gone: send the file to its new place instead
                 puts += m to "add"; continue
             }
             if (exists(m.dest)) { fail(m, "exists", "a different file is already at the new place", res); continue }
-            fs.mkdirs(SyncRules.parent(m.dest))
-            fs.move(from, m.dest, false)
+            if (!itemOp(m, res) { fs.mkdirs(SyncRules.parent(m.dest)); moveFile(from, m.dest) }) continue
             record(linkedMapOf("op" to "move", "kind" to kind, "from" to from, "to" to m.dest, "rel" to m.srcRel), m, kinds)
             res.moved++
             emptied += m.oldDest!!
@@ -324,7 +415,7 @@ class SyncApply(
             }
             val st = fs.stat(d.dest)
             if (st == null) { record(linkedMapOf("op" to "forget", "kind" to kind, "dest" to d.dest), d, kinds); continue }
-            if (st.size != d.cardSize) { listener.warn("changed_since_plan", "${d.dest} changed on the HiBy since the plan; kept", mapOf("path" to d.dest)); continue }
+            if (st.size != d.cardSize || (d.cardMtime > 0 && abs(st.mtime - d.cardMtime) > 2)) { listener.warn("changed_since_plan", "${d.dest} changed on the HiBy since the plan; kept", mapOf("path" to d.dest)); continue }
             try { fs.delete(d.dest) } catch (e: BtpException) {
                 if (!e.remote || e.code == Btp.E_SD_UNAVAILABLE) throw e
                 fail(d, e.codeName, e.message ?: e.codeName, res); continue
@@ -366,11 +457,12 @@ class SyncApply(
             }
         }
         // ---- copies to this computer
+        val children = items.filter { it.parent != null }.groupBy { it.parent!! }
         for (i in items.filter { it.action == "player_only" && choices[it.id] == "pull" && it.parent == null }) {
             checkCancel()
             pull(kind, i, res, kinds)
             // its sidecars come too
-            for (c in items.filter { it.parent == i.id }) pull(kind, c, res, kinds)
+            for (c in children[i.id] ?: emptyList()) pull(kind, c, res, kinds)
         }
     }
 
@@ -406,7 +498,7 @@ class SyncApply(
             listener.progress("sync", item.dest, doneBytes, total, "bytes", mapOf("files_done" to doneFiles, "files_total" to puts.size,
                 "rate" to rate(doneBytes, t0)))
             val link = linkOf(item.link)
-            val src = link?.let { File(it.local, item.srcRel ?: "") }
+            val src = link?.let { localFile(it, item.srcRel ?: "") }
             if (link == null || src == null || !src.isFile || src.length() != item.size || src.lastModified() / 1000 != item.mtime) {
                 listener.warn("changed_since_plan", "${item.srcRel} changed or went away since the plan; plan again", mapOf("path" to item.dest))
                 res.skipped++
@@ -420,6 +512,7 @@ class SyncApply(
                 val send = prepared(src, item, srcSha)
                 val sentSha = if (send == src) srcSha else SyncRules.shaFile(send, listener::cancelled) { d, t -> listener.progress("hash", dest, d, t) }
                 val size = send.length()
+                beforeTransfer(size, kinds)
                 val oldSize = if (mode == "replace") maxOf(0L, item.cardSize) else 0L
                 var r: Int
                 if (mode == "replace" && sdFree - size + oldSize < SyncPlanning.MARGIN && exists(dest)) {
@@ -511,6 +604,7 @@ class SyncApply(
         val finalRel = target.relativeTo(File(link.local)).path.replace('\\', '/')
         target.absoluteFile.parentFile?.mkdirs()
         val part = File(target.path + ".byos-part")
+        beforeTransfer(maxOf(0L, i.cardSize), kinds)
         try {
             fs.get(i.dest, part) { d, t -> listener.progress("pull", i.dest, d, t) }
             Files.move(part.toPath(), target.toPath())
@@ -537,7 +631,9 @@ class SyncApply(
             val entries = man.forLink(link.id)
             store.saveState(link.id, cardId, entries)
             link.entriesLast = entries.size.toLong()
-            if (link.volumeId == null) link.volumeId = LocalScanner.volumeId(File(link.local))
+            val vol = LocalScanner.volumeId(File(link.local))
+            // an id of an older kind (Linux device number) is replaced by the stable one
+            if (link.volumeId == null || (vol != null && !LocalScanner.sameScheme(link.volumeId, vol))) link.volumeId = vol
         }
     }
 }

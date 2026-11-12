@@ -25,7 +25,8 @@ class PlanRequest(
 
 /**
  * sync-plan (section 3.4): reads the card's state, compares every enabled link of the asked
- * kinds with it and returns the plan JSON (format 2). Nothing on the card changes.
+ * kinds with it and returns the plan JSON (format 2). Nothing on the card changes, except
+ * card.json (the card's id) when the card has none yet: every plan names its card.
  */
 object SyncPlanning {
     /** Free space the plan keeps on the card. */
@@ -67,6 +68,8 @@ object SyncPlanning {
     fun plan(fs: CardFs, store: SyncStore, lf: LinksFile, scans: Map<String, LocalScan>, req: PlanRequest, listener: SyncListener): Map<String, Any?> {
         val df = fs.df()
         val fsName = fsName(df)
+        // the plan names its card: a plan made for one card is never applied to another (card.json is written once)
+        CardStore.ensureCardId(fs)
         val ctx = loadCardState(fs, store, lf, req.kinds, listener)
         val ids = IdGen()
         val items = ArrayList<PlanItem>()
@@ -98,7 +101,7 @@ object SyncPlanning {
                 val di = DiffInput(link, scan, tracked, others, card, lf.clientId, fsName, nestedRoots(lf, link), req.deleteUntracked, req.policies[kind],
                     localQfp = { rel ->
                         scan.entries[rel]?.let { e ->
-                            e.qfp ?: try { SyncRules.qfpFile(File(root, rel)).also { e.qfp = it; scanDirty = true } } catch (x: IOException) { null }
+                            e.qfp ?: try { SyncRules.qfpFile(File(root, e.path)).also { e.qfp = it; scanDirty = true } } catch (x: IOException) { null }
                         }
                     },
                     cardQfp = { c ->
@@ -111,7 +114,7 @@ object SyncPlanning {
                     localSha = { rel ->
                         scan.entries[rel]?.let { e ->
                             e.sha ?: try {
-                                SyncRules.hex(SyncRules.shaFile(File(root, rel), listener::cancelled) { d, t -> listener.progress("hash", rel, d, t) })
+                                SyncRules.hex(SyncRules.shaFile(File(root, e.path), listener::cancelled) { d, t -> listener.progress("hash", rel, d, t) })
                                     .also { e.sha = it; scanDirty = true }
                             } catch (x: IOException) { null }
                         }
@@ -132,7 +135,7 @@ object SyncPlanning {
                 }
                 linksOut += linkedMapOf("id" to link.id, "kind" to kind, "label" to link.label, "local" to link.local, "card_root" to link.cardRoot,
                     "layout" to link.layout, "scan" to linkedMapOf("status" to scan.status, "time" to scan.time, "errors" to scan.errors,
-                        "unreadable" to scan.unreadableDirs.size), "guard" to lp.guard.toMap(), "tracked" to lp.tracked)
+                        "unreadable" to scan.unreadableDirs.size, "tag_errors" to scan.tagErrors), "guard" to lp.guard.toMap(), "tracked" to lp.tracked)
             }
             bytesAddAll += bytesAdd; bytesRemoveAll += bytesRemove
             val po = linkedMapOf<String, Any?>()

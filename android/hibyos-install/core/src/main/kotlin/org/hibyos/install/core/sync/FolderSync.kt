@@ -89,6 +89,8 @@ object FolderSync {
         val sideRels = ArrayList<String>()
         val localDirsWithMedia = HashSet<String>()
         val cueDirs = HashSet<String>()
+        // left out by the selection while their tags could not be read: never pre-ticked for deletion
+        val tagUnknown = HashSet<String>()
         for (e in scan.entries.values) {
             val nm = SyncRules.name(e.rel)
             if (SyncRules.hidden(e.rel) || !Kinds.relevant(kind, nm)) continue
@@ -98,7 +100,9 @@ object FolderSync {
             if (SyncRules.excluded(link.exclude, e.rel)) { notWanted += e.rel; continue }
             if (!media && !link.includeSidecars) { notWanted += e.rel; continue }
             if (media && kind == Kinds.MUSIC && !link.selection.all && !sel.wants(SourceTrack(e.rel, e.rel, indexTrack(e.rel, e)))) {
-                notWanted += e.rel; continue
+                notWanted += e.rel
+                if (e.tagError) tagUnknown += e.rel
+                continue
             }
             wanted[e.rel] = e
             if (media) mediaRels += e.rel else sideRels += e.rel
@@ -139,6 +143,8 @@ object FolderSync {
         }
         fun natural(rel: String): String {
             val it = itracks[rel]
+            // tags that could not be read say nothing about where the file belongs: it stays where it is
+            if (wanted[rel]?.tagError == true) trackedByRel[rel]?.let { t -> return t.dest }
             if (!music || it == null || SyncRules.parent(rel) in cueDirs) return keepDest(root, rel)
             val multi = (discs[SyncSelection.albumKey(it.groupArtist, it.album)]?.size ?: 0) > 1
             return SyncPlanner.destFor(SourceTrack(rel, rel, it), root, "artist-album", multi)
@@ -152,7 +158,8 @@ object FolderSync {
             val n = natural(rel); nat[rel] = n
             val t = trackedByRel[rel] ?: continue
             if ((lower(t.dest) == lower(n) || lower(SyncRules.unnumbered(t.dest)) == lower(n)) && lower(t.dest) !in claimed) {
-                destOf[rel] = t.dest; claimed[lower(t.dest)] = rel
+                // the spelling the card has (it may differ from the manifest's in case or Unicode form)
+                destOf[rel] = cardBy[lower(t.dest)]?.path ?: t.dest; claimed[lower(t.dest)] = rel
             }
         }
         fun claim(rel: String, want: String): String {
@@ -187,7 +194,7 @@ object FolderSync {
                 else d = keepDest(root, rel)
             }
             val t = trackedByRel[rel]
-            destOf[rel] = if (t != null && lower(t.dest) == lower(d) && lower(t.dest) !in claimed) { claimed[lower(t.dest)] = rel; t.dest } else claim(rel, d)
+            destOf[rel] = if (t != null && lower(t.dest) == lower(d) && lower(t.dest) !in claimed) { claimed[lower(t.dest)] = rel; cardBy[lower(t.dest)]?.path ?: t.dest } else claim(rel, d)
         }
 
         // ---- 4. compare each wanted file with what the card has
@@ -210,7 +217,7 @@ object FolderSync {
             val t = trackedByRel[rel]
             if (t != null) {
                 var on = cardBy[lower(t.dest)]
-                var cardPath = t.dest
+                var cardPath = on?.path ?: t.dest
                 var renamedOnCard = false
                 var state = when {
                     on == null -> "missing"
@@ -242,7 +249,7 @@ object FolderSync {
                 when (state) {
                     "missing" -> add(copyOf(base, ids.next(), "add", "missing_on_card", cardSize = -1))
                     "changed" -> add(copyOf(base, ids.next(), "conflict", if (localChanged) "changed_both" else "edited_on_player",
-                        dest = t.dest, default = "skip", choices = listOf("computer", "player", "both", "skip")))
+                        dest = cardPath, default = "skip", choices = listOf("computer", "player", "both", "skip")))
                     else -> when {
                         lower(cardPath) != lower(dest) -> add(copyOf(base, ids.next(), "move", if (rekey) "renamed" else "dest_changed",
                             oldDest = cardPath, thenUpdate = localChanged || coversChanged))
@@ -257,16 +264,17 @@ object FolderSync {
                 val other = inp.others[lower(dest)]
                 val base = PlanItem("", kind, link.id, "", "", rel, dest, null, e.size, e.mtime, on?.size ?: -1, on?.mtime ?: 0, title,
                     other?.origin, covers = covers)
+                // the file already there keeps its own spelling (an NFD name is another name on the card)
                 when {
                     on == null -> add(copyOf(base, ids.next(), "add", "new"))
                     on.size == e.size -> {
                         fpBytes += 2L * minOf(on.size, SyncRules.QFP_PART.toLong())
                         val c = inp.cardQfp(on)
                         if (c != null && c == inp.localQfp(rel)) add(copyOf(base, ids.next(), "adopt", if (other != null) "same_content_other" else "same_content",
-                            record = Tracked(on.path, link.id, rel, inp.clientId, e.size, e.mtime, on.size, null, on.mtime, covers, 0, sentQfp = c).toMap()))
-                        else add(copyOf(base, ids.next(), "conflict", "different_content", default = "skip", choices = listOf("computer", "player", "both", "skip")))
+                            dest = on.path, record = Tracked(on.path, link.id, rel, inp.clientId, e.size, e.mtime, on.size, null, on.mtime, covers, 0, sentQfp = c).toMap()))
+                        else add(copyOf(base, ids.next(), "conflict", "different_content", dest = on.path, default = "skip", choices = listOf("computer", "player", "both", "skip")))
                     }
-                    else -> add(copyOf(base, ids.next(), "conflict", "different_content", default = "skip", choices = listOf("computer", "player", "both", "skip")))
+                    else -> add(copyOf(base, ids.next(), "conflict", "different_content", dest = on.path, default = "skip", choices = listOf("computer", "player", "both", "skip")))
                 }
             }
         }
@@ -275,9 +283,11 @@ object FolderSync {
         val vfat = inp.fs == "vfat"
         for ((k, i) in items.withIndex()) {
             val sends = i.action == "add" || i.action == "update" || (i.action == "move" && i.thenUpdate)
+            // a move puts a file at a new place too: the same path rules apply to it
+            val places = sends || i.action == "move"
             val why = when {
-                !sends -> null
-                vfat && i.size > SyncRules.FAT32_MAX -> "too_big_fat32"
+                !places -> null
+                sends && vfat && i.size > SyncRules.FAT32_MAX -> "too_big_fat32"
                 BtpPaths.check(i.dest) != null -> "bad_path_" + BtpPaths.check(i.dest)
                 inNested(i.dest) -> "inside_other_link"
                 else -> null
@@ -323,8 +333,11 @@ object FolderSync {
             }
             if (reason == null) { unreadableKept++; continue }
             val changed = on.size != t.sentSize || (t.cardMtime > 0 && abs(on.mtime - t.cardMtime) > 2)
-            playerOnly += PlanItem(ids.next(), kind, link.id, "player_only", reason, rel, t.dest, null, on.size, 0, on.size, on.mtime,
-                SyncRules.name(t.dest).substringBeforeLast('.'), t.origin, extra = if (changed) mapOf("card_changed" to true) else emptyMap())
+            val extra = HashMap<String, Any?>()
+            if (changed) extra["card_changed"] = true
+            if (reason == PlayerOnly.EXCLUDED && rel in tagUnknown) extra["tags_unreadable"] = true
+            playerOnly += PlanItem(ids.next(), kind, link.id, "player_only", reason, rel, on.path, null, on.size, 0, on.size, on.mtime,
+                SyncRules.name(t.dest).substringBeforeLast('.'), t.origin, extra = extra)
         }
 
         // ---- 6. files on the card under the root that no sync of this link wrote
@@ -383,10 +396,15 @@ object FolderSync {
         }
 
         // ---- 7. DeleteGuard
-        val nDeleted = playerOnly.count { it.reason == PlayerOnly.DELETED && it.parent == null }
+        // files that would be pre-ticked for deletion: deleted on this computer, and (with
+        // remove_unselected) left out by the selection, which a retag or a tag read error can do in bulk
+        val nDeleted = playerOnly.count {
+            it.parent == null && (it.reason == PlayerOnly.DELETED || (it.reason == PlayerOnly.EXCLUDED && link.removeUnselected && it.extra["tags_unreadable"] != true))
+        }
         val guardReason = when {
             !scanOk -> "source_unavailable"
-            link.volumeId != null && scan.volumeId != null && link.volumeId != scan.volumeId -> "volume_changed"
+            // ids of another kind (a Linux device number before the file system UUID) are not compared
+            LocalScanner.sameScheme(link.volumeId, scan.volumeId) && link.volumeId != scan.volumeId -> "volume_changed"
             scan.errors > 0 -> "scan_errors"
             nDeleted > SyncRules.MASS_FILES || nDeleted > trackedByRel.size * SyncRules.MASS_SHARE -> "mass_delete"
             else -> null
@@ -402,6 +420,7 @@ object FolderSync {
                 parent != null -> parent.defaultChoice == "delete"
                 guard.tripped -> false
                 i.extra["card_changed"] == true -> false
+                i.extra["tags_unreadable"] == true -> false
                 i.reason == PlayerOnly.DELETED -> policy == "delete"
                 i.reason == PlayerOnly.EXCLUDED -> link.removeUnselected
                 else -> inp.deleteUntracked

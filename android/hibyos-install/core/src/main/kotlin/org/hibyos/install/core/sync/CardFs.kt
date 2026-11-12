@@ -141,7 +141,10 @@ object CardStore {
 
     fun readLock(fs: CardFs): LockInfo? = readJson(fs, LOCK)?.let { LockInfo.fromMap(it) }
 
-    /** Every file under [root] (hidden names left out), recursively. */
+    /**
+     * Every file under [root] (hidden names left out), recursively. Paths keep the spelling the
+     * card gave (not normalised): they are what STAT, MOVE, DELETE and GET need.
+     */
     fun walk(fs: CardFs, root: String, listener: SyncListener): List<CardFile> {
         val out = ArrayList<CardFile>()
         var folders = 0L
@@ -154,7 +157,7 @@ object CardStore {
                 if (e.name.startsWith(".")) continue
                 val p = if (d.isEmpty()) e.name else "$d/${e.name}"
                 if (e.isDir) { if (depth < 31) go(p, depth + 1) }
-                else if (e.kind == 0) out += CardFile(SyncRules.nfc(p), e.size, e.mtime)
+                else if (e.kind == 0) out += CardFile(p, e.size, e.mtime)
             }
         }
         go(root, root.count { it == '/' } + 1)

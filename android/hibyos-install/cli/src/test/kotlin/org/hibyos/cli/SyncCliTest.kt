@@ -482,7 +482,7 @@ class SyncCliTest {
 
     @Test
     fun excludesAndUnselectedNeedTheirOwnTick() {
-        val m = library()
+        val m = library(20)   // Queen's 2 tracks of 22 stay under DeleteGuard's 10 %
         val id = addLink("music", m, "--player-only", "delete")
         ok(run("sync-apply", plan()["plan"] as String))
         ok(run("link-set", id, "--exclude", "Queen/**"))
@@ -492,16 +492,21 @@ class SyncCliTest {
         ok(run("sync-apply", p["plan"] as String, "--yes"))
         assertTrue(sd("Music/Queen/Hits/01 Hit 1.flac").isFile)
         // choosing artists works the same way
-        ok(run("link-set", id, "--clear-exclude", "--select", "artist:Queen", "--remove-unselected"))
+        ok(run("link-set", id, "--clear-exclude", "--select", "artist:ABBA", "--remove-unselected"))
         val q = plan()
         val un = planItems(q).filter { it["reason"] == "excluded_on_computer" }
-        assertEquals(4, un.size); assertTrue(un.all { it["default_choice"] == "delete" })
+        assertEquals(2, un.size); assertTrue(un.all { it["default_choice"] == "delete" })
         val no = run("sync-apply", q["plan"] as String, stdin = ByteArrayInputStream("no\n".toByteArray()))
         assertEquals(7, no.code)
         assertTrue((no.events("prompt").single()["message"] as String).contains("no longer selected"))
         ok(run("sync-apply", q["plan"] as String, "--yes"))
-        assertFalse(sd("Music/ABBA").exists())
-        assertTrue(sd("Music/Queen/Hits/01 Hit 1.flac").isFile)
+        assertFalse(sd("Music/Queen").exists())
+        assertTrue(sd("Music/ABBA/Gold/01 Song 1.flac").isFile)
+        // leaving out most of the library at once (a retag, a narrowed selection) ticks nothing
+        ok(run("link-set", id, "--select", "artist:Nobody", "--remove-unselected"))
+        val r = run("sync-plan")
+        assertTrue(r.warns("mass_delete_blocked").isNotEmpty())
+        assertTrue(planItems(ok(r)).filter { it["reason"] == "excluded_on_computer" }.all { it["default_choice"] == "keep" })
     }
 
     @Test

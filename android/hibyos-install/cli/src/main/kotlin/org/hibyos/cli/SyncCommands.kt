@@ -294,6 +294,9 @@ class SyncCommands(private val cli: Cli) {
                 mapOf("link" to l.id, "status" to s.status))
             if (s.unreadableDirs.isNotEmpty()) out.warn("unreadable", "${s.unreadableDirs.size} folders under ${l.local} could not be read; their files are kept on the HiBy",
                 mapOf("link" to l.id, "folders" to s.unreadableDirs.take(20)))
+            val bad = s.entries.values.filter { it.tagError }
+            if (bad.isNotEmpty()) out.warn("tags_unreadable", "The tags of ${bad.size} files under ${l.local} could not be read; they stay where they are on the HiBy",
+                mapOf("link" to l.id, "count" to bad.size, "files" to bad.take(20).map { it.rel }))
             res[l.id] = s
         }
         return res
@@ -311,7 +314,7 @@ class SyncCommands(private val cli: Cli) {
         return linkedMapOf("device_id" to dev, "links" to links.map { l ->
             val s = scans[l.id]!!
             linkedMapOf("id" to l.id, "kind" to l.kind, "status" to s.status, "files" to s.entries.size, "unreadable" to s.unreadableDirs.size,
-                "errors" to s.errors, "bytes" to s.entries.values.sumOf { it.size })
+                "errors" to s.errors, "tag_errors" to s.tagErrors, "bytes" to s.entries.values.sumOf { it.size })
         })
     }
 
