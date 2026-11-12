@@ -24,6 +24,7 @@ ext() { awk -v n="$2" '{sub(/\r$/, "")} !p && $0 ~ "^static[^(]*[ *]"n"\\(" && $
   grep '^#define FMC_' $S/freemusic.inc.c
   awk '{sub(/\r$/, "")} /^enum \{ FH_ROW = 1/ {p=1} p {print} p && /;$/ {p=0}' $S/freemusic.inc.c
   awk '{sub(/\r$/, "")} /^struct fm_hit \{/ {p=1} p {print} p && /^static int fm_press_kind/ {p=0}' $S/freemusic.inc.c
+  grep -m1 '^static double fm_press_t;' $S/freemusic.inc.c | tr -d ''
   for f in fm_hline fm_line fm_ringd fm_glyph_search fm_glyph_x fm_glyph_back fm_glyph_play fm_glyph_check fm_glyph_more fm_glyph_bars fm_badge \
            fm_hit fm_hit_at fm_pressed fm_chrome_status fm_navbar fm_spinner_at; do ext $S/freemusic.inc.c $f; done
 } > $X
