@@ -315,6 +315,23 @@ static int is_plane(const uint16_t *img)
     for (int i = 0; i < 4; i++) if (lum(img[pts[i][1] * W + pts[i][0]]) > 200) white++;
     return white >= 3;
 }
+/* Dialogo de confirmacion de HiBy (dialog/confirm.dlg y volume_long_time_high.dlg: el aviso
+ * de volumen alto de la UE, borrar, restaurar...): pantalla negra bajo la barra de estado y
+ * abajo (y 416-480) Cancelar gris 0x1C1C1E a la izquierda y OK azul 0x009FF6 a la derecha.
+ * Se mira el borde de cada boton (lejos del texto) y el cuerpo bajo la franja de volumen. */
+static int px_near(uint16_t p, uint16_t q)
+{
+    return abs((p >> 11) - (q >> 11)) <= 2 && abs(((p >> 5) & 63) - ((q >> 5) & 63)) <= 3 && abs((p & 31) - (q & 31)) <= 2;
+}
+static int is_hiby_modal(const uint16_t *img)
+{
+    if (!px_near(img[424 * W + 308], 0x04FE) || !px_near(img[424 * W + 12], 0x18E3)) return 0;
+    if (!px_near(img[452 * W + 300], 0x04FE) || !px_near(img[452 * W + 20], 0x18E3)) return 0;
+    static const int dk[][2] = { {20, 90}, {300, 90}, {20, 330}, {300, 330}, {160, 370} };
+    for (int i = 0; i < 5; i++) if (lum(img[dk[i][1] * W + dk[i][0]]) > 24) return 0;
+    return has_statusbar(img);
+}
+
 /* centro de control: asa clara abajo en el centro y oscuro a los lados */
 static int is_cc(const uint16_t *img)
 {
@@ -1126,9 +1143,11 @@ static void hud_upload(void)
     while (st->presents == p && now_ms() - t < 60) msleep(1);   /* al ritmo del panel */
 }
 static void update_overlay(void);
+static int hiby_modal;                      /* un dialogo de HiBy en pantalla: todo es suyo */
 static void hud_key(int code)
 {
     double t = now_ms();
+    if (hiby_modal) { lcd_boost(); lg("volumen: tecla %d (dialogo de HiBy en pantalla)", code); return; }
     /* indicador de HiBy: en sus pantallas lo dibuja el reproductor; nada que hacer aqui */
     if (!vol_ui && !st->capture) { lcd_boost(); lg("volumen: tecla %d (indicador de HiBy)", code); return; }
     if (!hud_active) { hud_shown_at = t; hud_active = 1; int v = read_volume(); if (v >= 0) vol_guess = v; hud_level = vol_guess / 100.0; }
@@ -1184,7 +1203,7 @@ static int hud_update(int present_it)
 static int music_on;
 static void update_overlay(void)
 {
-    if (st->capture || st->held || hud_active || launcher_on) return;
+    if (st->capture || st->held || hud_active || launcher_on || hiby_modal) return;
     /* mirar la imagen visible sin la capa */
     const uint16_t *v = visible();
     /* arranque: nada encima de la animacion mientras hibyboot la muestra. (Antes se esperaba a
@@ -1726,6 +1745,33 @@ static void mem_guard(void)
     mem_trim("auto");
 }
 
+/* Antes el aviso de volumen alto parpadeaba sin parar y OK no respondia: en el inicio de ByOS el
+ * bucle soltaba la pantalla (el fotograma no era el inicio), la pildora de volumen la volvia a
+ * capturar, la libreria pegaba la imagen del inicio en los fotogramas de HiBy y la barra de
+ * inicio y el gesto de abajo tapaban los botones. Mientras se vea el dialogo, ByOS se aparta. */
+static int hiby_modal_clear;
+static int hiby_modal_tick(void)
+{
+    const uint16_t *v = st->capture ? fr1 : visible();
+    if (!hiby_modal) {
+        if (!is_hiby_modal(v)) return 0;
+        hiby_modal = 1; hiby_modal_clear = 0;
+        hud_active = 0; hud_cap = 0;
+        if (launcher_on) launcher_leave();
+        else if (st->capture) { cmd('R'); double t = now_ms(); while (st->capture && now_ms() - t < 200) msleep(2); }
+        st->home_sub_on = 0;
+        if (st->ov_on) { st->ov_on = 0; ov_cur = 0; cmd('O'); }
+        lg("dialogo de HiBy en pantalla: la pantalla y los toques son suyos");
+        return 1;
+    }
+    if (is_hiby_modal(v)) { hiby_modal_clear = 0; return 1; }
+    if (++hiby_modal_clear < 3) return 1;     /* tres vueltas seguidas sin el (~180 ms) */
+    hiby_modal = 0; st->home_sub_on = 1;
+    lg("dialogo de HiBy cerrado");
+    update_overlay();
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -1844,6 +1890,15 @@ int main(int argc, char **argv)
             ssize_t n = read(keys, ke, sizeof ke);
             for (int i = 0; i < n / (ssize_t)sizeof ke[0]; i++)
                 if (ke[i].type == EV_KEY && ke[i].value && (ke[i].code == KEY_LEFT || ke[i].code == KEY_RIGHT)) hud_key(ke[i].code);
+        }
+        if (hiby_modal_tick()) {
+            /* dialogo de HiBy (p. ej. el aviso de volumen alto): ni inicio, ni pildora, ni barra
+             * de inicio, ni gestos de borde; cada toque va entero al reproductor */
+            if (pr > 0 && (pf[0].revents & POLLIN)) {
+                struct pkt mp;
+                if (read_pkt(&mp, 300)) { fwd(&mp); while (cur_down && read_pkt(&mp, 5000)) fwd(&mp); player_poke(); }
+            }
+            continue;
         }
         if (hud_active) { hud_main = 1; hud_step(); hud_main = 0; }
         if (launcher_on) {
